@@ -107,6 +107,11 @@ export interface ReferenceStandardListResult {
   items: ReferenceStandardRecord[];
 }
 
+export interface ReferenceStandardFormValues {
+  code: string;
+  name: string;
+}
+
 export interface ProductRecord {
   id: string;
   code: string;
@@ -122,6 +127,21 @@ export interface ProductListResult {
   total: number;
   etag?: string | null;
   items: ProductRecord[];
+}
+
+export interface PressureRatingRecord {
+  id: string;
+  label: string;
+  pressureKpa: number;
+}
+
+export interface ProductFormValues {
+  code: string;
+  name: string;
+  category: string;
+  subCategory: string | null;
+  standardId: string | null;
+  pressureRatings: PressureRatingRecord[];
 }
 
 export interface RecordSummary {
@@ -169,4 +189,20 @@ export interface AssetListResult {
   total: number;
   etag?: string | null;
   items: AssetRecord[];
+}
+
+export interface AssetEndValues {
+  fitting: string;
+  size: string;
+}
+
+export interface AssetFormValues {
+  assetNumber: string;
+  customerId: string;
+  customerSerialNo: string | null;
+  productId: string;
+  lifecycleStatus: string;
+  nextRetestDueAt: string | null;
+  aEnd: AssetEndValues;
+  bEnd: AssetEndValues;
 }

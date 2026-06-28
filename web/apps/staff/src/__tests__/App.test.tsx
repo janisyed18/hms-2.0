@@ -72,9 +72,21 @@ function okJson(body: unknown) {
   };
 }
 
+function noContent() {
+  return {
+    ok: true,
+    status: 204,
+    headers: new Headers(),
+    json: async () => undefined
+  };
+}
+
 function routeFetch() {
-  return vi.fn(async (url: string | URL | Request) => {
+  return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const path = String(url);
+    if (init?.method === "DELETE") {
+      return noContent();
+    }
     if (path.startsWith("/api/v1/customers")) {
       return okJson({
         total: 1,
@@ -230,5 +242,82 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Reference Data" }));
     expect(await screen.findByRole("row", { name: /API Standard/i })).toBeVisible();
+  });
+
+  it("opens the reference standard drawer and saves a standard", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Reference Data" }));
+    await user.click(screen.getByRole("button", { name: "Add Standard" }));
+    await user.type(screen.getByLabelText("Standard code"), "EN857");
+    await user.type(screen.getByLabelText("Standard name"), "EN 857");
+    await user.click(screen.getByRole("button", { name: "Save standard" }));
+
+    expect(await screen.findByRole("row", { name: /EN 857/i })).toBeVisible();
+  });
+
+  it("opens the product drawer, adds a pressure rating row, and saves a product", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Products" }));
+    await user.click(screen.getByRole("button", { name: "Add Product" }));
+    await user.type(screen.getByLabelText("Product code"), "API-HOSE");
+    await user.type(screen.getByLabelText("Product name"), "API Demo Hose");
+    await user.type(screen.getByLabelText("Category"), "Composite");
+    await user.click(screen.getByRole("button", { name: "Add pressure rating" }));
+
+    expect(screen.getByText("Rating 1")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Save product" }));
+
+    expect(await screen.findByRole("row", { name: /API Demo Hose/i })).toBeVisible();
+  });
+
+  it("opens the asset drawer, edits A/B end values, and saves an asset", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Assets" }));
+    await user.click(screen.getByRole("button", { name: "Add Asset" }));
+    await user.type(screen.getByLabelText("Asset number"), "ASSET-200");
+    await user.type(screen.getByLabelText("Customer serial number"), "SER-200");
+    await user.type(screen.getByLabelText("A end fitting"), "Camlock A");
+    await user.type(screen.getByLabelText("B end fitting"), "Flange B");
+
+    expect(screen.getByDisplayValue("Camlock A")).toBeVisible();
+    expect(screen.getByDisplayValue("Flange B")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Save asset" }));
+
+    expect(await screen.findByRole("row", { name: /ASSET-200/i })).toBeVisible();
+  });
+
+  it("confirms archive actions and calls soft-delete endpoints", async () => {
+    const fetchMock = routeFetch();
+    const confirmMock = vi.fn().mockReturnValue(true);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", confirmMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Products" }));
+    await user.click(await screen.findByRole("button", { name: "Archive API Fuel Hose" }));
+
+    await waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledWith("Archive API Fuel Hose?");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/products/product-api-1",
+        expect.objectContaining({ method: "DELETE" })
+      );
+    });
   });
 });

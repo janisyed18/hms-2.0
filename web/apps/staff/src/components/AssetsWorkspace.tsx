@@ -1,3 +1,4 @@
+import { AssetForm } from "./AssetForm";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
 import { useAssetsWorkspace } from "../hooks/useAssetsWorkspace";
 import type { AssetRecord } from "../domain/types";
@@ -19,54 +20,77 @@ function statusClass(status: string) {
   return "mini-status current";
 }
 
-const assetColumns: ModuleColumn<AssetRecord>[] = [
-  {
-    header: "Asset",
-    render: (asset) => <strong>{asset.assetNumber}</strong>
-  },
-  {
-    header: "Customer",
-    render: (asset) => asset.customer.name
-  },
-  {
-    header: "Product",
-    render: (asset) => asset.product.name
-  },
-  {
-    header: "Status",
-    render: (asset) => (
-      <span className={statusClass(asset.lifecycleStatus)}>
-        {asset.lifecycleStatus.replace("_", " ")}
-      </span>
-    )
-  },
-  {
-    header: "Next Retest",
-    render: (asset) => asset.nextRetestDueAt ?? "Not scheduled"
-  },
-  {
-    header: "Location",
-    render: locationLabel
-  }
-];
-
 export function AssetsWorkspace() {
   const workspace = useAssetsWorkspace();
+  const assetColumns: ModuleColumn<AssetRecord>[] = [
+    {
+      header: "Asset",
+      render: (asset) => <strong>{asset.assetNumber}</strong>
+    },
+    {
+      header: "Customer",
+      render: (asset) => asset.customer.name
+    },
+    {
+      header: "Product",
+      render: (asset) => asset.product.name
+    },
+    {
+      header: "Status",
+      render: (asset) => (
+        <span className={statusClass(asset.lifecycleStatus)}>
+          {asset.lifecycleStatus.replace("_", " ")}
+        </span>
+      )
+    },
+    {
+      header: "Next Retest",
+      render: (asset) => asset.nextRetestDueAt ?? "Not scheduled"
+    },
+    {
+      header: "Location",
+      render: locationLabel
+    },
+    {
+      header: "Actions",
+      render: (asset) => (
+        <span className="row-actions">
+          <button type="button" onClick={() => workspace.openEdit(asset)}>
+            Edit
+          </button>
+          <button type="button" onClick={() => workspace.archiveAsset(asset)}>
+            Archive
+          </button>
+        </span>
+      )
+    }
+  ];
 
   return (
-    <ModuleTable
-      actionLabel="Add Asset"
-      columns={assetColumns}
-      countLabel={`${workspace.assets.length} assets`}
-      emptyLabel="No assets match the current filters."
-      getRowKey={(asset) => asset.id}
-      items={workspace.visibleAssets}
-      onQueryChange={workspace.setQuery}
-      query={workspace.query}
-      searchLabel="Search assets"
-      searchPlaceholder="Search assets..."
-      source={workspace.source}
-      tableLabel="Asset records"
-    />
+    <>
+      <ModuleTable
+        actionLabel="Add Asset"
+        columns={assetColumns}
+        countLabel={`${workspace.assets.length} assets`}
+        emptyLabel="No assets match the current filters."
+        getRowKey={(asset) => asset.id}
+        items={workspace.visibleAssets}
+        onAction={workspace.openCreate}
+        onQueryChange={workspace.setQuery}
+        query={workspace.query}
+        searchLabel="Search assets"
+        searchPlaceholder="Search assets..."
+        source={workspace.source}
+        tableLabel="Asset records"
+      />
+      <AssetForm
+        asset={workspace.editingAsset}
+        customerOptions={workspace.customerOptions}
+        productOptions={workspace.productOptions}
+        open={workspace.isFormOpen}
+        onClose={() => workspace.setFormOpen(false)}
+        onSubmit={workspace.saveAsset}
+      />
+    </>
   );
 }

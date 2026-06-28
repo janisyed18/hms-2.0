@@ -541,6 +541,21 @@ td strong {
   font-weight: 700;
 }
 
+.row-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.row-actions button {
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: #334155;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 tbody tr {
   transition: background 140ms ease;
 }
@@ -1011,6 +1026,45 @@ tr.is-selected .row-check {
   color: #334155;
   font-size: 12px;
   font-weight: 700;
+}
+
+.drawer-section {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.drawer-section h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 13px;
+}
+
+.pressure-list {
+  display: grid;
+  gap: 8px;
+}
+
+.pressure-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  border-top: 1px solid var(--border);
+  color: #334155;
+  font-size: 12px;
+}
+
+.pressure-list div:first-child {
+  border-top: 0;
+}
+
+.pressure-list p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .customer-drawer input,

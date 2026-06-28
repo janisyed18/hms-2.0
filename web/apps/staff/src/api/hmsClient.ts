@@ -11,6 +11,7 @@ import type {
   ApiListResult,
   AssetListResult,
   AssetLocationSummary,
+  AssetFormValues,
   AssetRecord,
   AssetProductSummary,
   CustomerContact,
@@ -19,9 +20,11 @@ import type {
   CustomerLocation,
   CustomerRecord,
   ProductListResult,
+  ProductFormValues,
   ProductRecord,
   RecordSummary,
   ReferenceStandardListResult,
+  ReferenceStandardFormValues,
   ReferenceStandardRecord,
   RetestScheduleRecord
 } from "../domain/types";
@@ -445,6 +448,42 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toCustomer(response.data, response.etag);
     },
 
+    async createReferenceStandard(
+      values: ReferenceStandardFormValues
+    ): Promise<ReferenceStandardRecord> {
+      const response = await request<ApiReferenceStandard>(
+        "/api/v1/reference/standards",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            code: values.code,
+            name: values.name,
+            enabled: true
+          })
+        }
+      );
+      return toReferenceStandard(response.data, response.etag);
+    },
+
+    async updateReferenceStandard(
+      id: string,
+      values: ReferenceStandardFormValues,
+      etag?: string | null
+    ): Promise<ReferenceStandardRecord> {
+      const response = await request<ApiReferenceStandard>(
+        `/api/v1/reference/standards/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          headers: ifMatchHeader(etag),
+          body: JSON.stringify({
+            code: values.code,
+            name: values.name
+          })
+        }
+      );
+      return toReferenceStandard(response.data, response.etag);
+    },
+
     async listProducts(
       listOptions: ListProductOptions = {}
     ): Promise<ApiListResult<ProductRecord>> {
@@ -464,6 +503,47 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       };
     },
 
+    async createProduct(values: ProductFormValues): Promise<ProductRecord> {
+      const response = await request<ApiProduct>(
+        "/api/v1/products",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            category: values.category,
+            sub_category: values.subCategory,
+            code: values.code,
+            name: values.name,
+            standard_id: values.standardId,
+            enabled: true
+          })
+        }
+      );
+      return toProduct(response.data, response.etag);
+    },
+
+    async updateProduct(
+      id: string,
+      values: ProductFormValues,
+      etag?: string | null
+    ): Promise<ProductRecord> {
+      const response = await request<ApiProduct>(
+        `/api/v1/products/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          headers: ifMatchHeader(etag),
+          body: JSON.stringify({
+            category: values.category,
+            sub_category: values.subCategory,
+            code: values.code,
+            name: values.name,
+            standard_id: values.standardId,
+            enabled: true
+          })
+        }
+      );
+      return toProduct(response.data, response.etag);
+    },
+
     async listAssets(
       listOptions: ListAssetOptions = {}
     ): Promise<ApiListResult<AssetRecord>> {
@@ -480,6 +560,47 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         etag: response.etag,
         items: response.data.items.map((asset) => toAsset(asset, response.etag))
       };
+    },
+
+    async createAsset(values: AssetFormValues): Promise<AssetRecord> {
+      const response = await request<ApiAsset>(
+        "/api/v1/assets",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            customer_id: values.customerId,
+            product_id: values.productId,
+            asset_number: values.assetNumber,
+            customer_serial_no: values.customerSerialNo,
+            lifecycle_status: values.lifecycleStatus,
+            next_retest_due_at: values.nextRetestDueAt
+          })
+        }
+      );
+      return toAsset(response.data, response.etag);
+    },
+
+    async updateAsset(
+      id: string,
+      values: AssetFormValues,
+      etag?: string | null
+    ): Promise<AssetRecord> {
+      const response = await request<ApiAsset>(
+        `/api/v1/assets/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          headers: ifMatchHeader(etag),
+          body: JSON.stringify({
+            customer_id: values.customerId,
+            product_id: values.productId,
+            asset_number: values.assetNumber,
+            customer_serial_no: values.customerSerialNo,
+            lifecycle_status: values.lifecycleStatus,
+            next_retest_due_at: values.nextRetestDueAt
+          })
+        }
+      );
+      return toAsset(response.data, response.etag);
     },
 
     async listReferenceStandards(

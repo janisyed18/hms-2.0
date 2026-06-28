@@ -13,6 +13,7 @@ interface ModuleTableProps<TItem> {
   emptyLabel: string;
   getRowKey: (item: TItem) => string;
   items: TItem[];
+  onAction: () => void;
   onQueryChange: (value: string) => void;
   query: string;
   searchLabel: string;
@@ -28,6 +29,7 @@ export function ModuleTable<TItem>({
   emptyLabel,
   getRowKey,
   items,
+  onAction,
   onQueryChange,
   query,
   searchLabel,
@@ -64,7 +66,7 @@ export function ModuleTable<TItem>({
       <div className="table-actions">
         <span>{countLabel}</span>
         <div>
-          <button className="primary-button" type="button">
+          <button className="primary-button" type="button" onClick={onAction}>
             <Plus aria-hidden="true" size={17} />
             {actionLabel}
           </button>
