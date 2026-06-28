@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E402, F401, I001
+
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint
@@ -68,3 +70,6 @@ class ProductPressureRating(SyncableMixin, Base):
         lazy="selectin",
     )
     nominal_bore: Mapped[NominalBore] = relationship(lazy="selectin")
+
+
+from hms_backend.app.modules.reference import models as _reference_models  # noqa: E402,F401

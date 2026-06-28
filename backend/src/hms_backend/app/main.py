@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 
+from hms_backend.app.api.records import router as records_router
+
 
 def create_app() -> FastAPI:
     app = FastAPI(
@@ -12,6 +14,8 @@ def create_app() -> FastAPI:
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "hms-backend"}
+
+    app.include_router(records_router, prefix="/api/v1", tags=["core-records"])
 
     return app
 

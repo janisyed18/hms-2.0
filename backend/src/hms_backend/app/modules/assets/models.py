@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E402, F401, I001
+
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
@@ -150,3 +152,8 @@ class AssetEndConfiguration(SyncableMixin, Base):
     coupling: Mapped[Coupling | None] = relationship(lazy="selectin")
     coupling_add_on: Mapped[CouplingAddOn | None] = relationship(lazy="selectin")
     attach_method: Mapped[AttachMethod | None] = relationship(lazy="selectin")
+
+
+from hms_backend.app.modules.certificates import models as _certificate_models  # noqa: E402,F401
+from hms_backend.app.modules.inspections import models as _inspection_models  # noqa: E402,F401
+from hms_backend.app.modules.scheduling import models as _scheduling_models  # noqa: E402,F401

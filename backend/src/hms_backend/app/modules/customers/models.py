@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E402, F401, I001
+
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String
@@ -89,3 +91,7 @@ class CustomerContact(SyncableMixin, Base):
         back_populates="contacts",
         lazy="selectin",
     )
+
+
+from hms_backend.app.modules.assets import models as _asset_models  # noqa: E402,F401
+from hms_backend.app.modules.scheduling import models as _scheduling_models  # noqa: E402,F401

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E402, F401, I001
+
 from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -191,3 +193,6 @@ class InspectionPhoto(SyncableMixin, Base):
         back_populates="photos",
         lazy="selectin",
     )
+
+
+from hms_backend.app.modules.certificates import models as _certificate_models  # noqa: E402,F401
