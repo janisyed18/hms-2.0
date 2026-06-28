@@ -178,6 +178,27 @@ def _enforce_if_match(if_match: str | None, version: int) -> None:
     )
 
 
+def _apply_sort(
+    statement: Select[Any],
+    model: type[Any],
+    sort: str | None,
+    allowed_fields: frozenset[str],
+    *,
+    default: str,
+) -> Select[Any]:
+    requested_sort = sort or default
+    descending = requested_sort.startswith("-")
+    field_name = requested_sort[1:] if descending else requested_sort
+    if field_name not in allowed_fields:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported sort field: {field_name}",
+        )
+
+    sort_column = getattr(model, field_name)
+    return statement.order_by(sort_column.desc() if descending else sort_column.asc())
+
+
 @router.post(
     "/reference/standards",
     response_model=LookupRead,
@@ -209,15 +230,21 @@ async def create_standard(
 async def list_standards(
     session: SessionDep,
     principal: PrincipalDep,
+    sort: str | None = None,
 ) -> LookupListResponse:
     _require_asset_read(principal)
-    standards = (
-        await session.scalars(
-            select(Standard)
-            .where(Standard.enabled.is_(True), Standard.deleted_at.is_(None))
-            .order_by(Standard.code)
-        )
-    ).all()
+    statement = select(Standard).where(
+        Standard.enabled.is_(True),
+        Standard.deleted_at.is_(None),
+    )
+    statement = _apply_sort(
+        statement,
+        Standard,
+        sort,
+        frozenset({"code", "name", "created_at", "updated_at"}),
+        default="code",
+    )
+    standards = (await session.scalars(statement)).all()
 
     return LookupListResponse(
         items=[
@@ -329,6 +356,7 @@ async def list_customers(
     session: SessionDep,
     principal: PrincipalDep,
     search: str | None = None,
+    sort: str | None = None,
     limit: LimitParam = 50,
     offset: OffsetParam = 0,
 ) -> CustomerListResponse:
@@ -345,10 +373,15 @@ async def list_customers(
         )
 
     total = await _count(session, statement)
+    statement = _apply_sort(
+        statement,
+        Customer,
+        sort,
+        frozenset({"code", "name", "created_at", "updated_at"}),
+        default="code",
+    )
     customers = (
-        await session.scalars(
-            statement.order_by(Customer.code).offset(offset).limit(limit)
-        )
+        await session.scalars(statement.offset(offset).limit(limit))
     ).all()
     return CustomerListResponse(
         total=total,
@@ -878,6 +911,7 @@ async def list_products(
     principal: PrincipalDep,
     category: str | None = None,
     search: str | None = None,
+    sort: str | None = None,
     limit: LimitParam = 50,
     offset: OffsetParam = 0,
 ) -> ProductListResponse:
@@ -899,10 +933,15 @@ async def list_products(
         )
 
     total = await _count(session, statement)
+    statement = _apply_sort(
+        statement,
+        Product,
+        sort,
+        frozenset({"code", "name", "category", "created_at", "updated_at"}),
+        default="code",
+    )
     products = (
-        await session.scalars(
-            statement.order_by(Product.code).offset(offset).limit(limit)
-        )
+        await session.scalars(statement.offset(offset).limit(limit))
     ).all()
     return ProductListResponse(
         total=total,
@@ -986,6 +1025,7 @@ async def list_assets(
     search: str | None = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     customer_id: str | None = None,
+    sort: str | None = None,
     limit: LimitParam = 50,
     offset: OffsetParam = 0,
 ) -> AssetListResponse:
@@ -1012,10 +1052,23 @@ async def list_assets(
         )
 
     total = await _count(session, statement)
+    statement = _apply_sort(
+        statement,
+        Asset,
+        sort,
+        frozenset(
+            {
+                "asset_number",
+                "lifecycle_status",
+                "next_retest_due_at",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        default="asset_number",
+    )
     assets = (
-        await session.scalars(
-            statement.order_by(Asset.asset_number).offset(offset).limit(limit)
-        )
+        await session.scalars(statement.offset(offset).limit(limit))
     ).all()
     return AssetListResponse(
         total=total,

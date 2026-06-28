@@ -189,6 +189,48 @@ async def test_reference_standards_endpoint_returns_enabled_standards_only(
 
 
 @pytest.mark.asyncio
+async def test_reference_standards_endpoint_supports_allow_listed_sorting(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with session_factory() as session:
+        session.add(Standard(code="ISO10380", name="ISO 10380"))
+        await session.commit()
+
+    async with api_client(session_factory, principal) as client:
+        ascending_response = await client.get(
+            "/api/v1/reference/standards",
+            params={"sort": "code"},
+        )
+        descending_response = await client.get(
+            "/api/v1/reference/standards",
+            params={"sort": "-code"},
+        )
+        rejected_response = await client.get(
+            "/api/v1/reference/standards",
+            params={"sort": "deleted_at"},
+        )
+
+    assert ascending_response.status_code == 200
+    assert [item["code"] for item in ascending_response.json()["items"]] == [
+        "AS2683",
+        "ISO10380",
+    ]
+    assert descending_response.status_code == 200
+    assert [item["code"] for item in descending_response.json()["items"]] == [
+        "ISO10380",
+        "AS2683",
+    ]
+    assert rejected_response.status_code == 400
+    assert rejected_response.json()["detail"] == "Unsupported sort field: deleted_at"
+
+
+@pytest.mark.asyncio
 async def test_products_endpoint_filters_by_category_and_search(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
@@ -209,6 +251,73 @@ async def test_products_endpoint_filters_by_category_and_search(
     assert response.json()["total"] == 1
     assert response.json()["items"][0]["code"] == "1000GY"
     assert response.json()["items"][0]["standard_code"] == "AS2683"
+
+
+@pytest.mark.asyncio
+async def test_products_and_assets_support_allow_listed_sorting(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        product_ascending_response = await client.get(
+            "/api/v1/products",
+            params={"sort": "code"},
+        )
+        product_descending_response = await client.get(
+            "/api/v1/products",
+            params={"sort": "-code"},
+        )
+        product_rejected_response = await client.get(
+            "/api/v1/products",
+            params={"sort": "deleted_at"},
+        )
+        asset_ascending_response = await client.get(
+            "/api/v1/assets",
+            params={"sort": "asset_number"},
+        )
+        asset_descending_response = await client.get(
+            "/api/v1/assets",
+            params={"sort": "-asset_number"},
+        )
+        asset_rejected_response = await client.get(
+            "/api/v1/assets",
+            params={"sort": "customer_id"},
+        )
+
+    assert product_ascending_response.status_code == 200
+    assert [item["code"] for item in product_ascending_response.json()["items"]] == [
+        "1000GY",
+        "SS1",
+    ]
+    assert product_descending_response.status_code == 200
+    assert [item["code"] for item in product_descending_response.json()["items"]] == [
+        "SS1",
+        "1000GY",
+    ]
+    assert product_rejected_response.status_code == 400
+    assert (
+        product_rejected_response.json()["detail"]
+        == "Unsupported sort field: deleted_at"
+    )
+
+    assert asset_ascending_response.status_code == 200
+    assert [
+        item["asset_number"] for item in asset_ascending_response.json()["items"]
+    ] == ["997950", "ORIC-100"]
+    assert asset_descending_response.status_code == 200
+    assert [
+        item["asset_number"] for item in asset_descending_response.json()["items"]
+    ] == ["ORIC-100", "997950"]
+    assert asset_rejected_response.status_code == 400
+    assert asset_rejected_response.json()["detail"] == (
+        "Unsupported sort field: customer_id"
+    )
 
 
 @pytest.mark.asyncio
@@ -306,6 +415,45 @@ async def test_customers_endpoint_scopes_customer_user(
     assert visible_detail_response.json()["locations"][0]["name"] == "Site A"
     assert visible_detail_response.json()["contacts"][0]["name"] == "Retest Coordinator"
     assert hidden_detail_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_customers_endpoint_supports_allow_listed_sorting(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        ascending_response = await client.get(
+            "/api/v1/customers",
+            params={"sort": "name"},
+        )
+        descending_response = await client.get(
+            "/api/v1/customers",
+            params={"sort": "-name"},
+        )
+        rejected_response = await client.get(
+            "/api/v1/customers",
+            params={"sort": "deleted_at"},
+        )
+
+    assert ascending_response.status_code == 200
+    assert [item["name"] for item in ascending_response.json()["items"]] == [
+        "Orica",
+        "Vopak",
+    ]
+    assert descending_response.status_code == 200
+    assert [item["name"] for item in descending_response.json()["items"]] == [
+        "Vopak",
+        "Orica",
+    ]
+    assert rejected_response.status_code == 400
+    assert rejected_response.json()["detail"] == "Unsupported sort field: deleted_at"
 
 
 @pytest.mark.asyncio
