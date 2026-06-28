@@ -63,6 +63,90 @@ class ProductUpdate(BaseModel):
     enabled: bool | None = None
 
 
+class CustomerLocationRead(BaseModel):
+    id: str
+    name: str
+    address_1: str | None
+    address_2: str | None
+    city: str | None
+    state: str | None
+    country: str | None
+
+
+class CustomerContactRead(BaseModel):
+    id: str
+    name: str
+    email: str | None
+    phone: str | None
+    role: str | None
+    receives_retest_reminders: bool
+
+
+class CustomerRead(BaseModel):
+    id: str
+    code: str
+    name: str
+    retest_enabled: bool
+    default_retest_months: int | None
+    locations: list[CustomerLocationRead]
+    contacts: list[CustomerContactRead]
+
+
+class CustomerListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[CustomerRead]
+
+
+class CustomerCreate(BaseModel):
+    code: str
+    name: str
+    retest_enabled: bool = False
+    default_retest_months: int | None = None
+
+
+class CustomerUpdate(BaseModel):
+    code: str | None = None
+    name: str | None = None
+    retest_enabled: bool | None = None
+    default_retest_months: int | None = None
+
+
+class CustomerLocationCreate(BaseModel):
+    name: str
+    address_1: str | None = None
+    address_2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+
+
+class CustomerLocationUpdate(BaseModel):
+    name: str | None = None
+    address_1: str | None = None
+    address_2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
+
+
+class CustomerContactCreate(BaseModel):
+    name: str
+    email: str | None = None
+    phone: str | None = None
+    role: str | None = None
+    receives_retest_reminders: bool = True
+
+
+class CustomerContactUpdate(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    role: str | None = None
+    receives_retest_reminders: bool | None = None
+
+
 class CustomerSummary(BaseModel):
     id: str
     code: str

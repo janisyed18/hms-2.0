@@ -16,7 +16,11 @@ from hms_backend.app.models.base import Base
 from hms_backend.app.models.foundation import AuditEvent, SyncChange
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
 from hms_backend.app.modules.certificates.models import Certificate
-from hms_backend.app.modules.customers.models import Customer, CustomerLocation
+from hms_backend.app.modules.customers.models import (
+    Customer,
+    CustomerContact,
+    CustomerLocation,
+)
 from hms_backend.app.modules.inspections.models import (
     Inspection,
     InspectionStatus,
@@ -72,6 +76,14 @@ async def seeded_session(
             state="NSW",
             country="AU",
         )
+        contact = CustomerContact(
+            customer=vopak,
+            name="Retest Coordinator",
+            email="retest@example.com",
+            phone="+61 2 5555 0100",
+            role="Maintenance",
+            receives_retest_reminders=True,
+        )
         vopak_asset = Asset(
             customer=vopak,
             location=location,
@@ -105,6 +117,7 @@ async def seeded_session(
                 hidden_standard,
                 product,
                 other_product,
+                contact,
                 vopak_asset,
                 orica_asset,
                 schedule,
@@ -118,6 +131,7 @@ async def seeded_session(
             "product_id": product.id,
             "other_product_id": other_product.id,
             "vopak_location_id": location.id,
+            "vopak_contact_id": contact.id,
             "vopak_asset_id": vopak_asset.id,
             "orica_asset_id": orica_asset.id,
         }
@@ -263,6 +277,277 @@ async def test_customer_user_cannot_create_reference_standard(
         )
 
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_customers_endpoint_scopes_customer_user(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        list_response = await client.get("/api/v1/customers")
+        visible_detail_response = await client.get(
+            f"/api/v1/customers/{seeded_session['vopak_id']}"
+        )
+        hidden_detail_response = await client.get(
+            f"/api/v1/customers/{seeded_session['orica_id']}"
+        )
+
+    assert list_response.status_code == 200
+    assert list_response.json()["total"] == 1
+    assert list_response.json()["items"][0]["code"] == "VOPA"
+    assert visible_detail_response.status_code == 200
+    assert visible_detail_response.json()["locations"][0]["name"] == "Site A"
+    assert visible_detail_response.json()["contacts"][0]["name"] == "Retest Coordinator"
+    assert hidden_detail_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_customer_user_cannot_create_customer(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            "/api/v1/customers",
+            json={"code": "NEWC", "name": "New Customer"},
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_create_customer_writes_sync_change_and_audit_event(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            "/api/v1/customers",
+            json={
+                "code": " acme ",
+                "name": " ACME Mining ",
+                "retest_enabled": True,
+                "default_retest_months": 6,
+            },
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["code"] == "ACME"
+    assert body["name"] == "ACME Mining"
+    assert body["retest_enabled"] is True
+    assert body["default_retest_months"] == 6
+    assert body["locations"] == []
+    assert body["contacts"] == []
+
+    async with session_factory() as session:
+        customer = (
+            await session.scalars(select(Customer).where(Customer.code == "ACME"))
+        ).one()
+        sync_change = (await session.scalars(select(SyncChange))).one()
+        audit_event = (await session.scalars(select(AuditEvent))).one()
+
+        assert customer.version == 1
+        assert customer.name == "ACME Mining"
+        assert sync_change.entity == "Customer"
+        assert sync_change.entity_id == customer.id
+        assert sync_change.op == "create"
+        assert sync_change.version == 1
+        assert audit_event.actor_id == "admin-1"
+        assert audit_event.action == "customer.created"
+        assert audit_event.entity == "Customer"
+        assert audit_event.entity_id == customer.id
+        assert audit_event.before is None
+        assert audit_event.after is not None
+        assert audit_event.after["code"] == "ACME"
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_update_customer_writes_sync_change_and_audit_event(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/customers/{seeded_session['vopak_id']}",
+            json={
+                "name": "Vopak Updated",
+                "retest_enabled": True,
+                "default_retest_months": 12,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Vopak Updated"
+    assert response.json()["retest_enabled"] is True
+    assert response.json()["default_retest_months"] == 12
+
+    async with session_factory() as session:
+        customer = await session.get(Customer, seeded_session["vopak_id"])
+        sync_change = (await session.scalars(select(SyncChange))).one()
+        audit_event = (await session.scalars(select(AuditEvent))).one()
+
+        assert customer is not None
+        assert customer.version == 2
+        assert customer.name == "Vopak Updated"
+        assert sync_change.entity == "Customer"
+        assert sync_change.op == "update"
+        assert sync_change.version == 2
+        assert audit_event.action == "customer.updated"
+        assert audit_event.before is not None
+        assert audit_event.before["name"] == "Vopak"
+        assert audit_event.after is not None
+        assert audit_event.after["name"] == "Vopak Updated"
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_create_and_update_customer_location_writes_audit_and_sync(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        create_response = await client.post(
+            f"/api/v1/customers/{seeded_session['vopak_id']}/locations",
+            json={
+                "name": "Newcastle Depot",
+                "address_1": "1 Wharf Road",
+                "city": "Newcastle",
+                "state": "NSW",
+                "country": "AU",
+            },
+        )
+        assert create_response.status_code == 201
+        location_id = create_response.json()["id"]
+        update_response = await client.patch(
+            f"/api/v1/customers/{seeded_session['vopak_id']}/locations/{location_id}",
+            json={"city": "Carrington", "address_2": "Gate 3"},
+        )
+
+    assert create_response.json()["name"] == "Newcastle Depot"
+    assert update_response.status_code == 200
+    assert update_response.json()["city"] == "Carrington"
+    assert update_response.json()["address_2"] == "Gate 3"
+
+    async with session_factory() as session:
+        location = await session.get(CustomerLocation, location_id)
+        sync_changes = (
+            await session.scalars(select(SyncChange).order_by(SyncChange.seq))
+        ).all()
+        audit_events = (
+            await session.scalars(select(AuditEvent).order_by(AuditEvent.sequence))
+        ).all()
+
+        assert location is not None
+        assert location.version == 2
+        assert location.customer_id == seeded_session["vopak_id"]
+        assert [change.entity for change in sync_changes] == [
+            "CustomerLocation",
+            "CustomerLocation",
+        ]
+        assert [change.op for change in sync_changes] == ["create", "update"]
+        assert [event.action for event in audit_events] == [
+            "customer_location.created",
+            "customer_location.updated",
+        ]
+        assert audit_events[1].before is not None
+        assert audit_events[1].before["city"] == "Newcastle"
+        assert audit_events[1].after is not None
+        assert audit_events[1].after["city"] == "Carrington"
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_create_and_update_customer_contact_writes_audit_and_sync(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        create_response = await client.post(
+            f"/api/v1/customers/{seeded_session['vopak_id']}/contacts",
+            json={
+                "name": "Jane Manager",
+                "email": " jane.manager@example.com ",
+                "phone": "+61 2 5555 0200",
+                "role": "Maintenance Manager",
+                "receives_retest_reminders": True,
+            },
+        )
+        assert create_response.status_code == 201
+        contact_id = create_response.json()["id"]
+        update_response = await client.patch(
+            f"/api/v1/customers/{seeded_session['vopak_id']}/contacts/{contact_id}",
+            json={"role": "Operations Manager", "receives_retest_reminders": False},
+        )
+
+    assert create_response.json()["email"] == "jane.manager@example.com"
+    assert update_response.status_code == 200
+    assert update_response.json()["role"] == "Operations Manager"
+    assert update_response.json()["receives_retest_reminders"] is False
+
+    async with session_factory() as session:
+        contact = await session.get(CustomerContact, contact_id)
+        sync_changes = (
+            await session.scalars(select(SyncChange).order_by(SyncChange.seq))
+        ).all()
+        audit_events = (
+            await session.scalars(select(AuditEvent).order_by(AuditEvent.sequence))
+        ).all()
+
+        assert contact is not None
+        assert contact.version == 2
+        assert contact.customer_id == seeded_session["vopak_id"]
+        assert [change.entity for change in sync_changes] == [
+            "CustomerContact",
+            "CustomerContact",
+        ]
+        assert [change.op for change in sync_changes] == ["create", "update"]
+        assert [event.action for event in audit_events] == [
+            "customer_contact.created",
+            "customer_contact.updated",
+        ]
+        assert audit_events[1].before is not None
+        assert audit_events[1].before["role"] == "Maintenance Manager"
+        assert audit_events[1].after is not None
+        assert audit_events[1].after["role"] == "Operations Manager"
+        assert await verify_audit_chain(session)
 
 
 @pytest.mark.asyncio

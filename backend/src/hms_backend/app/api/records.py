@@ -16,7 +16,17 @@ from hms_backend.app.api.schemas import (
     AssetUpdate,
     CertificateCreate,
     CertificateRead,
+    CustomerContactCreate,
+    CustomerContactRead,
+    CustomerContactUpdate,
+    CustomerCreate,
+    CustomerListResponse,
+    CustomerLocationCreate,
+    CustomerLocationRead,
+    CustomerLocationUpdate,
+    CustomerRead,
     CustomerSummary,
+    CustomerUpdate,
     InspectionCreate,
     InspectionRead,
     LocationSummary,
@@ -46,7 +56,11 @@ from hms_backend.app.modules.certificates.models import (
     Certificate,
     CertificateIssueError,
 )
-from hms_backend.app.modules.customers.models import Customer, CustomerLocation
+from hms_backend.app.modules.customers.models import (
+    Customer,
+    CustomerContact,
+    CustomerLocation,
+)
 from hms_backend.app.modules.inspections.models import (
     Inspection,
     InspectionStatus,
@@ -67,6 +81,26 @@ OffsetParam = Annotated[int, Query(ge=0)]
 def _require_asset_read(principal: Principal) -> None:
     try:
         require_permission(principal, Permission.ASSET_READ)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+
+def _require_customer_read(principal: Principal) -> None:
+    try:
+        require_permission(principal, Permission.CUSTOMER_READ)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+
+def _require_customer_write(principal: Principal) -> None:
+    try:
+        require_permission(principal, Permission.CUSTOMER_WRITE)
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -203,6 +237,265 @@ async def update_standard(
     )
     await session.commit()
     return LookupRead(id=standard.id, code=standard.code, name=standard.name)
+
+
+@router.post(
+    "/customers",
+    response_model=CustomerRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_customer(
+    payload: CustomerCreate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerRead:
+    _require_customer_write(principal)
+    customer = Customer(
+        code=payload.code.strip().upper(),
+        name=payload.name.strip(),
+        retest_enabled=payload.retest_enabled,
+        default_retest_months=payload.default_retest_months,
+    )
+    session.add(customer)
+    await record_create(
+        session,
+        customer,
+        actor_id=principal.user_id,
+        action="customer.created",
+    )
+    await session.commit()
+    loaded = await _get_visible_customer_or_404(session, customer.id, principal)
+    return _customer_read(loaded)
+
+
+@router.get("/customers", response_model=CustomerListResponse)
+async def list_customers(
+    session: SessionDep,
+    principal: PrincipalDep,
+    search: str | None = None,
+    limit: LimitParam = 50,
+    offset: OffsetParam = 0,
+) -> CustomerListResponse:
+    _require_customer_read(principal)
+    statement = _customer_statement().where(Customer.deleted_at.is_(None))
+    statement = _apply_customer_scope(statement, principal)
+    if search:
+        search_pattern = f"%{search.lower()}%"
+        statement = statement.where(
+            or_(
+                func.lower(Customer.code).like(search_pattern),
+                func.lower(Customer.name).like(search_pattern),
+            )
+        )
+
+    total = await _count(session, statement)
+    customers = (
+        await session.scalars(
+            statement.order_by(Customer.code).offset(offset).limit(limit)
+        )
+    ).all()
+    return CustomerListResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=[_customer_read(customer) for customer in customers],
+    )
+
+
+@router.post(
+    "/customers/{customer_id}/locations",
+    response_model=CustomerLocationRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_customer_location(
+    customer_id: str,
+    payload: CustomerLocationCreate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerLocationRead:
+    _require_customer_write(principal)
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    location = CustomerLocation(
+        customer=customer,
+        name=payload.name.strip(),
+        address_1=_clean_optional(payload.address_1),
+        address_2=_clean_optional(payload.address_2),
+        city=_clean_optional(payload.city),
+        state=_clean_optional(payload.state),
+        country=_clean_optional(payload.country),
+    )
+    session.add(location)
+    await record_create(
+        session,
+        location,
+        actor_id=principal.user_id,
+        action="customer_location.created",
+    )
+    await session.commit()
+    return _customer_location_read(location)
+
+
+@router.patch(
+    "/customers/{customer_id}/locations/{location_id}",
+    response_model=CustomerLocationRead,
+)
+async def update_customer_location(
+    customer_id: str,
+    location_id: str,
+    payload: CustomerLocationUpdate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerLocationRead:
+    _require_customer_write(principal)
+    location = await _get_visible_customer_location_or_404(
+        session,
+        customer_id,
+        location_id,
+        principal,
+    )
+    before = location.to_audit_dict()
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates and payload.name is not None:
+        location.name = payload.name.strip()
+    if "address_1" in updates:
+        location.address_1 = _clean_optional(payload.address_1)
+    if "address_2" in updates:
+        location.address_2 = _clean_optional(payload.address_2)
+    if "city" in updates:
+        location.city = _clean_optional(payload.city)
+    if "state" in updates:
+        location.state = _clean_optional(payload.state)
+    if "country" in updates:
+        location.country = _clean_optional(payload.country)
+
+    await record_update(
+        session,
+        location,
+        actor_id=principal.user_id,
+        action="customer_location.updated",
+        before=before,
+    )
+    await session.commit()
+    return _customer_location_read(location)
+
+
+@router.post(
+    "/customers/{customer_id}/contacts",
+    response_model=CustomerContactRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_customer_contact(
+    customer_id: str,
+    payload: CustomerContactCreate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerContactRead:
+    _require_customer_write(principal)
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    contact = CustomerContact(
+        customer=customer,
+        name=payload.name.strip(),
+        email=_clean_optional(payload.email),
+        phone=_clean_optional(payload.phone),
+        role=_clean_optional(payload.role),
+        receives_retest_reminders=payload.receives_retest_reminders,
+    )
+    session.add(contact)
+    await record_create(
+        session,
+        contact,
+        actor_id=principal.user_id,
+        action="customer_contact.created",
+    )
+    await session.commit()
+    return _customer_contact_read(contact)
+
+
+@router.patch(
+    "/customers/{customer_id}/contacts/{contact_id}",
+    response_model=CustomerContactRead,
+)
+async def update_customer_contact(
+    customer_id: str,
+    contact_id: str,
+    payload: CustomerContactUpdate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerContactRead:
+    _require_customer_write(principal)
+    contact = await _get_visible_customer_contact_or_404(
+        session,
+        customer_id,
+        contact_id,
+        principal,
+    )
+    before = contact.to_audit_dict()
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates and payload.name is not None:
+        contact.name = payload.name.strip()
+    if "email" in updates:
+        contact.email = _clean_optional(payload.email)
+    if "phone" in updates:
+        contact.phone = _clean_optional(payload.phone)
+    if "role" in updates:
+        contact.role = _clean_optional(payload.role)
+    if (
+        "receives_retest_reminders" in updates
+        and payload.receives_retest_reminders is not None
+    ):
+        contact.receives_retest_reminders = payload.receives_retest_reminders
+
+    await record_update(
+        session,
+        contact,
+        actor_id=principal.user_id,
+        action="customer_contact.updated",
+        before=before,
+    )
+    await session.commit()
+    return _customer_contact_read(contact)
+
+
+@router.patch("/customers/{customer_id}", response_model=CustomerRead)
+async def update_customer(
+    customer_id: str,
+    payload: CustomerUpdate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerRead:
+    _require_customer_write(principal)
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    before = customer.to_audit_dict()
+    updates = payload.model_dump(exclude_unset=True)
+    if "code" in updates and payload.code is not None:
+        customer.code = payload.code.strip().upper()
+    if "name" in updates and payload.name is not None:
+        customer.name = payload.name.strip()
+    if "retest_enabled" in updates and payload.retest_enabled is not None:
+        customer.retest_enabled = payload.retest_enabled
+    if "default_retest_months" in updates:
+        customer.default_retest_months = payload.default_retest_months
+
+    await record_update(
+        session,
+        customer,
+        actor_id=principal.user_id,
+        action="customer.updated",
+        before=before,
+    )
+    await session.commit()
+    return _customer_read(customer)
+
+
+@router.get("/customers/{customer_id}", response_model=CustomerRead)
+async def get_customer(
+    customer_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerRead:
+    _require_customer_read(principal)
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    return _customer_read(customer)
 
 
 @router.post(
@@ -674,6 +967,71 @@ def _apply_asset_scope[StatementT: Select[Any]](
     return statement.where(Asset.customer_id.in_(principal.customer_ids))
 
 
+def _customer_statement() -> Select[tuple[Customer]]:
+    return select(Customer).options(
+        selectinload(Customer.locations),
+        selectinload(Customer.contacts),
+    )
+
+
+def _apply_customer_scope[StatementT: Select[Any]](
+    statement: StatementT,
+    principal: Principal,
+) -> StatementT:
+    if not is_customer_scoped(principal):
+        return statement
+    if not principal.customer_ids:
+        return statement.where(false())
+    return statement.where(Customer.id.in_(principal.customer_ids))
+
+
+def _customer_location_read(location: CustomerLocation) -> CustomerLocationRead:
+    return CustomerLocationRead(
+        id=location.id,
+        name=location.name,
+        address_1=location.address_1,
+        address_2=location.address_2,
+        city=location.city,
+        state=location.state,
+        country=location.country,
+    )
+
+
+def _customer_contact_read(contact: CustomerContact) -> CustomerContactRead:
+    return CustomerContactRead(
+        id=contact.id,
+        name=contact.name,
+        email=contact.email,
+        phone=contact.phone,
+        role=contact.role,
+        receives_retest_reminders=contact.receives_retest_reminders,
+    )
+
+
+def _customer_read(customer: Customer) -> CustomerRead:
+    locations = sorted(
+        (
+            location
+            for location in customer.locations
+            if location.deleted_at is None
+        ),
+        key=lambda location: location.name,
+    )
+    contacts = sorted(
+        (contact for contact in customer.contacts if contact.deleted_at is None),
+        key=lambda contact: contact.name,
+    )
+    return CustomerRead(
+        id=customer.id,
+        code=customer.code,
+        name=customer.name,
+        retest_enabled=customer.retest_enabled,
+        default_retest_months=customer.default_retest_months,
+        locations=[_customer_location_read(location) for location in locations],
+        contacts=[_customer_contact_read(contact) for contact in contacts],
+    )
+
+
 def _product_read(product: Product) -> ProductRead:
     standard_code = product.standard.code if product.standard is not None else None
     return ProductRead(
@@ -709,6 +1067,65 @@ async def _get_customer_or_404(session: AsyncSession, customer_id: str) -> Custo
             detail="Customer not found",
         )
     return customer
+
+
+async def _get_visible_customer_or_404(
+    session: AsyncSession,
+    customer_id: str,
+    principal: Principal,
+) -> Customer:
+    statement = _customer_statement().where(
+        Customer.id == customer_id,
+        Customer.deleted_at.is_(None),
+    )
+    statement = _apply_customer_scope(statement, principal)
+    customer = (await session.scalars(statement)).first()
+    if customer is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer not found",
+        )
+    return customer
+
+
+async def _get_visible_customer_location_or_404(
+    session: AsyncSession,
+    customer_id: str,
+    location_id: str,
+    principal: Principal,
+) -> CustomerLocation:
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    location = await session.get(CustomerLocation, location_id)
+    if (
+        location is None
+        or location.deleted_at is not None
+        or location.customer_id != customer.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Location not found",
+        )
+    return location
+
+
+async def _get_visible_customer_contact_or_404(
+    session: AsyncSession,
+    customer_id: str,
+    contact_id: str,
+    principal: Principal,
+) -> CustomerContact:
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    contact = await session.get(CustomerContact, contact_id)
+    if (
+        contact is None
+        or contact.deleted_at is not None
+        or contact.customer_id != customer.id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Contact not found",
+        )
+    return contact
 
 
 async def _get_product_or_404(session: AsyncSession, product_id: str) -> Product:
