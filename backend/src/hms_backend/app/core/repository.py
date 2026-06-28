@@ -47,3 +47,59 @@ async def soft_delete(
         before=before,
         after=after,
     )
+
+
+async def record_create(
+    session: AsyncSession,
+    entity: SyncableEntity,
+    *,
+    actor_id: str,
+    action: str,
+) -> None:
+    await session.flush()
+    session.add(
+        SyncChange(
+            entity=entity.__class__.__name__,
+            entity_id=entity.id,
+            op="create",
+            version=entity.version,
+        )
+    )
+    await append_audit_event(
+        session,
+        actor_id=actor_id,
+        action=action,
+        entity=entity.__class__.__name__,
+        entity_id=entity.id,
+        before=None,
+        after=entity.to_audit_dict(),
+    )
+
+
+async def record_update(
+    session: AsyncSession,
+    entity: SyncableEntity,
+    *,
+    actor_id: str,
+    action: str,
+    before: dict[str, object | None],
+) -> None:
+    entity.version += 1
+    after = entity.to_audit_dict()
+    session.add(
+        SyncChange(
+            entity=entity.__class__.__name__,
+            entity_id=entity.id,
+            op="update",
+            version=entity.version,
+        )
+    )
+    await append_audit_event(
+        session,
+        actor_id=actor_id,
+        action=action,
+        entity=entity.__class__.__name__,
+        entity_id=entity.id,
+        before=before,
+        after=after,
+    )

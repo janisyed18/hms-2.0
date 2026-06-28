@@ -16,10 +16,14 @@ from hms_backend.app.api.schemas import (
     LocationSummary,
     LookupListResponse,
     LookupRead,
+    ProductCreate,
     ProductListResponse,
     ProductRead,
     ProductSummary,
+    ProductUpdate,
     RetestScheduleSummary,
+    StandardCreate,
+    StandardUpdate,
 )
 from hms_backend.app.core.rbac import (
     Permission,
@@ -27,6 +31,7 @@ from hms_backend.app.core.rbac import (
     is_customer_scoped,
     require_permission,
 )
+from hms_backend.app.core.repository import record_create, record_update
 from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.customers.models import Customer
 from hms_backend.app.modules.products.models import Product
@@ -50,11 +55,48 @@ def _require_asset_read(principal: Principal) -> None:
         ) from exc
 
 
+def _require_reference_admin(principal: Principal) -> None:
+    try:
+        require_permission(principal, Permission.REFERENCE_ADMIN)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+
 async def _count(session: AsyncSession, statement: Select[Any]) -> int:
     count_statement = select(func.count()).select_from(
         statement.order_by(None).subquery()
     )
     return await session.scalar(count_statement) or 0
+
+
+@router.post(
+    "/reference/standards",
+    response_model=LookupRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_standard(
+    payload: StandardCreate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> LookupRead:
+    _require_reference_admin(principal)
+    standard = Standard(
+        code=payload.code.strip().upper(),
+        name=payload.name.strip(),
+        enabled=payload.enabled,
+    )
+    session.add(standard)
+    await record_create(
+        session,
+        standard,
+        actor_id=principal.user_id,
+        action="standard.created",
+    )
+    await session.commit()
+    return LookupRead(id=standard.id, code=standard.code, name=standard.name)
 
 
 @router.get("/reference/standards", response_model=LookupListResponse)
@@ -77,6 +119,72 @@ async def list_standards(
             for standard in standards
         ]
     )
+
+
+@router.patch("/reference/standards/{standard_id}", response_model=LookupRead)
+async def update_standard(
+    standard_id: str,
+    payload: StandardUpdate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> LookupRead:
+    _require_reference_admin(principal)
+    standard = await session.get(Standard, standard_id)
+    if standard is None or standard.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Standard not found",
+        )
+
+    before = standard.to_audit_dict()
+    updates = payload.model_dump(exclude_unset=True)
+    if "code" in updates and payload.code is not None:
+        standard.code = payload.code.strip().upper()
+    if "name" in updates and payload.name is not None:
+        standard.name = payload.name.strip()
+    if "enabled" in updates and payload.enabled is not None:
+        standard.enabled = payload.enabled
+
+    await record_update(
+        session,
+        standard,
+        actor_id=principal.user_id,
+        action="standard.updated",
+        before=before,
+    )
+    await session.commit()
+    return LookupRead(id=standard.id, code=standard.code, name=standard.name)
+
+
+@router.post(
+    "/products",
+    response_model=ProductRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_product(
+    payload: ProductCreate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> ProductRead:
+    _require_reference_admin(principal)
+    standard = await _get_standard_or_404(session, payload.standard_id)
+    product = Product(
+        category=payload.category.strip(),
+        sub_category=payload.sub_category.strip() if payload.sub_category else None,
+        code=payload.code.strip().upper(),
+        name=payload.name.strip(),
+        standard=standard,
+        enabled=payload.enabled,
+    )
+    session.add(product)
+    await record_create(
+        session,
+        product,
+        actor_id=principal.user_id,
+        action="product.created",
+    )
+    await session.commit()
+    return _product_read(product)
 
 
 @router.get("/products", response_model=ProductListResponse)
@@ -117,6 +225,49 @@ async def list_products(
         offset=offset,
         items=[_product_read(product) for product in products],
     )
+
+
+@router.patch("/products/{product_id}", response_model=ProductRead)
+async def update_product(
+    product_id: str,
+    payload: ProductUpdate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> ProductRead:
+    _require_reference_admin(principal)
+    product = await session.get(Product, product_id)
+    if product is None or product.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found",
+        )
+
+    before = product.to_audit_dict()
+    updates = payload.model_dump(exclude_unset=True)
+    if "category" in updates and payload.category is not None:
+        product.category = payload.category.strip()
+    if "sub_category" in updates:
+        product.sub_category = (
+            payload.sub_category.strip() if payload.sub_category else None
+        )
+    if "code" in updates and payload.code is not None:
+        product.code = payload.code.strip().upper()
+    if "name" in updates and payload.name is not None:
+        product.name = payload.name.strip()
+    if "standard_id" in updates:
+        product.standard = await _get_standard_or_404(session, payload.standard_id)
+    if "enabled" in updates and payload.enabled is not None:
+        product.enabled = payload.enabled
+
+    await record_update(
+        session,
+        product,
+        actor_id=principal.user_id,
+        action="product.updated",
+        before=before,
+    )
+    await session.commit()
+    return _product_read(product)
 
 
 @router.get("/assets", response_model=AssetListResponse)
@@ -216,6 +367,21 @@ def _product_read(product: Product) -> ProductRead:
         sub_category=product.sub_category,
         standard_code=standard_code,
     )
+
+
+async def _get_standard_or_404(
+    session: AsyncSession,
+    standard_id: str | None,
+) -> Standard | None:
+    if standard_id is None:
+        return None
+    standard = await session.get(Standard, standard_id)
+    if standard is None or standard.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Standard not found",
+        )
+    return standard
 
 
 def _asset_read(asset: Asset) -> AssetRead:

@@ -12,6 +12,18 @@ class LookupRead(BaseModel):
     name: str
 
 
+class StandardCreate(BaseModel):
+    code: str
+    name: str
+    enabled: bool = True
+
+
+class StandardUpdate(BaseModel):
+    code: str | None = None
+    name: str | None = None
+    enabled: bool | None = None
+
+
 class LookupListResponse(BaseModel):
     items: list[LookupRead]
 
@@ -30,6 +42,24 @@ class ProductListResponse(BaseModel):
     limit: int
     offset: int
     items: list[ProductRead]
+
+
+class ProductCreate(BaseModel):
+    category: str
+    sub_category: str | None = None
+    code: str
+    name: str
+    standard_id: str | None = None
+    enabled: bool = True
+
+
+class ProductUpdate(BaseModel):
+    category: str | None = None
+    sub_category: str | None = None
+    code: str | None = None
+    name: str | None = None
+    standard_id: str | None = None
+    enabled: bool | None = None
 
 
 class CustomerSummary(BaseModel):

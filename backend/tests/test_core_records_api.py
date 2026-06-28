@@ -5,12 +5,15 @@ from datetime import date
 import httpx
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
+from hms_backend.app.core.audit import verify_audit_chain
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
+from hms_backend.app.models.foundation import AuditEvent, SyncChange
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
 from hms_backend.app.modules.customers.models import Customer, CustomerLocation
 from hms_backend.app.modules.products.models import Product
@@ -230,3 +233,212 @@ async def test_asset_detail_includes_customer_product_location_and_retest_status
     assert body["product"]["code"] == "1000GY"
     assert body["location"]["name"] == "Site A"
     assert body["retest_schedule"]["status"] == "OVERDUE"
+
+
+@pytest.mark.asyncio
+async def test_customer_user_cannot_create_reference_standard(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            "/api/v1/reference/standards",
+            json={"code": "ISO10380", "name": "ISO 10380", "enabled": True},
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_create_reference_standard_writes_sync_change_and_audit_event(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            "/api/v1/reference/standards",
+            json={"code": "ISO10380", "name": "ISO 10380", "enabled": True},
+        )
+
+    assert response.status_code == 201
+    assert response.json()["code"] == "ISO10380"
+
+    async with session_factory() as session:
+        standard = (
+            await session.scalars(select(Standard).where(Standard.code == "ISO10380"))
+        ).one()
+        sync_change = (await session.scalars(select(SyncChange))).one()
+        audit_event = (await session.scalars(select(AuditEvent))).one()
+
+        assert standard.version == 1
+        assert sync_change.entity == "Standard"
+        assert sync_change.entity_id == standard.id
+        assert sync_change.op == "create"
+        assert sync_change.version == 1
+        assert audit_event.actor_id == "admin-1"
+        assert audit_event.action == "standard.created"
+        assert audit_event.entity == "Standard"
+        assert audit_event.entity_id == standard.id
+        assert audit_event.before is None
+        assert audit_event.after is not None
+        assert audit_event.after["code"] == "ISO10380"
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_update_reference_standard_writes_sync_change_and_audit_event(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with session_factory() as session:
+        standard_id = (
+            await session.scalars(select(Standard.id).where(Standard.code == "AS2683"))
+        ).one()
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/reference/standards/{standard_id}",
+            json={"name": "AS 2683:2020", "enabled": False},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "AS 2683:2020"
+
+    async with session_factory() as session:
+        standard = await session.get(Standard, standard_id)
+        sync_change = (await session.scalars(select(SyncChange))).one()
+        audit_event = (await session.scalars(select(AuditEvent))).one()
+
+        assert standard is not None
+        assert standard.version == 2
+        assert standard.enabled is False
+        assert sync_change.entity == "Standard"
+        assert sync_change.op == "update"
+        assert sync_change.version == 2
+        assert audit_event.action == "standard.updated"
+        assert audit_event.before is not None
+        assert audit_event.before["name"] == "AS2683"
+        assert audit_event.after is not None
+        assert audit_event.after["name"] == "AS 2683:2020"
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_create_product_links_standard_and_writes_audit(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with session_factory() as session:
+        standard_id = (
+            await session.scalars(select(Standard.id).where(Standard.code == "AS2683"))
+        ).one()
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            "/api/v1/products",
+            json={
+                "category": "Rubber",
+                "sub_category": "Water",
+                "code": "RUB-WATER",
+                "name": "Rubber Water Hose",
+                "standard_id": standard_id,
+                "enabled": True,
+            },
+        )
+
+    assert response.status_code == 201
+    assert response.json()["code"] == "RUB-WATER"
+    assert response.json()["standard_code"] == "AS2683"
+
+    async with session_factory() as session:
+        product = (
+            await session.scalars(select(Product).where(Product.code == "RUB-WATER"))
+        ).one()
+        sync_change = (
+            await session.scalars(
+                select(SyncChange).where(SyncChange.entity == "Product")
+            )
+        ).one()
+        audit_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.entity == "Product")
+            )
+        ).one()
+
+        assert product.standard_id == standard_id
+        assert sync_change.op == "create"
+        assert sync_change.entity_id == product.id
+        assert audit_event.action == "product.created"
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_update_product_writes_sync_change_and_audit_event(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with session_factory() as session:
+        product_id = (
+            await session.scalars(select(Product.id).where(Product.code == "1000GY"))
+        ).one()
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/products/{product_id}",
+            json={"name": "FUELFLEX GREEN UPDATED", "enabled": False},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "FUELFLEX GREEN UPDATED"
+
+    async with session_factory() as session:
+        product = await session.get(Product, product_id)
+        sync_change = (
+            await session.scalars(
+                select(SyncChange).where(SyncChange.entity == "Product")
+            )
+        ).one()
+        audit_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.entity == "Product")
+            )
+        ).one()
+
+        assert product is not None
+        assert product.version == 2
+        assert product.enabled is False
+        assert sync_change.op == "update"
+        assert sync_change.version == 2
+        assert audit_event.action == "product.updated"
+        assert audit_event.before is not None
+        assert audit_event.before["name"] == "FUELFLEX GREEN"
+        assert audit_event.after is not None
+        assert audit_event.after["name"] == "FUELFLEX GREEN UPDATED"
+        assert await verify_audit_chain(session)
