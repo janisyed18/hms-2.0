@@ -12,7 +12,10 @@ Use the attached HMS 2.0 Technical Design Document, Functional Specification, No
 - Never hard-delete customers, assets, inspections, or certificates.
 - Never store or display passwords.
 - Every mutation must produce an `AuditEvent` and `SyncChange`.
-- Mobile field app is Ionic + Angular + Capacitor, not Swift/Kotlin native.
+- Frontend apps use React + TypeScript. Staff/admin/customer web use React + Vite.
+- Mobile field app is Ionic React + Capacitor, not Swift/Kotlin native.
+- Use package-backed UI primitives and icon libraries where practical; avoid ad-hoc
+  hand-drawn UI that makes the app look prototype-generated.
 
 ## Build Order
 
@@ -25,3 +28,17 @@ Build phases in order:
 5. Phase 4 - Deferred analytics, integrations, rules hardening, AI
 
 Ask before implementing items marked `[CONFIRM]` in the master build prompt.
+
+## Deferred Phase 0 Items
+
+Do not prioritize these until Phase 1 core records are complete unless explicitly
+requested:
+
+- Real OIDC auth integration.
+- Structured logging and OpenTelemetry wiring.
+- Terraform modules for OCI network, OKE, managed Postgres, OCIR, Object
+  Storage, and Vault.
+- Helm chart implementation beyond skeleton.
+- CI image scanning, image build/push, and deploy jobs.
+- Sync API endpoints beyond the current `SyncChange` table/outbox foundation.
+- Converting the folder scaffold into a full Nx monorepo.
