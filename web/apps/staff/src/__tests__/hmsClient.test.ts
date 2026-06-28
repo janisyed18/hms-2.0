@@ -2,9 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createHmsClient,
-  loadCustomersWithFallback
+  loadAssetsWithFallback,
+  loadCustomersWithFallback,
+  loadProductsWithFallback,
+  loadReferenceStandardsWithFallback
 } from "../api/hmsClient";
+import { mockAssets } from "../data/mockAssets";
 import { mockCustomers } from "../data/mockCustomers";
+import { mockProducts } from "../data/mockProducts";
+import { mockReferenceStandards } from "../data/mockReferenceData";
 
 const apiCustomer = {
   id: "cust-api-1",
@@ -35,21 +41,90 @@ const apiCustomer = {
   ]
 };
 
+const apiProduct = {
+  id: "product-api-1",
+  code: "1000GY",
+  name: "FUELFLEX GREEN",
+  category: "Composite",
+  sub_category: "Petrol & Oil",
+  standard_code: "AS2683"
+};
+
+const apiStandard = {
+  id: "standard-api-1",
+  code: "AS2683",
+  name: "AS 2683"
+};
+
+const apiAsset = {
+  id: "asset-api-1",
+  asset_number: "997950",
+  customer_serial_no: "VOPA-SN-1",
+  tag: "HMS-997950",
+  lifecycle_status: "OVERDUE",
+  manufacture_date: "2023-05-02",
+  next_retest_due_at: "2023-11-02",
+  condemned_at: null,
+  length_m: "6.100",
+  customer: {
+    id: "cust-api-1",
+    code: "VOPA",
+    name: "Vopak"
+  },
+  product: {
+    id: "product-api-1",
+    code: "1000GY",
+    name: "FUELFLEX GREEN",
+    category: "Composite"
+  },
+  location: {
+    id: "loc-api-1",
+    name: "Site A",
+    city: "Port Botany",
+    state: "NSW",
+    country: "AU"
+  },
+  retest_schedule: {
+    due_at: "2023-11-02",
+    status: "OVERDUE"
+  }
+};
+
+function okJson(body: unknown, headers: Record<string, string> = {}) {
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers(headers),
+    json: async () => body
+  };
+}
+
+function noContent(headers: Record<string, string> = {}) {
+  return {
+    ok: true,
+    status: 204,
+    headers: new Headers(headers),
+    json: async () => undefined
+  };
+}
+
 describe("hmsClient", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it("sends HMS identity headers and maps customer list responses", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        total: 1,
-        limit: 50,
-        offset: 0,
-        items: [apiCustomer]
-      })
-    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      okJson(
+        {
+          total: 1,
+          limit: 50,
+          offset: 0,
+          items: [apiCustomer]
+        },
+        { ETag: '"customers-1"' }
+      )
+    );
 
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
     const result = await client.listCustomers("north");
@@ -63,6 +138,7 @@ describe("hmsClient", () => {
         })
       })
     );
+    expect(result.etag).toBe('"customers-1"');
     expect(result.items[0]).toMatchObject({
       id: "cust-api-1",
       code: "NSD",
@@ -71,6 +147,177 @@ describe("hmsClient", () => {
         expect.objectContaining({ name: "Aberdeen Yard" })
       ])
     });
+  });
+
+  it("maps product, asset, and reference-data list responses", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okJson(
+          {
+            total: 1,
+            limit: 50,
+            offset: 0,
+            items: [apiProduct]
+          },
+          { ETag: '"products-1"' }
+        )
+      )
+      .mockResolvedValueOnce(
+        okJson(
+          {
+            total: 1,
+            limit: 50,
+            offset: 0,
+            items: [apiAsset]
+          },
+          { ETag: '"assets-1"' }
+        )
+      )
+      .mockResolvedValueOnce(
+        okJson(
+          {
+            items: [apiStandard]
+          },
+          { ETag: '"standards-1"' }
+        )
+      );
+
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const products = await client.listProducts({ search: "fuel", sort: "-code" });
+    const assets = await client.listAssets({ status: "OVERDUE", sort: "asset_number" });
+    const standards = await client.listReferenceStandards({ sort: "code" });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/products?limit=50&offset=0&search=fuel&sort=-code",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/assets?limit=50&offset=0&status=OVERDUE&sort=asset_number",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/reference/standards?sort=code",
+      expect.any(Object)
+    );
+    expect(products.etag).toBe('"products-1"');
+    expect(products.items[0]).toMatchObject({
+      id: "product-api-1",
+      code: "1000GY",
+      subCategory: "Petrol & Oil",
+      standardCode: "AS2683"
+    });
+    expect(assets.etag).toBe('"assets-1"');
+    expect(assets.items[0]).toMatchObject({
+      id: "asset-api-1",
+      assetNumber: "997950",
+      lifecycleStatus: "OVERDUE",
+      customer: expect.objectContaining({ code: "VOPA" }),
+      product: expect.objectContaining({ code: "1000GY" }),
+      retestSchedule: expect.objectContaining({ status: "OVERDUE" })
+    });
+    expect(standards.etag).toBe('"standards-1"');
+    expect(standards.items[0]).toEqual({
+      id: "standard-api-1",
+      code: "AS2683",
+      name: "AS 2683",
+      etag: '"standards-1"'
+    });
+  });
+
+  it("archives core records with DELETE and optional If-Match headers", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(noContent())
+      .mockResolvedValueOnce(noContent())
+      .mockResolvedValueOnce(noContent())
+      .mockResolvedValueOnce(noContent());
+
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    await client.archiveCustomer("cust-api-1", '"2"');
+    await client.archiveProduct("product-api-1", '"3"');
+    await client.archiveAsset("asset-api-1", '"4"');
+    await client.archiveReferenceStandard("standard-api-1", '"5"');
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/customers/cust-api-1",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "If-Match": '"2"' })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/products/product-api-1",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "If-Match": '"3"' })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/assets/asset-api-1",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "If-Match": '"4"' })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/api/v1/reference/standards/standard-api-1",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "If-Match": '"5"' })
+      })
+    );
+  });
+
+  it("uses mock fallback only when list requests reject or return non-OK", async () => {
+    const apiFetch = vi.fn().mockResolvedValue(
+      okJson({
+        total: 1,
+        limit: 50,
+        offset: 0,
+        items: [apiProduct]
+      })
+    );
+    const nonOkFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      headers: new Headers(),
+      json: async () => ({ detail: "unavailable" })
+    });
+    const rejectedFetch = vi.fn().mockRejectedValue(new Error("offline"));
+
+    const apiProducts = await loadProductsWithFallback({
+      fetcher: apiFetch,
+      baseUrl: ""
+    });
+    const fallbackProducts = await loadProductsWithFallback({
+      fetcher: nonOkFetch,
+      baseUrl: ""
+    });
+    const fallbackAssets = await loadAssetsWithFallback({
+      fetcher: rejectedFetch,
+      baseUrl: ""
+    });
+    const fallbackStandards = await loadReferenceStandardsWithFallback({
+      fetcher: rejectedFetch,
+      baseUrl: ""
+    });
+
+    expect(apiProducts.source).toBe("api");
+    expect(apiProducts.items[0].code).toBe("1000GY");
+    expect(fallbackProducts.source).toBe("mock");
+    expect(fallbackProducts.items).toHaveLength(mockProducts.length);
+    expect(fallbackAssets.source).toBe("mock");
+    expect(fallbackAssets.items).toHaveLength(mockAssets.length);
+    expect(fallbackStandards.source).toBe("mock");
+    expect(fallbackStandards.items).toHaveLength(mockReferenceStandards.length);
   });
 
   it("falls back to mock customer data when the backend is unavailable", async () => {
