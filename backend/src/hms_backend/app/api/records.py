@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -49,7 +49,7 @@ from hms_backend.app.core.rbac import (
     is_customer_scoped,
     require_permission,
 )
-from hms_backend.app.core.repository import record_create, record_update
+from hms_backend.app.core.repository import record_create, record_update, soft_delete
 from hms_backend.app.models.base import utc_now
 from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.certificates.models import (
@@ -239,6 +239,33 @@ async def update_standard(
     return LookupRead(id=standard.id, code=standard.code, name=standard.name)
 
 
+@router.delete(
+    "/reference/standards/{standard_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_standard(
+    standard_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> Response:
+    _require_reference_admin(principal)
+    standard = await _get_standard_or_404(session, standard_id)
+    if standard is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Standard not found",
+        )
+
+    await soft_delete(
+        session,
+        standard,
+        actor_id=principal.user_id,
+        action="standard.deleted",
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post(
     "/customers",
     response_model=CustomerRead,
@@ -379,6 +406,33 @@ async def update_customer_location(
     return _customer_location_read(location)
 
 
+@router.delete(
+    "/customers/{customer_id}/locations/{location_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_customer_location(
+    customer_id: str,
+    location_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> Response:
+    _require_customer_write(principal)
+    location = await _get_visible_customer_location_or_404(
+        session,
+        customer_id,
+        location_id,
+        principal,
+    )
+    await soft_delete(
+        session,
+        location,
+        actor_id=principal.user_id,
+        action="customer_location.deleted",
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post(
     "/customers/{customer_id}/contacts",
     response_model=CustomerContactRead,
@@ -456,6 +510,33 @@ async def update_customer_contact(
     return _customer_contact_read(contact)
 
 
+@router.delete(
+    "/customers/{customer_id}/contacts/{contact_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_customer_contact(
+    customer_id: str,
+    contact_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> Response:
+    _require_customer_write(principal)
+    contact = await _get_visible_customer_contact_or_404(
+        session,
+        customer_id,
+        contact_id,
+        principal,
+    )
+    await soft_delete(
+        session,
+        contact,
+        actor_id=principal.user_id,
+        action="customer_contact.deleted",
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.patch("/customers/{customer_id}", response_model=CustomerRead)
 async def update_customer(
     customer_id: str,
@@ -485,6 +566,24 @@ async def update_customer(
     )
     await session.commit()
     return _customer_read(customer)
+
+
+@router.delete("/customers/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_customer(
+    customer_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> Response:
+    _require_customer_write(principal)
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    await soft_delete(
+        session,
+        customer,
+        actor_id=principal.user_id,
+        action="customer.deleted",
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/customers/{customer_id}", response_model=CustomerRead)
@@ -819,6 +918,24 @@ async def update_product(
     return _product_read(product)
 
 
+@router.delete("/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_product(
+    product_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> Response:
+    _require_reference_admin(principal)
+    product = await _get_product_or_404(session, product_id)
+    await soft_delete(
+        session,
+        product,
+        actor_id=principal.user_id,
+        action="product.deleted",
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/assets", response_model=AssetListResponse)
 async def list_assets(
     session: SessionDep,
@@ -924,6 +1041,24 @@ async def update_asset(
     await session.commit()
     loaded = await _get_visible_asset_or_404(session, asset.id, principal)
     return _asset_read(loaded)
+
+
+@router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_asset(
+    asset_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> Response:
+    _require_asset_write(principal)
+    asset = await _get_visible_asset_or_404(session, asset_id, principal)
+    await soft_delete(
+        session,
+        asset,
+        actor_id=principal.user_id,
+        action="asset.deleted",
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/assets/{asset_id}", response_model=AssetRead)
