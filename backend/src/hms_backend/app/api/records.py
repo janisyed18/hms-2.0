@@ -14,10 +14,15 @@ from hms_backend.app.api.schemas import (
     AssetListResponse,
     AssetRead,
     AssetUpdate,
+    CertificateCreate,
+    CertificateRead,
     CustomerSummary,
+    InspectionCreate,
+    InspectionRead,
     LocationSummary,
     LookupListResponse,
     LookupRead,
+    PressureTestRead,
     ProductCreate,
     ProductListResponse,
     ProductRead,
@@ -35,8 +40,18 @@ from hms_backend.app.core.rbac import (
     require_permission,
 )
 from hms_backend.app.core.repository import record_create, record_update
+from hms_backend.app.models.base import utc_now
 from hms_backend.app.modules.assets.models import Asset
+from hms_backend.app.modules.certificates.models import (
+    Certificate,
+    CertificateIssueError,
+)
 from hms_backend.app.modules.customers.models import Customer, CustomerLocation
+from hms_backend.app.modules.inspections.models import (
+    Inspection,
+    InspectionStatus,
+    PressureTestResult,
+)
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Standard
 from hms_backend.app.modules.scheduling.models import RetestSchedule
@@ -72,6 +87,26 @@ def _require_reference_admin(principal: Principal) -> None:
 def _require_asset_write(principal: Principal) -> None:
     try:
         require_permission(principal, Permission.ASSET_WRITE)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+
+def _require_inspection_write(principal: Principal) -> None:
+    try:
+        require_permission(principal, Permission.INSPECTION_WRITE)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+
+def _require_certificate_approve(principal: Principal) -> None:
+    try:
+        require_permission(principal, Permission.CERTIFICATE_APPROVE)
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -255,6 +290,157 @@ async def create_asset(
     await session.commit()
     loaded = await _get_visible_asset_or_404(session, asset.id, principal)
     return _asset_read(loaded)
+
+
+@router.post(
+    "/assets/{asset_id}/inspections",
+    response_model=InspectionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_inspection(
+    asset_id: str,
+    payload: InspectionCreate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionRead:
+    _require_inspection_write(principal)
+    asset = await _get_visible_asset_or_404(session, asset_id, principal)
+    inspection = Inspection(
+        asset=asset,
+        inspection_type=payload.inspection_type,
+        status=InspectionStatus.DRAFT.value,
+        result=_clean_optional(payload.result),
+        inspector_user_id=principal.user_id,
+    )
+    session.add(inspection)
+    await record_create(
+        session,
+        inspection,
+        actor_id=principal.user_id,
+        action="inspection.created",
+    )
+
+    if payload.pressure_test is not None:
+        pressure_test = PressureTestResult(
+            inspection=inspection,
+            applied_pressure_kpa=payload.pressure_test.applied_pressure_kpa,
+            hold_time_seconds=payload.pressure_test.hold_time_seconds,
+            passed=payload.pressure_test.passed,
+            measurements=payload.pressure_test.measurements,
+        )
+        session.add(pressure_test)
+        await record_create(
+            session,
+            pressure_test,
+            actor_id=principal.user_id,
+            action="pressure_test_result.created",
+        )
+
+    await session.commit()
+    return _inspection_read(inspection)
+
+
+@router.post("/inspections/{inspection_id}/submit", response_model=InspectionRead)
+async def submit_inspection(
+    inspection_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionRead:
+    _require_inspection_write(principal)
+    inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    if inspection.status != InspectionStatus.DRAFT.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inspection must be in draft status before submission",
+        )
+
+    before = inspection.to_audit_dict()
+    inspection.status = InspectionStatus.SUBMITTED.value
+    inspection.submitted_at = utc_now()
+    await record_update(
+        session,
+        inspection,
+        actor_id=principal.user_id,
+        action="inspection.submitted",
+        before=before,
+    )
+    await session.commit()
+    return _inspection_read(inspection)
+
+
+@router.post("/inspections/{inspection_id}/approve", response_model=InspectionRead)
+async def approve_inspection(
+    inspection_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionRead:
+    _require_certificate_approve(principal)
+    inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    if inspection.status != InspectionStatus.SUBMITTED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inspection must be submitted before approval",
+        )
+
+    before = inspection.to_audit_dict()
+    inspection.status = InspectionStatus.APPROVED.value
+    inspection.reviewer_user_id = principal.user_id
+    inspection.approved_at = utc_now()
+    await record_update(
+        session,
+        inspection,
+        actor_id=principal.user_id,
+        action="inspection.approved",
+        before=before,
+    )
+    await session.commit()
+    return _inspection_read(inspection)
+
+
+@router.post(
+    "/inspections/{inspection_id}/certificate",
+    response_model=CertificateRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def issue_certificate(
+    inspection_id: str,
+    payload: CertificateCreate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CertificateRead:
+    _require_certificate_approve(principal)
+    inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    if inspection.certificate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Certificate already issued for inspection",
+        )
+
+    try:
+        certificate = Certificate.issue_from_inspection(
+            inspection,
+            number=payload.number.strip(),
+            pdf_object_key=payload.pdf_object_key.strip(),
+            verification_hash=payload.verification_hash.strip(),
+            public_token=payload.public_token.strip(),
+            issued_by_user_id=principal.user_id,
+            valid_until=payload.valid_until,
+        )
+    except CertificateIssueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    session.add(certificate)
+    await record_create(
+        session,
+        certificate,
+        actor_id=principal.user_id,
+        action="certificate.issued",
+    )
+    await session.commit()
+    return _certificate_read(certificate)
 
 
 @router.get("/products", response_model=ProductListResponse)
@@ -477,10 +663,10 @@ def _asset_statement() -> Select[tuple[Asset]]:
     )
 
 
-def _apply_asset_scope(
-    statement: Select[tuple[Asset]],
+def _apply_asset_scope[StatementT: Select[Any]](
+    statement: StatementT,
     principal: Principal,
-) -> Select[tuple[Asset]]:
+) -> StatementT:
     if not is_customer_scoped(principal):
         return statement
     if not principal.customer_ids:
@@ -576,6 +762,35 @@ async def _get_visible_asset_or_404(
     return asset
 
 
+async def _get_inspection_or_404(
+    session: AsyncSession,
+    inspection_id: str,
+    principal: Principal,
+) -> Inspection:
+    statement = (
+        select(Inspection)
+        .join(Inspection.asset)
+        .options(
+            selectinload(Inspection.asset),
+            selectinload(Inspection.pressure_test),
+            selectinload(Inspection.certificate),
+        )
+        .where(
+            Inspection.id == inspection_id,
+            Inspection.deleted_at.is_(None),
+            Asset.deleted_at.is_(None),
+        )
+    )
+    statement = _apply_asset_scope(statement, principal)
+    inspection = (await session.scalars(statement)).first()
+    if inspection is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inspection not found",
+        )
+    return inspection
+
+
 def _build_retest_schedule(
     payload: RetestScheduleWrite,
     *,
@@ -632,6 +847,53 @@ def _clean_optional(value: str | None) -> str | None:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+def _pressure_test_read(pressure_test: PressureTestResult) -> PressureTestRead:
+    return PressureTestRead(
+        id=pressure_test.id,
+        applied_pressure_kpa=pressure_test.applied_pressure_kpa,
+        hold_time_seconds=pressure_test.hold_time_seconds,
+        passed=pressure_test.passed,
+        measurements=pressure_test.measurements,
+    )
+
+
+def _inspection_read(inspection: Inspection) -> InspectionRead:
+    return InspectionRead(
+        id=inspection.id,
+        asset_id=inspection.asset_id,
+        inspection_type=inspection.inspection_type,
+        status=inspection.status,
+        result=inspection.result,
+        inspector_user_id=inspection.inspector_user_id,
+        reviewer_user_id=inspection.reviewer_user_id,
+        submitted_at=inspection.submitted_at,
+        approved_at=inspection.approved_at,
+        rejected_at=inspection.rejected_at,
+        pressure_test=(
+            _pressure_test_read(inspection.pressure_test)
+            if inspection.pressure_test is not None
+            else None
+        ),
+    )
+
+
+def _certificate_read(certificate: Certificate) -> CertificateRead:
+    return CertificateRead(
+        id=certificate.id,
+        inspection_id=certificate.inspection_id,
+        asset_id=certificate.asset_id,
+        number=certificate.number,
+        certificate_version=certificate.certificate_version,
+        issued_at=certificate.issued_at,
+        valid_until=certificate.valid_until,
+        pdf_object_key=certificate.pdf_object_key,
+        verification_hash=certificate.verification_hash,
+        public_token=certificate.public_token,
+        issued_by_user_id=certificate.issued_by_user_id,
+        status=certificate.status,
+    )
 
 
 def _asset_read(asset: Asset) -> AssetRead:

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -146,3 +147,61 @@ class AssetUpdate(BaseModel):
     condemned_at: date | None = None
     length_m: Decimal | None = None
     retest_schedule: RetestScheduleWrite | None = None
+
+
+class PressureTestWrite(BaseModel):
+    applied_pressure_kpa: int
+    hold_time_seconds: int
+    passed: bool
+    measurements: dict[str, Any] | None = None
+
+
+class PressureTestRead(BaseModel):
+    id: str
+    applied_pressure_kpa: int
+    hold_time_seconds: int
+    passed: bool
+    measurements: dict[str, Any] | None
+
+
+class InspectionCreate(BaseModel):
+    inspection_type: str
+    result: str | None = None
+    pressure_test: PressureTestWrite | None = None
+
+
+class InspectionRead(BaseModel):
+    id: str
+    asset_id: str
+    inspection_type: str
+    status: str
+    result: str | None
+    inspector_user_id: str
+    reviewer_user_id: str | None
+    submitted_at: datetime | None
+    approved_at: datetime | None
+    rejected_at: datetime | None
+    pressure_test: PressureTestRead | None
+
+
+class CertificateCreate(BaseModel):
+    number: str
+    pdf_object_key: str
+    verification_hash: str
+    public_token: str
+    valid_until: date | None = None
+
+
+class CertificateRead(BaseModel):
+    id: str
+    inspection_id: str
+    asset_id: str
+    number: str
+    certificate_version: int
+    issued_at: datetime
+    valid_until: date | None
+    pdf_object_key: str
+    verification_hash: str
+    public_token: str
+    issued_by_user_id: str
+    status: str

@@ -15,7 +15,14 @@ from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
 from hms_backend.app.models.foundation import AuditEvent, SyncChange
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
+from hms_backend.app.modules.certificates.models import Certificate
 from hms_backend.app.modules.customers.models import Customer, CustomerLocation
+from hms_backend.app.modules.inspections.models import (
+    Inspection,
+    InspectionStatus,
+    InspectionType,
+    PressureTestResult,
+)
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Standard
 from hms_backend.app.modules.scheduling.models import (
@@ -626,4 +633,291 @@ async def test_update_asset_and_retest_schedule_writes_audit_and_sync(
         assert audit_events[0].before["lifecycle_status"] == "OVERDUE"
         assert audit_events[0].after is not None
         assert audit_events[0].after["lifecycle_status"] == "IN_SERVICE"
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_customer_user_cannot_create_inspection(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            f"/api/v1/assets/{seeded_session['vopak_asset_id']}/inspections",
+            json={"inspection_type": "SERVICE", "result": "PASS"},
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_create_service_inspection_with_pressure_test_writes_audit_and_sync(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="inspector-1",
+        roles=frozenset({Role.INSPECTOR}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            f"/api/v1/assets/{seeded_session['vopak_asset_id']}/inspections",
+            json={
+                "inspection_type": "SERVICE",
+                "result": "PASS",
+                "pressure_test": {
+                    "applied_pressure_kpa": 1500,
+                    "hold_time_seconds": 300,
+                    "passed": True,
+                    "measurements": {"leak": "none"},
+                },
+            },
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["asset_id"] == seeded_session["vopak_asset_id"]
+    assert body["inspection_type"] == "SERVICE"
+    assert body["status"] == "DRAFT"
+    assert body["result"] == "PASS"
+    assert body["pressure_test"]["passed"] is True
+    assert body["pressure_test"]["measurements"] == {"leak": "none"}
+
+    async with session_factory() as session:
+        inspection = (
+            await session.scalars(
+                select(Inspection).where(
+                    Inspection.asset_id == seeded_session["vopak_asset_id"]
+                )
+            )
+        ).one()
+        pressure_test = (
+            await session.scalars(
+                select(PressureTestResult).where(
+                    PressureTestResult.inspection_id == inspection.id
+                )
+            )
+        ).one()
+        sync_changes = (
+            await session.scalars(select(SyncChange).order_by(SyncChange.seq))
+        ).all()
+        audit_events = (
+            await session.scalars(select(AuditEvent).order_by(AuditEvent.sequence))
+        ).all()
+
+        assert inspection.version == 1
+        assert inspection.status == InspectionStatus.DRAFT.value
+        assert inspection.inspector_user_id == "inspector-1"
+        assert pressure_test.applied_pressure_kpa == 1500
+        assert [change.entity for change in sync_changes] == [
+            "Inspection",
+            "PressureTestResult",
+        ]
+        assert [change.op for change in sync_changes] == ["create", "create"]
+        assert [event.action for event in audit_events] == [
+            "inspection.created",
+            "pressure_test_result.created",
+        ]
+        assert audit_events[0].after is not None
+        assert audit_events[0].after["status"] == InspectionStatus.DRAFT.value
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_submit_and_approve_inspection_transitions_with_audit(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        inspection = Inspection(
+            asset_id=seeded_session["vopak_asset_id"],
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.DRAFT.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+        )
+        session.add(inspection)
+        await session.commit()
+        inspection_id = inspection.id
+
+    inspector = Principal(
+        user_id="inspector-1",
+        roles=frozenset({Role.INSPECTOR}),
+        customer_ids=frozenset(),
+    )
+    async with api_client(session_factory, inspector) as client:
+        submit_response = await client.post(
+            f"/api/v1/inspections/{inspection_id}/submit"
+        )
+
+    assert submit_response.status_code == 200
+    assert submit_response.json()["status"] == InspectionStatus.SUBMITTED.value
+    assert submit_response.json()["submitted_at"] is not None
+
+    reviewer = Principal(
+        user_id="reviewer-1",
+        roles=frozenset({Role.REVIEWER}),
+        customer_ids=frozenset(),
+    )
+    async with api_client(session_factory, reviewer) as client:
+        approve_response = await client.post(
+            f"/api/v1/inspections/{inspection_id}/approve"
+        )
+
+    assert approve_response.status_code == 200
+    assert approve_response.json()["status"] == InspectionStatus.APPROVED.value
+    assert approve_response.json()["reviewer_user_id"] == "reviewer-1"
+    assert approve_response.json()["approved_at"] is not None
+
+    async with session_factory() as session:
+        loaded_inspection = await session.get(Inspection, inspection_id)
+        sync_changes = (
+            await session.scalars(
+                select(SyncChange)
+                .where(SyncChange.entity == "Inspection")
+                .order_by(SyncChange.seq)
+            )
+        ).all()
+        audit_events = (
+            await session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.entity == "Inspection")
+                .order_by(AuditEvent.sequence)
+            )
+        ).all()
+
+        assert loaded_inspection is not None
+        assert loaded_inspection.version == 3
+        assert loaded_inspection.status == InspectionStatus.APPROVED.value
+        assert loaded_inspection.reviewer_user_id == "reviewer-1"
+        assert [change.op for change in sync_changes] == ["update", "update"]
+        assert [event.action for event in audit_events] == [
+            "inspection.submitted",
+            "inspection.approved",
+        ]
+        assert audit_events[0].before is not None
+        assert audit_events[0].before["status"] == InspectionStatus.DRAFT.value
+        assert audit_events[0].after is not None
+        assert audit_events[0].after["status"] == InspectionStatus.SUBMITTED.value
+        assert audit_events[1].after is not None
+        assert audit_events[1].after["status"] == InspectionStatus.APPROVED.value
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_certificate_cannot_be_issued_before_inspection_approval(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        inspection = Inspection(
+            asset_id=seeded_session["vopak_asset_id"],
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.SUBMITTED.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+        )
+        session.add(inspection)
+        await session.commit()
+        inspection_id = inspection.id
+
+    principal = Principal(
+        user_id="reviewer-1",
+        roles=frozenset({Role.REVIEWER}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            f"/api/v1/inspections/{inspection_id}/certificate",
+            json={
+                "number": "CERT-997950-1",
+                "pdf_object_key": "certificates/CERT-997950-1.pdf",
+                "verification_hash": "hash-997950-1",
+                "public_token": "public-token-997950-1",
+                "valid_until": "2027-06-28",
+            },
+        )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_issue_certificate_from_approved_inspection_writes_audit_and_sync(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        inspection = Inspection(
+            asset_id=seeded_session["vopak_asset_id"],
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+            reviewer_user_id="reviewer-1",
+        )
+        session.add(inspection)
+        await session.commit()
+        inspection_id = inspection.id
+
+    principal = Principal(
+        user_id="reviewer-1",
+        roles=frozenset({Role.REVIEWER}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            f"/api/v1/inspections/{inspection_id}/certificate",
+            json={
+                "number": "CERT-997950-1",
+                "pdf_object_key": "certificates/CERT-997950-1.pdf",
+                "verification_hash": "hash-997950-1",
+                "public_token": "public-token-997950-1",
+                "valid_until": "2027-06-28",
+            },
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["inspection_id"] == inspection_id
+    assert body["asset_id"] == seeded_session["vopak_asset_id"]
+    assert body["number"] == "CERT-997950-1"
+    assert body["certificate_version"] == 1
+    assert body["status"] == "ISSUED"
+    assert body["valid_until"] == "2027-06-28"
+
+    async with session_factory() as session:
+        certificate = (
+            await session.scalars(
+                select(Certificate).where(Certificate.inspection_id == inspection_id)
+            )
+        ).one()
+        sync_change = (
+            await session.scalars(
+                select(SyncChange).where(SyncChange.entity == "Certificate")
+            )
+        ).one()
+        audit_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.entity == "Certificate")
+            )
+        ).one()
+
+        assert certificate.version == 1
+        assert certificate.status == "ISSUED"
+        assert certificate.issued_by_user_id == "reviewer-1"
+        assert sync_change.op == "create"
+        assert sync_change.entity_id == certificate.id
+        assert audit_event.action == "certificate.issued"
+        assert audit_event.after is not None
+        assert audit_event.after["number"] == "CERT-997950-1"
         assert await verify_audit_chain(session)
