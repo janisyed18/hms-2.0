@@ -8,11 +8,13 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 *.pyc
+*.tsbuildinfo
 *.sqlite
 *.db
 dist/
 build/
 node_modules/
+.superpowers/
 .angular/
 .nx/
 coverage/
