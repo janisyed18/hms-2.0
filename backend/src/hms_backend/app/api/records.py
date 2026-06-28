@@ -10,8 +10,10 @@ from sqlalchemy.sql import Select
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.api.schemas import (
+    AssetCreate,
     AssetListResponse,
     AssetRead,
+    AssetUpdate,
     CustomerSummary,
     LocationSummary,
     LookupListResponse,
@@ -22,6 +24,7 @@ from hms_backend.app.api.schemas import (
     ProductSummary,
     ProductUpdate,
     RetestScheduleSummary,
+    RetestScheduleWrite,
     StandardCreate,
     StandardUpdate,
 )
@@ -33,9 +36,10 @@ from hms_backend.app.core.rbac import (
 )
 from hms_backend.app.core.repository import record_create, record_update
 from hms_backend.app.modules.assets.models import Asset
-from hms_backend.app.modules.customers.models import Customer
+from hms_backend.app.modules.customers.models import Customer, CustomerLocation
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Standard
+from hms_backend.app.modules.scheduling.models import RetestSchedule
 
 router = APIRouter()
 
@@ -58,6 +62,16 @@ def _require_asset_read(principal: Principal) -> None:
 def _require_reference_admin(principal: Principal) -> None:
     try:
         require_permission(principal, Permission.REFERENCE_ADMIN)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+
+def _require_asset_write(principal: Principal) -> None:
+    try:
+        require_permission(principal, Permission.ASSET_WRITE)
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -185,6 +199,62 @@ async def create_product(
     )
     await session.commit()
     return _product_read(product)
+
+
+@router.post(
+    "/assets",
+    response_model=AssetRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_asset(
+    payload: AssetCreate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> AssetRead:
+    _require_asset_write(principal)
+    customer = await _get_customer_or_404(session, payload.customer_id)
+    product = await _get_product_or_404(session, payload.product_id)
+    location = await _get_location_or_400(
+        session,
+        payload.location_id,
+        customer_id=customer.id,
+    )
+    asset = Asset(
+        customer=customer,
+        location=location,
+        product=product,
+        asset_number=payload.asset_number.strip(),
+        customer_serial_no=_clean_optional(payload.customer_serial_no),
+        tag=_clean_optional(payload.tag),
+        lifecycle_status=payload.lifecycle_status,
+        manufacture_date=payload.manufacture_date,
+        next_retest_due_at=payload.next_retest_due_at,
+        condemned_at=payload.condemned_at,
+        length_m=payload.length_m,
+    )
+    session.add(asset)
+    await record_create(
+        session,
+        asset,
+        actor_id=principal.user_id,
+        action="asset.created",
+    )
+    if payload.retest_schedule is not None:
+        schedule = _build_retest_schedule(
+            payload.retest_schedule,
+            customer=customer,
+            asset=asset,
+        )
+        session.add(schedule)
+        await record_create(
+            session,
+            schedule,
+            actor_id=principal.user_id,
+            action="retest_schedule.created",
+        )
+    await session.commit()
+    loaded = await _get_visible_asset_or_404(session, asset.id, principal)
+    return _asset_read(loaded)
 
 
 @router.get("/products", response_model=ProductListResponse)
@@ -316,6 +386,67 @@ async def list_assets(
     )
 
 
+@router.patch("/assets/{asset_id}", response_model=AssetRead)
+async def update_asset(
+    asset_id: str,
+    payload: AssetUpdate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> AssetRead:
+    _require_asset_write(principal)
+    asset = await _get_visible_asset_or_404(session, asset_id, principal)
+    before = asset.to_audit_dict()
+    updates = payload.model_dump(exclude_unset=True)
+
+    target_customer = asset.customer
+    if "customer_id" in updates and payload.customer_id is not None:
+        target_customer = await _get_customer_or_404(session, payload.customer_id)
+        asset.customer = target_customer
+    if "product_id" in updates and payload.product_id is not None:
+        asset.product = await _get_product_or_404(session, payload.product_id)
+    if "location_id" in updates:
+        asset.location = await _get_location_or_400(
+            session,
+            payload.location_id,
+            customer_id=target_customer.id,
+        )
+    if "asset_number" in updates and payload.asset_number is not None:
+        asset.asset_number = payload.asset_number.strip()
+    if "customer_serial_no" in updates:
+        asset.customer_serial_no = _clean_optional(payload.customer_serial_no)
+    if "tag" in updates:
+        asset.tag = _clean_optional(payload.tag)
+    if "lifecycle_status" in updates and payload.lifecycle_status is not None:
+        asset.lifecycle_status = payload.lifecycle_status
+    if "manufacture_date" in updates:
+        asset.manufacture_date = payload.manufacture_date
+    if "next_retest_due_at" in updates:
+        asset.next_retest_due_at = payload.next_retest_due_at
+    if "condemned_at" in updates:
+        asset.condemned_at = payload.condemned_at
+    if "length_m" in updates:
+        asset.length_m = payload.length_m
+
+    await record_update(
+        session,
+        asset,
+        actor_id=principal.user_id,
+        action="asset.updated",
+        before=before,
+    )
+    if "retest_schedule" in updates and payload.retest_schedule is not None:
+        await _upsert_retest_schedule(
+            session,
+            payload.retest_schedule,
+            asset=asset,
+            customer=target_customer,
+            actor_id=principal.user_id,
+        )
+    await session.commit()
+    loaded = await _get_visible_asset_or_404(session, asset.id, principal)
+    return _asset_read(loaded)
+
+
 @router.get("/assets/{asset_id}", response_model=AssetRead)
 async def get_asset(
     asset_id: str,
@@ -382,6 +513,125 @@ async def _get_standard_or_404(
             detail="Standard not found",
         )
     return standard
+
+
+async def _get_customer_or_404(session: AsyncSession, customer_id: str) -> Customer:
+    customer = await session.get(Customer, customer_id)
+    if customer is None or customer.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Customer not found",
+        )
+    return customer
+
+
+async def _get_product_or_404(session: AsyncSession, product_id: str) -> Product:
+    product = await session.get(Product, product_id)
+    if product is None or product.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Product not found",
+        )
+    return product
+
+
+async def _get_location_or_400(
+    session: AsyncSession,
+    location_id: str | None,
+    *,
+    customer_id: str,
+) -> CustomerLocation | None:
+    if location_id is None:
+        return None
+    location = await session.get(CustomerLocation, location_id)
+    if location is None or location.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Location not found",
+        )
+    if location.customer_id != customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Location does not belong to customer",
+        )
+    return location
+
+
+async def _get_visible_asset_or_404(
+    session: AsyncSession,
+    asset_id: str,
+    principal: Principal,
+) -> Asset:
+    statement = _asset_statement().where(
+        Asset.id == asset_id,
+        Asset.deleted_at.is_(None),
+    )
+    statement = _apply_asset_scope(statement, principal)
+    asset = (await session.scalars(statement)).first()
+    if asset is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Asset not found",
+        )
+    return asset
+
+
+def _build_retest_schedule(
+    payload: RetestScheduleWrite,
+    *,
+    customer: Customer,
+    asset: Asset,
+) -> RetestSchedule:
+    return RetestSchedule(
+        customer=customer,
+        asset=asset,
+        due_at=payload.due_at,
+        status=payload.status,
+        reminder_interval_days=payload.reminder_interval_days,
+        escalation_interval_days=payload.escalation_interval_days,
+    )
+
+
+async def _upsert_retest_schedule(
+    session: AsyncSession,
+    payload: RetestScheduleWrite,
+    *,
+    asset: Asset,
+    customer: Customer,
+    actor_id: str,
+) -> None:
+    schedule = asset.retest_schedule
+    if schedule is None:
+        schedule = _build_retest_schedule(payload, customer=customer, asset=asset)
+        session.add(schedule)
+        await record_create(
+            session,
+            schedule,
+            actor_id=actor_id,
+            action="retest_schedule.created",
+        )
+        return
+
+    before = schedule.to_audit_dict()
+    schedule.customer = customer
+    schedule.due_at = payload.due_at
+    schedule.status = payload.status
+    schedule.reminder_interval_days = payload.reminder_interval_days
+    schedule.escalation_interval_days = payload.escalation_interval_days
+    await record_update(
+        session,
+        schedule,
+        actor_id=actor_id,
+        action="retest_schedule.updated",
+        before=before,
+    )
+
+
+def _clean_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 def _asset_read(asset: Asset) -> AssetRead:

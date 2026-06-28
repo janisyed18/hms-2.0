@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -16,6 +17,10 @@ def normalise_for_json(value: Any) -> Any:
         if value.tzinfo is None:
             value = value.replace(tzinfo=UTC)
         return value.astimezone(UTC).isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
     if isinstance(value, dict):
         return {key: normalise_for_json(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -58,13 +63,15 @@ async def append_audit_event(
     latest = (
         await session.scalars(select(AuditEvent).order_by(AuditEvent.sequence.desc()))
     ).first()
+    normalised_before = normalise_for_json(before)
+    normalised_after = normalise_for_json(after)
     event = AuditEvent(
         actor_id=actor_id,
         action=action,
         entity=entity,
         entity_id=entity_id,
-        before=before,
-        after=after,
+        before=normalised_before,
+        after=normalised_after,
         timestamp=datetime.now(UTC),
         prev_hash=latest.hash if latest else None,
         hash="",

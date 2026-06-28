@@ -108,6 +108,9 @@ async def seeded_session(
         yield {
             "vopak_id": vopak.id,
             "orica_id": orica.id,
+            "product_id": product.id,
+            "other_product_id": other_product.id,
+            "vopak_location_id": location.id,
             "vopak_asset_id": vopak_asset.id,
             "orica_asset_id": orica_asset.id,
         }
@@ -441,4 +444,186 @@ async def test_update_product_writes_sync_change_and_audit_event(
         assert audit_event.before["name"] == "FUELFLEX GREEN"
         assert audit_event.after is not None
         assert audit_event.after["name"] == "FUELFLEX GREEN UPDATED"
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_customer_user_cannot_create_asset(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            "/api/v1/assets",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "product_id": seeded_session["product_id"],
+                "asset_number": "NEW-100",
+                "lifecycle_status": "IN_SERVICE",
+            },
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_create_asset_with_retest_schedule_writes_audit_and_sync(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            "/api/v1/assets",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "product_id": seeded_session["product_id"],
+                "asset_number": "NEW-100",
+                "customer_serial_no": "SER-100",
+                "tag": "HMS-NEW-100",
+                "lifecycle_status": "DUE",
+                "manufacture_date": "2026-01-15",
+                "next_retest_due_at": "2026-07-15",
+                "length_m": "6.100",
+                "retest_schedule": {
+                    "due_at": "2026-07-15",
+                    "status": "DUE",
+                    "reminder_interval_days": 30,
+                    "escalation_interval_days": 7,
+                },
+            },
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["asset_number"] == "NEW-100"
+    assert body["customer"]["code"] == "VOPA"
+    assert body["location"]["name"] == "Site A"
+    assert body["retest_schedule"]["status"] == "DUE"
+
+    async with session_factory() as session:
+        asset = (
+            await session.scalars(select(Asset).where(Asset.asset_number == "NEW-100"))
+        ).one()
+        sync_changes = (
+            await session.scalars(select(SyncChange).order_by(SyncChange.seq))
+        ).all()
+        audit_events = (
+            await session.scalars(select(AuditEvent).order_by(AuditEvent.sequence))
+        ).all()
+
+        assert asset.version == 1
+        assert asset.customer_id == seeded_session["vopak_id"]
+        assert [change.entity for change in sync_changes] == ["Asset", "RetestSchedule"]
+        assert [change.op for change in sync_changes] == ["create", "create"]
+        assert [event.action for event in audit_events] == [
+            "asset.created",
+            "retest_schedule.created",
+        ]
+        assert audit_events[0].after is not None
+        assert audit_events[0].after["asset_number"] == "NEW-100"
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_create_asset_rejects_location_from_another_customer(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            "/api/v1/assets",
+            json={
+                "customer_id": seeded_session["orica_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "product_id": seeded_session["product_id"],
+                "asset_number": "BAD-LOCATION",
+                "lifecycle_status": "IN_SERVICE",
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Location does not belong to customer"
+
+
+@pytest.mark.asyncio
+async def test_update_asset_and_retest_schedule_writes_audit_and_sync(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/assets/{seeded_session['vopak_asset_id']}",
+            json={
+                "lifecycle_status": "IN_SERVICE",
+                "next_retest_due_at": "2027-01-15",
+                "retest_schedule": {
+                    "due_at": "2027-01-15",
+                    "status": "UPCOMING",
+                    "reminder_interval_days": 45,
+                    "escalation_interval_days": 10,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["lifecycle_status"] == "IN_SERVICE"
+    assert body["retest_schedule"]["status"] == "UPCOMING"
+
+    async with session_factory() as session:
+        asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        schedule = (
+            await session.scalars(
+                select(RetestSchedule).where(
+                    RetestSchedule.asset_id == seeded_session["vopak_asset_id"]
+                )
+            )
+        ).one()
+        sync_changes = (
+            await session.scalars(select(SyncChange).order_by(SyncChange.seq))
+        ).all()
+        audit_events = (
+            await session.scalars(select(AuditEvent).order_by(AuditEvent.sequence))
+        ).all()
+
+        assert asset is not None
+        assert asset.version == 2
+        assert asset.lifecycle_status == "IN_SERVICE"
+        assert schedule.version == 2
+        assert schedule.status == "UPCOMING"
+        assert [change.entity for change in sync_changes] == ["Asset", "RetestSchedule"]
+        assert [change.op for change in sync_changes] == ["update", "update"]
+        assert [event.action for event in audit_events] == [
+            "asset.updated",
+            "retest_schedule.updated",
+        ]
+        assert audit_events[0].before is not None
+        assert audit_events[0].before["lifecycle_status"] == "OVERDUE"
+        assert audit_events[0].after is not None
+        assert audit_events[0].after["lifecycle_status"] == "IN_SERVICE"
         assert await verify_audit_chain(session)

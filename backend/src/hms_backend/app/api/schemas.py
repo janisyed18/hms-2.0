@@ -88,6 +88,13 @@ class RetestScheduleSummary(BaseModel):
     status: str
 
 
+class RetestScheduleWrite(BaseModel):
+    due_at: date
+    status: str
+    reminder_interval_days: int = 30
+    escalation_interval_days: int = 7
+
+
 class AssetRead(BaseModel):
     id: str
     asset_number: str
@@ -109,3 +116,33 @@ class AssetListResponse(BaseModel):
     limit: int
     offset: int
     items: list[AssetRead]
+
+
+class AssetCreate(BaseModel):
+    customer_id: str
+    location_id: str | None = None
+    product_id: str
+    asset_number: str
+    customer_serial_no: str | None = None
+    tag: str | None = None
+    lifecycle_status: str
+    manufacture_date: date | None = None
+    next_retest_due_at: date | None = None
+    condemned_at: date | None = None
+    length_m: Decimal | None = None
+    retest_schedule: RetestScheduleWrite | None = None
+
+
+class AssetUpdate(BaseModel):
+    customer_id: str | None = None
+    location_id: str | None = None
+    product_id: str | None = None
+    asset_number: str | None = None
+    customer_serial_no: str | None = None
+    tag: str | None = None
+    lifecycle_status: str | None = None
+    manufacture_date: date | None = None
+    next_retest_due_at: date | None = None
+    condemned_at: date | None = None
+    length_m: Decimal | None = None
+    retest_schedule: RetestScheduleWrite | None = None
