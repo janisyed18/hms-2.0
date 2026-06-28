@@ -11,6 +11,7 @@ from hms_backend.app.core.config import settings
 from hms_backend.app.models import foundation  # noqa: F401
 from hms_backend.app.models.base import Base
 from hms_backend.app.modules.customers import models as customer_models  # noqa: F401
+from hms_backend.app.modules.identity import models as identity_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
