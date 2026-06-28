@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -76,6 +76,7 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 PrincipalDep = Annotated[Principal, Depends(get_current_principal)]
 LimitParam = Annotated[int, Query(ge=1, le=100)]
 OffsetParam = Annotated[int, Query(ge=0)]
+IfMatchHeader = Annotated[str | None, Header(alias="If-Match")]
 
 
 def _require_asset_read(principal: Principal) -> None:
@@ -155,6 +156,28 @@ async def _count(session: AsyncSession, statement: Select[Any]) -> int:
     return await session.scalar(count_statement) or 0
 
 
+def _etag_for_version(version: int) -> str:
+    return f'"{version}"'
+
+
+def _set_etag(response: Response, version: int) -> None:
+    response.headers["ETag"] = _etag_for_version(version)
+
+
+def _enforce_if_match(if_match: str | None, version: int) -> None:
+    if if_match is None:
+        return
+
+    requested_tags = {tag.strip() for tag in if_match.split(",")}
+    if "*" in requested_tags or _etag_for_version(version) in requested_tags:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_412_PRECONDITION_FAILED,
+        detail="Resource version does not match",
+    )
+
+
 @router.post(
     "/reference/standards",
     response_model=LookupRead,
@@ -210,6 +233,8 @@ async def update_standard(
     payload: StandardUpdate,
     session: SessionDep,
     principal: PrincipalDep,
+    response: Response,
+    if_match: IfMatchHeader = None,
 ) -> LookupRead:
     _require_reference_admin(principal)
     standard = await session.get(Standard, standard_id)
@@ -218,6 +243,7 @@ async def update_standard(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Standard not found",
         )
+    _enforce_if_match(if_match, standard.version)
 
     before = standard.to_audit_dict()
     updates = payload.model_dump(exclude_unset=True)
@@ -236,6 +262,7 @@ async def update_standard(
         before=before,
     )
     await session.commit()
+    _set_etag(response, standard.version)
     return LookupRead(id=standard.id, code=standard.code, name=standard.name)
 
 
@@ -247,6 +274,7 @@ async def delete_standard(
     standard_id: str,
     session: SessionDep,
     principal: PrincipalDep,
+    if_match: IfMatchHeader = None,
 ) -> Response:
     _require_reference_admin(principal)
     standard = await _get_standard_or_404(session, standard_id)
@@ -255,6 +283,7 @@ async def delete_standard(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Standard not found",
         )
+    _enforce_if_match(if_match, standard.version)
 
     await soft_delete(
         session,
@@ -543,9 +572,12 @@ async def update_customer(
     payload: CustomerUpdate,
     session: SessionDep,
     principal: PrincipalDep,
+    response: Response,
+    if_match: IfMatchHeader = None,
 ) -> CustomerRead:
     _require_customer_write(principal)
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    _enforce_if_match(if_match, customer.version)
     before = customer.to_audit_dict()
     updates = payload.model_dump(exclude_unset=True)
     if "code" in updates and payload.code is not None:
@@ -565,6 +597,7 @@ async def update_customer(
         before=before,
     )
     await session.commit()
+    _set_etag(response, customer.version)
     return _customer_read(customer)
 
 
@@ -573,9 +606,11 @@ async def delete_customer(
     customer_id: str,
     session: SessionDep,
     principal: PrincipalDep,
+    if_match: IfMatchHeader = None,
 ) -> Response:
     _require_customer_write(principal)
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    _enforce_if_match(if_match, customer.version)
     await soft_delete(
         session,
         customer,
@@ -591,9 +626,11 @@ async def get_customer(
     customer_id: str,
     session: SessionDep,
     principal: PrincipalDep,
+    response: Response,
 ) -> CustomerRead:
     _require_customer_read(principal)
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    _set_etag(response, customer.version)
     return _customer_read(customer)
 
 
@@ -881,6 +918,8 @@ async def update_product(
     payload: ProductUpdate,
     session: SessionDep,
     principal: PrincipalDep,
+    response: Response,
+    if_match: IfMatchHeader = None,
 ) -> ProductRead:
     _require_reference_admin(principal)
     product = await session.get(Product, product_id)
@@ -889,6 +928,7 @@ async def update_product(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found",
         )
+    _enforce_if_match(if_match, product.version)
 
     before = product.to_audit_dict()
     updates = payload.model_dump(exclude_unset=True)
@@ -915,6 +955,7 @@ async def update_product(
         before=before,
     )
     await session.commit()
+    _set_etag(response, product.version)
     return _product_read(product)
 
 
@@ -923,9 +964,11 @@ async def delete_product(
     product_id: str,
     session: SessionDep,
     principal: PrincipalDep,
+    if_match: IfMatchHeader = None,
 ) -> Response:
     _require_reference_admin(principal)
     product = await _get_product_or_404(session, product_id)
+    _enforce_if_match(if_match, product.version)
     await soft_delete(
         session,
         product,
@@ -988,9 +1031,12 @@ async def update_asset(
     payload: AssetUpdate,
     session: SessionDep,
     principal: PrincipalDep,
+    response: Response,
+    if_match: IfMatchHeader = None,
 ) -> AssetRead:
     _require_asset_write(principal)
     asset = await _get_visible_asset_or_404(session, asset_id, principal)
+    _enforce_if_match(if_match, asset.version)
     before = asset.to_audit_dict()
     updates = payload.model_dump(exclude_unset=True)
 
@@ -1040,6 +1086,7 @@ async def update_asset(
         )
     await session.commit()
     loaded = await _get_visible_asset_or_404(session, asset.id, principal)
+    _set_etag(response, loaded.version)
     return _asset_read(loaded)
 
 
@@ -1048,9 +1095,11 @@ async def delete_asset(
     asset_id: str,
     session: SessionDep,
     principal: PrincipalDep,
+    if_match: IfMatchHeader = None,
 ) -> Response:
     _require_asset_write(principal)
     asset = await _get_visible_asset_or_404(session, asset_id, principal)
+    _enforce_if_match(if_match, asset.version)
     await soft_delete(
         session,
         asset,
@@ -1066,6 +1115,7 @@ async def get_asset(
     asset_id: str,
     session: SessionDep,
     principal: PrincipalDep,
+    response: Response,
 ) -> AssetRead:
     _require_asset_read(principal)
     statement = _asset_statement().where(
@@ -1079,6 +1129,7 @@ async def get_asset(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Asset not found",
         )
+    _set_etag(response, asset.version)
     return _asset_read(asset)
 
 

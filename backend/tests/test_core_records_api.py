@@ -427,6 +427,55 @@ async def test_update_customer_writes_sync_change_and_audit_event(
 
 
 @pytest.mark.asyncio
+async def test_customer_detail_returns_etag_and_patch_enforces_if_match(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        detail_response = await client.get(
+            f"/api/v1/customers/{seeded_session['vopak_id']}"
+        )
+        stale_response = await client.patch(
+            f"/api/v1/customers/{seeded_session['vopak_id']}",
+            headers={"If-Match": '"0"'},
+            json={"name": "Stale Name"},
+        )
+        update_response = await client.patch(
+            f"/api/v1/customers/{seeded_session['vopak_id']}",
+            headers={"If-Match": '"1"'},
+            json={"name": "Vopak Matched"},
+        )
+
+    assert detail_response.status_code == 200
+    assert detail_response.headers.get("etag") == '"1"'
+    assert stale_response.status_code == 412
+    assert stale_response.json()["detail"] == "Resource version does not match"
+    assert update_response.status_code == 200
+    assert update_response.headers["etag"] == '"2"'
+    assert update_response.json()["name"] == "Vopak Matched"
+
+    async with session_factory() as session:
+        customer = await session.get(Customer, seeded_session["vopak_id"])
+        sync_change = (await session.scalars(select(SyncChange))).one()
+        audit_event = (await session.scalars(select(AuditEvent))).one()
+
+        assert customer is not None
+        assert customer.version == 2
+        assert customer.name == "Vopak Matched"
+        assert sync_change.op == "update"
+        assert sync_change.version == 2
+        assert audit_event.action == "customer.updated"
+        assert audit_event.after is not None
+        assert audit_event.after["name"] == "Vopak Matched"
+
+
+@pytest.mark.asyncio
 async def test_soft_delete_customer_writes_tombstone_sync_and_audit(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
@@ -1206,6 +1255,115 @@ async def test_soft_delete_asset_writes_tombstone_sync_and_audit(
         assert audit_event.after is not None
         assert audit_event.after["deleted_at"] is not None
         assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_standard_product_and_asset_mutations_enforce_if_match(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with session_factory() as session:
+        standard_id = (
+            await session.scalars(select(Standard.id).where(Standard.code == "AS2683"))
+        ).one()
+
+    async with api_client(session_factory, principal) as client:
+        asset_detail_response = await client.get(
+            f"/api/v1/assets/{seeded_session['vopak_asset_id']}"
+        )
+        stale_standard_response = await client.patch(
+            f"/api/v1/reference/standards/{standard_id}",
+            headers={"If-Match": '"0"'},
+            json={"name": "Stale Standard"},
+        )
+        standard_response = await client.patch(
+            f"/api/v1/reference/standards/{standard_id}",
+            headers={"If-Match": '"1"'},
+            json={"name": "AS 2683 Matched"},
+        )
+        stale_product_response = await client.patch(
+            f"/api/v1/products/{seeded_session['product_id']}",
+            headers={"If-Match": '"0"'},
+            json={"name": "Stale Product"},
+        )
+        product_response = await client.patch(
+            f"/api/v1/products/{seeded_session['product_id']}",
+            headers={"If-Match": '"1"'},
+            json={"name": "FUELFLEX MATCHED"},
+        )
+        stale_asset_response = await client.patch(
+            f"/api/v1/assets/{seeded_session['vopak_asset_id']}",
+            headers={"If-Match": '"0"'},
+            json={"lifecycle_status": "IN_SERVICE"},
+        )
+        asset_response = await client.patch(
+            f"/api/v1/assets/{seeded_session['vopak_asset_id']}",
+            headers={"If-Match": '"1"'},
+            json={"lifecycle_status": "IN_SERVICE"},
+        )
+
+    assert asset_detail_response.status_code == 200
+    assert asset_detail_response.headers.get("etag") == '"1"'
+    assert stale_standard_response.status_code == 412
+    assert standard_response.status_code == 200
+    assert standard_response.headers.get("etag") == '"2"'
+    assert stale_product_response.status_code == 412
+    assert product_response.status_code == 200
+    assert product_response.headers.get("etag") == '"2"'
+    assert stale_asset_response.status_code == 412
+    assert asset_response.status_code == 200
+    assert asset_response.headers.get("etag") == '"2"'
+
+
+@pytest.mark.asyncio
+async def test_delete_routes_enforce_if_match_when_supplied(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with session_factory() as session:
+        standard_id = (
+            await session.scalars(select(Standard.id).where(Standard.code == "AS2683"))
+        ).one()
+
+    async with api_client(session_factory, principal) as client:
+        standard_response = await client.delete(
+            f"/api/v1/reference/standards/{standard_id}",
+            headers={"If-Match": '"0"'},
+        )
+        customer_response = await client.delete(
+            f"/api/v1/customers/{seeded_session['vopak_id']}",
+            headers={"If-Match": '"0"'},
+        )
+        product_response = await client.delete(
+            f"/api/v1/products/{seeded_session['product_id']}",
+            headers={"If-Match": '"0"'},
+        )
+        asset_response = await client.delete(
+            f"/api/v1/assets/{seeded_session['vopak_asset_id']}",
+            headers={"If-Match": '"0"'},
+        )
+
+    assert standard_response.status_code == 412
+    assert customer_response.status_code == 412
+    assert product_response.status_code == 412
+    assert asset_response.status_code == 412
+
+    async with session_factory() as session:
+        sync_changes = (await session.scalars(select(SyncChange))).all()
+        audit_events = (await session.scalars(select(AuditEvent))).all()
+
+        assert sync_changes == []
+        assert audit_events == []
 
 
 @pytest.mark.asyncio
