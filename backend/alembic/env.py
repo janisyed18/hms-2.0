@@ -10,8 +10,20 @@ from alembic import context
 from hms_backend.app.core.config import settings
 from hms_backend.app.models import foundation  # noqa: F401
 from hms_backend.app.models.base import Base
+from hms_backend.app.modules.assets import models as asset_models  # noqa: F401
+from hms_backend.app.modules.certificates import (  # noqa: F401
+    models as certificate_models,
+)
 from hms_backend.app.modules.customers import models as customer_models  # noqa: F401
 from hms_backend.app.modules.identity import models as identity_models  # noqa: F401
+from hms_backend.app.modules.inspections import (  # noqa: F401
+    models as inspection_models,
+)
+from hms_backend.app.modules.products import models as product_models  # noqa: F401
+from hms_backend.app.modules.reference import models as reference_models  # noqa: F401
+from hms_backend.app.modules.scheduling import (  # noqa: F401
+    models as scheduling_models,
+)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)

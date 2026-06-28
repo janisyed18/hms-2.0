@@ -1,0 +1,1 @@
+"""Product catalogue domain module."""
