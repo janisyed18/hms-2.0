@@ -367,6 +367,18 @@ kbd {
   padding: 24px 20px 24px 22px;
 }
 
+.record-page {
+  min-height: calc(100vh - 80px);
+  padding: 24px 22px;
+}
+
+.record-main {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  max-width: 1260px;
+}
+
 .table-panel,
 .activity-panel,
 .detail-panel,
@@ -386,6 +398,10 @@ kbd {
   grid-template-columns: minmax(190px, 1.1fr) repeat(4, minmax(112px, 0.7fr)) auto;
   gap: 10px;
   padding: 18px;
+}
+
+.module-toolbar {
+  grid-template-columns: minmax(240px, 1fr) minmax(138px, 180px) auto;
 }
 
 .field {
@@ -444,6 +460,15 @@ table {
   font-size: 12px;
 }
 
+.module-table {
+  table-layout: auto;
+}
+
+.module-table th,
+.module-table td {
+  width: auto;
+}
+
 th:nth-child(1),
 td:nth-child(1) {
   width: 4%;
@@ -482,6 +507,11 @@ td:nth-child(7) {
 th:nth-child(8),
 td:nth-child(8) {
   width: 11%;
+}
+
+.module-table th:nth-child(n),
+.module-table td:nth-child(n) {
+  width: auto;
 }
 
 th,

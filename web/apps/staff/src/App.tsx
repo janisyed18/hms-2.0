@@ -1,44 +1,88 @@
+import { useState } from "react";
+
 import { ActivityFeed } from "./components/ActivityFeed";
-import { AppShell } from "./components/AppShell";
+import { AppShell, type AppModule } from "./components/AppShell";
+import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
 import { CustomerForm } from "./components/CustomerForm";
 import { CustomerTable } from "./components/CustomerTable";
+import { ProductsWorkspace } from "./components/ProductsWorkspace";
+import { ReferenceWorkspace } from "./components/ReferenceWorkspace";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import "./styles.css";
 
+const moduleCopy: Record<AppModule, { title: string; description: string }> = {
+  customers: {
+    title: "Customers",
+    description: "Manage customers and view hose management overview"
+  },
+  assets: {
+    title: "Assets",
+    description: "Track hose assemblies, lifecycle status, and retest scheduling"
+  },
+  products: {
+    title: "Products",
+    description: "Maintain hose product catalog records and standards"
+  },
+  reference: {
+    title: "Reference Data",
+    description: "Manage controlled standards and lookup data"
+  }
+};
+
 export default function App() {
+  const [activeModule, setActiveModule] = useState<AppModule>("customers");
   const workspace = useCustomerWorkspace();
+  const activeCopy = moduleCopy[activeModule];
 
   return (
-    <AppShell source={workspace.source}>
-      <main className="customer-page">
-        <div className="customer-main">
-          <CustomerTable
-            customers={workspace.visibleCustomers}
-            totalCount={workspace.totalCount}
-            selectedId={workspace.selectedCustomer?.id ?? null}
-            query={workspace.query}
-            riskFilter={workspace.riskFilter}
-            statusFilter={workspace.statusFilter}
-            onQueryChange={workspace.setQuery}
-            onRiskFilterChange={workspace.setRiskFilter}
-            onStatusFilterChange={workspace.setStatusFilter}
-            onSelectCustomer={workspace.setSelectedId}
-            onAddCustomer={() => workspace.setFormOpen(true)}
+    <AppShell
+      activeModule={activeModule}
+      description={activeCopy.description}
+      onModuleChange={setActiveModule}
+      source={workspace.source}
+      title={activeCopy.title}
+    >
+      {activeModule === "customers" ? (
+        <>
+          <main className="customer-page">
+            <div className="customer-main">
+              <CustomerTable
+                customers={workspace.visibleCustomers}
+                totalCount={workspace.totalCount}
+                selectedId={workspace.selectedCustomer?.id ?? null}
+                query={workspace.query}
+                riskFilter={workspace.riskFilter}
+                statusFilter={workspace.statusFilter}
+                onQueryChange={workspace.setQuery}
+                onRiskFilterChange={workspace.setRiskFilter}
+                onStatusFilterChange={workspace.setStatusFilter}
+                onSelectCustomer={workspace.setSelectedId}
+                onAddCustomer={() => workspace.setFormOpen(true)}
+              />
+              <ActivityFeed items={workspace.selectedCustomer?.metrics.activity ?? []} />
+            </div>
+            <CustomerDetail
+              customer={workspace.selectedCustomer}
+              activeTab={workspace.activeTab}
+              onTabChange={workspace.setActiveTab}
+            />
+          </main>
+          <CustomerForm
+            open={workspace.isFormOpen}
+            onClose={() => workspace.setFormOpen(false)}
+            onSubmit={workspace.createCustomer}
           />
-          <ActivityFeed items={workspace.selectedCustomer?.metrics.activity ?? []} />
-        </div>
-        <CustomerDetail
-          customer={workspace.selectedCustomer}
-          activeTab={workspace.activeTab}
-          onTabChange={workspace.setActiveTab}
-        />
-      </main>
-      <CustomerForm
-        open={workspace.isFormOpen}
-        onClose={() => workspace.setFormOpen(false)}
-        onSubmit={workspace.createCustomer}
-      />
+        </>
+      ) : (
+        <main className="record-page">
+          <div className="record-main">
+            {activeModule === "assets" ? <AssetsWorkspace /> : null}
+            {activeModule === "products" ? <ProductsWorkspace /> : null}
+            {activeModule === "reference" ? <ReferenceWorkspace /> : null}
+          </div>
+        </main>
+      )}
     </AppShell>
   );
 }

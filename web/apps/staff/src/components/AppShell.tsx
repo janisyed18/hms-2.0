@@ -1,5 +1,6 @@
 import {
   Bell,
+  Boxes,
   ChevronDown,
   ClipboardCheck,
   Database,
@@ -10,26 +11,47 @@ import {
   RefreshCcw,
   Search,
   ShieldCheck,
+  TableProperties,
   UsersRound
 } from "lucide-react";
 import type { ReactNode } from "react";
 
+export type AppModule = "customers" | "assets" | "products" | "reference";
+
 interface AppShellProps {
+  activeModule: AppModule;
   children: ReactNode;
+  description: string;
+  onModuleChange: (module: AppModule) => void;
   source: "api" | "mock";
+  title: string;
 }
 
 const navItems = [
   { label: "Dashboard", icon: LayoutDashboard },
-  { label: "Customers", icon: UsersRound, active: true },
-  { label: "Assets", icon: Database },
+  { label: "Customers", icon: UsersRound, module: "customers" },
+  { label: "Assets", icon: Database, module: "assets" },
+  { label: "Products", icon: Boxes, module: "products" },
+  { label: "Reference Data", icon: TableProperties, module: "reference" },
   { label: "Inspections", icon: ClipboardCheck },
   { label: "Certificates", icon: FileCheck2 },
   { label: "Sync Queue", icon: RefreshCcw, badge: "7" },
   { label: "Audit", icon: ShieldCheck }
-];
+] satisfies Array<{
+  label: string;
+  icon: typeof LayoutDashboard;
+  module?: AppModule;
+  badge?: string;
+}>;
 
-export function AppShell({ children, source }: AppShellProps) {
+export function AppShell({
+  activeModule,
+  children,
+  description,
+  onModuleChange,
+  source,
+  title
+}: AppShellProps) {
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Primary navigation">
@@ -41,10 +63,16 @@ export function AppShell({ children, source }: AppShellProps) {
         <nav className="nav-list">
           {navItems.map((item) => {
             const Icon = item.icon;
+            const isActive = item.module === activeModule;
             return (
               <button
-                className={`nav-item${item.active ? " is-active" : ""}`}
+                className={`nav-item${isActive ? " is-active" : ""}`}
                 key={item.label}
+                onClick={() => {
+                  if (item.module) {
+                    onModuleChange(item.module);
+                  }
+                }}
                 type="button"
               >
                 <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
@@ -63,8 +91,8 @@ export function AppShell({ children, source }: AppShellProps) {
       <div className="workspace">
         <header className="topbar">
           <div>
-            <h1>Customers</h1>
-            <p>Manage customers and view hose management overview</p>
+            <h1>{title}</h1>
+            <p>{description}</p>
           </div>
           <div className="topbar-actions">
             <label className="global-search">
