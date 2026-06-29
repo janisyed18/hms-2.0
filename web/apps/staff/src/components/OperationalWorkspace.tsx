@@ -37,7 +37,7 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
           icon={<RefreshCcw aria-hidden="true" size={20} />}
           source={source}
           title="Sync Queue"
-          description="Read-only local queue view for records waiting on future sync APIs."
+          description="Queued inspection, certificate, and asset events awaiting staff review."
         />
         <OperationsTable
           ariaLabel="Sync queue items"
@@ -56,7 +56,7 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
           icon={<ShieldCheck aria-hidden="true" size={20} />}
           source={source}
           title="Audit Trail"
-          description="Read-only local event stream for inspection, certificate, and asset activity."
+          description="Recent inspection, certificate, and asset lifecycle events across the staff workspace."
         />
         <OperationsTable
           ariaLabel="Audit trail events"
@@ -113,8 +113,8 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
         <section className="operations-panel">
           <h3>Next Review</h3>
           <p>
-            The next focused build phase can replace this read-only snapshot with backend
-            dashboard aggregates.
+            Submitted inspections, expiring certificates, and queued sync events are ready for
+            staff review.
           </p>
         </section>
       </div>

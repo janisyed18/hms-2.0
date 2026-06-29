@@ -76,7 +76,7 @@ function popoverBody(menu: TopbarMenu, source: "api" | "mock") {
     return "Inspection approval, certificate issue, and sync queue items are ready for review.";
   }
   if (menu === "help") {
-    return "Support, release notes, and workflow guidance will stay available from this menu.";
+    return "Support, release notes, and workflow guidance.";
   }
   return "Alex Williams. Administrator workspace.";
 }
