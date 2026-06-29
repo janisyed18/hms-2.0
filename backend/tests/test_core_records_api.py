@@ -1741,6 +1741,112 @@ async def test_inspections_endpoint_filters_and_returns_detail(
 
 
 @pytest.mark.asyncio
+async def test_patch_draft_inspection_updates_result_and_pressure_test_with_audit(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        inspection = Inspection(
+            asset_id=seeded_session["vopak_asset_id"],
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.DRAFT.value,
+            result="REVIEW",
+            inspector_user_id="inspector-1",
+        )
+        session.add(inspection)
+        await session.commit()
+        inspection_id = inspection.id
+
+    principal = Principal(
+        user_id="inspector-1",
+        roles=frozenset({Role.INSPECTOR}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/inspections/{inspection_id}",
+            json={
+                "result": "PASS",
+                "pressure_test": {
+                    "applied_pressure_kpa": 1750,
+                    "hold_time_seconds": 360,
+                    "passed": True,
+                    "measurements": {"leak": "none", "visual": "ok"},
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["result"] == "PASS"
+    assert body["pressure_test"]["applied_pressure_kpa"] == 1750
+    assert body["pressure_test"]["measurements"]["visual"] == "ok"
+
+    async with session_factory() as session:
+        loaded = await session.get(Inspection, inspection_id)
+        pressure_test = (
+            await session.scalars(
+                select(PressureTestResult).where(
+                    PressureTestResult.inspection_id == inspection_id
+                )
+            )
+        ).one()
+        sync_changes = (
+            await session.scalars(select(SyncChange).order_by(SyncChange.seq))
+        ).all()
+        audit_events = (
+            await session.scalars(select(AuditEvent).order_by(AuditEvent.sequence))
+        ).all()
+
+        assert loaded is not None
+        assert loaded.version == 2
+        assert pressure_test.version == 1
+        assert [change.entity for change in sync_changes] == [
+            "Inspection",
+            "PressureTestResult",
+        ]
+        assert [event.action for event in audit_events] == [
+            "inspection.updated",
+            "pressure_test_result.created",
+        ]
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_patch_inspection_rejects_non_draft_status(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        inspection = Inspection(
+            asset_id=seeded_session["vopak_asset_id"],
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.SUBMITTED.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+        )
+        session.add(inspection)
+        await session.commit()
+        inspection_id = inspection.id
+
+    principal = Principal(
+        user_id="inspector-1",
+        roles=frozenset({Role.INSPECTOR}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/inspections/{inspection_id}",
+            json={"result": "FAIL"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Only draft inspections can be edited"
+
+
+@pytest.mark.asyncio
 async def test_submit_and_approve_inspection_transitions_with_audit(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],

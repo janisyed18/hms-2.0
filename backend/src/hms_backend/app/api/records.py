@@ -31,10 +31,12 @@ from hms_backend.app.api.schemas import (
     InspectionCreate,
     InspectionListResponse,
     InspectionRead,
+    InspectionUpdate,
     LocationSummary,
     LookupListResponse,
     LookupRead,
     PressureTestRead,
+    PressureTestWrite,
     ProductCreate,
     ProductListResponse,
     ProductRead,
@@ -878,6 +880,45 @@ async def create_inspection(
     return _inspection_read(inspection)
 
 
+@router.patch("/inspections/{inspection_id}", response_model=InspectionRead)
+async def update_inspection(
+    inspection_id: str,
+    payload: InspectionUpdate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionRead:
+    _require_inspection_write(principal)
+    inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    if inspection.status != InspectionStatus.DRAFT.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only draft inspections can be edited",
+        )
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "result" in updates:
+        before = inspection.to_audit_dict()
+        inspection.result = _clean_optional(payload.result)
+        await record_update(
+            session,
+            inspection,
+            actor_id=principal.user_id,
+            action="inspection.updated",
+            before=before,
+        )
+    if payload.pressure_test is not None:
+        await _upsert_pressure_test(
+            session,
+            payload.pressure_test,
+            inspection=inspection,
+            actor_id=principal.user_id,
+        )
+
+    await session.commit()
+    loaded = await _get_inspection_or_404(session, inspection.id, principal)
+    return _inspection_read(loaded)
+
+
 @router.post("/inspections/{inspection_id}/submit", response_model=InspectionRead)
 async def submit_inspection(
     inspection_id: str,
@@ -1526,6 +1567,45 @@ async def _get_inspection_or_404(
             detail="Inspection not found",
         )
     return inspection
+
+
+async def _upsert_pressure_test(
+    session: AsyncSession,
+    payload: PressureTestWrite,
+    *,
+    inspection: Inspection,
+    actor_id: str,
+) -> None:
+    pressure_test = inspection.pressure_test
+    if pressure_test is None:
+        pressure_test = PressureTestResult(
+            inspection=inspection,
+            applied_pressure_kpa=payload.applied_pressure_kpa,
+            hold_time_seconds=payload.hold_time_seconds,
+            passed=payload.passed,
+            measurements=payload.measurements,
+        )
+        session.add(pressure_test)
+        await record_create(
+            session,
+            pressure_test,
+            actor_id=actor_id,
+            action="pressure_test_result.created",
+        )
+        return
+
+    before = pressure_test.to_audit_dict()
+    pressure_test.applied_pressure_kpa = payload.applied_pressure_kpa
+    pressure_test.hold_time_seconds = payload.hold_time_seconds
+    pressure_test.passed = payload.passed
+    pressure_test.measurements = payload.measurements
+    await record_update(
+        session,
+        pressure_test,
+        actor_id=actor_id,
+        action="pressure_test_result.updated",
+        before=before,
+    )
 
 
 def _build_retest_schedule(

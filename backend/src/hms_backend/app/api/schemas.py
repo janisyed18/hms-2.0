@@ -254,6 +254,11 @@ class InspectionCreate(BaseModel):
     pressure_test: PressureTestWrite | None = None
 
 
+class InspectionUpdate(BaseModel):
+    result: str | None = None
+    pressure_test: PressureTestWrite | None = None
+
+
 class InspectionAssetSummary(BaseModel):
     id: str
     asset_number: str
