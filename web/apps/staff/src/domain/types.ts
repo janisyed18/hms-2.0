@@ -206,3 +206,66 @@ export interface AssetFormValues {
   aEnd: AssetEndValues;
   bEnd: AssetEndValues;
 }
+
+export type InspectionStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
+
+export type InspectionType = "NEW_ASSET" | "SERVICE";
+
+export interface InspectionAssetSummary {
+  id: string;
+  assetNumber: string;
+  tag: string | null;
+  lifecycleStatus: string;
+}
+
+export interface PressureTestRecord {
+  id: string;
+  appliedPressureKpa: number;
+  holdTimeSeconds: number;
+  passed: boolean;
+  measurements: Record<string, unknown> | null;
+}
+
+export interface PressureTestValues {
+  appliedPressureKpa: number;
+  holdTimeSeconds: number;
+  passed: boolean;
+  measurements: Record<string, unknown> | null;
+}
+
+export interface InspectionRecord {
+  id: string;
+  assetId: string;
+  inspectionType: InspectionType;
+  status: InspectionStatus;
+  result: string | null;
+  inspectorUserId: string;
+  reviewerUserId: string | null;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  rejectedAt: string | null;
+  asset: InspectionAssetSummary;
+  customer: RecordSummary;
+  product: AssetProductSummary;
+  pressureTest: PressureTestRecord | null;
+  etag?: string | null;
+}
+
+export interface InspectionListResult {
+  source: DataSource;
+  total: number;
+  etag?: string | null;
+  items: InspectionRecord[];
+}
+
+export interface InspectionCreateValues {
+  assetId: string;
+  inspectionType: InspectionType;
+  result: string | null;
+  pressureTest: PressureTestValues | null;
+}
+
+export interface InspectionUpdateValues {
+  result: string | null;
+  pressureTest: PressureTestValues | null;
+}

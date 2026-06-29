@@ -5,6 +5,7 @@ import {
   mockCustomers,
   mockTotalCustomers
 } from "../data/mockCustomers";
+import { mockInspections } from "../data/mockInspections";
 import { mockProducts } from "../data/mockProducts";
 import { mockReferenceStandards } from "../data/mockReferenceData";
 import type {
@@ -19,9 +20,17 @@ import type {
   CustomerListResult,
   CustomerLocation,
   CustomerRecord,
+  InspectionCreateValues,
+  InspectionListResult,
+  InspectionRecord,
+  InspectionStatus,
+  InspectionType,
+  InspectionUpdateValues,
   ProductListResult,
   ProductFormValues,
   ProductRecord,
+  PressureTestRecord,
+  PressureTestValues,
   RecordSummary,
   ReferenceStandardListResult,
   ReferenceStandardFormValues,
@@ -137,6 +146,45 @@ interface ApiAssetList {
   items: ApiAsset[];
 }
 
+interface ApiInspectionAssetSummary {
+  id: string;
+  asset_number: string;
+  tag: string | null;
+  lifecycle_status: string;
+}
+
+interface ApiPressureTest {
+  id: string;
+  applied_pressure_kpa: number;
+  hold_time_seconds: number;
+  passed: boolean;
+  measurements: Record<string, unknown> | null;
+}
+
+interface ApiInspection {
+  id: string;
+  asset_id: string;
+  inspection_type: InspectionType;
+  status: InspectionStatus;
+  result: string | null;
+  inspector_user_id: string;
+  reviewer_user_id: string | null;
+  submitted_at: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  asset: ApiInspectionAssetSummary;
+  customer: ApiSummary;
+  product: ApiProductSummary;
+  pressure_test: ApiPressureTest | null;
+}
+
+interface ApiInspectionList {
+  total: number;
+  limit: number;
+  offset: number;
+  items: ApiInspection[];
+}
+
 export interface HmsClientOptions {
   baseUrl?: string;
   fetcher?: typeof fetch;
@@ -165,6 +213,17 @@ interface ListProductOptions {
 interface ListAssetOptions {
   search?: string;
   status?: string;
+  customerId?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}
+
+interface ListInspectionOptions {
+  search?: string;
+  status?: InspectionStatus;
+  inspectionType?: InspectionType;
+  assetId?: string;
   customerId?: string;
   sort?: string;
   limit?: number;
@@ -339,6 +398,65 @@ function toAsset(asset: ApiAsset, etag: string | null = null): AssetRecord {
     },
     etag
   );
+}
+
+function toPressureTest(
+  pressureTest: ApiPressureTest | null
+): PressureTestRecord | null {
+  if (pressureTest === null) {
+    return null;
+  }
+  return {
+    id: pressureTest.id,
+    appliedPressureKpa: pressureTest.applied_pressure_kpa,
+    holdTimeSeconds: pressureTest.hold_time_seconds,
+    passed: pressureTest.passed,
+    measurements: pressureTest.measurements
+  };
+}
+
+function toInspection(
+  inspection: ApiInspection,
+  etag: string | null = null
+): InspectionRecord {
+  return withEtag(
+    {
+      id: inspection.id,
+      assetId: inspection.asset_id,
+      inspectionType: inspection.inspection_type,
+      status: inspection.status,
+      result: inspection.result,
+      inspectorUserId: inspection.inspector_user_id,
+      reviewerUserId: inspection.reviewer_user_id,
+      submittedAt: inspection.submitted_at,
+      approvedAt: inspection.approved_at,
+      rejectedAt: inspection.rejected_at,
+      asset: {
+        id: inspection.asset.id,
+        assetNumber: inspection.asset.asset_number,
+        tag: inspection.asset.tag,
+        lifecycleStatus: inspection.asset.lifecycle_status
+      },
+      customer: toSummary(inspection.customer),
+      product: toProductSummary(inspection.product),
+      pressureTest: toPressureTest(inspection.pressure_test)
+    },
+    etag
+  );
+}
+
+function pressureTestPayload(
+  pressureTest: PressureTestValues | null
+): Record<string, unknown> | null {
+  if (pressureTest === null) {
+    return null;
+  }
+  return {
+    applied_pressure_kpa: pressureTest.appliedPressureKpa,
+    hold_time_seconds: pressureTest.holdTimeSeconds,
+    passed: pressureTest.passed,
+    measurements: pressureTest.measurements
+  };
 }
 
 function buildUrl(
@@ -603,6 +721,82 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toAsset(response.data, response.etag);
     },
 
+    async listInspections(
+      listOptions: ListInspectionOptions = {}
+    ): Promise<ApiListResult<InspectionRecord>> {
+      const response = await request<ApiInspectionList>("/api/v1/inspections", {}, {
+        limit: listOptions.limit ?? 50,
+        offset: listOptions.offset ?? 0,
+        status: listOptions.status,
+        inspection_type: listOptions.inspectionType,
+        asset_id: listOptions.assetId,
+        customer_id: listOptions.customerId,
+        search: listOptions.search?.trim() || undefined,
+        sort: listOptions.sort
+      });
+      return {
+        total: response.data.total,
+        etag: response.etag,
+        items: response.data.items.map((inspection) =>
+          toInspection(inspection, response.etag)
+        )
+      };
+    },
+
+    async createInspection(
+      values: InspectionCreateValues
+    ): Promise<InspectionRecord> {
+      const response = await request<ApiInspection>(
+        `/api/v1/assets/${encodeURIComponent(values.assetId)}/inspections`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            inspection_type: values.inspectionType,
+            result: values.result,
+            pressure_test: pressureTestPayload(values.pressureTest)
+          })
+        }
+      );
+      return toInspection(response.data, response.etag);
+    },
+
+    async updateInspection(
+      id: string,
+      values: InspectionUpdateValues
+    ): Promise<InspectionRecord> {
+      const response = await request<ApiInspection>(
+        `/api/v1/inspections/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            result: values.result,
+            pressure_test: pressureTestPayload(values.pressureTest)
+          })
+        }
+      );
+      return toInspection(response.data, response.etag);
+    },
+
+    async submitInspection(id: string): Promise<InspectionRecord> {
+      const response = await request<ApiInspection>(
+        `/api/v1/inspections/${encodeURIComponent(id)}/submit`,
+        {
+          method: "POST"
+        }
+      );
+      return toInspection(response.data, response.etag);
+    },
+
+    async approveInspection(id: string): Promise<InspectionRecord> {
+      const response = await request<ApiInspection>(
+        `/api/v1/inspections/${encodeURIComponent(id)}/approve`,
+        {
+          method: "POST"
+        }
+      );
+      return toInspection(response.data, response.etag);
+    },
+
     async listReferenceStandards(
       listOptions: ListReferenceStandardOptions = {}
     ): Promise<ApiListResult<ReferenceStandardRecord>> {
@@ -714,6 +908,46 @@ function filterMockAssets(options: ListAssetOptions = {}): AssetRecord[] {
   });
 }
 
+function filterMockInspections(
+  options: ListInspectionOptions = {}
+): InspectionRecord[] {
+  const normalized = options.search?.trim().toLowerCase();
+  return mockInspections.filter((inspection) => {
+    const matchesStatus =
+      !options.status || inspection.status === options.status;
+    const matchesType =
+      !options.inspectionType ||
+      inspection.inspectionType === options.inspectionType;
+    const matchesAsset =
+      !options.assetId || inspection.assetId === options.assetId;
+    const matchesCustomer =
+      !options.customerId || inspection.customer.id === options.customerId;
+    const matchesSearch =
+      !normalized ||
+      [
+        inspection.asset.assetNumber,
+        inspection.asset.tag,
+        inspection.customer.code,
+        inspection.customer.name,
+        inspection.product.code,
+        inspection.product.name,
+        inspection.inspectorUserId,
+        inspection.reviewerUserId,
+        inspection.result,
+        inspection.status
+      ]
+        .filter(Boolean)
+        .some((value) => value?.toLowerCase().includes(normalized));
+    return (
+      matchesStatus &&
+      matchesType &&
+      matchesAsset &&
+      matchesCustomer &&
+      matchesSearch
+    );
+  });
+}
+
 function filterMockReferenceStandards(
   options: ListReferenceStandardOptions = {}
 ): ReferenceStandardRecord[] {
@@ -789,6 +1023,28 @@ export async function loadAssetsWithFallback(
     return {
       source: "mock",
       total: mockAssets.length,
+      items
+    };
+  }
+}
+
+export async function loadInspectionsWithFallback(
+  options: HmsClientOptions & ListInspectionOptions = {}
+): Promise<InspectionListResult> {
+  try {
+    const client = createHmsClient(options);
+    const response = await client.listInspections(options);
+    return {
+      source: "api",
+      total: response.total,
+      etag: response.etag,
+      items: response.items
+    };
+  } catch {
+    const items = filterMockInspections(options);
+    return {
+      source: "mock",
+      total: mockInspections.length,
       items
     };
   }
