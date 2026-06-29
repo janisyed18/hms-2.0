@@ -250,6 +250,11 @@ button:disabled {
   width: 302px;
   height: 42px;
   padding: 0 11px;
+  gap: 8px;
+}
+
+.global-search-icon {
+  flex: 0 0 auto;
 }
 
 .global-search input,
@@ -266,16 +271,23 @@ button:disabled {
   font-size: 12px;
 }
 
-kbd {
+.search-submit {
   display: inline-grid;
-  min-width: 22px;
-  height: 22px;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
   place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: #f8fafc;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: var(--muted);
-  font-size: 12px;
+}
+
+.search-submit:hover:not(:disabled),
+.search-submit:focus-visible {
+  background: #eaf0f8;
+  color: var(--accent);
 }
 
 .environment-button,

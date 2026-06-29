@@ -572,7 +572,7 @@ describe("App", () => {
     render(<App />);
 
     await user.type(await screen.findByLabelText("Global search"), "certificate");
-    await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("button", { name: "Run global search" }));
     expect(await screen.findByRole("heading", { name: "Certificates" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Environment and source details" }));

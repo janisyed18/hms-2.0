@@ -152,7 +152,7 @@ export function AppShell({
           </div>
           <div className="topbar-actions">
             <form className="global-search" onSubmit={handleGlobalSearch}>
-              <Search aria-hidden="true" size={17} />
+              <Search aria-hidden="true" className="global-search-icon" size={17} />
               <label className="sr-only" htmlFor="global-search-input">
                 Global search
               </label>
@@ -162,7 +162,14 @@ export function AppShell({
                 value={globalQuery}
                 onChange={(event) => setGlobalQuery(event.target.value)}
               />
-              <kbd>/</kbd>
+              <button
+                aria-label="Run global search"
+                className="search-submit"
+                disabled={!globalQuery.trim()}
+                type="submit"
+              >
+                <Search aria-hidden="true" size={15} />
+              </button>
             </form>
             <button
               aria-label="Environment and source details"
