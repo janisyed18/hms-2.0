@@ -16,6 +16,12 @@ from hms_backend.app.modules.customers.models import (
     CustomerContact,
     CustomerLocation,
 )
+from hms_backend.app.modules.inspections.models import (
+    Inspection,
+    InspectionStatus,
+    InspectionType,
+    PressureTestResult,
+)
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Standard
 from hms_backend.app.modules.scheduling.models import RetestSchedule
@@ -56,11 +62,14 @@ async def seed_local_demo_data(
         customers_by_code,
         assets_by_number,
     )
+    await _seed_inspections(session, assets_by_number)
 
     await session.commit()
     return {
         "standards": len(standards_by_code),
         **plan.table_counts,
+        "inspections": await _count(session, Inspection),
+        "pressure_test_results": await _count(session, PressureTestResult),
     }
 
 
@@ -294,6 +303,99 @@ async def _seed_retest_schedules(
             )
 
 
+async def _seed_inspections(
+    session: AsyncSession,
+    assets_by_number: dict[str, Asset],
+) -> None:
+    rows = [
+        {
+            "asset_number": "997950",
+            "inspection_type": InspectionType.SERVICE.value,
+            "status": InspectionStatus.DRAFT.value,
+            "result": "REVIEW",
+            "inspector_user_id": "inspector-1",
+            "pressure_test": {
+                "applied_pressure_kpa": 1500,
+                "hold_time_seconds": 300,
+                "passed": True,
+                "measurements": {"leak": "none"},
+            },
+        },
+        {
+            "asset_number": "980636",
+            "inspection_type": InspectionType.SERVICE.value,
+            "status": InspectionStatus.SUBMITTED.value,
+            "result": "PASS",
+            "inspector_user_id": "inspector-2",
+            "pressure_test": {
+                "applied_pressure_kpa": 1200,
+                "hold_time_seconds": 240,
+                "passed": True,
+                "measurements": {"visual": "ok"},
+            },
+        },
+        {
+            "asset_number": "997950",
+            "inspection_type": InspectionType.NEW_ASSET.value,
+            "status": InspectionStatus.APPROVED.value,
+            "result": "PASS",
+            "inspector_user_id": "inspector-1",
+            "reviewer_user_id": "staff-ui-dev",
+            "pressure_test": None,
+        },
+    ]
+    for index, row in enumerate(rows, start=1):
+        asset = assets_by_number[row["asset_number"]]
+        inspection = await _scalar_one_or_none(
+            session,
+            select(Inspection).where(
+                Inspection.asset_id == asset.id,
+                Inspection.inspection_type == row["inspection_type"],
+                Inspection.status == row["status"],
+                Inspection.inspector_user_id == row["inspector_user_id"],
+            ),
+        )
+        if inspection is None:
+            inspection = Inspection(
+                asset=asset,
+                inspection_type=row["inspection_type"],
+                status=row["status"],
+                result=row["result"],
+                inspector_user_id=row["inspector_user_id"],
+                reviewer_user_id=row.get("reviewer_user_id"),
+                legacy_system="synthetic",
+                legacy_table="inspections",
+                legacy_id=f"inspection-{index}",
+            )
+            session.add(inspection)
+            await record_create(
+                session,
+                inspection,
+                actor_id=SEED_ACTOR_ID,
+                action="inspection.seeded",
+            )
+
+        pressure_payload = row["pressure_test"]
+        pressure_test = await _scalar_one_or_none(
+            session,
+            select(PressureTestResult).where(
+                PressureTestResult.inspection_id == inspection.id,
+            ),
+        )
+        if pressure_payload is not None and pressure_test is None:
+            pressure_test = PressureTestResult(
+                inspection=inspection,
+                **pressure_payload,
+            )
+            session.add(pressure_test)
+            await record_create(
+                session,
+                pressure_test,
+                actor_id=SEED_ACTOR_ID,
+                action="pressure_test_result.seeded",
+            )
+
+
 async def _scalar_one_or_none(session: AsyncSession, statement: Any) -> Any | None:
     result = await session.scalar(statement)
     return result
@@ -316,6 +418,8 @@ async def seed_configured_database() -> SeedSummary:
             "products": await _count(session, Product),
             "assets": await _count(session, Asset),
             "retest_schedules": await _count(session, RetestSchedule),
+            "inspections": await _count(session, Inspection),
+            "pressure_test_results": await _count(session, PressureTestResult),
         }
 
 

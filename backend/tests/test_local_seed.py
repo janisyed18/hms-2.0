@@ -9,6 +9,7 @@ from hms_backend.app.modules.customers.models import (
     CustomerContact,
     CustomerLocation,
 )
+from hms_backend.app.modules.inspections.models import Inspection, PressureTestResult
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Standard
 from hms_backend.app.modules.scheduling.models import RetestSchedule
@@ -39,6 +40,8 @@ async def test_seed_local_demo_data_creates_idempotent_core_records() -> None:
             "products": 2,
             "assets": 2,
             "retest_schedules": 2,
+            "inspections": 3,
+            "pressure_test_results": 2,
         }
         assert await _count(session, Standard) == 2
         assert await _count(session, Customer) == 3
@@ -47,5 +50,7 @@ async def test_seed_local_demo_data_creates_idempotent_core_records() -> None:
         assert await _count(session, Product) == 2
         assert await _count(session, Asset) == 2
         assert await _count(session, RetestSchedule) == 2
+        assert await _count(session, Inspection) == 3
+        assert await _count(session, PressureTestResult) == 2
 
     await engine.dispose()
