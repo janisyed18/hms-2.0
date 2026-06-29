@@ -15,6 +15,8 @@ from hms_backend.app.api.schemas import (
     AssetRead,
     AssetUpdate,
     CertificateCreate,
+    CertificateInspectionSummary,
+    CertificateListResponse,
     CertificateRead,
     CustomerContactCreate,
     CustomerContactRead,
@@ -1022,6 +1024,85 @@ async def issue_certificate(
     return _certificate_read(certificate)
 
 
+@router.get("/certificates", response_model=CertificateListResponse)
+async def list_certificates(
+    session: SessionDep,
+    principal: PrincipalDep,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    asset_id: str | None = None,
+    customer_id: str | None = None,
+    inspection_id: str | None = None,
+    search: str | None = None,
+    sort: str | None = None,
+    limit: LimitParam = 50,
+    offset: OffsetParam = 0,
+) -> CertificateListResponse:
+    _require_asset_read(principal)
+    statement = _certificate_statement()
+    statement = _apply_asset_scope(statement, principal)
+    if status_filter:
+        statement = statement.where(Certificate.status == status_filter)
+    if asset_id:
+        statement = statement.where(Certificate.asset_id == asset_id)
+    if customer_id:
+        statement = statement.where(Asset.customer_id == customer_id)
+    if inspection_id:
+        statement = statement.where(Certificate.inspection_id == inspection_id)
+    if search:
+        search_pattern = f"%{search.lower()}%"
+        statement = statement.where(
+            or_(
+                func.lower(Certificate.number).like(search_pattern),
+                func.lower(Certificate.pdf_object_key).like(search_pattern),
+                func.lower(Certificate.verification_hash).like(search_pattern),
+                func.lower(Certificate.public_token).like(search_pattern),
+                func.lower(Certificate.issued_by_user_id).like(search_pattern),
+                func.lower(Asset.asset_number).like(search_pattern),
+                func.lower(Asset.tag).like(search_pattern),
+                func.lower(Customer.code).like(search_pattern),
+                func.lower(Customer.name).like(search_pattern),
+            )
+        )
+
+    total = await _count(session, statement)
+    statement = _apply_sort(
+        statement,
+        Certificate,
+        sort,
+        frozenset(
+            {
+                "number",
+                "status",
+                "issued_at",
+                "valid_until",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        default="-issued_at",
+    )
+    certificates = (
+        await session.scalars(statement.offset(offset).limit(limit))
+    ).all()
+    return CertificateListResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=[_certificate_read(certificate) for certificate in certificates],
+    )
+
+
+@router.get("/certificates/{certificate_id}", response_model=CertificateRead)
+async def get_certificate(
+    certificate_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CertificateRead:
+    _require_asset_read(principal)
+    certificate = await _get_certificate_or_404(session, certificate_id, principal)
+    return _certificate_read(certificate)
+
+
 @router.get("/products", response_model=ProductListResponse)
 async def list_products(
     session: SessionDep,
@@ -1330,6 +1411,25 @@ def _inspection_statement() -> Select[tuple[Inspection]]:
     )
 
 
+def _certificate_statement() -> Select[tuple[Certificate]]:
+    return (
+        select(Certificate)
+        .join(Certificate.asset)
+        .join(Asset.customer)
+        .join(Certificate.inspection)
+        .options(
+            selectinload(Certificate.asset).selectinload(Asset.customer),
+            selectinload(Certificate.asset).selectinload(Asset.product),
+            selectinload(Certificate.inspection),
+        )
+        .where(
+            Certificate.deleted_at.is_(None),
+            Asset.deleted_at.is_(None),
+            Inspection.deleted_at.is_(None),
+        )
+    )
+
+
 def _apply_asset_scope[StatementT: Select[Any]](
     statement: StatementT,
     principal: Principal,
@@ -1569,6 +1669,22 @@ async def _get_inspection_or_404(
     return inspection
 
 
+async def _get_certificate_or_404(
+    session: AsyncSession,
+    certificate_id: str,
+    principal: Principal,
+) -> Certificate:
+    statement = _certificate_statement().where(Certificate.id == certificate_id)
+    statement = _apply_asset_scope(statement, principal)
+    certificate = (await session.scalars(statement)).first()
+    if certificate is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate not found",
+        )
+    return certificate
+
+
 async def _upsert_pressure_test(
     session: AsyncSession,
     payload: PressureTestWrite,
@@ -1727,6 +1843,30 @@ def _certificate_read(certificate: Certificate) -> CertificateRead:
         public_token=certificate.public_token,
         issued_by_user_id=certificate.issued_by_user_id,
         status=certificate.status,
+        asset=InspectionAssetSummary(
+            id=certificate.asset.id,
+            asset_number=certificate.asset.asset_number,
+            tag=certificate.asset.tag,
+            lifecycle_status=certificate.asset.lifecycle_status,
+        ),
+        customer=CustomerSummary(
+            id=certificate.asset.customer.id,
+            code=certificate.asset.customer.code,
+            name=certificate.asset.customer.name,
+        ),
+        product=ProductSummary(
+            id=certificate.asset.product.id,
+            code=certificate.asset.product.code,
+            name=certificate.asset.product.name,
+            category=certificate.asset.product.category,
+        ),
+        inspection=CertificateInspectionSummary(
+            id=certificate.inspection.id,
+            inspection_type=certificate.inspection.inspection_type,
+            status=certificate.inspection.status,
+            result=certificate.inspection.result,
+            approved_at=certificate.inspection.approved_at,
+        ),
     )
 
 

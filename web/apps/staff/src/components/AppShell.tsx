@@ -21,7 +21,8 @@ export type AppModule =
   | "assets"
   | "products"
   | "reference"
-  | "inspections";
+  | "inspections"
+  | "certificates";
 
 interface AppShellProps {
   activeModule: AppModule;
@@ -39,7 +40,7 @@ const navItems = [
   { label: "Products", icon: Boxes, module: "products" },
   { label: "Reference Data", icon: TableProperties, module: "reference" },
   { label: "Inspections", icon: ClipboardCheck, module: "inspections" },
-  { label: "Certificates", icon: FileCheck2 },
+  { label: "Certificates", icon: FileCheck2, module: "certificates" },
   { label: "Sync Queue", icon: RefreshCcw, badge: "7" },
   { label: "Audit", icon: ShieldCheck }
 ] satisfies Array<{

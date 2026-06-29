@@ -269,3 +269,46 @@ export interface InspectionUpdateValues {
   result: string | null;
   pressureTest: PressureTestValues | null;
 }
+
+export type CertificateStatus = "DRAFT" | "ISSUED" | "SUPERSEDED" | "REVOKED";
+
+export interface CertificateInspectionSummary {
+  id: string;
+  inspectionType: InspectionType;
+  status: InspectionStatus;
+  result: string | null;
+  approvedAt: string | null;
+}
+
+export interface CertificateRecord {
+  id: string;
+  inspectionId: string;
+  assetId: string;
+  number: string;
+  certificateVersion: number;
+  issuedAt: string;
+  validUntil: string | null;
+  pdfObjectKey: string;
+  verificationHash: string;
+  publicToken: string;
+  issuedByUserId: string;
+  status: CertificateStatus;
+  asset: InspectionAssetSummary;
+  customer: RecordSummary;
+  product: AssetProductSummary;
+  inspection: CertificateInspectionSummary;
+  etag?: string | null;
+}
+
+export interface CertificateListResult {
+  source: DataSource;
+  total: number;
+  etag?: string | null;
+  items: CertificateRecord[];
+}
+
+export interface CertificateIssueValues {
+  inspectionId: string;
+  number: string;
+  validUntil: string | null;
+}

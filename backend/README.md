@@ -16,7 +16,7 @@ uv run uvicorn hms_backend.app.main:app --reload
 The seed command uses synthetic HMS-shaped records only. It is idempotent, so it
 can be run more than once against the same local database.
 The seed includes customers, assets, products, retest schedules, inspections,
-and pressure-test examples for local UI verification.
+pressure-test examples, and an issued certificate for local UI verification.
 
 ## Staff UI With Backend Data
 
@@ -29,8 +29,9 @@ npm run dev -- --host 127.0.0.1
 ```
 
 Open `http://127.0.0.1:5173/`. Vite proxies `/api` and `/health` to
-`http://127.0.0.1:8000`, so the staff app loads customers, assets, products, and
-reference standards from the local backend when it is running.
+`http://127.0.0.1:8000`, so the staff app loads customers, assets, products,
+reference standards, inspections, and certificates from the local backend when
+it is running.
 
 Current auth is development header scaffolding. The staff UI sends:
 

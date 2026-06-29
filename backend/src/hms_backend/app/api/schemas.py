@@ -298,6 +298,14 @@ class CertificateCreate(BaseModel):
     valid_until: date | None = None
 
 
+class CertificateInspectionSummary(BaseModel):
+    id: str
+    inspection_type: str
+    status: str
+    result: str | None
+    approved_at: datetime | None
+
+
 class CertificateRead(BaseModel):
     id: str
     inspection_id: str
@@ -311,3 +319,14 @@ class CertificateRead(BaseModel):
     public_token: str
     issued_by_user_id: str
     status: str
+    asset: InspectionAssetSummary
+    customer: CustomerSummary
+    product: ProductSummary
+    inspection: CertificateInspectionSummary
+
+
+class CertificateListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[CertificateRead]

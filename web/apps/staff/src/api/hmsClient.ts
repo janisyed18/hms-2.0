@@ -1,4 +1,5 @@
 import { mockAssets } from "../data/mockAssets";
+import { mockCertificates } from "../data/mockCertificates";
 import {
   makeLocalCustomer,
   mergeMockMetrics,
@@ -15,6 +16,10 @@ import type {
   AssetFormValues,
   AssetRecord,
   AssetProductSummary,
+  CertificateIssueValues,
+  CertificateListResult,
+  CertificateRecord,
+  CertificateStatus,
   CustomerContact,
   CustomerFormValues,
   CustomerListResult,
@@ -185,6 +190,40 @@ interface ApiInspectionList {
   items: ApiInspection[];
 }
 
+interface ApiCertificateInspectionSummary {
+  id: string;
+  inspection_type: InspectionType;
+  status: InspectionStatus;
+  result: string | null;
+  approved_at: string | null;
+}
+
+interface ApiCertificate {
+  id: string;
+  inspection_id: string;
+  asset_id: string;
+  number: string;
+  certificate_version: number;
+  issued_at: string;
+  valid_until: string | null;
+  pdf_object_key: string;
+  verification_hash: string;
+  public_token: string;
+  issued_by_user_id: string;
+  status: CertificateStatus;
+  asset: ApiInspectionAssetSummary;
+  customer: ApiSummary;
+  product: ApiProductSummary;
+  inspection: ApiCertificateInspectionSummary;
+}
+
+interface ApiCertificateList {
+  total: number;
+  limit: number;
+  offset: number;
+  items: ApiCertificate[];
+}
+
 export interface HmsClientOptions {
   baseUrl?: string;
   fetcher?: typeof fetch;
@@ -225,6 +264,17 @@ interface ListInspectionOptions {
   inspectionType?: InspectionType;
   assetId?: string;
   customerId?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}
+
+interface ListCertificateOptions {
+  search?: string;
+  status?: CertificateStatus;
+  assetId?: string;
+  customerId?: string;
+  inspectionId?: string;
   sort?: string;
   limit?: number;
   offset?: number;
@@ -445,6 +495,50 @@ function toInspection(
   );
 }
 
+function toInspectionAssetSummary(
+  asset: ApiInspectionAssetSummary
+): InspectionRecord["asset"] {
+  return {
+    id: asset.id,
+    assetNumber: asset.asset_number,
+    tag: asset.tag,
+    lifecycleStatus: asset.lifecycle_status
+  };
+}
+
+function toCertificate(
+  certificate: ApiCertificate,
+  etag: string | null = null
+): CertificateRecord {
+  return withEtag(
+    {
+      id: certificate.id,
+      inspectionId: certificate.inspection_id,
+      assetId: certificate.asset_id,
+      number: certificate.number,
+      certificateVersion: certificate.certificate_version,
+      issuedAt: certificate.issued_at,
+      validUntil: certificate.valid_until,
+      pdfObjectKey: certificate.pdf_object_key,
+      verificationHash: certificate.verification_hash,
+      publicToken: certificate.public_token,
+      issuedByUserId: certificate.issued_by_user_id,
+      status: certificate.status,
+      asset: toInspectionAssetSummary(certificate.asset),
+      customer: toSummary(certificate.customer),
+      product: toProductSummary(certificate.product),
+      inspection: {
+        id: certificate.inspection.id,
+        inspectionType: certificate.inspection.inspection_type,
+        status: certificate.inspection.status,
+        result: certificate.inspection.result,
+        approvedAt: certificate.inspection.approved_at
+      }
+    },
+    etag
+  );
+}
+
 function pressureTestPayload(
   pressureTest: PressureTestValues | null
 ): Record<string, unknown> | null {
@@ -456,6 +550,25 @@ function pressureTestPayload(
     hold_time_seconds: pressureTest.holdTimeSeconds,
     passed: pressureTest.passed,
     measurements: pressureTest.measurements
+  };
+}
+
+function certificateSlug(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function certificateIssuePayload(values: CertificateIssueValues) {
+  const slug = certificateSlug(values.number);
+  return {
+    number: values.number,
+    pdf_object_key: `certificates/${values.number}.pdf`,
+    verification_hash: `dev-hash-${slug}-${values.inspectionId}`,
+    public_token: `verify-${slug}-${values.inspectionId.slice(0, 8)}`,
+    valid_until: values.validUntil
   };
 }
 
@@ -797,6 +910,41 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toInspection(response.data, response.etag);
     },
 
+    async listCertificates(
+      listOptions: ListCertificateOptions = {}
+    ): Promise<ApiListResult<CertificateRecord>> {
+      const response = await request<ApiCertificateList>("/api/v1/certificates", {}, {
+        limit: listOptions.limit ?? 50,
+        offset: listOptions.offset ?? 0,
+        status: listOptions.status,
+        asset_id: listOptions.assetId,
+        customer_id: listOptions.customerId,
+        inspection_id: listOptions.inspectionId,
+        search: listOptions.search?.trim() || undefined,
+        sort: listOptions.sort
+      });
+      return {
+        total: response.data.total,
+        etag: response.etag,
+        items: response.data.items.map((certificate) =>
+          toCertificate(certificate, response.etag)
+        )
+      };
+    },
+
+    async issueCertificate(
+      values: CertificateIssueValues
+    ): Promise<CertificateRecord> {
+      const response = await request<ApiCertificate>(
+        `/api/v1/inspections/${encodeURIComponent(values.inspectionId)}/certificate`,
+        {
+          method: "POST",
+          body: JSON.stringify(certificateIssuePayload(values))
+        }
+      );
+      return toCertificate(response.data, response.etag);
+    },
+
     async listReferenceStandards(
       listOptions: ListReferenceStandardOptions = {}
     ): Promise<ApiListResult<ReferenceStandardRecord>> {
@@ -948,6 +1096,54 @@ function filterMockInspections(
   });
 }
 
+function filterMockCertificates(
+  options: ListCertificateOptions = {}
+): CertificateRecord[] {
+  const normalized = options.search?.trim().toLowerCase();
+  const filtered = mockCertificates.filter((certificate) => {
+    const matchesStatus =
+      !options.status || certificate.status === options.status;
+    const matchesAsset =
+      !options.assetId || certificate.assetId === options.assetId;
+    const matchesCustomer =
+      !options.customerId || certificate.customer.id === options.customerId;
+    const matchesInspection =
+      !options.inspectionId || certificate.inspectionId === options.inspectionId;
+    const matchesSearch =
+      !normalized ||
+      [
+        certificate.number,
+        certificate.asset.assetNumber,
+        certificate.asset.tag,
+        certificate.customer.code,
+        certificate.customer.name,
+        certificate.product.code,
+        certificate.product.name,
+        certificate.publicToken,
+        certificate.status,
+        certificate.issuedByUserId
+      ]
+        .filter(Boolean)
+        .some((value) => value?.toLowerCase().includes(normalized));
+    return (
+      matchesStatus &&
+      matchesAsset &&
+      matchesCustomer &&
+      matchesInspection &&
+      matchesSearch
+    );
+  });
+  if (options.sort === "number" || options.sort === "-number") {
+    const sorted = [...filtered].sort((left, right) =>
+      left.number.localeCompare(right.number)
+    );
+    return options.sort.startsWith("-") ? sorted.reverse() : sorted;
+  }
+  return [...filtered].sort((left, right) =>
+    right.issuedAt.localeCompare(left.issuedAt)
+  );
+}
+
 function filterMockReferenceStandards(
   options: ListReferenceStandardOptions = {}
 ): ReferenceStandardRecord[] {
@@ -1045,6 +1241,28 @@ export async function loadInspectionsWithFallback(
     return {
       source: "mock",
       total: mockInspections.length,
+      items
+    };
+  }
+}
+
+export async function loadCertificatesWithFallback(
+  options: HmsClientOptions & ListCertificateOptions = {}
+): Promise<CertificateListResult> {
+  try {
+    const client = createHmsClient(options);
+    const response = await client.listCertificates(options);
+    return {
+      source: "api",
+      total: response.total,
+      etag: response.etag,
+      items: response.items
+    };
+  } catch {
+    const items = filterMockCertificates(options);
+    return {
+      source: "mock",
+      total: mockCertificates.length,
       items
     };
   }

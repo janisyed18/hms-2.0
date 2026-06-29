@@ -94,6 +94,54 @@ const apiInspection = {
   }
 };
 
+const apiApprovedInspection = {
+  ...apiInspection,
+  id: "inspection-api-approved-1",
+  status: "APPROVED",
+  result: "PASS",
+  reviewer_user_id: "reviewer-1",
+  approved_at: "2026-06-29T11:00:00Z"
+};
+
+const apiCertificate = {
+  id: "certificate-api-1",
+  inspection_id: "inspection-api-approved-1",
+  asset_id: "asset-api-1",
+  number: "CERT-API-777-1",
+  certificate_version: 1,
+  issued_at: "2026-06-29T12:00:00Z",
+  valid_until: "2027-06-29",
+  pdf_object_key: "certificates/CERT-API-777-1.pdf",
+  verification_hash: "hash-api-777-1",
+  public_token: "public-token-api-777-1",
+  issued_by_user_id: "staff-ui-dev",
+  status: "ISSUED",
+  asset: {
+    id: "asset-api-1",
+    asset_number: "API-777",
+    tag: "HMS-API-777",
+    lifecycle_status: "DUE"
+  },
+  customer: {
+    id: "cust-api-1",
+    code: "VOPA",
+    name: "Vopak API"
+  },
+  product: {
+    id: "product-api-1",
+    code: "API-1000",
+    name: "API Fuel Hose",
+    category: "Composite"
+  },
+  inspection: {
+    id: "inspection-api-approved-1",
+    inspection_type: "SERVICE",
+    status: "APPROVED",
+    result: "PASS",
+    approved_at: "2026-06-29T11:00:00Z"
+  }
+};
+
 const apiStandard = {
   id: "standard-api-1",
   code: "API-STD",
@@ -149,11 +197,27 @@ function routeFetch() {
       });
     }
     if (path.startsWith("/api/v1/inspections")) {
+      if (init?.method === "POST" && path.includes("/certificate")) {
+        return {
+          ok: true,
+          status: 201,
+          headers: new Headers(),
+          json: async () => apiCertificate
+        };
+      }
+      return okJson({
+        total: 2,
+        limit: 50,
+        offset: 0,
+        items: [apiInspection, apiApprovedInspection]
+      });
+    }
+    if (path.startsWith("/api/v1/certificates")) {
       return okJson({
         total: 1,
         limit: 50,
         offset: 0,
-        items: [apiInspection]
+        items: [apiCertificate]
       });
     }
     if (path.startsWith("/api/v1/reference/standards")) {
@@ -275,6 +339,12 @@ describe("App", () => {
     expect(screen.getByRole("table", { name: "Inspection records" })).toHaveTextContent(
       "997950"
     );
+
+    await user.click(screen.getByRole("button", { name: "Certificates" }));
+    expect(await screen.findByRole("heading", { name: "Certificate Management" })).toBeVisible();
+    expect(screen.getByRole("table", { name: "Certificate records" })).toHaveTextContent(
+      "CERT-VOPA-NEW-1"
+    );
   });
 
   it("shows backend-backed rows inside each core-record module", async () => {
@@ -295,7 +365,31 @@ describe("App", () => {
     expect(await screen.findByRole("row", { name: /API Standard/i })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Inspections" }));
-    expect(await screen.findByRole("row", { name: /API-777/i })).toBeVisible();
+    expect((await screen.findAllByRole("row", { name: /API-777/i }))[0]).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Certificates" }));
+    expect(await screen.findByRole("row", { name: /CERT-API-777-1/i })).toBeVisible();
+  });
+
+  it("issues a certificate from an approved inspection in the staff UI", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Certificates" }));
+    await user.click(screen.getByRole("button", { name: "Issue Certificate" }));
+    await user.selectOptions(screen.getByLabelText("Approved inspection"), "inspection-1003");
+    await user.clear(screen.getByLabelText("Certificate number"));
+    await user.type(screen.getByLabelText("Certificate number"), "CERT-VOPA-NEW-2");
+    await user.clear(screen.getByLabelText("Valid until"));
+    await user.type(screen.getByLabelText("Valid until"), "2027-06-29");
+    await user.click(screen.getByRole("button", { name: "Issue certificate" }));
+
+    expect(await screen.findByRole("row", { name: /CERT-VOPA-NEW-2/i })).toBeVisible();
+    expect(screen.getByRole("complementary", { name: "Certificate detail" })).toHaveTextContent(
+      "CERT-VOPA-NEW-2"
+    );
   });
 
   it("creates a draft inspection from the staff UI", async () => {

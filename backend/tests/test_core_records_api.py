@@ -2036,3 +2036,137 @@ async def test_issue_certificate_from_approved_inspection_writes_audit_and_sync(
         assert audit_event.after is not None
         assert audit_event.after["number"] == "CERT-997950-1"
         assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_certificates_endpoint_lists_with_asset_customer_inspection_context(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        vopak_asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        orica_asset = await session.get(Asset, seeded_session["orica_asset_id"])
+        assert vopak_asset is not None
+        assert orica_asset is not None
+        vopak_inspection = Inspection(
+            asset=vopak_asset,
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+            reviewer_user_id="reviewer-1",
+        )
+        orica_inspection = Inspection(
+            asset=orica_asset,
+            inspection_type=InspectionType.NEW_ASSET.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-2",
+            reviewer_user_id="reviewer-1",
+        )
+        session.add_all([vopak_inspection, orica_inspection])
+        await session.flush()
+        session.add_all(
+            [
+                Certificate.issue_from_inspection(
+                    vopak_inspection,
+                    number="CERT-997950-1",
+                    pdf_object_key="certificates/CERT-997950-1.pdf",
+                    verification_hash="hash-997950-1",
+                    public_token="public-token-997950-1",
+                    issued_by_user_id="reviewer-1",
+                    valid_until=date(2027, 6, 28),
+                ),
+                Certificate.issue_from_inspection(
+                    orica_inspection,
+                    number="CERT-ORIC-100-1",
+                    pdf_object_key="certificates/CERT-ORIC-100-1.pdf",
+                    verification_hash="hash-oric-100-1",
+                    public_token="public-token-oric-100-1",
+                    issued_by_user_id="reviewer-1",
+                    valid_until=date(2027, 7, 1),
+                ),
+            ]
+        )
+        await session.commit()
+
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.get(
+            "/api/v1/certificates",
+            params={
+                "customer_id": seeded_session["vopak_id"],
+                "search": "997950",
+                "sort": "-issued_at",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    certificate = body["items"][0]
+    assert certificate["number"] == "CERT-997950-1"
+    assert certificate["asset"]["asset_number"] == "997950"
+    assert certificate["customer"]["code"] == "VOPA"
+    assert certificate["product"]["code"] == "1000GY"
+    assert certificate["inspection"]["inspection_type"] == "SERVICE"
+    assert certificate["inspection"]["result"] == "PASS"
+
+
+@pytest.mark.asyncio
+async def test_certificate_detail_respects_customer_scope(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        assert asset is not None
+        inspection = Inspection(
+            asset=asset,
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+            reviewer_user_id="reviewer-1",
+        )
+        session.add(inspection)
+        await session.flush()
+        certificate = Certificate.issue_from_inspection(
+            inspection,
+            number="CERT-997950-1",
+            pdf_object_key="certificates/CERT-997950-1.pdf",
+            verification_hash="hash-997950-1",
+            public_token="public-token-997950-1",
+            issued_by_user_id="reviewer-1",
+            valid_until=date(2027, 6, 28),
+        )
+        session.add(certificate)
+        await session.commit()
+        certificate_id = certificate.id
+
+    visible_principal = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    hidden_principal = Principal(
+        user_id="customer-user-2",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["orica_id"]}),
+    )
+
+    async with api_client(session_factory, visible_principal) as client:
+        visible_response = await client.get(f"/api/v1/certificates/{certificate_id}")
+
+    async with api_client(session_factory, hidden_principal) as client:
+        hidden_response = await client.get(f"/api/v1/certificates/{certificate_id}")
+
+    assert visible_response.status_code == 200
+    assert visible_response.json()["number"] == "CERT-997950-1"
+    assert visible_response.json()["customer"]["code"] == "VOPA"
+    assert hidden_response.status_code == 404

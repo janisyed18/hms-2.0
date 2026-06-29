@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.core.repository import record_create
 from hms_backend.app.modules.assets.models import Asset
+from hms_backend.app.modules.certificates.models import Certificate
 from hms_backend.app.modules.customers.models import (
     Customer,
     CustomerContact,
@@ -63,6 +64,7 @@ async def seed_local_demo_data(
         assets_by_number,
     )
     await _seed_inspections(session, assets_by_number)
+    await _seed_certificates(session, assets_by_number)
 
     await session.commit()
     return {
@@ -70,6 +72,7 @@ async def seed_local_demo_data(
         **plan.table_counts,
         "inspections": await _count(session, Inspection),
         "pressure_test_results": await _count(session, PressureTestResult),
+        "certificates": await _count(session, Certificate),
     }
 
 
@@ -396,6 +399,48 @@ async def _seed_inspections(
             )
 
 
+async def _seed_certificates(
+    session: AsyncSession,
+    assets_by_number: dict[str, Asset],
+) -> None:
+    asset = assets_by_number["997950"]
+    inspection = await _scalar_one_or_none(
+        session,
+        select(Inspection).where(
+            Inspection.asset_id == asset.id,
+            Inspection.inspection_type == InspectionType.NEW_ASSET.value,
+            Inspection.status == InspectionStatus.APPROVED.value,
+        ),
+    )
+    if inspection is None:
+        return
+
+    existing = await _scalar_one_or_none(
+        session,
+        select(Certificate).where(Certificate.inspection_id == inspection.id),
+    )
+    if existing is not None:
+        return
+
+    inspection.asset = asset
+    certificate = Certificate.issue_from_inspection(
+        inspection,
+        number="CERT-997950-1",
+        pdf_object_key="certificates/CERT-997950-1.pdf",
+        verification_hash="hash-997950-1",
+        public_token="public-token-997950-1",
+        issued_by_user_id="staff-ui-dev",
+        valid_until=date(2027, 6, 29),
+    )
+    session.add(certificate)
+    await record_create(
+        session,
+        certificate,
+        actor_id=SEED_ACTOR_ID,
+        action="certificate.seeded",
+    )
+
+
 async def _scalar_one_or_none(session: AsyncSession, statement: Any) -> Any | None:
     result = await session.scalar(statement)
     return result
@@ -420,6 +465,7 @@ async def seed_configured_database() -> SeedSummary:
             "retest_schedules": await _count(session, RetestSchedule),
             "inspections": await _count(session, Inspection),
             "pressure_test_results": await _count(session, PressureTestResult),
+            "certificates": await _count(session, Certificate),
         }
 
 

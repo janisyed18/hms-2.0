@@ -1259,6 +1259,39 @@ tr.is-selected .row-check {
   font-size: 12px;
 }
 
+.certificate-verification {
+  display: grid;
+  gap: 10px;
+}
+
+.certificate-verification > div {
+  display: grid;
+  grid-template-columns: auto minmax(92px, max-content) minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 48px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.certificate-verification > div:not(:has(svg)) {
+  grid-template-columns: minmax(92px, max-content) minmax(0, 1fr);
+}
+
+.certificate-verification span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.certificate-verification strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #172033;
+  font-size: 12px;
+}
+
 .inspection-detail-form {
   display: grid;
   gap: 12px;

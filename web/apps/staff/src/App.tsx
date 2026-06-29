@@ -3,6 +3,7 @@ import { useState } from "react";
 import { ActivityFeed } from "./components/ActivityFeed";
 import { AppShell, type AppModule } from "./components/AppShell";
 import { AssetsWorkspace } from "./components/AssetsWorkspace";
+import { CertificatesWorkspace } from "./components/CertificatesWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
 import { CustomerForm } from "./components/CustomerForm";
 import { CustomerTable } from "./components/CustomerTable";
@@ -32,6 +33,10 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   inspections: {
     title: "Inspections",
     description: "Manage draft, submitted, and approved inspection workflows"
+  },
+  certificates: {
+    title: "Certificates",
+    description: "Issue and review versioned certificate records"
   }
 };
 
@@ -86,6 +91,7 @@ export default function App() {
             {activeModule === "products" ? <ProductsWorkspace /> : null}
             {activeModule === "reference" ? <ReferenceWorkspace /> : null}
             {activeModule === "inspections" ? <InspectionsWorkspace /> : null}
+            {activeModule === "certificates" ? <CertificatesWorkspace /> : null}
           </div>
         </main>
       )}

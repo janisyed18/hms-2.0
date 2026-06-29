@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from hms_backend.app.models.base import Base
 from hms_backend.app.modules.assets.models import Asset
+from hms_backend.app.modules.certificates.models import Certificate
 from hms_backend.app.modules.customers.models import (
     Customer,
     CustomerContact,
@@ -42,6 +43,7 @@ async def test_seed_local_demo_data_creates_idempotent_core_records() -> None:
             "retest_schedules": 2,
             "inspections": 3,
             "pressure_test_results": 2,
+            "certificates": 1,
         }
         assert await _count(session, Standard) == 2
         assert await _count(session, Customer) == 3
@@ -52,5 +54,6 @@ async def test_seed_local_demo_data_creates_idempotent_core_records() -> None:
         assert await _count(session, RetestSchedule) == 2
         assert await _count(session, Inspection) == 3
         assert await _count(session, PressureTestResult) == 2
+        assert await _count(session, Certificate) == 1
 
     await engine.dispose()
