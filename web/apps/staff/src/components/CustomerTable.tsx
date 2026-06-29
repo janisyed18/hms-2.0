@@ -1,5 +1,7 @@
 import { Download, Filter, Plus, Search } from "lucide-react";
+import { useState } from "react";
 
+import { WorkspaceState } from "./WorkspaceState";
 import type { CustomerRecord } from "../domain/types";
 
 interface CustomerTableProps {
@@ -38,6 +40,21 @@ function inspectionClass(label: string) {
   return "success-text";
 }
 
+function csvCell(value: string) {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+function downloadCsv(filename: string, rows: string[][]) {
+  const csv = rows.map((row) => row.map(csvCell).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export function CustomerTable({
   customers,
   totalCount,
@@ -51,6 +68,28 @@ export function CustomerTable({
   onSelectCustomer,
   onAddCustomer
 }: CustomerTableProps) {
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const exportRows = [
+    [
+      "Customer Name",
+      "Location",
+      "Assets",
+      "Inspection Due",
+      "Certificate Status",
+      "Risk Level",
+      "Last Activity"
+    ],
+    ...customers.map((customer) => [
+      customer.name,
+      locationLabel(customer),
+      String(customer.metrics.assetCount),
+      customer.metrics.inspectionDueLabel,
+      customer.metrics.certificateStatusLabel,
+      customer.riskLevel,
+      customer.lastActivity
+    ])
+  ];
+
   return (
     <section className="table-panel" aria-label="Customer workspace">
       <div className="toolbar">
@@ -105,11 +144,25 @@ export function CustomerTable({
             <option>Review</option>
           </select>
         </label>
-        <button className="secondary-button" type="button">
+        <button
+          aria-expanded={filtersOpen}
+          className="secondary-button"
+          onClick={() => setFiltersOpen((current) => !current)}
+          type="button"
+        >
           <Filter aria-hidden="true" size={16} />
           More Filters
         </button>
       </div>
+
+      {filtersOpen ? (
+        <div className="filter-summary" role="status" aria-label="Customer filter summary">
+          <strong>Active view</strong>
+          <span>Status: {statusFilter}</span>
+          <span>Risk: {riskFilter}</span>
+          <span>Search: {query.trim() || "All customers"}</span>
+        </div>
+      ) : null}
 
       <div className="table-actions">
         <span>{totalCount} customers</span>
@@ -118,7 +171,12 @@ export function CustomerTable({
             <Plus aria-hidden="true" size={17} />
             Add Customer
           </button>
-          <button className="icon-button light" aria-label="Download customer list" type="button">
+          <button
+            className="icon-button light"
+            aria-label="Download customer list"
+            onClick={() => downloadCsv("customers.csv", exportRows)}
+            type="button"
+          >
             <Download size={17} />
           </button>
         </div>
@@ -169,6 +227,15 @@ export function CustomerTable({
                 <td>{customer.lastActivity}</td>
               </tr>
             ))}
+            {customers.length === 0 ? (
+              <tr>
+                <td colSpan={8}>
+                  <WorkspaceState title="No customers found">
+                    Adjust the search text or filters to expand the current view.
+                  </WorkspaceState>
+                </td>
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>

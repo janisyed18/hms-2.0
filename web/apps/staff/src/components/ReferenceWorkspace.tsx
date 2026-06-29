@@ -36,6 +36,7 @@ export function ReferenceWorkspace() {
         columns={standardColumns}
         countLabel={`${workspace.standards.length} standards`}
         emptyLabel="No standards match the current filters."
+        exportRows={(standard) => [standard.code, standard.name, ""]}
         getRowKey={(standard) => standard.id}
         items={workspace.visibleStandards}
         onAction={workspace.openCreate}

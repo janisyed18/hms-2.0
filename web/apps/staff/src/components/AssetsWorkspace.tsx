@@ -73,6 +73,15 @@ export function AssetsWorkspace() {
         columns={assetColumns}
         countLabel={`${workspace.assets.length} assets`}
         emptyLabel="No assets match the current filters."
+        exportRows={(asset) => [
+          asset.assetNumber,
+          asset.customer.name,
+          asset.product.name,
+          asset.lifecycleStatus,
+          asset.nextRetestDueAt ?? "",
+          locationLabel(asset),
+          ""
+        ]}
         getRowKey={(asset) => asset.id}
         items={workspace.visibleAssets}
         onAction={workspace.openCreate}

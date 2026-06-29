@@ -593,4 +593,38 @@ describe("App", () => {
       "Alex Williams"
     );
   });
+
+  it("uses working filter summaries and download actions", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+    const objectUrl = "blob:hms-export";
+    const createObjectURL = vi.fn().mockReturnValue(objectUrl);
+    const revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL,
+      revokeObjectURL
+    });
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Customers" }));
+    await user.click(screen.getByRole("button", { name: "More Filters" }));
+    expect(screen.getByRole("status", { name: "Customer filter summary" })).toHaveTextContent(
+      "Status"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Download customer list" }));
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Certificates" }));
+    await user.click(screen.getByRole("button", { name: "Filters" }));
+    expect(
+      screen.getByRole("status", { name: "Certificate records filter summary" })
+    ).toHaveTextContent("Source");
+
+    await user.click(screen.getByRole("button", { name: "Download Certificate records" }));
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+  });
 });

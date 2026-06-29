@@ -52,6 +52,14 @@ export function ProductsWorkspace() {
         columns={productColumns}
         countLabel={`${workspace.products.length} products`}
         emptyLabel="No products match the current filters."
+        exportRows={(product) => [
+          product.code,
+          product.name,
+          product.category,
+          product.subCategory ?? "",
+          product.standardCode ?? "",
+          ""
+        ]}
         getRowKey={(product) => product.id}
         items={workspace.visibleProducts}
         onAction={workspace.openCreate}

@@ -153,6 +153,15 @@ export function InspectionsWorkspace() {
             columns={columns}
             countLabel={`${workspace.visibleInspections.length} inspections`}
             emptyLabel="No inspections match the current filters."
+            exportRows={(inspection) => [
+              inspection.status,
+              inspection.asset.assetNumber,
+              inspection.customer.name,
+              inspection.inspectionType,
+              inspection.result ?? "",
+              pressureLabel(inspection),
+              ""
+            ]}
             getRowKey={(inspection) => inspection.id}
             items={workspace.visibleInspections}
             onAction={workspace.openCreate}

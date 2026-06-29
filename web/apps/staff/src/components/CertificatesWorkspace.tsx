@@ -149,6 +149,15 @@ export function CertificatesWorkspace() {
             columns={columns}
             countLabel={`${workspace.visibleCertificates.length} certificates`}
             emptyLabel="No certificates match the current filters."
+            exportRows={(certificate) => [
+              certificate.status,
+              certificate.number,
+              certificate.asset.assetNumber,
+              certificate.customer.name,
+              certificate.validUntil ?? "",
+              certificate.publicToken,
+              ""
+            ]}
             getRowKey={(certificate) => certificate.id}
             items={workspace.visibleCertificates}
             onAction={workspace.openCreate}

@@ -1,5 +1,7 @@
 import { Download, Filter, Plus, Search } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+
+import { WorkspaceState } from "./WorkspaceState";
 
 export interface ModuleColumn<TItem> {
   header: string;
@@ -11,6 +13,7 @@ interface ModuleTableProps<TItem> {
   columns: ModuleColumn<TItem>[];
   countLabel: string;
   emptyLabel: string;
+  exportRows: (item: TItem) => string[];
   getRowKey: (item: TItem) => string;
   items: TItem[];
   onAction: () => void;
@@ -22,11 +25,27 @@ interface ModuleTableProps<TItem> {
   tableLabel: string;
 }
 
+function csvCell(value: string) {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+function downloadCsv(filename: string, rows: string[][]) {
+  const csv = rows.map((row) => row.map(csvCell).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export function ModuleTable<TItem>({
   actionLabel,
   columns,
   countLabel,
   emptyLabel,
+  exportRows,
   getRowKey,
   items,
   onAction,
@@ -37,6 +56,9 @@ export function ModuleTable<TItem>({
   source,
   tableLabel
 }: ModuleTableProps<TItem>) {
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const exportData = [columns.map((column) => column.header), ...items.map(exportRows)];
+
   return (
     <section className="table-panel module-panel" aria-label={tableLabel}>
       <div className="toolbar module-toolbar">
@@ -57,11 +79,24 @@ export function ModuleTable<TItem>({
             <option value="mock">Mock data</option>
           </select>
         </label>
-        <button className="secondary-button" type="button">
+        <button
+          aria-expanded={filtersOpen}
+          className="secondary-button"
+          onClick={() => setFiltersOpen((current) => !current)}
+          type="button"
+        >
           <Filter aria-hidden="true" size={16} />
           Filters
         </button>
       </div>
+
+      {filtersOpen ? (
+        <div className="filter-summary" role="status" aria-label={`${tableLabel} filter summary`}>
+          <strong>Active view</strong>
+          <span>Source: {source === "api" ? "Backend" : "Mock data"}</span>
+          <span>Search: {query.trim() || "All records"}</span>
+        </div>
+      ) : null}
 
       <div className="table-actions">
         <span>{countLabel}</span>
@@ -70,7 +105,17 @@ export function ModuleTable<TItem>({
             <Plus aria-hidden="true" size={17} />
             {actionLabel}
           </button>
-          <button className="icon-button light" aria-label={`Download ${tableLabel}`} type="button">
+          <button
+            className="icon-button light"
+            aria-label={`Download ${tableLabel}`}
+            onClick={() =>
+              downloadCsv(
+                `${tableLabel.toLowerCase().replaceAll(" ", "-")}.csv`,
+                exportData
+              )
+            }
+            type="button"
+          >
             <Download size={17} />
           </button>
         </div>
@@ -95,7 +140,9 @@ export function ModuleTable<TItem>({
             ))}
             {items.length === 0 ? (
               <tr>
-                <td colSpan={columns.length}>{emptyLabel}</td>
+                <td colSpan={columns.length}>
+                  <WorkspaceState title="No records found">{emptyLabel}</WorkspaceState>
+                </td>
               </tr>
             ) : null}
           </tbody>
