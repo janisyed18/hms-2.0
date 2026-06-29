@@ -1641,6 +1641,106 @@ async def test_create_service_inspection_with_pressure_test_writes_audit_and_syn
 
 
 @pytest.mark.asyncio
+async def test_inspections_endpoint_lists_with_asset_customer_product_context(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        draft = Inspection(
+            asset_id=seeded_session["vopak_asset_id"],
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.DRAFT.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+        )
+        submitted = Inspection(
+            asset_id=seeded_session["orica_asset_id"],
+            inspection_type=InspectionType.NEW_ASSET.value,
+            status=InspectionStatus.SUBMITTED.value,
+            result="REVIEW",
+            inspector_user_id="inspector-2",
+        )
+        session.add_all([draft, submitted])
+        await session.commit()
+
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.get(
+            "/api/v1/inspections",
+            params={"sort": "created_at"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 2
+    assert body["items"][0]["asset"]["asset_number"] == "997950"
+    assert body["items"][0]["customer"]["code"] == "VOPA"
+    assert body["items"][0]["product"]["code"] == "1000GY"
+    assert body["items"][1]["asset"]["asset_number"] == "ORIC-100"
+    assert body["items"][1]["status"] == InspectionStatus.SUBMITTED.value
+
+
+@pytest.mark.asyncio
+async def test_inspections_endpoint_filters_and_returns_detail(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        inspection = Inspection(
+            asset_id=seeded_session["vopak_asset_id"],
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.SUBMITTED.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+        )
+        session.add(inspection)
+        await session.flush()
+        pressure_test = PressureTestResult(
+            inspection=inspection,
+            applied_pressure_kpa=1500,
+            hold_time_seconds=300,
+            passed=True,
+            measurements={"leak": "none"},
+        )
+        session.add(pressure_test)
+        await session.commit()
+        inspection_id = inspection.id
+
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        list_response = await client.get(
+            "/api/v1/inspections",
+            params={
+                "status": "SUBMITTED",
+                "inspection_type": "SERVICE",
+                "customer_id": seeded_session["vopak_id"],
+                "search": "997",
+            },
+        )
+        detail_response = await client.get(f"/api/v1/inspections/{inspection_id}")
+
+    assert list_response.status_code == 200
+    assert list_response.json()["total"] == 1
+    assert list_response.json()["items"][0]["id"] == inspection_id
+    assert detail_response.status_code == 200
+    detail = detail_response.json()
+    assert detail["id"] == inspection_id
+    assert detail["asset"]["asset_number"] == "997950"
+    assert detail["pressure_test"]["applied_pressure_kpa"] == 1500
+    assert detail["pressure_test"]["measurements"] == {"leak": "none"}
+
+
+@pytest.mark.asyncio
 async def test_submit_and_approve_inspection_transitions_with_audit(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],

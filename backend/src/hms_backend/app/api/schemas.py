@@ -254,6 +254,13 @@ class InspectionCreate(BaseModel):
     pressure_test: PressureTestWrite | None = None
 
 
+class InspectionAssetSummary(BaseModel):
+    id: str
+    asset_number: str
+    tag: str | None
+    lifecycle_status: str
+
+
 class InspectionRead(BaseModel):
     id: str
     asset_id: str
@@ -265,7 +272,17 @@ class InspectionRead(BaseModel):
     submitted_at: datetime | None
     approved_at: datetime | None
     rejected_at: datetime | None
+    asset: InspectionAssetSummary
+    customer: CustomerSummary
+    product: ProductSummary
     pressure_test: PressureTestRead | None
+
+
+class InspectionListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[InspectionRead]
 
 
 class CertificateCreate(BaseModel):

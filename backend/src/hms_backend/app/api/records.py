@@ -27,7 +27,9 @@ from hms_backend.app.api.schemas import (
     CustomerRead,
     CustomerSummary,
     CustomerUpdate,
+    InspectionAssetSummary,
     InspectionCreate,
+    InspectionListResponse,
     InspectionRead,
     LocationSummary,
     LookupListResponse,
@@ -754,6 +756,80 @@ async def create_asset(
     return _asset_read(loaded)
 
 
+@router.get("/inspections", response_model=InspectionListResponse)
+async def list_inspections(
+    session: SessionDep,
+    principal: PrincipalDep,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    inspection_type: str | None = None,
+    asset_id: str | None = None,
+    customer_id: str | None = None,
+    search: str | None = None,
+    sort: str | None = None,
+    limit: LimitParam = 50,
+    offset: OffsetParam = 0,
+) -> InspectionListResponse:
+    _require_asset_read(principal)
+    statement = _inspection_statement()
+    statement = _apply_asset_scope(statement, principal)
+    if status_filter:
+        statement = statement.where(Inspection.status == status_filter)
+    if inspection_type:
+        statement = statement.where(Inspection.inspection_type == inspection_type)
+    if asset_id:
+        statement = statement.where(Inspection.asset_id == asset_id)
+    if customer_id:
+        statement = statement.where(Asset.customer_id == customer_id)
+    if search:
+        search_pattern = f"%{search.lower()}%"
+        statement = statement.where(
+            or_(
+                func.lower(Asset.asset_number).like(search_pattern),
+                func.lower(Asset.tag).like(search_pattern),
+                func.lower(Customer.code).like(search_pattern),
+                func.lower(Customer.name).like(search_pattern),
+                func.lower(Inspection.inspector_user_id).like(search_pattern),
+                func.lower(Inspection.reviewer_user_id).like(search_pattern),
+            )
+        )
+
+    total = await _count(session, statement)
+    statement = _apply_sort(
+        statement,
+        Inspection,
+        sort,
+        frozenset(
+            {
+                "status",
+                "inspection_type",
+                "submitted_at",
+                "approved_at",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        default="-created_at",
+    )
+    inspections = (await session.scalars(statement.offset(offset).limit(limit))).all()
+    return InspectionListResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=[_inspection_read(inspection) for inspection in inspections],
+    )
+
+
+@router.get("/inspections/{inspection_id}", response_model=InspectionRead)
+async def get_inspection(
+    inspection_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionRead:
+    _require_asset_read(principal)
+    inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    return _inspection_read(inspection)
+
+
 @router.post(
     "/assets/{asset_id}/inspections",
     response_model=InspectionRead,
@@ -1195,6 +1271,24 @@ def _asset_statement() -> Select[tuple[Asset]]:
     )
 
 
+def _inspection_statement() -> Select[tuple[Inspection]]:
+    return (
+        select(Inspection)
+        .join(Inspection.asset)
+        .join(Asset.customer)
+        .options(
+            selectinload(Inspection.asset).selectinload(Asset.customer),
+            selectinload(Inspection.asset).selectinload(Asset.product),
+            selectinload(Inspection.pressure_test),
+            selectinload(Inspection.certificate),
+        )
+        .where(
+            Inspection.deleted_at.is_(None),
+            Asset.deleted_at.is_(None),
+        )
+    )
+
+
 def _apply_asset_scope[StatementT: Select[Any]](
     statement: StatementT,
     principal: Principal,
@@ -1423,20 +1517,7 @@ async def _get_inspection_or_404(
     inspection_id: str,
     principal: Principal,
 ) -> Inspection:
-    statement = (
-        select(Inspection)
-        .join(Inspection.asset)
-        .options(
-            selectinload(Inspection.asset),
-            selectinload(Inspection.pressure_test),
-            selectinload(Inspection.certificate),
-        )
-        .where(
-            Inspection.id == inspection_id,
-            Inspection.deleted_at.is_(None),
-            Asset.deleted_at.is_(None),
-        )
-    )
+    statement = _inspection_statement().where(Inspection.id == inspection_id)
     statement = _apply_asset_scope(statement, principal)
     inspection = (await session.scalars(statement)).first()
     if inspection is None:
@@ -1527,6 +1608,23 @@ def _inspection_read(inspection: Inspection) -> InspectionRead:
         submitted_at=inspection.submitted_at,
         approved_at=inspection.approved_at,
         rejected_at=inspection.rejected_at,
+        asset=InspectionAssetSummary(
+            id=inspection.asset.id,
+            asset_number=inspection.asset.asset_number,
+            tag=inspection.asset.tag,
+            lifecycle_status=inspection.asset.lifecycle_status,
+        ),
+        customer=CustomerSummary(
+            id=inspection.asset.customer.id,
+            code=inspection.asset.customer.code,
+            name=inspection.asset.customer.name,
+        ),
+        product=ProductSummary(
+            id=inspection.asset.product.id,
+            code=inspection.asset.product.code,
+            name=inspection.asset.product.name,
+            category=inspection.asset.product.category,
+        ),
         pressure_test=(
             _pressure_test_read(inspection.pressure_test)
             if inspection.pressure_test is not None
