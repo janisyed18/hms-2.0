@@ -15,6 +15,7 @@ dist/
 build/
 node_modules/
 .superpowers/
+.worktrees/
 .angular/
 .nx/
 coverage/
