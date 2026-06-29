@@ -143,7 +143,9 @@ function OperationsHeader({
         <strong className="operations-title">{title}</strong>
         <p>{description}</p>
       </div>
-      <strong>{source === "api" ? "Backend" : "Mock data"}</strong>
+      <strong className={source === "api" ? "source-api" : "source-mock"}>
+        {source === "api" ? "Backend" : "Mock data"}
+      </strong>
     </header>
   );
 }
