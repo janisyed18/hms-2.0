@@ -35,7 +35,7 @@ reference standards from the local backend when it is running.
 Current auth is development header scaffolding. The staff UI sends:
 
 - `X-HMS-User-Id: staff-ui-dev`
-- `X-HMS-Roles: HMS_ADMIN`
+- `X-HMS-Roles: HMS_ADMIN,INSPECTOR,REVIEWER`
 
 Manual API checks can use the same headers:
 

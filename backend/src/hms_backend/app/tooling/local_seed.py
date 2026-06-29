@@ -307,7 +307,7 @@ async def _seed_inspections(
     session: AsyncSession,
     assets_by_number: dict[str, Asset],
 ) -> None:
-    rows = [
+    rows: list[dict[str, Any]] = [
         {
             "asset_number": "997950",
             "inspection_type": InspectionType.SERVICE.value,

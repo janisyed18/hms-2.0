@@ -241,7 +241,7 @@ interface HmsApiResponse<T> {
 
 const defaultIdentity = {
   userId: "staff-ui-dev",
-  roles: "HMS_ADMIN"
+  roles: "HMS_ADMIN,INSPECTOR,REVIEWER"
 };
 
 function withEtag<TRecord extends object>(

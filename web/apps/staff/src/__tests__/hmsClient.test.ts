@@ -176,7 +176,7 @@ describe("hmsClient", () => {
       expect.objectContaining({
         headers: expect.objectContaining({
           "x-hms-user-id": "staff-ui-dev",
-          "x-hms-roles": "HMS_ADMIN"
+          "x-hms-roles": "HMS_ADMIN,INSPECTOR,REVIEWER"
         })
       })
     );
