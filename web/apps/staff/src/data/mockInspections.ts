@@ -75,7 +75,7 @@ export const mockInspections: InspectionRecord[] = [
   },
   {
     id: "inspection-1003",
-    assetId: "asset-1001",
+    assetId: "asset-1003",
     inspectionType: "NEW_ASSET",
     status: "APPROVED",
     result: "PASS",
@@ -85,10 +85,10 @@ export const mockInspections: InspectionRecord[] = [
     approvedAt: "2026-06-28T11:15:00Z",
     rejectedAt: null,
     asset: {
-      id: "asset-1001",
-      assetNumber: "997950",
-      tag: "HMS-997950",
-      lifecycleStatus: "OVERDUE"
+      id: "asset-1003",
+      assetNumber: "VOPA-NEW",
+      tag: "HMS-VOPA-NEW",
+      lifecycleStatus: "IN_SERVICE"
     },
     customer: {
       id: "cust-1005",

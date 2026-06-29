@@ -6,6 +6,7 @@ import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
 import { CustomerForm } from "./components/CustomerForm";
 import { CustomerTable } from "./components/CustomerTable";
+import { InspectionsWorkspace } from "./components/InspectionsWorkspace";
 import { ProductsWorkspace } from "./components/ProductsWorkspace";
 import { ReferenceWorkspace } from "./components/ReferenceWorkspace";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
@@ -27,6 +28,10 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   reference: {
     title: "Reference Data",
     description: "Manage controlled standards and lookup data"
+  },
+  inspections: {
+    title: "Inspections",
+    description: "Manage draft, submitted, and approved inspection workflows"
   }
 };
 
@@ -80,6 +85,7 @@ export default function App() {
             {activeModule === "assets" ? <AssetsWorkspace /> : null}
             {activeModule === "products" ? <ProductsWorkspace /> : null}
             {activeModule === "reference" ? <ReferenceWorkspace /> : null}
+            {activeModule === "inspections" ? <InspectionsWorkspace /> : null}
           </div>
         </main>
       )}

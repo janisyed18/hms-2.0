@@ -57,6 +57,43 @@ const apiAsset = {
   }
 };
 
+const apiInspection = {
+  id: "inspection-api-1",
+  asset_id: "asset-api-1",
+  inspection_type: "SERVICE",
+  status: "DRAFT",
+  result: "REVIEW",
+  inspector_user_id: "inspector-1",
+  reviewer_user_id: null,
+  submitted_at: null,
+  approved_at: null,
+  rejected_at: null,
+  asset: {
+    id: "asset-api-1",
+    asset_number: "API-777",
+    tag: "HMS-API-777",
+    lifecycle_status: "DUE"
+  },
+  customer: {
+    id: "cust-api-1",
+    code: "VOPA",
+    name: "Vopak API"
+  },
+  product: {
+    id: "product-api-1",
+    code: "API-1000",
+    name: "API Fuel Hose",
+    category: "Composite"
+  },
+  pressure_test: {
+    id: "pressure-api-1",
+    applied_pressure_kpa: 1500,
+    hold_time_seconds: 300,
+    passed: true,
+    measurements: { leak: "none" }
+  }
+};
+
 const apiStandard = {
   id: "standard-api-1",
   code: "API-STD",
@@ -109,6 +146,14 @@ function routeFetch() {
         limit: 50,
         offset: 0,
         items: [apiAsset]
+      });
+    }
+    if (path.startsWith("/api/v1/inspections")) {
+      return okJson({
+        total: 1,
+        limit: 50,
+        offset: 0,
+        items: [apiInspection]
       });
     }
     if (path.startsWith("/api/v1/reference/standards")) {
@@ -224,6 +269,12 @@ describe("App", () => {
     expect(
       screen.getByRole("table", { name: "Reference standard records" })
     ).toHaveTextContent("AS2683");
+
+    await user.click(screen.getByRole("button", { name: "Inspections" }));
+    expect(await screen.findByRole("heading", { name: "Inspection Management" })).toBeVisible();
+    expect(screen.getByRole("table", { name: "Inspection records" })).toHaveTextContent(
+      "997950"
+    );
   });
 
   it("shows backend-backed rows inside each core-record module", async () => {
@@ -242,6 +293,72 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Reference Data" }));
     expect(await screen.findByRole("row", { name: /API Standard/i })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Inspections" }));
+    expect(await screen.findByRole("row", { name: /API-777/i })).toBeVisible();
+  });
+
+  it("creates a draft inspection from the staff UI", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Inspections" }));
+    await user.click(screen.getByRole("button", { name: "Add Inspection" }));
+    await user.selectOptions(screen.getByLabelText("Inspection asset"), "asset-1002");
+    await user.selectOptions(screen.getByLabelText("Inspection type"), "NEW_ASSET");
+    await user.selectOptions(screen.getByLabelText("Inspection result"), "PASS");
+    await user.clear(screen.getByLabelText("Applied pressure kPa"));
+    await user.type(screen.getByLabelText("Applied pressure kPa"), "900");
+    await user.clear(screen.getByLabelText("Hold time seconds"));
+    await user.type(screen.getByLabelText("Hold time seconds"), "180");
+    await user.type(screen.getByLabelText("Measurement notes"), "visual=ok");
+    await user.click(screen.getByRole("button", { name: "Save inspection" }));
+
+    const oricRows = await screen.findAllByRole("row", { name: /ORIC-100/i });
+    expect(oricRows[0]).toHaveTextContent("DRAFT");
+  });
+
+  it("edits and submits a draft inspection", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Inspections" }));
+    await user.click(await screen.findByRole("button", { name: "Open inspection 997950" }));
+    await user.clear(screen.getByLabelText("Detail applied pressure kPa"));
+    await user.type(screen.getByLabelText("Detail applied pressure kPa"), "1800");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Submit inspection" }));
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("complementary", { name: "Inspection detail" })).getByText(
+          "SUBMITTED"
+        )
+      ).toBeVisible();
+    });
+  });
+
+  it("approves a submitted inspection from the detail panel", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Inspections" }));
+    await user.click(await screen.findByRole("button", { name: "Open inspection ORIC-100" }));
+    await user.click(screen.getByRole("button", { name: "Approve inspection" }));
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("complementary", { name: "Inspection detail" })).getByText(
+          "APPROVED"
+        )
+      ).toBeVisible();
+    });
   });
 
   it("opens the reference standard drawer and saves a standard", async () => {

@@ -16,7 +16,12 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-export type AppModule = "customers" | "assets" | "products" | "reference";
+export type AppModule =
+  | "customers"
+  | "assets"
+  | "products"
+  | "reference"
+  | "inspections";
 
 interface AppShellProps {
   activeModule: AppModule;
@@ -33,7 +38,7 @@ const navItems = [
   { label: "Assets", icon: Database, module: "assets" },
   { label: "Products", icon: Boxes, module: "products" },
   { label: "Reference Data", icon: TableProperties, module: "reference" },
-  { label: "Inspections", icon: ClipboardCheck },
+  { label: "Inspections", icon: ClipboardCheck, module: "inspections" },
   { label: "Certificates", icon: FileCheck2 },
   { label: "Sync Queue", icon: RefreshCcw, badge: "7" },
   { label: "Audit", icon: ShieldCheck }
