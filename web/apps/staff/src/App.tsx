@@ -8,12 +8,20 @@ import { CustomerDetail } from "./components/CustomerDetail";
 import { CustomerForm } from "./components/CustomerForm";
 import { CustomerTable } from "./components/CustomerTable";
 import { InspectionsWorkspace } from "./components/InspectionsWorkspace";
+import {
+  OperationalWorkspace,
+  type OperationalModule
+} from "./components/OperationalWorkspace";
 import { ProductsWorkspace } from "./components/ProductsWorkspace";
 import { ReferenceWorkspace } from "./components/ReferenceWorkspace";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import "./styles.css";
 
 const moduleCopy: Record<AppModule, { title: string; description: string }> = {
+  dashboard: {
+    title: "Operations Dashboard",
+    description: "Operational snapshot across HMS records and staff workflow queues"
+  },
   customers: {
     title: "Customers",
     description: "Manage customers and view hose management overview"
@@ -37,11 +45,25 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   certificates: {
     title: "Certificates",
     description: "Issue and review versioned certificate records"
+  },
+  sync: {
+    title: "Sync Queue",
+    description: "Review local sync readiness and queued operational events"
+  },
+  audit: {
+    title: "Audit Trail",
+    description: "Review read-only staff activity and record lifecycle events"
   }
 };
 
+const operationalModules = new Set<AppModule>(["dashboard", "sync", "audit"]);
+
+function isOperationalModule(module: AppModule): module is OperationalModule {
+  return operationalModules.has(module);
+}
+
 export default function App() {
-  const [activeModule, setActiveModule] = useState<AppModule>("customers");
+  const [activeModule, setActiveModule] = useState<AppModule>("dashboard");
   const workspace = useCustomerWorkspace();
   const activeCopy = moduleCopy[activeModule];
 
@@ -53,7 +75,13 @@ export default function App() {
       source={workspace.source}
       title={activeCopy.title}
     >
-      {activeModule === "customers" ? (
+      {isOperationalModule(activeModule) ? (
+        <main className="record-page">
+          <div className="record-main">
+            <OperationalWorkspace module={activeModule} source={workspace.source} />
+          </div>
+        </main>
+      ) : activeModule === "customers" ? (
         <>
           <main className="customer-page">
             <div className="customer-main">

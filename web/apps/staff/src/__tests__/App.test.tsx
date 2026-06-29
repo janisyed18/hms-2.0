@@ -234,13 +234,17 @@ describe("App", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the premium staff customer workspace with mock fallback data", async () => {
+  it("renders the operations dashboard first and keeps the customer workspace reachable", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Customers" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Operations Dashboard" })).toBeVisible();
     expect(screen.getByText("Live Environment")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Customers" }));
+
+    expect(await screen.findByRole("heading", { name: "Customers" })).toBeVisible();
     expect(screen.getByText("45 customers")).toBeVisible();
     expect(screen.getByRole("row", { name: /North Sea Drilling Ltd./i })).toBeVisible();
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
@@ -254,6 +258,7 @@ describe("App", () => {
 
     render(<App />);
 
+    await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.click(await screen.findByRole("row", { name: /Bluewater Energy/i }));
 
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
@@ -267,6 +272,7 @@ describe("App", () => {
 
     render(<App />);
 
+    await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.type(await screen.findByLabelText("Search customers"), "arctic");
 
     await waitFor(() => {
@@ -282,6 +288,7 @@ describe("App", () => {
 
     render(<App />);
 
+    await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.click(await screen.findByRole("button", { name: /Add Customer/i }));
     await user.type(screen.getByLabelText("Customer name"), "Summit Marine Group");
     await user.type(screen.getByLabelText("Customer code"), "SMG");
@@ -299,6 +306,7 @@ describe("App", () => {
 
     render(<App />);
 
+    await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.type(await screen.findByLabelText("Search customers"), "arctic");
     await user.click(screen.getByRole("button", { name: /Add Customer/i }));
     await user.type(screen.getByLabelText("Customer name"), "Summit Marine Group");
@@ -315,6 +323,7 @@ describe("App", () => {
 
     render(<App />);
 
+    await user.click(await screen.findByRole("button", { name: "Customers" }));
     await screen.findByRole("heading", { name: "Customers" });
     await user.click(screen.getByRole("button", { name: "Assets" }));
     expect(await screen.findByRole("heading", { name: "Assets" })).toBeVisible();
@@ -353,6 +362,7 @@ describe("App", () => {
 
     render(<App />);
 
+    await user.click(await screen.findByRole("button", { name: "Customers" }));
     expect(await screen.findByRole("row", { name: /Vopak API/i })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Assets" }));
