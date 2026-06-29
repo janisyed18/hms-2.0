@@ -531,4 +531,56 @@ describe("App", () => {
       );
     });
   });
+
+  it("opens dashboard, sync queue, and audit as real shell workspaces", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Dashboard" }));
+    expect(await screen.findByRole("heading", { name: "Operations Dashboard" })).toBeVisible();
+    expect(screen.getByText("Mock data")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: /Sync Queue/i }));
+    expect(await screen.findByRole("heading", { name: "Sync Queue" })).toBeVisible();
+    expect(screen.getByRole("table", { name: "Sync queue items" })).toHaveTextContent(
+      "Certificate issue"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Audit" }));
+    expect(await screen.findByRole("heading", { name: "Audit Trail" })).toBeVisible();
+    expect(screen.getByRole("table", { name: "Audit trail events" })).toHaveTextContent(
+      "Inspection approved"
+    );
+  });
+
+  it("opens topbar menus and applies global search navigation", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.type(await screen.findByLabelText("Global search"), "certificate");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("heading", { name: "Certificates" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Environment and source details" }));
+    expect(screen.getByRole("dialog", { name: "Environment details" })).toHaveTextContent(
+      "Demo mode"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Notifications" }));
+    expect(screen.getByRole("dialog", { name: "Notifications" })).toHaveTextContent(
+      "Inspection approval"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Help" }));
+    expect(screen.getByRole("dialog", { name: "Help" })).toHaveTextContent("Support");
+
+    await user.click(screen.getByRole("button", { name: "User menu" }));
+    expect(screen.getByRole("dialog", { name: "User menu" })).toHaveTextContent(
+      "Alex Williams"
+    );
+  });
 });
