@@ -606,10 +606,46 @@ describe("App", () => {
 
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Analytics" }));
+    await user.click(await screen.findByRole("button", { name: /Retest Schedule/i }));
 
-    expect(await screen.findByRole("heading", { name: "Analytics" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Retest Schedule" })).toBeVisible();
     expect(screen.getByText("This workspace is not available yet.")).toBeVisible();
+  });
+
+  it("opens analytics, users, and devices as implemented console workspaces", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Analytics" }));
+    expect(await screen.findByRole("heading", { name: "Analytics" })).toBeVisible();
+    expect(screen.getByText("Fleet Health Trend")).toBeVisible();
+    expect(screen.getByText("Retest Risk by Customer")).toBeVisible();
+    expect(screen.getByRole("table", { name: "Risk ranking" })).toHaveTextContent(
+      "North Sea Drilling"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Users & Roles" }));
+    expect(await screen.findByRole("heading", { name: "Users & Roles" })).toBeVisible();
+    expect(screen.getByText("Role Matrix")).toBeVisible();
+    expect(screen.getByRole("table", { name: "User access records" })).toHaveTextContent(
+      "James Mitchell"
+    );
+    expect(screen.getByRole("table", { name: "User access records" })).toHaveTextContent(
+      "HMS Admin"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Devices" }));
+    expect(await screen.findByRole("heading", { name: "Devices" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Registered Devices" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Sync Health" })).toBeVisible();
+    expect(screen.getByRole("table", { name: "Device records" })).toHaveTextContent(
+      "Field Tablet 01"
+    );
+    expect(screen.getByRole("table", { name: "Device records" })).toHaveTextContent(
+      "Offline Ready"
+    );
   });
 
   it("opens topbar menus and applies global search navigation", async () => {

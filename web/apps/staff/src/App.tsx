@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { ActivityFeed } from "./components/ActivityFeed";
+import { AnalyticsWorkspace } from "./components/AnalyticsWorkspace";
 import { AppShell, type AppModule } from "./components/AppShell";
 import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CertificatesWorkspace } from "./components/CertificatesWorkspace";
@@ -14,6 +15,10 @@ import {
 } from "./components/OperationalWorkspace";
 import { ProductsWorkspace } from "./components/ProductsWorkspace";
 import { ReferenceWorkspace } from "./components/ReferenceWorkspace";
+import {
+  SystemWorkspace,
+  type SystemModule
+} from "./components/SystemWorkspace";
 import { WorkspaceState } from "./components/WorkspaceState";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import "./styles.css";
@@ -74,10 +79,14 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
 };
 
 const operationalModules = new Set<AppModule>(["dashboard", "sync", "audit"]);
-const unavailableModules = new Set<AppModule>(["analytics", "retest", "users", "devices"]);
+const unavailableModules = new Set<AppModule>(["retest"]);
 
 function isOperationalModule(module: AppModule): module is OperationalModule {
   return operationalModules.has(module);
+}
+
+function isSystemModule(module: AppModule): module is SystemModule {
+  return module === "users" || module === "devices";
 }
 
 export default function App() {
@@ -142,10 +151,16 @@ export default function App() {
         <main className="record-page">
           <div className="record-main">
             {activeModule === "assets" ? <AssetsWorkspace /> : null}
+            {activeModule === "analytics" ? (
+              <AnalyticsWorkspace source={workspace.source} />
+            ) : null}
             {activeModule === "products" ? <ProductsWorkspace /> : null}
             {activeModule === "reference" ? <ReferenceWorkspace /> : null}
             {activeModule === "inspections" ? <InspectionsWorkspace /> : null}
             {activeModule === "certificates" ? <CertificatesWorkspace /> : null}
+            {isSystemModule(activeModule) ? (
+              <SystemWorkspace module={activeModule} source={workspace.source} />
+            ) : null}
           </div>
         </main>
       )}
