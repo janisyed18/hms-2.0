@@ -240,13 +240,26 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Operations Dashboard" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
+    expect(screen.getByText("Overview")).toBeVisible();
+    expect(screen.getByText("Operations")).toBeVisible();
+    expect(screen.getByText("Management")).toBeVisible();
+    expect(screen.getByText("System")).toBeVisible();
     expect(screen.getByText("Live Environment")).toBeVisible();
+    expect(screen.getByRole("button", { name: "New Asset" })).toBeVisible();
+    expect(screen.getByText("Total Assets")).toBeVisible();
+    expect(screen.getByText("In Service")).toBeVisible();
+    expect(screen.getByText("Overdue Retests")).toBeVisible();
+    expect(screen.getByText("Fleet Health")).toBeVisible();
+    expect(screen.getByText("Due This Week")).toBeVisible();
+    expect(screen.getByText("Awaiting Review")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Customers" }));
 
-    expect(await screen.findByRole("heading", { name: "Customers" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Customer Management" })).toBeVisible();
     expect(screen.getByText("45 customers")).toBeVisible();
-    expect(screen.getByRole("row", { name: /North Sea Drilling Ltd./i })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Select customer North Sea Drilling Ltd./i })
+    ).toBeVisible();
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
       "North Sea Drilling Ltd."
     );
@@ -259,7 +272,9 @@ describe("App", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
-    await user.click(await screen.findByRole("row", { name: /Bluewater Energy/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /Select customer Bluewater Energy/i })
+    );
 
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
       "Bluewater Energy"
@@ -276,9 +291,12 @@ describe("App", () => {
     await user.type(await screen.findByLabelText("Search customers"), "arctic");
 
     await waitFor(() => {
-      const table = screen.getByRole("table", { name: "Customer records" });
-      expect(within(table).getByText("Arctic Offshore AS")).toBeVisible();
-      expect(within(table).queryByText("North Sea Drilling Ltd.")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /Select customer Arctic Offshore AS/i })
+      ).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: /Select customer North Sea Drilling Ltd./i })
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -294,7 +312,9 @@ describe("App", () => {
     await user.type(screen.getByLabelText("Customer code"), "SMG");
     await user.click(screen.getByRole("button", { name: "Save customer" }));
 
-    expect(await screen.findByRole("row", { name: /Summit Marine Group/i })).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: /Select customer Summit Marine Group/i })
+    ).toBeVisible();
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
       "Summit Marine Group"
     );
@@ -313,7 +333,9 @@ describe("App", () => {
     await user.type(screen.getByLabelText("Customer code"), "SMG");
     await user.click(screen.getByRole("button", { name: "Save customer" }));
 
-    expect(await screen.findByRole("row", { name: /Summit Marine Group/i })).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: /Select customer Summit Marine Group/i })
+    ).toBeVisible();
     expect(screen.getByLabelText("Search customers")).toHaveValue("");
   });
 
@@ -324,9 +346,15 @@ describe("App", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
-    await screen.findByRole("heading", { name: "Customers" });
+    await screen.findByRole("heading", { name: "Customer Management" });
     await user.click(screen.getByRole("button", { name: "Assets" }));
-    expect(await screen.findByRole("heading", { name: "Assets" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
+    expect(screen.getByRole("table", { name: "Asset records" })).toHaveTextContent(
+      "Asset ID"
+    );
+    expect(screen.getByRole("table", { name: "Asset records" })).toHaveTextContent(
+      "End A / End B"
+    );
     expect(screen.getByRole("table", { name: "Asset records" })).toHaveTextContent(
       "997950"
     );
@@ -345,12 +373,17 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Inspections" }));
     expect(await screen.findByRole("heading", { name: "Inspection Management" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: /Submitted/i })).toBeVisible();
     expect(screen.getByRole("table", { name: "Inspection records" })).toHaveTextContent(
       "997950"
+    );
+    expect(screen.getByRole("table", { name: "Inspection records" })).toHaveTextContent(
+      "Pressure Test"
     );
 
     await user.click(screen.getByRole("button", { name: "Certificates" }));
     expect(await screen.findByRole("heading", { name: "Certificate Management" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "All Certificates" })).toBeVisible();
     expect(screen.getByRole("table", { name: "Certificate records" })).toHaveTextContent(
       "CERT-VOPA-NEW-1"
     );
@@ -363,7 +396,9 @@ describe("App", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
-    expect(await screen.findByRole("row", { name: /Vopak API/i })).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: /Select customer Vopak API/i })
+    ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Assets" }));
     expect(await screen.findByRole("row", { name: /API-777/i })).toBeVisible();
@@ -549,7 +584,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Dashboard" }));
-    expect(await screen.findByRole("heading", { name: "Operations Dashboard" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
     expect(screen.getByText("Mock data")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: /Sync Queue/i }));
@@ -558,11 +593,23 @@ describe("App", () => {
       "Certificate issue"
     );
 
-    await user.click(screen.getByRole("button", { name: "Audit" }));
+    await user.click(screen.getByRole("button", { name: "Audit Log" }));
     expect(await screen.findByRole("heading", { name: "Audit Trail" })).toBeVisible();
     expect(screen.getByRole("table", { name: "Audit trail events" })).toHaveTextContent(
       "Inspection approved"
     );
+  });
+
+  it("routes unavailable console modules to a clean empty state", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Analytics" }));
+
+    expect(await screen.findByRole("heading", { name: "Analytics" })).toBeVisible();
+    expect(screen.getByText("This workspace is not available yet.")).toBeVisible();
   });
 
   it("opens topbar menus and applies global search navigation", async () => {
@@ -573,7 +620,7 @@ describe("App", () => {
 
     await user.type(await screen.findByLabelText("Global search"), "certificate");
     await user.click(screen.getByRole("button", { name: "Run global search" }));
-    expect(await screen.findByRole("heading", { name: "Certificates" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Certificate Management" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Environment and source details" }));
     expect(screen.getByRole("dialog", { name: "Environment details" })).toHaveTextContent(
