@@ -10,10 +10,11 @@ import {
 import type { CertificateRecord } from "../domain/types";
 
 const statusFilters: Array<{ label: string; value: CertificateStatusFilter }> = [
-  { label: "All", value: "ALL" },
-  { label: "Issued", value: "ISSUED" },
+  { label: "All Certificates", value: "ALL" },
+  { label: "Pending Issue", value: "DRAFT" },
   { label: "Superseded", value: "SUPERSEDED" },
-  { label: "Revoked", value: "REVOKED" }
+  { label: "Revoked", value: "REVOKED" },
+  { label: "Issued", value: "ISSUED" }
 ];
 
 function statusClass(status: string) {
@@ -102,7 +103,7 @@ export function CertificatesWorkspace() {
       <div className="inspection-dashboard">
         <div className="inspection-dashboard-heading">
           <div>
-            <h2>Certificate Management</h2>
+            <h2>Certificate Queue</h2>
             <p>Issue and review versioned certificates for approved inspections.</p>
           </div>
         </div>
@@ -128,12 +129,14 @@ export function CertificatesWorkspace() {
             <strong>{tokenCount}</strong>
           </div>
         </div>
-        <div className="inspection-filter-tabs" aria-label="Certificate status filters">
+        <div className="inspection-filter-tabs" role="tablist" aria-label="Certificate status filters">
           {statusFilters.map((filter) => (
             <button
+              aria-selected={workspace.statusFilter === filter.value}
               className={workspace.statusFilter === filter.value ? "is-active" : ""}
               key={filter.value}
               onClick={() => workspace.setStatusFilter(filter.value)}
+              role="tab"
               type="button"
             >
               {filter.label}

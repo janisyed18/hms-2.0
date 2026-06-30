@@ -20,11 +20,22 @@ function statusClass(status: string) {
   return "mini-status current";
 }
 
+function boreLabel(_asset: AssetRecord) {
+  return "Not recorded";
+}
+
+function endLabel(asset: AssetRecord) {
+  if (asset.customerSerialNo) {
+    return `${asset.customerSerialNo} / Not recorded`;
+  }
+  return "Not recorded";
+}
+
 export function AssetsWorkspace() {
   const workspace = useAssetsWorkspace();
   const assetColumns: ModuleColumn<AssetRecord>[] = [
     {
-      header: "Asset",
+      header: "Asset ID",
       render: (asset) => <strong>{asset.assetNumber}</strong>
     },
     {
@@ -36,20 +47,28 @@ export function AssetsWorkspace() {
       render: (asset) => asset.product.name
     },
     {
-      header: "Status",
+      header: "Bore",
+      render: boreLabel
+    },
+    {
+      header: "End A / End B",
+      render: endLabel
+    },
+    {
+      header: "Location",
+      render: locationLabel
+    },
+    {
+      header: "Retest Due",
+      render: (asset) => asset.nextRetestDueAt ?? "Not scheduled"
+    },
+    {
+      header: "Lifecycle",
       render: (asset) => (
         <span className={statusClass(asset.lifecycleStatus)}>
           {asset.lifecycleStatus.replace("_", " ")}
         </span>
       )
-    },
-    {
-      header: "Next Retest",
-      render: (asset) => asset.nextRetestDueAt ?? "Not scheduled"
-    },
-    {
-      header: "Location",
-      render: locationLabel
     },
     {
       header: "Actions",
@@ -77,9 +96,11 @@ export function AssetsWorkspace() {
           asset.assetNumber,
           asset.customer.name,
           asset.product.name,
-          asset.lifecycleStatus,
-          asset.nextRetestDueAt ?? "",
+          boreLabel(asset),
+          endLabel(asset),
           locationLabel(asset),
+          asset.nextRetestDueAt ?? "",
+          asset.lifecycleStatus,
           ""
         ]}
         getRowKey={(asset) => asset.id}

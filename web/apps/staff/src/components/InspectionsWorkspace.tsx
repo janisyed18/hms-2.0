@@ -16,9 +16,10 @@ import type { InspectionRecord } from "../domain/types";
 
 const statusFilters: Array<{ label: string; value: InspectionStatusFilter }> = [
   { label: "All", value: "ALL" },
-  { label: "Draft", value: "DRAFT" },
   { label: "Submitted", value: "SUBMITTED" },
-  { label: "Approved", value: "APPROVED" }
+  { label: "Approved", value: "APPROVED" },
+  { label: "Rejected", value: "REJECTED" },
+  { label: "Draft", value: "DRAFT" }
 ];
 
 function statusClass(status: string) {
@@ -58,14 +59,6 @@ export function InspectionsWorkspace() {
 
   const columns: ModuleColumn<InspectionRecord>[] = [
     {
-      header: "Status",
-      render: (inspection) => (
-        <span className={statusClass(inspection.status)}>
-          {inspection.status}
-        </span>
-      )
-    },
-    {
       header: "Asset",
       render: (inspection) => <strong>{inspection.asset.assetNumber}</strong>
     },
@@ -82,8 +75,16 @@ export function InspectionsWorkspace() {
       render: (inspection) => inspection.result ?? "Pending"
     },
     {
-      header: "Pressure",
+      header: "Pressure Test",
       render: pressureLabel
+    },
+    {
+      header: "Status",
+      render: (inspection) => (
+        <span className={statusClass(inspection.status)}>
+          {inspection.status}
+        </span>
+      )
     },
     {
       header: "Actions",
@@ -106,7 +107,7 @@ export function InspectionsWorkspace() {
       <div className="inspection-dashboard">
         <div className="inspection-dashboard-heading">
           <div>
-            <h2>Inspection Management</h2>
+            <h2>Inspection Queue</h2>
             <p>Review draft inspections, pressure tests, and approval readiness.</p>
           </div>
         </div>
@@ -132,12 +133,14 @@ export function InspectionsWorkspace() {
             <strong>{attentionCount}</strong>
           </div>
         </div>
-        <div className="inspection-filter-tabs" aria-label="Inspection status filters">
+        <div className="inspection-filter-tabs" role="tablist" aria-label="Inspection status filters">
           {statusFilters.map((filter) => (
             <button
+              aria-selected={workspace.statusFilter === filter.value}
               className={workspace.statusFilter === filter.value ? "is-active" : ""}
               key={filter.value}
               onClick={() => workspace.setStatusFilter(filter.value)}
+              role="tab"
               type="button"
             >
               {filter.label}

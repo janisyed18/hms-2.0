@@ -18,7 +18,8 @@ import {
   Smartphone,
   TableProperties,
   UserCog,
-  UsersRound
+  UsersRound,
+  type LucideIcon
 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
 
@@ -39,6 +40,13 @@ export type AppModule =
 
 type TopbarMenu = "environment" | "notifications" | "help" | "user";
 
+interface NavItem {
+  label: string;
+  icon: LucideIcon;
+  module: AppModule;
+  badge?: string;
+}
+
 interface AppShellProps {
   activeModule: AppModule;
   children: ReactNode;
@@ -48,7 +56,7 @@ interface AppShellProps {
   title: string;
 }
 
-const navGroups = [
+const navGroups: Array<{ label: string; items: NavItem[] }> = [
   {
     label: "Overview",
     items: [
@@ -82,15 +90,7 @@ const navGroups = [
       { label: "Audit Log", icon: FileClock, module: "audit" }
     ]
   }
-] satisfies Array<{
-  label: string;
-  items: Array<{
-  label: string;
-  icon: typeof LayoutDashboard;
-  module: AppModule;
-  badge?: string;
-  }>;
-}>;
+];
 
 const navItems = navGroups.flatMap((group) => group.items);
 
@@ -188,7 +188,11 @@ export function AppShell({
                   >
                     <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
                     <span>{item.label}</span>
-                    {item.badge ? <span className="nav-badge">{item.badge}</span> : null}
+                    {item.badge ? (
+                      <span aria-hidden="true" className="nav-badge">
+                        {item.badge}
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}

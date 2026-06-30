@@ -40,6 +40,16 @@ function inspectionClass(label: string) {
   return "success-text";
 }
 
+function inspectionShortLabel(label: string) {
+  if (label.includes("Overdue")) {
+    return "Overdue";
+  }
+  if (label.includes("Due")) {
+    return "Due";
+  }
+  return "Current";
+}
+
 function csvCell(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
 }
@@ -91,8 +101,8 @@ export function CustomerTable({
   ];
 
   return (
-    <section className="table-panel" aria-label="Customer workspace">
-      <div className="toolbar">
+    <section className="customer-console" aria-label="Customer workspace">
+      <div className="customer-console-toolbar">
         <label className="field search-field">
           <Search aria-hidden="true" size={17} />
           <span className="sr-only">Search customers</span>
@@ -103,47 +113,6 @@ export function CustomerTable({
             onChange={(event) => onQueryChange(event.target.value)}
           />
         </label>
-        <label className="field select-field">
-          <span>Status</span>
-          <select
-            value={statusFilter}
-            onChange={(event) => onStatusFilterChange(event.target.value)}
-          >
-            <option>All</option>
-            <option>Active</option>
-            <option>Review</option>
-            <option>Paused</option>
-          </select>
-        </label>
-        <label className="field select-field">
-          <span>Risk Level</span>
-          <select
-            value={riskFilter}
-            onChange={(event) => onRiskFilterChange(event.target.value)}
-          >
-            <option>All</option>
-            <option>High</option>
-            <option>Medium</option>
-            <option>Low</option>
-          </select>
-        </label>
-        <label className="field select-field">
-          <span>Inspection Due</span>
-          <select defaultValue="All">
-            <option>All</option>
-            <option>Overdue</option>
-            <option>Due Soon</option>
-            <option>Current</option>
-          </select>
-        </label>
-        <label className="field select-field">
-          <span>Certificate Status</span>
-          <select defaultValue="All">
-            <option>All</option>
-            <option>Valid</option>
-            <option>Review</option>
-          </select>
-        </label>
         <button
           aria-expanded={filtersOpen}
           className="secondary-button"
@@ -153,104 +122,98 @@ export function CustomerTable({
           <Filter aria-hidden="true" size={16} />
           More Filters
         </button>
+        <button
+          className="icon-button light"
+          aria-label="Download customer list"
+          onClick={() => downloadCsv("customers.csv", exportRows)}
+          type="button"
+        >
+          <Download size={17} />
+        </button>
+        <button className="primary-button" type="button" onClick={onAddCustomer}>
+          <Plus aria-hidden="true" size={17} />
+          Add Customer
+        </button>
       </div>
 
       {filtersOpen ? (
-        <div className="filter-summary" role="status" aria-label="Customer filter summary">
+        <div className="filter-summary customer-filter-summary" role="status" aria-label="Customer filter summary">
           <strong>Active view</strong>
-          <span>Status: {statusFilter}</span>
-          <span>Risk: {riskFilter}</span>
+          <label className="field select-field">
+            <span>Status</span>
+            <select
+              value={statusFilter}
+              onChange={(event) => onStatusFilterChange(event.target.value)}
+            >
+              <option>All</option>
+              <option>Active</option>
+              <option>Review</option>
+              <option>Paused</option>
+            </select>
+          </label>
+          <label className="field select-field">
+            <span>Risk</span>
+            <select
+              value={riskFilter}
+              onChange={(event) => onRiskFilterChange(event.target.value)}
+            >
+              <option>All</option>
+              <option>High</option>
+              <option>Medium</option>
+              <option>Low</option>
+            </select>
+          </label>
           <span>Search: {query.trim() || "All customers"}</span>
         </div>
       ) : null}
 
-      <div className="table-actions">
+      <div className="customer-count-row">
         <span>{totalCount} customers</span>
-        <div>
-          <button className="primary-button" type="button" onClick={onAddCustomer}>
-            <Plus aria-hidden="true" size={17} />
-            Add Customer
-          </button>
-          <button
-            className="icon-button light"
-            aria-label="Download customer list"
-            onClick={() => downloadCsv("customers.csv", exportRows)}
-            type="button"
-          >
-            <Download size={17} />
-          </button>
-        </div>
       </div>
 
-      <div className="table-frame">
-        <table aria-label="Customer records">
-          <thead>
-            <tr>
-              <th aria-label="Select row" />
-              <th>Customer Name</th>
-              <th>Location</th>
-              <th>Assets</th>
-              <th>Inspection Due</th>
-              <th>Certificate Status</th>
-              <th>Risk Level</th>
-              <th>Last Activity</th>
-            </tr>
-          </thead>
-          <tbody>
-            {customers.map((customer) => (
-              <tr
-                className={customer.id === selectedId ? "is-selected" : ""}
-                key={customer.id}
-                tabIndex={0}
-                onClick={() => onSelectCustomer(customer.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    onSelectCustomer(customer.id);
-                  }
-                }}
-              >
-                <td>
-                  <span className="row-check" aria-hidden="true" />
-                </td>
-                <td>
-                  <strong>{customer.name}</strong>
-                </td>
-                <td>{locationLabel(customer)}</td>
-                <td>{customer.metrics.assetCount}</td>
-                <td className={inspectionClass(customer.metrics.inspectionDueLabel)}>
-                  {customer.metrics.inspectionDueLabel}
-                </td>
-                <td className="success-text">{customer.metrics.certificateStatusLabel}</td>
-                <td>
-                  <span className={riskClass(customer.riskLevel)}>{customer.riskLevel}</span>
-                </td>
-                <td>{customer.lastActivity}</td>
-              </tr>
-            ))}
-            {customers.length === 0 ? (
-              <tr>
-                <td colSpan={8}>
-                  <WorkspaceState title="No customers found">
-                    Adjust the search text or filters to expand the current view.
-                  </WorkspaceState>
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
+      <div className="customer-card-grid">
+        {customers.map((customer) => (
+          <button
+            aria-label={`Select customer ${customer.name}`}
+            className={`customer-card${customer.id === selectedId ? " is-selected" : ""}`}
+            key={customer.id}
+            onClick={() => onSelectCustomer(customer.id)}
+            type="button"
+          >
+            <span className="customer-card-top">
+              <span className="customer-avatar">{customer.code.slice(0, 2)}</span>
+              <span className={`status-pill status-${customer.status.toLowerCase()}`}>
+                {customer.status}
+              </span>
+            </span>
+            <span className="customer-name">{customer.name}</span>
+            <span className="customer-code">{customer.code}</span>
+            <span className="customer-location">{locationLabel(customer)}</span>
+            <span className="customer-metrics">
+              <span>
+                <strong>{customer.metrics.assetCount}</strong>
+                <small>Assets</small>
+              </span>
+              <span>
+                <strong className={inspectionClass(customer.metrics.inspectionDueLabel)}>
+                  {customer.metrics.inspectionDueCount}
+                </strong>
+                <small>{inspectionShortLabel(customer.metrics.inspectionDueLabel)}</small>
+              </span>
+              <span>
+                <strong>{customer.locations.length}</strong>
+                <small>{customer.locations.length === 1 ? "Site" : "Sites"}</small>
+              </span>
+            </span>
+            <span className={riskClass(customer.riskLevel)}>{customer.riskLevel} Risk</span>
+          </button>
+        ))}
       </div>
-      <div className="pagination">
-        <span>Rows per page</span>
-        <button type="button">10</button>
-        <nav aria-label="Customer pages">
-          <button className="is-active" type="button">1</button>
-          <button type="button">2</button>
-          <button type="button">3</button>
-          <button type="button">4</button>
-          <button type="button">5</button>
-        </nav>
-        <span>1-10 of {totalCount}</span>
-      </div>
+      {customers.length === 0 ? (
+        <WorkspaceState title="No customers found">
+          Adjust the search text or filters to expand the current view.
+        </WorkspaceState>
+      ) : null}
     </section>
   );
 }
