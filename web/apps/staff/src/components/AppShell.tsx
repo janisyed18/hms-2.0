@@ -1,31 +1,41 @@
 import {
+  BarChart3,
   Bell,
   Boxes,
+  CalendarClock,
   ChevronDown,
   ClipboardCheck,
   Database,
+  FileClock,
   FileCheck2,
   HelpCircle,
   LayoutDashboard,
-  Menu,
+  LogOut,
+  Plus,
   RefreshCcw,
   Search,
   ShieldCheck,
+  Smartphone,
   TableProperties,
+  UserCog,
   UsersRound
 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
 
 export type AppModule =
   | "dashboard"
+  | "analytics"
   | "customers"
   | "assets"
   | "products"
   | "reference"
   | "inspections"
   | "certificates"
+  | "retest"
   | "sync"
-  | "audit";
+  | "audit"
+  | "users"
+  | "devices";
 
 type TopbarMenu = "environment" | "notifications" | "help" | "user";
 
@@ -38,22 +48,51 @@ interface AppShellProps {
   title: string;
 }
 
-const navItems = [
-  { label: "Dashboard", icon: LayoutDashboard, module: "dashboard" },
-  { label: "Customers", icon: UsersRound, module: "customers" },
-  { label: "Assets", icon: Database, module: "assets" },
-  { label: "Products", icon: Boxes, module: "products" },
-  { label: "Reference Data", icon: TableProperties, module: "reference" },
-  { label: "Inspections", icon: ClipboardCheck, module: "inspections" },
-  { label: "Certificates", icon: FileCheck2, module: "certificates" },
-  { label: "Sync Queue", icon: RefreshCcw, module: "sync", badge: "7" },
-  { label: "Audit", icon: ShieldCheck, module: "audit" }
+const navGroups = [
+  {
+    label: "Overview",
+    items: [
+      { label: "Dashboard", icon: LayoutDashboard, module: "dashboard" },
+      { label: "Analytics", icon: BarChart3, module: "analytics" }
+    ]
+  },
+  {
+    label: "Operations",
+    items: [
+      { label: "Assets", icon: Database, module: "assets", badge: "1,247" },
+      { label: "Inspections", icon: ClipboardCheck, module: "inspections", badge: "8" },
+      { label: "Certificates", icon: FileCheck2, module: "certificates" },
+      { label: "Retest Schedule", icon: CalendarClock, module: "retest", badge: "23" },
+      { label: "Sync Queue", icon: RefreshCcw, module: "sync", badge: "7" }
+    ]
+  },
+  {
+    label: "Management",
+    items: [
+      { label: "Customers", icon: UsersRound, module: "customers" },
+      { label: "Products", icon: Boxes, module: "products" },
+      { label: "Reference Data", icon: TableProperties, module: "reference" }
+    ]
+  },
+  {
+    label: "System",
+    items: [
+      { label: "Users & Roles", icon: UserCog, module: "users" },
+      { label: "Devices", icon: Smartphone, module: "devices" },
+      { label: "Audit Log", icon: FileClock, module: "audit" }
+    ]
+  }
 ] satisfies Array<{
+  label: string;
+  items: Array<{
   label: string;
   icon: typeof LayoutDashboard;
   module: AppModule;
   badge?: string;
+  }>;
 }>;
+
+const navItems = navGroups.flatMap((group) => group.items);
 
 function popoverTitle(menu: TopbarMenu) {
   if (menu === "environment") {
@@ -90,7 +129,6 @@ export function AppShell({
   title
 }: AppShellProps) {
   const [openMenu, setOpenMenu] = useState<TopbarMenu | null>(null);
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
 
   function handleGlobalSearch(event: FormEvent<HTMLFormElement>) {
@@ -105,43 +143,66 @@ export function AppShell({
   }
 
   return (
-    <div className={`app-shell${isCollapsed ? " is-sidebar-collapsed" : ""}`}>
+    <div className="app-shell">
       <aside className="sidebar" aria-label="Primary navigation">
         <div className="brand">
-          <div className="brand-mark">BAT</div>
-          <div className="brand-subtitle">ENGINEERING</div>
-          <div className="product-name">HMS 2.0</div>
+          <div className="brand-lockup">
+            <div className="brand-shield">
+              <ShieldCheck aria-hidden="true" size={19} />
+            </div>
+            <div>
+              <strong>BAT HMS</strong>
+              <span>v2.0</span>
+            </div>
+          </div>
+          <form className="sidebar-search" onSubmit={handleGlobalSearch}>
+            <Search aria-hidden="true" size={16} />
+            <label className="sr-only" htmlFor="sidebar-search-input">
+              Search assets and customers
+            </label>
+            <input
+              id="sidebar-search-input"
+              placeholder="Search assets, customers..."
+              value={globalQuery}
+              onChange={(event) => setGlobalQuery(event.target.value)}
+            />
+            <kbd>⌘K</kbd>
+          </form>
         </div>
         <nav className="nav-list">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = item.module === activeModule;
-            return (
-              <button
-                className={`nav-item${isActive ? " is-active" : ""}`}
-                key={item.label}
-                onClick={() => {
-                  onModuleChange(item.module);
-                  setOpenMenu(null);
-                }}
-                type="button"
-              >
-                <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
-                <span>{item.label}</span>
-                {item.badge ? <span className="nav-badge">{item.badge}</span> : null}
-              </button>
-            );
-          })}
+          {navGroups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <span className="nav-group-label">{group.label}</span>
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                const isActive = item.module === activeModule;
+                return (
+                  <button
+                    className={`nav-item${isActive ? " is-active" : ""}`}
+                    key={item.label}
+                    onClick={() => {
+                      onModuleChange(item.module);
+                      setOpenMenu(null);
+                    }}
+                    type="button"
+                  >
+                    <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
+                    <span>{item.label}</span>
+                    {item.badge ? <span className="nav-badge">{item.badge}</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </nav>
-        <button
-          aria-expanded={!isCollapsed}
-          className="collapse-button"
-          onClick={() => setIsCollapsed((current) => !current)}
-          type="button"
-        >
-          <Menu aria-hidden="true" size={18} />
-          <span>Collapse</span>
-        </button>
+        <div className="sidebar-user">
+          <div className="avatar">JM</div>
+          <div>
+            <strong>James Mitchell</strong>
+            <span>HMS Admin</span>
+          </div>
+          <LogOut aria-hidden="true" size={17} />
+        </div>
       </aside>
 
       <div className="workspace">
@@ -182,6 +243,14 @@ export function AppShell({
               <span className="status-dot" />
               <span>Live Environment</span>
               <ChevronDown aria-hidden="true" size={15} />
+            </button>
+            <button
+              className="primary-button topbar-primary"
+              onClick={() => onModuleChange("assets")}
+              type="button"
+            >
+              <Plus aria-hidden="true" size={17} />
+              New Asset
             </button>
             <button
               className="icon-button has-count"

@@ -14,20 +14,25 @@ import {
 } from "./components/OperationalWorkspace";
 import { ProductsWorkspace } from "./components/ProductsWorkspace";
 import { ReferenceWorkspace } from "./components/ReferenceWorkspace";
+import { WorkspaceState } from "./components/WorkspaceState";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import "./styles.css";
 
 const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   dashboard: {
-    title: "Operations Dashboard",
+    title: "Dashboard",
     description: "Operational snapshot across HMS records and staff workflow queues"
   },
+  analytics: {
+    title: "Analytics",
+    description: "Fleet reporting and operational performance trends"
+  },
   customers: {
-    title: "Customers",
+    title: "Customer Management",
     description: "Manage customers and view hose management overview"
   },
   assets: {
-    title: "Assets",
+    title: "Asset Register",
     description: "Track hose assemblies, lifecycle status, and retest scheduling"
   },
   products: {
@@ -39,12 +44,16 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
     description: "Manage controlled standards and lookup data"
   },
   inspections: {
-    title: "Inspections",
+    title: "Inspection Management",
     description: "Manage draft, submitted, and approved inspection workflows"
   },
   certificates: {
-    title: "Certificates",
+    title: "Certificate Management",
     description: "Issue and review versioned certificate records"
+  },
+  retest: {
+    title: "Retest Schedule",
+    description: "Plan upcoming hose assembly retest work"
   },
   sync: {
     title: "Sync Queue",
@@ -53,10 +62,19 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   audit: {
     title: "Audit Trail",
     description: "Review read-only staff activity and record lifecycle events"
+  },
+  users: {
+    title: "Users & Roles",
+    description: "Manage staff access and role assignments"
+  },
+  devices: {
+    title: "Devices",
+    description: "Manage registered mobile and field devices"
   }
 };
 
 const operationalModules = new Set<AppModule>(["dashboard", "sync", "audit"]);
+const unavailableModules = new Set<AppModule>(["analytics", "retest", "users", "devices"]);
 
 function isOperationalModule(module: AppModule): module is OperationalModule {
   return operationalModules.has(module);
@@ -79,6 +97,14 @@ export default function App() {
         <main className="record-page">
           <div className="record-main">
             <OperationalWorkspace module={activeModule} source={workspace.source} />
+          </div>
+        </main>
+      ) : unavailableModules.has(activeModule) ? (
+        <main className="record-page">
+          <div className="record-main">
+            <WorkspaceState title={activeCopy.title}>
+              This workspace is not available yet.
+            </WorkspaceState>
           </div>
         </main>
       ) : activeModule === "customers" ? (
