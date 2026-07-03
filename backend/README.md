@@ -18,6 +18,25 @@ can be run more than once against the same local database.
 The seed includes customers, assets, products, retest schedules, inspections,
 pressure-test examples, and an issued certificate for local UI verification.
 
+## Sync API
+
+Phase 3A adds the backend sync contract for offline-capable field clients:
+
+- `GET /api/v1/sync/bootstrap` registers/updates a device and returns the
+  caller's scoped current records.
+- `GET /api/v1/sync/changes?since=0` returns ordered `SyncChange` upserts and
+  tombstones after a monotonic cursor.
+- `POST /api/v1/sync/push` applies batched inspection outbox operations with
+  idempotency keys and optimistic version conflict reporting.
+- `POST /api/v1/sync/operations` is an alias for clients following the original
+  mobile addendum endpoint name.
+
+Sync requests require the development HMS identity headers plus device headers:
+
+- `X-HMS-Device-Id`
+- `X-HMS-Device-Platform`
+- `X-HMS-App-Version`
+
 ## Staff UI With Backend Data
 
 In a second terminal:

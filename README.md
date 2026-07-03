@@ -104,12 +104,20 @@ Completed foundation and core staff workflows:
 - Retest schedule list/detail/update flow
 - Certificate issue/revoke/supersede flow
 - Analytics, sync queue placeholder workspace, audit, users, and devices UI
+- Backend sync bootstrap, changes, and inspection push endpoints
 - GitHub Actions CI for backend and staff app checks
+
+Current sync API slice:
+
+- `GET /api/v1/sync/bootstrap`
+- `GET /api/v1/sync/changes?since=0`
+- `POST /api/v1/sync/push`
+- `POST /api/v1/sync/operations`
 
 Planned next phase:
 
-- Sync bootstrap, changes, and push APIs
-- Conflict handling and outbox processing
+- Field/mobile offline UI and local outbox processing
+- Broader push handlers for asset field edits and inspection child records
 - Offline-capable field/mobile inspection workflow
 - Notification rules for retests, submitted inspections, and certificate events
 
