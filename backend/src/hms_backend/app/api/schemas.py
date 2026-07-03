@@ -180,6 +180,13 @@ class RetestScheduleWrite(BaseModel):
     escalation_interval_days: int = 7
 
 
+class RetestScheduleUpdate(BaseModel):
+    due_at: date | None = None
+    status: str | None = None
+    reminder_interval_days: int | None = None
+    escalation_interval_days: int | None = None
+
+
 class AssetRead(BaseModel):
     id: str
     asset_number: str
@@ -264,6 +271,28 @@ class InspectionAssetSummary(BaseModel):
     asset_number: str
     tag: str | None
     lifecycle_status: str
+
+
+class RetestScheduleRead(BaseModel):
+    id: str
+    asset_id: str
+    customer_id: str
+    due_at: date
+    status: str
+    reminder_interval_days: int
+    escalation_interval_days: int
+    last_reminded_at: datetime | None
+    escalated_at: datetime | None
+    asset: InspectionAssetSummary
+    customer: CustomerSummary
+    product: ProductSummary
+
+
+class RetestScheduleListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[RetestScheduleRead]
 
 
 class InspectionRead(BaseModel):

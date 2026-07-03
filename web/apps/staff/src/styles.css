@@ -1347,6 +1347,26 @@ tr.is-selected .row-check {
   font-size: 12px;
 }
 
+.certificate-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.certificate-action-band {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  border: 1px solid rgba(11, 101, 216, 0.16);
+  border-radius: 6px;
+  background: #f8fbff;
+  color: #51627a;
+  padding: 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .inspection-detail-form {
   display: grid;
   gap: 12px;

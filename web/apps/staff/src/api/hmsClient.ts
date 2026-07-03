@@ -9,12 +9,14 @@ import {
 import { mockInspections } from "../data/mockInspections";
 import { mockProducts } from "../data/mockProducts";
 import { mockReferenceStandards } from "../data/mockReferenceData";
+import { mockRetestSchedules } from "../data/mockRetestSchedules";
 import type {
   ApiListResult,
   AssetListResult,
   AssetLocationSummary,
   AssetFormValues,
   AssetRecord,
+  AssetRetestSummary,
   AssetProductSummary,
   CertificateIssueValues,
   CertificateListResult,
@@ -40,7 +42,10 @@ import type {
   ReferenceStandardListResult,
   ReferenceStandardFormValues,
   ReferenceStandardRecord,
-  RetestScheduleRecord
+  RetestScheduleListResult,
+  RetestScheduleRecord,
+  RetestScheduleStatus,
+  RetestScheduleUpdateValues
 } from "../domain/types";
 
 interface ApiLocation {
@@ -123,7 +128,7 @@ interface ApiLocationSummary {
   country: string | null;
 }
 
-interface ApiRetestSchedule {
+interface ApiAssetRetestSchedule {
   due_at: string;
   status: string;
 }
@@ -141,7 +146,7 @@ interface ApiAsset {
   customer: ApiSummary;
   product: ApiProductSummary;
   location: ApiLocationSummary | null;
-  retest_schedule: ApiRetestSchedule | null;
+  retest_schedule: ApiAssetRetestSchedule | null;
 }
 
 interface ApiAssetList {
@@ -188,6 +193,28 @@ interface ApiInspectionList {
   limit: number;
   offset: number;
   items: ApiInspection[];
+}
+
+interface ApiRetestSchedule {
+  id: string;
+  asset_id: string;
+  customer_id: string;
+  due_at: string;
+  status: RetestScheduleStatus;
+  reminder_interval_days: number;
+  escalation_interval_days: number;
+  last_reminded_at: string | null;
+  escalated_at: string | null;
+  asset: ApiInspectionAssetSummary;
+  customer: ApiSummary;
+  product: ApiProductSummary;
+}
+
+interface ApiRetestScheduleList {
+  total: number;
+  limit: number;
+  offset: number;
+  items: ApiRetestSchedule[];
 }
 
 interface ApiCertificateInspectionSummary {
@@ -262,6 +289,16 @@ interface ListInspectionOptions {
   search?: string;
   status?: InspectionStatus;
   inspectionType?: InspectionType;
+  assetId?: string;
+  customerId?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}
+
+interface ListRetestScheduleOptions {
+  search?: string;
+  status?: RetestScheduleStatus;
   assetId?: string;
   customerId?: string;
   sort?: string;
@@ -417,9 +454,9 @@ function toLocationSummary(
   };
 }
 
-function toRetestSchedule(
-  schedule: ApiRetestSchedule | null
-): RetestScheduleRecord | null {
+function toAssetRetestSummary(
+  schedule: ApiAssetRetestSchedule | null
+): AssetRetestSummary | null {
   if (schedule === null) {
     return null;
   }
@@ -444,7 +481,7 @@ function toAsset(asset: ApiAsset, etag: string | null = null): AssetRecord {
       customer: toSummary(asset.customer),
       product: toProductSummary(asset.product),
       location: toLocationSummary(asset.location),
-      retestSchedule: toRetestSchedule(asset.retest_schedule)
+      retestSchedule: toAssetRetestSummary(asset.retest_schedule)
     },
     etag
   );
@@ -504,6 +541,29 @@ function toInspectionAssetSummary(
     tag: asset.tag,
     lifecycleStatus: asset.lifecycle_status
   };
+}
+
+function toRetestScheduleRecord(
+  schedule: ApiRetestSchedule,
+  etag: string | null = null
+): RetestScheduleRecord {
+  return withEtag(
+    {
+      id: schedule.id,
+      assetId: schedule.asset_id,
+      customerId: schedule.customer_id,
+      dueAt: schedule.due_at,
+      status: schedule.status,
+      reminderIntervalDays: schedule.reminder_interval_days,
+      escalationIntervalDays: schedule.escalation_interval_days,
+      lastRemindedAt: schedule.last_reminded_at,
+      escalatedAt: schedule.escalated_at,
+      asset: toInspectionAssetSummary(schedule.asset),
+      customer: toSummary(schedule.customer),
+      product: toProductSummary(schedule.product)
+    },
+    etag
+  );
 }
 
 function toCertificate(
@@ -910,6 +970,52 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toInspection(response.data, response.etag);
     },
 
+    async listRetestSchedules(
+      listOptions: ListRetestScheduleOptions = {}
+    ): Promise<ApiListResult<RetestScheduleRecord>> {
+      const response = await request<ApiRetestScheduleList>(
+        "/api/v1/retest-schedules",
+        {},
+        {
+          limit: listOptions.limit ?? 50,
+          offset: listOptions.offset ?? 0,
+          status: listOptions.status,
+          asset_id: listOptions.assetId,
+          customer_id: listOptions.customerId,
+          search: listOptions.search?.trim() || undefined,
+          sort: listOptions.sort
+        }
+      );
+      return {
+        total: response.data.total,
+        etag: response.etag,
+        items: response.data.items.map((schedule) =>
+          toRetestScheduleRecord(schedule, response.etag)
+        )
+      };
+    },
+
+    async updateRetestSchedule(
+      id: string,
+      values: RetestScheduleUpdateValues,
+      etag?: string | null
+    ): Promise<RetestScheduleRecord> {
+      const response = await request<ApiRetestSchedule>(
+        `/api/v1/retest-schedules/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          headers: ifMatchHeader(etag),
+          body: JSON.stringify({
+            due_at: values.dueAt,
+            status: values.status,
+            reminder_interval_days: values.reminderIntervalDays,
+            escalation_interval_days: values.escalationIntervalDays
+          })
+        }
+      );
+      return toRetestScheduleRecord(response.data, response.etag);
+    },
+
     async listCertificates(
       listOptions: ListCertificateOptions = {}
     ): Promise<ApiListResult<CertificateRecord>> {
@@ -940,6 +1046,26 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         {
           method: "POST",
           body: JSON.stringify(certificateIssuePayload(values))
+        }
+      );
+      return toCertificate(response.data, response.etag);
+    },
+
+    async revokeCertificate(id: string): Promise<CertificateRecord> {
+      const response = await request<ApiCertificate>(
+        `/api/v1/certificates/${encodeURIComponent(id)}/revoke`,
+        {
+          method: "POST"
+        }
+      );
+      return toCertificate(response.data, response.etag);
+    },
+
+    async supersedeCertificate(id: string): Promise<CertificateRecord> {
+      const response = await request<ApiCertificate>(
+        `/api/v1/certificates/${encodeURIComponent(id)}/supersede`,
+        {
+          method: "POST"
         }
       );
       return toCertificate(response.data, response.etag);
@@ -1096,6 +1222,39 @@ function filterMockInspections(
   });
 }
 
+function filterMockRetestSchedules(
+  options: ListRetestScheduleOptions = {}
+): RetestScheduleRecord[] {
+  const normalized = options.search?.trim().toLowerCase();
+  const filtered = mockRetestSchedules.filter((schedule) => {
+    const matchesStatus =
+      !options.status || schedule.status === options.status;
+    const matchesAsset =
+      !options.assetId || schedule.assetId === options.assetId;
+    const matchesCustomer =
+      !options.customerId || schedule.customerId === options.customerId;
+    const matchesSearch =
+      !normalized ||
+      [
+        schedule.asset.assetNumber,
+        schedule.asset.tag,
+        schedule.customer.code,
+        schedule.customer.name,
+        schedule.product.code,
+        schedule.product.name,
+        schedule.status,
+        schedule.dueAt
+      ]
+        .filter(Boolean)
+        .some((value) => value?.toLowerCase().includes(normalized));
+    return matchesStatus && matchesAsset && matchesCustomer && matchesSearch;
+  });
+  const sorted = [...filtered].sort((left, right) =>
+    left.dueAt.localeCompare(right.dueAt)
+  );
+  return options.sort?.startsWith("-") ? sorted.reverse() : sorted;
+}
+
 function filterMockCertificates(
   options: ListCertificateOptions = {}
 ): CertificateRecord[] {
@@ -1241,6 +1400,28 @@ export async function loadInspectionsWithFallback(
     return {
       source: "mock",
       total: mockInspections.length,
+      items
+    };
+  }
+}
+
+export async function loadRetestSchedulesWithFallback(
+  options: HmsClientOptions & ListRetestScheduleOptions = {}
+): Promise<RetestScheduleListResult> {
+  try {
+    const client = createHmsClient(options);
+    const response = await client.listRetestSchedules(options);
+    return {
+      source: "api",
+      total: response.total,
+      etag: response.etag,
+      items: response.items
+    };
+  } catch {
+    const items = filterMockRetestSchedules(options);
+    return {
+      source: "mock",
+      total: mockRetestSchedules.length,
       items
     };
   }

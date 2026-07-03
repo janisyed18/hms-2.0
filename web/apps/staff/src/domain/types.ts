@@ -162,7 +162,7 @@ export interface AssetLocationSummary {
   country: string | null;
 }
 
-export interface RetestScheduleRecord {
+export interface AssetRetestSummary {
   dueAt: string;
   status: string;
 }
@@ -180,7 +180,7 @@ export interface AssetRecord {
   customer: RecordSummary;
   product: AssetProductSummary;
   location: AssetLocationSummary | null;
-  retestSchedule: RetestScheduleRecord | null;
+  retestSchedule: AssetRetestSummary | null;
   etag?: string | null;
 }
 
@@ -216,6 +216,38 @@ export interface InspectionAssetSummary {
   assetNumber: string;
   tag: string | null;
   lifecycleStatus: string;
+}
+
+export type RetestScheduleStatus = "UPCOMING" | "DUE" | "OVERDUE" | "SUSPENDED";
+
+export interface RetestScheduleRecord {
+  id: string;
+  assetId: string;
+  customerId: string;
+  dueAt: string;
+  status: RetestScheduleStatus;
+  reminderIntervalDays: number;
+  escalationIntervalDays: number;
+  lastRemindedAt: string | null;
+  escalatedAt: string | null;
+  asset: InspectionAssetSummary;
+  customer: RecordSummary;
+  product: AssetProductSummary;
+  etag?: string | null;
+}
+
+export interface RetestScheduleListResult {
+  source: DataSource;
+  total: number;
+  etag?: string | null;
+  items: RetestScheduleRecord[];
+}
+
+export interface RetestScheduleUpdateValues {
+  dueAt: string;
+  status: RetestScheduleStatus;
+  reminderIntervalDays: number;
+  escalationIntervalDays: number;
 }
 
 export interface PressureTestRecord {

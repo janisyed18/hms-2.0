@@ -58,6 +58,16 @@ function localCertificate(
   };
 }
 
+function localCertificateStatusUpdate(
+  certificate: CertificateRecord,
+  status: CertificateStatus
+): CertificateRecord {
+  return {
+    ...certificate,
+    status
+  };
+}
+
 export function useCertificatesWorkspace() {
   const [certificates, setCertificates] = useState<CertificateRecord[]>([]);
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
@@ -155,6 +165,47 @@ export function useCertificatesWorkspace() {
     setStatusFilter("ALL");
   }
 
+  function replaceCertificate(updated: CertificateRecord) {
+    setCertificates((current) =>
+      current.map((certificate) =>
+        certificate.id === updated.id ? updated : certificate
+      )
+    );
+    setSelectedId(updated.id);
+  }
+
+  async function revokeCertificate() {
+    if (!selectedCertificate) {
+      return;
+    }
+    let updated = localCertificateStatusUpdate(selectedCertificate, "REVOKED");
+    if (source === "api") {
+      try {
+        updated = await createHmsClient().revokeCertificate(selectedCertificate.id);
+      } catch {
+        updated = localCertificateStatusUpdate(selectedCertificate, "REVOKED");
+      }
+    }
+    replaceCertificate(updated);
+  }
+
+  async function supersedeCertificate() {
+    if (!selectedCertificate) {
+      return;
+    }
+    let updated = localCertificateStatusUpdate(selectedCertificate, "SUPERSEDED");
+    if (source === "api") {
+      try {
+        updated = await createHmsClient().supersedeCertificate(
+          selectedCertificate.id
+        );
+      } catch {
+        updated = localCertificateStatusUpdate(selectedCertificate, "SUPERSEDED");
+      }
+    }
+    replaceCertificate(updated);
+  }
+
   return {
     certificates,
     closeDetail,
@@ -170,6 +221,8 @@ export function useCertificatesWorkspace() {
     setStatusFilter,
     source,
     statusFilter,
+    revokeCertificate,
+    supersedeCertificate,
     visibleCertificates
   };
 }

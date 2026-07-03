@@ -7,7 +7,8 @@ import {
   loadCustomersWithFallback,
   loadInspectionsWithFallback,
   loadProductsWithFallback,
-  loadReferenceStandardsWithFallback
+  loadReferenceStandardsWithFallback,
+  loadRetestSchedulesWithFallback
 } from "../api/hmsClient";
 import { mockAssets } from "../data/mockAssets";
 import { mockCertificates } from "../data/mockCertificates";
@@ -15,6 +16,7 @@ import { mockCustomers } from "../data/mockCustomers";
 import { mockInspections } from "../data/mockInspections";
 import { mockProducts } from "../data/mockProducts";
 import { mockReferenceStandards } from "../data/mockReferenceData";
+import { mockRetestSchedules } from "../data/mockRetestSchedules";
 
 const apiCustomer = {
   id: "cust-api-1",
@@ -170,6 +172,35 @@ const apiCertificate = {
     status: "APPROVED",
     result: "PASS",
     approved_at: "2026-06-29T11:00:00Z"
+  }
+};
+
+const apiRetestSchedule = {
+  id: "retest-api-1",
+  asset_id: "asset-api-1",
+  customer_id: "cust-api-1",
+  due_at: "2026-07-15",
+  status: "OVERDUE",
+  reminder_interval_days: 30,
+  escalation_interval_days: 7,
+  last_reminded_at: null,
+  escalated_at: null,
+  asset: {
+    id: "asset-api-1",
+    asset_number: "997950",
+    tag: "HMS-997950",
+    lifecycle_status: "OVERDUE"
+  },
+  customer: {
+    id: "cust-api-1",
+    code: "VOPA",
+    name: "Vopak"
+  },
+  product: {
+    id: "product-api-1",
+    code: "1000GY",
+    name: "FUELFLEX GREEN",
+    category: "Composite"
   }
 };
 
@@ -532,6 +563,94 @@ describe("hmsClient", () => {
     expect(issued.publicToken).toBe("public-token-997950-1");
   });
 
+  it("maps retest schedule list/update and certificate lifecycle mutations", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okJson(
+          {
+            total: 1,
+            limit: 50,
+            offset: 0,
+            items: [apiRetestSchedule]
+          },
+          { ETag: '"retests-1"' }
+        )
+      )
+      .mockResolvedValueOnce(
+        okJson(
+          {
+            ...apiRetestSchedule,
+            due_at: "2026-09-15",
+            status: "UPCOMING",
+            reminder_interval_days: 45,
+            escalation_interval_days: 10
+          },
+          { ETag: '"retest-2"' }
+        )
+      )
+      .mockResolvedValueOnce(
+        okJson({ ...apiCertificate, status: "REVOKED" })
+      )
+      .mockResolvedValueOnce(
+        okJson({ ...apiCertificate, status: "SUPERSEDED" })
+      );
+
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const list = await client.listRetestSchedules({
+      status: "OVERDUE",
+      search: "997",
+      sort: "due_at"
+    });
+    const updated = await client.updateRetestSchedule("retest-api-1", {
+      dueAt: "2026-09-15",
+      status: "UPCOMING",
+      reminderIntervalDays: 45,
+      escalationIntervalDays: 10
+    });
+    const revoked = await client.revokeCertificate("certificate-api-1");
+    const superseded = await client.supersedeCertificate("certificate-api-1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/retest-schedules?limit=50&offset=0&status=OVERDUE&search=997&sort=due_at",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/retest-schedules/retest-api-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          due_at: "2026-09-15",
+          status: "UPCOMING",
+          reminder_interval_days: 45,
+          escalation_interval_days: 10
+        })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/certificates/certificate-api-1/revoke",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/api/v1/certificates/certificate-api-1/supersede",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(list.etag).toBe('"retests-1"');
+    expect(list.items[0]).toMatchObject({
+      id: "retest-api-1",
+      asset: expect.objectContaining({ assetNumber: "997950" }),
+      status: "OVERDUE"
+    });
+    expect(updated.dueAt).toBe("2026-09-15");
+    expect(updated.status).toBe("UPCOMING");
+    expect(revoked.status).toBe("REVOKED");
+    expect(superseded.status).toBe("SUPERSEDED");
+  });
+
   it("uses mock fallback only when list requests reject or return non-OK", async () => {
     const apiFetch = vi.fn().mockResolvedValue(
       okJson({
@@ -573,6 +692,10 @@ describe("hmsClient", () => {
       fetcher: rejectedFetch,
       baseUrl: ""
     });
+    const fallbackRetestSchedules = await loadRetestSchedulesWithFallback({
+      fetcher: rejectedFetch,
+      baseUrl: ""
+    });
 
     expect(apiProducts.source).toBe("api");
     expect(apiProducts.items[0].code).toBe("1000GY");
@@ -586,6 +709,8 @@ describe("hmsClient", () => {
     expect(fallbackInspections.items).toHaveLength(mockInspections.length);
     expect(fallbackCertificates.source).toBe("mock");
     expect(fallbackCertificates.items).toHaveLength(mockCertificates.length);
+    expect(fallbackRetestSchedules.source).toBe("mock");
+    expect(fallbackRetestSchedules.items).toHaveLength(mockRetestSchedules.length);
   });
 
   it("falls back to mock customer data when the backend is unavailable", async () => {

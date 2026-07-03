@@ -15,11 +15,11 @@ import {
 } from "./components/OperationalWorkspace";
 import { ProductsWorkspace } from "./components/ProductsWorkspace";
 import { ReferenceWorkspace } from "./components/ReferenceWorkspace";
+import { RetestScheduleWorkspace } from "./components/RetestScheduleWorkspace";
 import {
   SystemWorkspace,
   type SystemModule
 } from "./components/SystemWorkspace";
-import { WorkspaceState } from "./components/WorkspaceState";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import "./styles.css";
 
@@ -79,7 +79,6 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
 };
 
 const operationalModules = new Set<AppModule>(["dashboard", "sync", "audit"]);
-const unavailableModules = new Set<AppModule>(["retest"]);
 
 function isOperationalModule(module: AppModule): module is OperationalModule {
   return operationalModules.has(module);
@@ -106,14 +105,6 @@ export default function App() {
         <main className="record-page">
           <div className="record-main">
             <OperationalWorkspace module={activeModule} source={workspace.source} />
-          </div>
-        </main>
-      ) : unavailableModules.has(activeModule) ? (
-        <main className="record-page">
-          <div className="record-main">
-            <WorkspaceState title={activeCopy.title}>
-              This workspace is not available yet.
-            </WorkspaceState>
           </div>
         </main>
       ) : activeModule === "customers" ? (
@@ -158,6 +149,7 @@ export default function App() {
             {activeModule === "reference" ? <ReferenceWorkspace /> : null}
             {activeModule === "inspections" ? <InspectionsWorkspace /> : null}
             {activeModule === "certificates" ? <CertificatesWorkspace /> : null}
+            {activeModule === "retest" ? <RetestScheduleWorkspace /> : null}
             {isSystemModule(activeModule) ? (
               <SystemWorkspace module={activeModule} source={workspace.source} />
             ) : null}

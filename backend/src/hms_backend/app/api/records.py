@@ -44,7 +44,10 @@ from hms_backend.app.api.schemas import (
     ProductRead,
     ProductSummary,
     ProductUpdate,
+    RetestScheduleListResponse,
+    RetestScheduleRead,
     RetestScheduleSummary,
+    RetestScheduleUpdate,
     RetestScheduleWrite,
     StandardCreate,
     StandardUpdate,
@@ -61,6 +64,7 @@ from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.certificates.models import (
     Certificate,
     CertificateIssueError,
+    CertificateStatus,
 )
 from hms_backend.app.modules.customers.models import (
     Customer,
@@ -760,6 +764,112 @@ async def create_asset(
     return _asset_read(loaded)
 
 
+@router.get("/retest-schedules", response_model=RetestScheduleListResponse)
+async def list_retest_schedules(
+    session: SessionDep,
+    principal: PrincipalDep,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    asset_id: str | None = None,
+    customer_id: str | None = None,
+    search: str | None = None,
+    sort: str | None = None,
+    limit: LimitParam = 50,
+    offset: OffsetParam = 0,
+) -> RetestScheduleListResponse:
+    _require_asset_read(principal)
+    statement = _retest_schedule_statement()
+    statement = _apply_asset_scope(statement, principal)
+    if status_filter:
+        statement = statement.where(RetestSchedule.status == status_filter)
+    if asset_id:
+        statement = statement.where(RetestSchedule.asset_id == asset_id)
+    if customer_id:
+        statement = statement.where(RetestSchedule.customer_id == customer_id)
+    if search:
+        search_pattern = f"%{search.lower()}%"
+        statement = statement.where(
+            or_(
+                func.lower(Asset.asset_number).like(search_pattern),
+                func.lower(Asset.tag).like(search_pattern),
+                func.lower(Customer.code).like(search_pattern),
+                func.lower(Customer.name).like(search_pattern),
+                func.lower(Product.code).like(search_pattern),
+                func.lower(Product.name).like(search_pattern),
+            )
+        )
+
+    total = await _count(session, statement)
+    statement = _apply_sort(
+        statement,
+        RetestSchedule,
+        sort,
+        frozenset({"due_at", "status", "created_at", "updated_at"}),
+        default="due_at",
+    )
+    schedules = (await session.scalars(statement.offset(offset).limit(limit))).all()
+    return RetestScheduleListResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=[_retest_schedule_read(schedule) for schedule in schedules],
+    )
+
+
+@router.get("/retest-schedules/{schedule_id}", response_model=RetestScheduleRead)
+async def get_retest_schedule(
+    schedule_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+    response: Response,
+) -> RetestScheduleRead:
+    _require_asset_read(principal)
+    schedule = await _get_retest_schedule_or_404(session, schedule_id, principal)
+    _set_etag(response, schedule.version)
+    return _retest_schedule_read(schedule)
+
+
+@router.patch("/retest-schedules/{schedule_id}", response_model=RetestScheduleRead)
+async def update_retest_schedule(
+    schedule_id: str,
+    payload: RetestScheduleUpdate,
+    session: SessionDep,
+    principal: PrincipalDep,
+    response: Response,
+    if_match: IfMatchHeader = None,
+) -> RetestScheduleRead:
+    _require_asset_write(principal)
+    schedule = await _get_retest_schedule_or_404(session, schedule_id, principal)
+    _enforce_if_match(if_match, schedule.version)
+
+    updates = payload.model_dump(exclude_unset=True)
+    before = schedule.to_audit_dict()
+    if "due_at" in updates and payload.due_at is not None:
+        schedule.due_at = payload.due_at
+    if "status" in updates and payload.status is not None:
+        schedule.status = payload.status
+    if (
+        "reminder_interval_days" in updates
+        and payload.reminder_interval_days is not None
+    ):
+        schedule.reminder_interval_days = payload.reminder_interval_days
+    if (
+        "escalation_interval_days" in updates
+        and payload.escalation_interval_days is not None
+    ):
+        schedule.escalation_interval_days = payload.escalation_interval_days
+
+    await record_update(
+        session,
+        schedule,
+        actor_id=principal.user_id,
+        action="retest_schedule.updated",
+        before=before,
+    )
+    await session.commit()
+    _set_etag(response, schedule.version)
+    return _retest_schedule_read(schedule)
+
+
 @router.get("/inspections", response_model=InspectionListResponse)
 async def list_inspections(
     session: SessionDep,
@@ -1103,6 +1213,44 @@ async def get_certificate(
     return _certificate_read(certificate)
 
 
+@router.post("/certificates/{certificate_id}/revoke", response_model=CertificateRead)
+async def revoke_certificate(
+    certificate_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CertificateRead:
+    _require_certificate_approve(principal)
+    certificate = await _get_certificate_or_404(session, certificate_id, principal)
+    await _transition_certificate_status(
+        session,
+        certificate,
+        actor_id=principal.user_id,
+        action="certificate.revoked",
+        next_status=CertificateStatus.REVOKED.value,
+    )
+    await session.commit()
+    return _certificate_read(certificate)
+
+
+@router.post("/certificates/{certificate_id}/supersede", response_model=CertificateRead)
+async def supersede_certificate(
+    certificate_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CertificateRead:
+    _require_certificate_approve(principal)
+    certificate = await _get_certificate_or_404(session, certificate_id, principal)
+    await _transition_certificate_status(
+        session,
+        certificate,
+        actor_id=principal.user_id,
+        action="certificate.superseded",
+        next_status=CertificateStatus.SUPERSEDED.value,
+    )
+    await session.commit()
+    return _certificate_read(certificate)
+
+
 @router.get("/products", response_model=ProductListResponse)
 async def list_products(
     session: SessionDep,
@@ -1411,6 +1559,25 @@ def _inspection_statement() -> Select[tuple[Inspection]]:
     )
 
 
+def _retest_schedule_statement() -> Select[tuple[RetestSchedule]]:
+    return (
+        select(RetestSchedule)
+        .join(RetestSchedule.asset)
+        .join(Asset.customer)
+        .join(Asset.product)
+        .options(
+            selectinload(RetestSchedule.asset).selectinload(Asset.customer),
+            selectinload(RetestSchedule.asset).selectinload(Asset.product),
+            selectinload(RetestSchedule.customer),
+        )
+        .where(
+            RetestSchedule.deleted_at.is_(None),
+            Asset.deleted_at.is_(None),
+            Customer.deleted_at.is_(None),
+        )
+    )
+
+
 def _certificate_statement() -> Select[tuple[Certificate]]:
     return (
         select(Certificate)
@@ -1653,6 +1820,22 @@ async def _get_visible_asset_or_404(
     return asset
 
 
+async def _get_retest_schedule_or_404(
+    session: AsyncSession,
+    schedule_id: str,
+    principal: Principal,
+) -> RetestSchedule:
+    statement = _retest_schedule_statement().where(RetestSchedule.id == schedule_id)
+    statement = _apply_asset_scope(statement, principal)
+    schedule = (await session.scalars(statement)).first()
+    if schedule is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Retest schedule not found",
+        )
+    return schedule
+
+
 async def _get_inspection_or_404(
     session: AsyncSession,
     inspection_id: str,
@@ -1683,6 +1866,31 @@ async def _get_certificate_or_404(
             detail="Certificate not found",
         )
     return certificate
+
+
+async def _transition_certificate_status(
+    session: AsyncSession,
+    certificate: Certificate,
+    *,
+    actor_id: str,
+    action: str,
+    next_status: str,
+) -> None:
+    if certificate.status != CertificateStatus.ISSUED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only issued certificates can change lifecycle status",
+        )
+
+    before = certificate.to_audit_dict()
+    certificate.status = next_status
+    await record_update(
+        session,
+        certificate,
+        actor_id=actor_id,
+        action=action,
+        before=before,
+    )
 
 
 async def _upsert_pressure_test(
@@ -1789,6 +1997,37 @@ def _pressure_test_read(pressure_test: PressureTestResult) -> PressureTestRead:
         hold_time_seconds=pressure_test.hold_time_seconds,
         passed=pressure_test.passed,
         measurements=pressure_test.measurements,
+    )
+
+
+def _retest_schedule_read(schedule: RetestSchedule) -> RetestScheduleRead:
+    return RetestScheduleRead(
+        id=schedule.id,
+        asset_id=schedule.asset_id,
+        customer_id=schedule.customer_id,
+        due_at=schedule.due_at,
+        status=schedule.status,
+        reminder_interval_days=schedule.reminder_interval_days,
+        escalation_interval_days=schedule.escalation_interval_days,
+        last_reminded_at=schedule.last_reminded_at,
+        escalated_at=schedule.escalated_at,
+        asset=InspectionAssetSummary(
+            id=schedule.asset.id,
+            asset_number=schedule.asset.asset_number,
+            tag=schedule.asset.tag,
+            lifecycle_status=schedule.asset.lifecycle_status,
+        ),
+        customer=CustomerSummary(
+            id=schedule.asset.customer.id,
+            code=schedule.asset.customer.code,
+            name=schedule.asset.customer.name,
+        ),
+        product=ProductSummary(
+            id=schedule.asset.product.id,
+            code=schedule.asset.product.code,
+            name=schedule.asset.product.name,
+            category=schedule.asset.product.category,
+        ),
     )
 
 

@@ -142,6 +142,35 @@ const apiCertificate = {
   }
 };
 
+const apiRetestSchedule = {
+  id: "retest-api-1",
+  asset_id: "asset-api-1",
+  customer_id: "cust-api-1",
+  due_at: "2026-07-15",
+  status: "OVERDUE",
+  reminder_interval_days: 30,
+  escalation_interval_days: 7,
+  last_reminded_at: null,
+  escalated_at: null,
+  asset: {
+    id: "asset-api-1",
+    asset_number: "API-777",
+    tag: "HMS-API-777",
+    lifecycle_status: "DUE"
+  },
+  customer: {
+    id: "cust-api-1",
+    code: "VOPA",
+    name: "Vopak API"
+  },
+  product: {
+    id: "product-api-1",
+    code: "API-1000",
+    name: "API Fuel Hose",
+    category: "Composite"
+  }
+};
+
 const apiStandard = {
   id: "standard-api-1",
   code: "API-STD",
@@ -196,6 +225,23 @@ function routeFetch() {
         items: [apiAsset]
       });
     }
+    if (path.startsWith("/api/v1/retest-schedules")) {
+      if (init?.method === "PATCH") {
+        return okJson({
+          ...apiRetestSchedule,
+          due_at: "2026-09-15",
+          status: "UPCOMING",
+          reminder_interval_days: 45,
+          escalation_interval_days: 10
+        });
+      }
+      return okJson({
+        total: 1,
+        limit: 50,
+        offset: 0,
+        items: [apiRetestSchedule]
+      });
+    }
     if (path.startsWith("/api/v1/inspections")) {
       if (init?.method === "POST" && path.includes("/certificate")) {
         return {
@@ -213,6 +259,12 @@ function routeFetch() {
       });
     }
     if (path.startsWith("/api/v1/certificates")) {
+      if (init?.method === "POST" && path.endsWith("/supersede")) {
+        return okJson({ ...apiCertificate, status: "SUPERSEDED" });
+      }
+      if (init?.method === "POST" && path.endsWith("/revoke")) {
+        return okJson({ ...apiCertificate, status: "REVOKED" });
+      }
       return okJson({
         total: 1,
         limit: 50,
@@ -403,6 +455,11 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Assets" }));
     expect(await screen.findByRole("row", { name: /API-777/i })).toBeVisible();
 
+    await user.click(screen.getByRole("button", { name: "Retest Schedule" }));
+    expect(await screen.findByRole("row", { name: /API-777/i })).toHaveTextContent(
+      "OVERDUE"
+    );
+
     await user.click(screen.getByRole("button", { name: "Products" }));
     expect(await screen.findByRole("row", { name: /API Fuel Hose/i })).toBeVisible();
 
@@ -434,6 +491,24 @@ describe("App", () => {
     expect(await screen.findByRole("row", { name: /CERT-VOPA-NEW-2/i })).toBeVisible();
     expect(screen.getByRole("complementary", { name: "Certificate detail" })).toHaveTextContent(
       "CERT-VOPA-NEW-2"
+    );
+  });
+
+  it("updates certificate lifecycle from the certificate detail panel", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Certificates" }));
+    await user.click(await screen.findByRole("button", { name: "Open certificate CERT-VOPA-NEW-1" }));
+    expect(screen.getByRole("button", { name: "Mark superseded" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Revoke certificate" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Mark superseded" }));
+
+    expect(screen.getByRole("complementary", { name: "Certificate detail" })).toHaveTextContent(
+      "SUPERSEDED"
     );
   });
 
@@ -600,7 +675,7 @@ describe("App", () => {
     );
   });
 
-  it("routes unavailable console modules to a clean empty state", async () => {
+  it("opens and updates the retest schedule workspace", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
@@ -609,7 +684,21 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: /Retest Schedule/i }));
 
     expect(await screen.findByRole("heading", { name: "Retest Schedule" })).toBeVisible();
-    expect(screen.getByText("This workspace is not available yet.")).toBeVisible();
+    expect(screen.getByRole("table", { name: "Retest schedule records" })).toHaveTextContent(
+      "997950"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open schedule 997950" }));
+    await user.clear(screen.getByLabelText("Retest due date"));
+    await user.type(screen.getByLabelText("Retest due date"), "2026-09-15");
+    await user.selectOptions(screen.getByLabelText("Retest status"), "UPCOMING");
+    await user.clear(screen.getByLabelText("Reminder interval days"));
+    await user.type(screen.getByLabelText("Reminder interval days"), "45");
+    await user.click(screen.getByRole("button", { name: "Save schedule" }));
+
+    expect(screen.getByRole("complementary", { name: "Retest schedule detail" })).toHaveTextContent(
+      "UPCOMING"
+    );
   });
 
   it("opens analytics, users, and devices as implemented console workspaces", async () => {

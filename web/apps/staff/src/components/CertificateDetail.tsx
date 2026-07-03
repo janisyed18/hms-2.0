@@ -1,10 +1,13 @@
-import { Copy, FileCheck2, X } from "lucide-react";
+import { Ban, Copy, FileCheck2, RotateCcw, X } from "lucide-react";
+import { useState } from "react";
 
 import type { CertificateRecord } from "../domain/types";
 
 interface CertificateDetailProps {
   certificate: CertificateRecord | null;
   onClose: () => void;
+  onRevoke: () => Promise<void>;
+  onSupersede: () => Promise<void>;
 }
 
 function statusClass(status: string) {
@@ -19,8 +22,12 @@ function statusClass(status: string) {
 
 export function CertificateDetail({
   certificate,
-  onClose
+  onClose,
+  onRevoke,
+  onSupersede
 }: CertificateDetailProps) {
+  const [pendingAction, setPendingAction] = useState<"revoke" | "supersede" | null>(null);
+
   if (!certificate) {
     return (
       <aside className="inspection-detail-panel" aria-label="Certificate detail">
@@ -30,6 +37,16 @@ export function CertificateDetail({
         </div>
       </aside>
     );
+  }
+
+  async function runLifecycleAction(action: "revoke" | "supersede") {
+    setPendingAction(action);
+    if (action === "revoke") {
+      await onRevoke();
+    } else {
+      await onSupersede();
+    }
+    setPendingAction(null);
   }
 
   return (
@@ -97,6 +114,35 @@ export function CertificateDetail({
           </strong>
         </div>
       </div>
+
+      {certificate.status === "ISSUED" ? (
+        <div className="certificate-actions" aria-label="Certificate lifecycle actions">
+          <div className="certificate-action-band">
+            <FileCheck2 aria-hidden="true" size={18} />
+            <span>Lifecycle changes are retained as certificate status history.</span>
+          </div>
+          <div className="inspection-action-row">
+            <button
+              className="secondary-button"
+              disabled={pendingAction !== null}
+              onClick={() => runLifecycleAction("supersede")}
+              type="button"
+            >
+              <RotateCcw aria-hidden="true" size={16} />
+              {pendingAction === "supersede" ? "Updating..." : "Mark superseded"}
+            </button>
+            <button
+              className="danger-button"
+              disabled={pendingAction !== null}
+              onClick={() => runLifecycleAction("revoke")}
+              type="button"
+            >
+              <Ban aria-hidden="true" size={16} />
+              {pendingAction === "revoke" ? "Updating..." : "Revoke certificate"}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </aside>
   );
 }

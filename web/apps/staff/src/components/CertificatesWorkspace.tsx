@@ -175,6 +175,8 @@ export function CertificatesWorkspace() {
         <CertificateDetail
           certificate={workspace.selectedCertificate}
           onClose={workspace.closeDetail}
+          onRevoke={workspace.revokeCertificate}
+          onSupersede={workspace.supersedeCertificate}
         />
       </div>
 

@@ -15,7 +15,7 @@ from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
 from hms_backend.app.models.foundation import AuditEvent, SyncChange
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
-from hms_backend.app.modules.certificates.models import Certificate
+from hms_backend.app.modules.certificates.models import Certificate, CertificateStatus
 from hms_backend.app.modules.customers.models import (
     Customer,
     CustomerContact,
@@ -1362,6 +1362,125 @@ async def test_update_asset_and_retest_schedule_writes_audit_and_sync(
 
 
 @pytest.mark.asyncio
+async def test_retest_schedules_endpoint_lists_with_asset_customer_context(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        existing_schedule = (
+            await session.scalars(
+                select(RetestSchedule).where(
+                    RetestSchedule.asset_id == seeded_session["vopak_asset_id"]
+                )
+            )
+        ).one()
+        orica_asset = await session.get(Asset, seeded_session["orica_asset_id"])
+        orica_customer = await session.get(Customer, seeded_session["orica_id"])
+        assert orica_asset is not None
+        assert orica_customer is not None
+        session.add(
+            RetestSchedule(
+                customer=orica_customer,
+                asset=orica_asset,
+                due_at=date(2026, 8, 1),
+                status=RetestScheduleStatus.UPCOMING.value,
+                reminder_interval_days=30,
+                escalation_interval_days=7,
+            )
+        )
+        await session.commit()
+        schedule_id = existing_schedule.id
+
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        list_response = await client.get(
+            "/api/v1/retest-schedules",
+            params={
+                "status": "OVERDUE",
+                "customer_id": seeded_session["vopak_id"],
+                "search": "997",
+                "sort": "due_at",
+            },
+        )
+        detail_response = await client.get(f"/api/v1/retest-schedules/{schedule_id}")
+
+    assert list_response.status_code == 200
+    body = list_response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == schedule_id
+    assert body["items"][0]["status"] == "OVERDUE"
+    assert body["items"][0]["asset"]["asset_number"] == "997950"
+    assert body["items"][0]["customer"]["code"] == "VOPA"
+    assert body["items"][0]["product"]["code"] == "1000GY"
+    assert detail_response.status_code == 200
+    assert detail_response.json()["id"] == schedule_id
+    assert detail_response.json()["reminder_interval_days"] == 30
+
+
+@pytest.mark.asyncio
+async def test_patch_retest_schedule_updates_status_intervals_with_audit_and_sync(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        schedule_id = (
+            await session.scalars(
+                select(RetestSchedule.id).where(
+                    RetestSchedule.asset_id == seeded_session["vopak_asset_id"]
+                )
+            )
+        ).one()
+
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/retest-schedules/{schedule_id}",
+            json={
+                "due_at": "2026-09-15",
+                "status": "UPCOMING",
+                "reminder_interval_days": 45,
+                "escalation_interval_days": 10,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["due_at"] == "2026-09-15"
+    assert response.json()["status"] == "UPCOMING"
+    assert response.json()["asset"]["asset_number"] == "997950"
+
+    async with session_factory() as session:
+        schedule = await session.get(RetestSchedule, schedule_id)
+        sync_change = (await session.scalars(select(SyncChange))).one()
+        audit_event = (await session.scalars(select(AuditEvent))).one()
+
+        assert schedule is not None
+        assert schedule.version == 2
+        assert schedule.due_at == date(2026, 9, 15)
+        assert schedule.status == RetestScheduleStatus.UPCOMING.value
+        assert schedule.reminder_interval_days == 45
+        assert sync_change.entity == "RetestSchedule"
+        assert sync_change.entity_id == schedule.id
+        assert sync_change.op == "update"
+        assert sync_change.version == 2
+        assert audit_event.action == "retest_schedule.updated"
+        assert audit_event.before is not None
+        assert audit_event.before["status"] == RetestScheduleStatus.OVERDUE.value
+        assert audit_event.after is not None
+        assert audit_event.after["status"] == RetestScheduleStatus.UPCOMING.value
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
 async def test_soft_delete_asset_writes_tombstone_sync_and_audit(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
@@ -2170,3 +2289,107 @@ async def test_certificate_detail_respects_customer_scope(
     assert visible_response.json()["number"] == "CERT-997950-1"
     assert visible_response.json()["customer"]["code"] == "VOPA"
     assert hidden_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_certificate_lifecycle_actions_revoke_and_supersede_with_audit(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        vopak_asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        orica_asset = await session.get(Asset, seeded_session["orica_asset_id"])
+        assert vopak_asset is not None
+        assert orica_asset is not None
+        revoke_inspection = Inspection(
+            asset=vopak_asset,
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+            reviewer_user_id="reviewer-1",
+        )
+        supersede_inspection = Inspection(
+            asset=orica_asset,
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-2",
+            reviewer_user_id="reviewer-1",
+        )
+        session.add_all([revoke_inspection, supersede_inspection])
+        await session.flush()
+        revoked_certificate = Certificate.issue_from_inspection(
+            revoke_inspection,
+            number="CERT-997950-1",
+            pdf_object_key="certificates/CERT-997950-1.pdf",
+            verification_hash="hash-997950-1",
+            public_token="public-token-997950-1",
+            issued_by_user_id="reviewer-1",
+            valid_until=date(2027, 6, 28),
+        )
+        superseded_certificate = Certificate.issue_from_inspection(
+            supersede_inspection,
+            number="CERT-ORIC-100-1",
+            pdf_object_key="certificates/CERT-ORIC-100-1.pdf",
+            verification_hash="hash-oric-100-1",
+            public_token="public-token-oric-100-1",
+            issued_by_user_id="reviewer-1",
+            valid_until=date(2027, 7, 1),
+        )
+        session.add_all([revoked_certificate, superseded_certificate])
+        await session.commit()
+        revoked_certificate_id = revoked_certificate.id
+        superseded_certificate_id = superseded_certificate.id
+
+    principal = Principal(
+        user_id="reviewer-1",
+        roles=frozenset({Role.REVIEWER}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        revoke_response = await client.post(
+            f"/api/v1/certificates/{revoked_certificate_id}/revoke"
+        )
+        supersede_response = await client.post(
+            f"/api/v1/certificates/{superseded_certificate_id}/supersede"
+        )
+
+    assert revoke_response.status_code == 200
+    assert revoke_response.json()["status"] == CertificateStatus.REVOKED.value
+    assert supersede_response.status_code == 200
+    assert supersede_response.json()["status"] == CertificateStatus.SUPERSEDED.value
+
+    async with session_factory() as session:
+        revoked = await session.get(Certificate, revoked_certificate_id)
+        superseded = await session.get(Certificate, superseded_certificate_id)
+        sync_changes = (
+            await session.scalars(
+                select(SyncChange)
+                .where(SyncChange.entity == "Certificate")
+                .order_by(SyncChange.seq)
+            )
+        ).all()
+        audit_events = (
+            await session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.entity == "Certificate")
+                .order_by(AuditEvent.sequence)
+            )
+        ).all()
+
+        assert revoked is not None
+        assert superseded is not None
+        assert revoked.status == CertificateStatus.REVOKED.value
+        assert superseded.status == CertificateStatus.SUPERSEDED.value
+        assert [change.op for change in sync_changes] == ["update", "update"]
+        assert [event.action for event in audit_events] == [
+            "certificate.revoked",
+            "certificate.superseded",
+        ]
+        assert audit_events[0].before is not None
+        assert audit_events[0].before["status"] == CertificateStatus.ISSUED.value
+        assert audit_events[1].after is not None
+        assert audit_events[1].after["status"] == CertificateStatus.SUPERSEDED.value
+        assert await verify_audit_chain(session)
