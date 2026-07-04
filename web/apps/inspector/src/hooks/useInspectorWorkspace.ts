@@ -172,8 +172,13 @@ export function useInspectorWorkspace() {
     }
 
     const queue = pendingOperations(loadOutbox().operations).filter(
-      (operation) => operation.status === "pending"
+      (operation) =>
+        operation.status === "pending" || operation.status === "rejected"
     );
+
+    if (queue.length === 0) {
+      return;
+    }
 
     for (const operation of queue) {
       markOperationPushing(operation.opId);

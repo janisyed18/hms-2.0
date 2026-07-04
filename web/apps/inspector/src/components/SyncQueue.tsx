@@ -51,6 +51,10 @@ export function SyncQueue({
   const visibleOperations = outbox;
   const pendingCount = outbox.filter((operation) => operation.status !== "applied")
     .length;
+  const pushableCount = outbox.filter(
+    (operation) =>
+      operation.status === "pending" || operation.status === "rejected"
+  ).length;
 
   return (
     <section className="screen-stack" aria-label="Sync queue">
@@ -67,14 +71,19 @@ export function SyncQueue({
       <div className="action-row">
         <button
           className="primary-action"
-          disabled={!isOnline || pendingCount === 0}
+          disabled={!isOnline || pushableCount === 0}
           onClick={onPush}
           type="button"
         >
           <CloudUpload aria-hidden="true" size={17} />
           Push Changes
         </button>
-        <button className="secondary-action" onClick={onPull} type="button">
+        <button
+          className="secondary-action"
+          disabled={!isOnline}
+          onClick={onPull}
+          type="button"
+        >
           <RefreshCw aria-hidden="true" size={17} />
           Pull Updates
         </button>

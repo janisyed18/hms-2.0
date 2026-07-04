@@ -8,6 +8,7 @@ describe("Inspector app", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("opens to the queue-first work dashboard", async () => {
@@ -36,6 +37,89 @@ describe("Inspector app", () => {
 
     expect(screen.getByText("1 pending")).toBeInTheDocument();
     expect(screen.getByText("HOS-2024-0891")).toBeInTheDocument();
+  });
+
+  it("filters the field work queue by search text and urgency", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "BAT Inspector" });
+
+    await user.type(screen.getByLabelText("Search work"), "Pacific");
+
+    expect(screen.getByText("HOS-2025-0201")).toBeInTheDocument();
+    expect(screen.queryByText("HOS-2024-0891")).not.toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("Search work"));
+    await user.click(screen.getByRole("button", { name: "Drafts" }));
+
+    expect(screen.getByText("HOS-2025-0156")).toBeInTheDocument();
+    expect(screen.queryByText("HOS-2024-0891")).not.toBeInTheDocument();
+  });
+
+  it("lets rejected sync operations be pushed again", async () => {
+    const user = userEvent.setup();
+    let pushAttempts = 0;
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(url);
+
+      if (path.endsWith("/api/v1/sync/bootstrap")) {
+        return new Response(JSON.stringify(mockBootstrapResponse), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      if (path.endsWith("/api/v1/sync/push")) {
+        pushAttempts += 1;
+
+        if (pushAttempts === 1) {
+          return new Response("temporary outage", { status: 503 });
+        }
+
+        const body = JSON.parse(String(init?.body)) as {
+          operations: Array<{ op_id: string; idempotency_key: string }>;
+        };
+        return new Response(
+          JSON.stringify({
+            cursor: 11,
+            results: [
+              {
+                op_id: body.operations[0].op_id,
+                idempotency_key: body.operations[0].idempotency_key,
+                entity: "Inspection",
+                entity_id: "local-hos-2024-0891",
+                status: "applied",
+                version: 5,
+                current_version: null,
+                payload: null,
+                error: null
+              }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response("Not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await user.click(
+      await screen.findByRole("button", { name: /open HOS-2024-0891/i })
+    );
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    await user.click(screen.getByRole("button", { name: "Push Changes" }));
+
+    expect(await screen.findByText("Rejected")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Push Changes" }));
+
+    expect(await screen.findByText("Applied")).toBeInTheDocument();
+    expect(pushAttempts).toBe(2);
   });
 
   it("shows server conflicts returned from sync push", async () => {
