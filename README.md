@@ -13,6 +13,7 @@ seed data is synthetic and HMS-shaped for demo and verification use only.
 ```text
 backend/                  FastAPI API, SQLAlchemy models, Alembic migrations
 web/apps/staff/           React/Vite staff operations console
+web/apps/inspector/       React/Vite field inspector app with local outbox
 tooling/                  Migration and synthetic-data utilities
 docs/                     Design notes, implementation plans, and decisions
 .github/workflows/ci.yml  Backend and frontend CI checks
@@ -59,6 +60,29 @@ When the backend is running, Vite proxies `/api` and `/health` to
 `HMS_API_TARGET` from `web/apps/staff/.env`. If the backend is unavailable, the
 staff UI falls back to mock data for local development.
 
+## Inspector App Setup
+
+In another terminal:
+
+```bash
+cd web/apps/inspector
+cp .env.example .env
+npm install
+npm run dev -- --host 127.0.0.1
+```
+
+Open the printed Vite URL. The default configured port is `5174`.
+
+When the backend is running, Vite proxies `/api` and `/health` to
+`HMS_API_TARGET` from `web/apps/inspector/.env`. If the backend is unavailable,
+the inspector UI falls back to synthetic sync bootstrap data.
+
+The inspector app is the Phase 3B browser/mobile-web development slice. It uses
+`localStorage` to simulate an offline outbox for drafts and submitted
+inspections. This is not the final encrypted native offline store; Capacitor,
+secure storage, QR/barcode scanning, camera capture, and real OIDC are later
+phases.
+
 ## Development Auth
 
 Authentication is still development scaffolding. The staff UI sends local HMS
@@ -95,6 +119,14 @@ npm test -- --run
 npm run build
 ```
 
+Inspector app:
+
+```bash
+cd web/apps/inspector
+npm test -- --run
+npm run build
+```
+
 ## Current Phase Status
 
 Completed foundation and core staff workflows:
@@ -105,7 +137,9 @@ Completed foundation and core staff workflows:
 - Certificate issue/revoke/supersede flow
 - Analytics, sync queue placeholder workspace, audit, users, and devices UI
 - Backend sync bootstrap, changes, and inspection push endpoints
-- GitHub Actions CI for backend and staff app checks
+- Field inspector mobile-web app with work queue, inspection capture, local
+  outbox, and sync queue
+- GitHub Actions CI for backend, staff app, and inspector app checks
 
 Current sync API slice:
 
@@ -116,9 +150,8 @@ Current sync API slice:
 
 Planned next phase:
 
-- Field/mobile offline UI and local outbox processing
 - Broader push handlers for asset field edits and inspection child records
-- Offline-capable field/mobile inspection workflow
+- Native offline hardening for encrypted local storage and device security
 - Notification rules for retests, submitted inspections, and certificate events
 
 ## Guardrails

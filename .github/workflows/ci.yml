@@ -34,3 +34,19 @@ jobs:
       - run: npm ci
       - run: npm test -- --run
       - run: npm run build
+
+  inspector-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/apps/inspector
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/apps/inspector/package-lock.json
+      - run: npm ci
+      - run: npm test -- --run
+      - run: npm run build
