@@ -48,6 +48,54 @@ export interface WorkItem {
   inspectionStatus: InspectionStatus | null;
 }
 
+export interface SyncDeviceRead {
+  device_id: string;
+  platform: string;
+  app_version: string;
+  offline_window_days: number;
+  revoked: boolean;
+}
+
+export interface SyncRecordRead {
+  seq: number | null;
+  entity: string;
+  entity_id: string;
+  op: "upsert" | "delete";
+  version: number;
+  changed_at: string | null;
+  payload: Record<string, unknown> | null;
+}
+
+export interface SyncBootstrapResponse {
+  device: SyncDeviceRead;
+  cursor: number;
+  has_more: boolean;
+  records: SyncRecordRead[];
+}
+
+export interface SyncChangesResponse {
+  cursor: number;
+  has_more: boolean;
+  changes: SyncRecordRead[];
+}
+
+export interface SyncOperationResult {
+  op_id: string;
+  idempotency_key: string;
+  entity: string;
+  entity_id: string;
+  status: "applied" | "conflict" | "rejected";
+  version: number | null;
+  current_version: number | null;
+  payload: Record<string, unknown> | null;
+  error: string | null;
+}
+
+export interface SyncPushResponse {
+  cursor: number;
+  results: SyncOperationResult[];
+}
+
 export interface OutboxOperation {
   opId: string;
   idempotencyKey: string;
