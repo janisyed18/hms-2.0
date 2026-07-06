@@ -181,6 +181,8 @@ export interface AssetRecord {
   product: AssetProductSummary;
   location: AssetLocationSummary | null;
   retestSchedule: AssetRetestSummary | null;
+  aEnd: AssetEndValues;
+  bEnd: AssetEndValues;
   etag?: string | null;
 }
 

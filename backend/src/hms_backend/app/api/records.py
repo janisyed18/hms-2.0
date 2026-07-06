@@ -11,6 +11,8 @@ from sqlalchemy.sql import Select
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.api.schemas import (
     AssetCreate,
+    AssetEndRead,
+    AssetEndWrite,
     AssetListResponse,
     AssetRead,
     AssetUpdate,
@@ -60,7 +62,7 @@ from hms_backend.app.core.rbac import (
 )
 from hms_backend.app.core.repository import record_create, record_update, soft_delete
 from hms_backend.app.models.base import utc_now
-from hms_backend.app.modules.assets.models import Asset
+from hms_backend.app.modules.assets.models import Asset, AssetEndConfiguration
 from hms_backend.app.modules.certificates.models import (
     Certificate,
     CertificateIssueError,
@@ -746,6 +748,20 @@ async def create_asset(
         actor_id=principal.user_id,
         action="asset.created",
     )
+    await _upsert_asset_end(
+        session,
+        payload.a_end,
+        asset=asset,
+        end="A",
+        actor_id=principal.user_id,
+    )
+    await _upsert_asset_end(
+        session,
+        payload.b_end,
+        asset=asset,
+        end="B",
+        actor_id=principal.user_id,
+    )
     if payload.retest_schedule is not None:
         schedule = _build_retest_schedule(
             payload.retest_schedule,
@@ -843,8 +859,12 @@ async def update_retest_schedule(
 
     updates = payload.model_dump(exclude_unset=True)
     before = schedule.to_audit_dict()
+    asset_before = None
     if "due_at" in updates and payload.due_at is not None:
         schedule.due_at = payload.due_at
+        if schedule.asset.next_retest_due_at != payload.due_at:
+            asset_before = schedule.asset.to_audit_dict()
+            schedule.asset.next_retest_due_at = payload.due_at
     if "status" in updates and payload.status is not None:
         schedule.status = payload.status
     if (
@@ -865,6 +885,14 @@ async def update_retest_schedule(
         action="retest_schedule.updated",
         before=before,
     )
+    if asset_before is not None:
+        await record_update(
+            session,
+            schedule.asset,
+            actor_id=principal.user_id,
+            action="asset.retest_due_synced",
+            before=asset_before,
+        )
     await session.commit()
     _set_etag(response, schedule.version)
     return _retest_schedule_read(schedule)
@@ -1483,6 +1511,22 @@ async def update_asset(
             customer=target_customer,
             actor_id=principal.user_id,
         )
+    if "a_end" in updates:
+        await _upsert_asset_end(
+            session,
+            payload.a_end,
+            asset=asset,
+            end="A",
+            actor_id=principal.user_id,
+        )
+    if "b_end" in updates:
+        await _upsert_asset_end(
+            session,
+            payload.b_end,
+            asset=asset,
+            end="B",
+            actor_id=principal.user_id,
+        )
     await session.commit()
     loaded = await _get_visible_asset_or_404(session, asset.id, principal)
     _set_etag(response, loaded.version)
@@ -1537,6 +1581,7 @@ def _asset_statement() -> Select[tuple[Asset]]:
         selectinload(Asset.customer),
         selectinload(Asset.location),
         selectinload(Asset.product),
+        selectinload(Asset.ends),
         selectinload(Asset.retest_schedule),
     )
 
@@ -1983,6 +2028,58 @@ async def _upsert_retest_schedule(
     )
 
 
+async def _upsert_asset_end(
+    session: AsyncSession,
+    payload: AssetEndWrite | None,
+    *,
+    asset: Asset,
+    end: str,
+    actor_id: str,
+) -> None:
+    if payload is None:
+        return
+
+    fitting = _clean_optional(payload.fitting)
+    size = _clean_optional(payload.size)
+    existing = (
+        await session.scalars(
+            select(AssetEndConfiguration).where(
+                AssetEndConfiguration.asset_id == asset.id,
+                AssetEndConfiguration.end == end,
+                AssetEndConfiguration.deleted_at.is_(None),
+            )
+        )
+    ).first()
+    if existing is None:
+        if fitting is None and size is None:
+            return
+        configuration = AssetEndConfiguration(
+            asset=asset,
+            end=end,
+            fitting=fitting,
+            size=size,
+        )
+        session.add(configuration)
+        await record_create(
+            session,
+            configuration,
+            actor_id=actor_id,
+            action="asset_end_configuration.created",
+        )
+        return
+
+    before = existing.to_audit_dict()
+    existing.fitting = fitting
+    existing.size = size
+    await record_update(
+        session,
+        existing,
+        actor_id=actor_id,
+        action="asset_end_configuration.updated",
+        before=before,
+    )
+
+
 def _clean_optional(value: str | None) -> str | None:
     if value is None:
         return None
@@ -2109,7 +2206,21 @@ def _certificate_read(certificate: Certificate) -> CertificateRead:
     )
 
 
+def _asset_end_read(configuration: AssetEndConfiguration | None) -> AssetEndRead | None:
+    if configuration is None:
+        return None
+    return AssetEndRead(
+        fitting=configuration.fitting,
+        size=configuration.size,
+    )
+
+
 def _asset_read(asset: Asset) -> AssetRead:
+    ends = {
+        configuration.end: configuration
+        for configuration in asset.ends
+        if configuration.deleted_at is None
+    }
     return AssetRead(
         id=asset.id,
         asset_number=asset.asset_number,
@@ -2150,4 +2261,6 @@ def _asset_read(asset: Asset) -> AssetRead:
             if asset.retest_schedule is not None
             else None
         ),
+        a_end=_asset_end_read(ends.get("A")),
+        b_end=_asset_end_read(ends.get("B")),
     )

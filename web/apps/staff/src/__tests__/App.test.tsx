@@ -14,12 +14,31 @@ const apiCustomer = {
   contacts: []
 };
 
+const apiUnassignedCustomer = {
+  id: "cust-api-2",
+  code: "E2EAPI",
+  name: "E2E API Customer",
+  retest_enabled: true,
+  default_retest_months: 12,
+  locations: [],
+  contacts: []
+};
+
 const apiProduct = {
   id: "product-api-1",
   code: "API-1000",
   name: "API Fuel Hose",
   category: "Composite",
   sub_category: "Petrol & Oil",
+  standard_code: "AS2683"
+};
+
+const apiUnassignedProduct = {
+  id: "product-api-2",
+  code: "API-2000",
+  name: "API Spare Hose",
+  category: "Composite",
+  sub_category: "E2E",
   standard_code: "AS2683"
 };
 
@@ -54,6 +73,14 @@ const apiAsset = {
   retest_schedule: {
     due_at: "2026-07-15",
     status: "DUE"
+  },
+  a_end: {
+    fitting: "Camlock M",
+    size: "2 inch"
+  },
+  b_end: {
+    fitting: "Flange W",
+    size: "2 inch"
   }
 };
 
@@ -203,18 +230,18 @@ function routeFetch() {
     }
     if (path.startsWith("/api/v1/customers")) {
       return okJson({
-        total: 1,
+        total: 2,
         limit: 50,
         offset: 0,
-        items: [apiCustomer]
+        items: [apiCustomer, apiUnassignedCustomer]
       });
     }
     if (path.startsWith("/api/v1/products")) {
       return okJson({
-        total: 1,
+        total: 2,
         limit: 50,
         offset: 0,
-        items: [apiProduct]
+        items: [apiProduct, apiUnassignedProduct]
       });
     }
     if (path.startsWith("/api/v1/assets")) {
@@ -473,6 +500,27 @@ describe("App", () => {
     expect(await screen.findByRole("row", { name: /CERT-API-777-1/i })).toBeVisible();
   });
 
+  it("uses full backend customer and product lists when adding assets", async () => {
+    vi.stubGlobal("fetch", routeFetch());
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Assets" }));
+    await user.click(screen.getByRole("button", { name: "Add Asset" }));
+
+    expect(
+      within(screen.getByLabelText("Asset customer")).getByRole("option", {
+        name: "E2E API Customer"
+      })
+    ).toBeVisible();
+    expect(
+      within(screen.getByLabelText("Asset product")).getByRole("option", {
+        name: "API Spare Hose"
+      })
+    ).toBeVisible();
+  });
+
   it("issues a certificate from an approved inspection in the staff UI", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
@@ -491,6 +539,9 @@ describe("App", () => {
     expect(await screen.findByRole("row", { name: /CERT-VOPA-NEW-2/i })).toBeVisible();
     expect(screen.getByRole("complementary", { name: "Certificate detail" })).toHaveTextContent(
       "CERT-VOPA-NEW-2"
+    );
+    expect(screen.getByRole("complementary", { name: "Certificate detail" })).toHaveTextContent(
+      "Valid until 2027-06-29"
     );
   });
 
@@ -620,15 +671,21 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Add Asset" }));
     await user.type(screen.getByLabelText("Asset number"), "ASSET-200");
     await user.type(screen.getByLabelText("Customer serial number"), "SER-200");
+    await user.type(screen.getByLabelText("Next retest due"), "2026-09-15");
     await user.type(screen.getByLabelText("A end fitting"), "Camlock A");
+    await user.type(screen.getByLabelText("A end size"), "2 inch");
     await user.type(screen.getByLabelText("B end fitting"), "Flange B");
+    await user.type(screen.getByLabelText("B end size"), "2 inch");
 
     expect(screen.getByDisplayValue("Camlock A")).toBeVisible();
     expect(screen.getByDisplayValue("Flange B")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Save asset" }));
 
-    expect(await screen.findByRole("row", { name: /ASSET-200/i })).toBeVisible();
+    const assetRow = await screen.findByRole("row", { name: /ASSET-200/i });
+    expect(assetRow).toBeVisible();
+    expect(assetRow).toHaveTextContent("2026-09-15");
+    expect(assetRow).toHaveTextContent("Camlock A 2 inch / Flange B 2 inch");
   });
 
   it("confirms archive actions and calls soft-delete endpoints", async () => {
@@ -699,6 +756,10 @@ describe("App", () => {
     expect(screen.getByRole("complementary", { name: "Retest schedule detail" })).toHaveTextContent(
       "UPCOMING"
     );
+    expect(screen.getByRole("complementary", { name: "Retest schedule detail" })).toHaveTextContent(
+      "Due 2026-09-15"
+    );
+    expect(screen.getByRole("row", { name: /997950/i })).toHaveTextContent("2026-09-15");
   });
 
   it("opens analytics, users, and devices as implemented console workspaces", async () => {

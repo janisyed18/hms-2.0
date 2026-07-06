@@ -145,6 +145,8 @@ class AssetEndConfiguration(SyncableMixin, Base):
         nullable=True,
         index=True,
     )
+    fitting: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    size: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     asset: Mapped[Asset] = relationship(back_populates="ends", lazy="selectin")
     nominal_bore: Mapped[NominalBore | None] = relationship(lazy="selectin")

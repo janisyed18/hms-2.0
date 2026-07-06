@@ -93,6 +93,14 @@ const apiAsset = {
   retest_schedule: {
     due_at: "2023-11-02",
     status: "OVERDUE"
+  },
+  a_end: {
+    fitting: "Camlock M",
+    size: "2 inch"
+  },
+  b_end: {
+    fitting: "Flange W",
+    size: "2 inch"
   }
 };
 
@@ -388,6 +396,82 @@ describe("hmsClient", () => {
         headers: expect.objectContaining({ "If-Match": '"5"' })
       })
     );
+  });
+
+  it("sends asset retest schedule and end configuration payloads", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okJson({
+        ...apiAsset,
+        asset_number: "E2E-ASSET-001",
+        customer_serial_no: "SER-E2E-001",
+        lifecycle_status: "IN_SERVICE",
+        next_retest_due_at: "2026-09-15",
+        retest_schedule: {
+          due_at: "2026-09-15",
+          status: "UPCOMING"
+        },
+        a_end: {
+          fitting: "Camlock M",
+          size: "2 inch"
+        },
+        b_end: {
+          fitting: "Flange W",
+          size: "2 inch"
+        }
+      })
+    );
+
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const created = await client.createAsset({
+      assetNumber: "E2E-ASSET-001",
+      customerId: "cust-api-1",
+      customerSerialNo: "SER-E2E-001",
+      productId: "product-api-1",
+      lifecycleStatus: "IN_SERVICE",
+      nextRetestDueAt: "2026-09-15",
+      aEnd: {
+        fitting: "Camlock M",
+        size: "2 inch"
+      },
+      bEnd: {
+        fitting: "Flange W",
+        size: "2 inch"
+      }
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/assets",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          customer_id: "cust-api-1",
+          product_id: "product-api-1",
+          asset_number: "E2E-ASSET-001",
+          customer_serial_no: "SER-E2E-001",
+          lifecycle_status: "IN_SERVICE",
+          next_retest_due_at: "2026-09-15",
+          retest_schedule: {
+            due_at: "2026-09-15",
+            status: "UPCOMING"
+          },
+          a_end: {
+            fitting: "Camlock M",
+            size: "2 inch"
+          },
+          b_end: {
+            fitting: "Flange W",
+            size: "2 inch"
+          }
+        })
+      })
+    );
+    expect(created.nextRetestDueAt).toBe("2026-09-15");
+    expect(created.retestSchedule).toEqual({
+      dueAt: "2026-09-15",
+      status: "UPCOMING"
+    });
+    expect(created.aEnd).toEqual({ fitting: "Camlock M", size: "2 inch" });
+    expect(created.bEnd).toEqual({ fitting: "Flange W", size: "2 inch" });
   });
 
   it("maps inspection list responses and workflow mutations", async () => {

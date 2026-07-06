@@ -32,6 +32,14 @@ export const mockAssets: AssetRecord[] = [
     retestSchedule: {
       dueAt: "2023-11-02",
       status: "OVERDUE"
+    },
+    aEnd: {
+      fitting: "Camlock M",
+      size: "2 inch"
+    },
+    bEnd: {
+      fitting: "Flange W",
+      size: "2 inch"
     }
   },
   {
@@ -56,6 +64,14 @@ export const mockAssets: AssetRecord[] = [
       category: "Stainless Steel"
     },
     location: null,
-    retestSchedule: null
+    retestSchedule: null,
+    aEnd: {
+      fitting: "BSP F",
+      size: "1.5 inch"
+    },
+    bEnd: {
+      fitting: "Storz M",
+      size: "1.5 inch"
+    }
   }
 ];

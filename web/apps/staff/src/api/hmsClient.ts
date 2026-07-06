@@ -12,6 +12,7 @@ import { mockReferenceStandards } from "../data/mockReferenceData";
 import { mockRetestSchedules } from "../data/mockRetestSchedules";
 import type {
   ApiListResult,
+  AssetEndValues,
   AssetListResult,
   AssetLocationSummary,
   AssetFormValues,
@@ -133,6 +134,11 @@ interface ApiAssetRetestSchedule {
   status: string;
 }
 
+interface ApiAssetEnd {
+  fitting: string | null;
+  size: string | null;
+}
+
 interface ApiAsset {
   id: string;
   asset_number: string;
@@ -147,6 +153,8 @@ interface ApiAsset {
   product: ApiProductSummary;
   location: ApiLocationSummary | null;
   retest_schedule: ApiAssetRetestSchedule | null;
+  a_end?: ApiAssetEnd | null;
+  b_end?: ApiAssetEnd | null;
 }
 
 interface ApiAssetList {
@@ -466,6 +474,13 @@ function toAssetRetestSummary(
   };
 }
 
+function toAssetEnd(end: ApiAssetEnd | null | undefined): AssetEndValues {
+  return {
+    fitting: end?.fitting ?? "",
+    size: end?.size ?? ""
+  };
+}
+
 function toAsset(asset: ApiAsset, etag: string | null = null): AssetRecord {
   return withEtag(
     {
@@ -481,7 +496,9 @@ function toAsset(asset: ApiAsset, etag: string | null = null): AssetRecord {
       customer: toSummary(asset.customer),
       product: toProductSummary(asset.product),
       location: toLocationSummary(asset.location),
-      retestSchedule: toAssetRetestSummary(asset.retest_schedule)
+      retestSchedule: toAssetRetestSummary(asset.retest_schedule),
+      aEnd: toAssetEnd(asset.a_end),
+      bEnd: toAssetEnd(asset.b_end)
     },
     etag
   );
@@ -610,6 +627,39 @@ function pressureTestPayload(
     hold_time_seconds: pressureTest.holdTimeSeconds,
     passed: pressureTest.passed,
     measurements: pressureTest.measurements
+  };
+}
+
+function retestScheduleStatus(lifecycleStatus: string): string {
+  if (lifecycleStatus === "DUE" || lifecycleStatus === "OVERDUE") {
+    return lifecycleStatus;
+  }
+  return "UPCOMING";
+}
+
+function assetEndPayload(end: AssetEndValues): Record<string, string | null> {
+  return {
+    fitting: end.fitting.trim() || null,
+    size: end.size.trim() || null
+  };
+}
+
+function assetPayload(values: AssetFormValues) {
+  return {
+    customer_id: values.customerId,
+    product_id: values.productId,
+    asset_number: values.assetNumber,
+    customer_serial_no: values.customerSerialNo,
+    lifecycle_status: values.lifecycleStatus,
+    next_retest_due_at: values.nextRetestDueAt,
+    retest_schedule: values.nextRetestDueAt
+      ? {
+          due_at: values.nextRetestDueAt,
+          status: retestScheduleStatus(values.lifecycleStatus)
+        }
+      : null,
+    a_end: assetEndPayload(values.aEnd),
+    b_end: assetEndPayload(values.bEnd)
   };
 }
 
@@ -858,14 +908,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         "/api/v1/assets",
         {
           method: "POST",
-          body: JSON.stringify({
-            customer_id: values.customerId,
-            product_id: values.productId,
-            asset_number: values.assetNumber,
-            customer_serial_no: values.customerSerialNo,
-            lifecycle_status: values.lifecycleStatus,
-            next_retest_due_at: values.nextRetestDueAt
-          })
+          body: JSON.stringify(assetPayload(values))
         }
       );
       return toAsset(response.data, response.etag);
@@ -881,14 +924,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         {
           method: "PATCH",
           headers: ifMatchHeader(etag),
-          body: JSON.stringify({
-            customer_id: values.customerId,
-            product_id: values.productId,
-            asset_number: values.assetNumber,
-            customer_serial_no: values.customerSerialNo,
-            lifecycle_status: values.lifecycleStatus,
-            next_retest_due_at: values.nextRetestDueAt
-          })
+          body: JSON.stringify(assetPayload(values))
         }
       );
       return toAsset(response.data, response.etag);

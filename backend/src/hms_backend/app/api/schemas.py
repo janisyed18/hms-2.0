@@ -187,6 +187,16 @@ class RetestScheduleUpdate(BaseModel):
     escalation_interval_days: int | None = None
 
 
+class AssetEndRead(BaseModel):
+    fitting: str | None
+    size: str | None
+
+
+class AssetEndWrite(BaseModel):
+    fitting: str | None = None
+    size: str | None = None
+
+
 class AssetRead(BaseModel):
     id: str
     asset_number: str
@@ -201,6 +211,8 @@ class AssetRead(BaseModel):
     product: ProductSummary
     location: LocationSummary | None
     retest_schedule: RetestScheduleSummary | None
+    a_end: AssetEndRead | None
+    b_end: AssetEndRead | None
 
 
 class AssetListResponse(BaseModel):
@@ -223,6 +235,8 @@ class AssetCreate(BaseModel):
     condemned_at: date | None = None
     length_m: Decimal | None = None
     retest_schedule: RetestScheduleWrite | None = None
+    a_end: AssetEndWrite | None = None
+    b_end: AssetEndWrite | None = None
 
 
 class AssetUpdate(BaseModel):
@@ -238,6 +252,8 @@ class AssetUpdate(BaseModel):
     condemned_at: date | None = None
     length_m: Decimal | None = None
     retest_schedule: RetestScheduleWrite | None = None
+    a_end: AssetEndWrite | None = None
+    b_end: AssetEndWrite | None = None
 
 
 class PressureTestWrite(BaseModel):

@@ -52,8 +52,8 @@ export function AssetForm({
     setProductId(asset?.product.id ?? productOptions[0]?.id ?? "");
     setLifecycleStatus(asset?.lifecycleStatus ?? "IN_SERVICE");
     setNextRetestDueAt(asset?.nextRetestDueAt ?? "");
-    setAEnd(blankEnd);
-    setBEnd(blankEnd);
+    setAEnd(asset?.aEnd ?? blankEnd);
+    setBEnd(asset?.bEnd ?? blankEnd);
   }, [asset, customerOptions, open, productOptions]);
 
   if (!open) {
@@ -149,7 +149,8 @@ export function AssetForm({
           <span>Next retest due</span>
           <input
             aria-label="Next retest due"
-            type="date"
+            inputMode="numeric"
+            placeholder="YYYY-MM-DD"
             value={nextRetestDueAt}
             onChange={(event) => setNextRetestDueAt(event.target.value)}
           />

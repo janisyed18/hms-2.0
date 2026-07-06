@@ -21,14 +21,22 @@ function statusClass(status: string) {
 }
 
 function boreLabel(_asset: AssetRecord) {
-  return "Not recorded";
+  const sizes = [assetEndSize(_asset.aEnd), assetEndSize(_asset.bEnd)].filter(Boolean);
+  const uniqueSizes = Array.from(new Set(sizes));
+  return uniqueSizes.length === 1 ? uniqueSizes[0] : uniqueSizes.join(" / ") || "Not recorded";
+}
+
+function assetEndSize(end: AssetRecord["aEnd"]) {
+  return end.size.trim();
+}
+
+function assetEndLabel(end: AssetRecord["aEnd"]) {
+  const parts = [end.fitting.trim(), end.size.trim()].filter(Boolean);
+  return parts.join(" ") || "Not recorded";
 }
 
 function endLabel(asset: AssetRecord) {
-  if (asset.customerSerialNo) {
-    return `${asset.customerSerialNo} / Not recorded`;
-  }
-  return "Not recorded";
+  return `${assetEndLabel(asset.aEnd)} / ${assetEndLabel(asset.bEnd)}`;
 }
 
 export function AssetsWorkspace() {

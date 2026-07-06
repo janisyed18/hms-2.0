@@ -1,16 +1,47 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { createHmsClient, loadAssetsWithFallback } from "../api/hmsClient";
+import {
+  createHmsClient,
+  loadAssetsWithFallback,
+  loadCustomersWithFallback,
+  loadProductsWithFallback
+} from "../api/hmsClient";
 import type {
   AssetFormValues,
   AssetProductSummary,
   AssetRecord,
+  CustomerRecord,
   DataSource,
+  ProductRecord,
   RecordSummary
 } from "../domain/types";
 
 function uniqueById<TItem extends { id: string }>(items: TItem[]): TItem[] {
   return Array.from(new Map(items.map((item) => [item.id, item])).values());
+}
+
+function retestScheduleStatus(lifecycleStatus: string): string {
+  if (lifecycleStatus === "DUE" || lifecycleStatus === "OVERDUE") {
+    return lifecycleStatus;
+  }
+  return "UPCOMING";
+}
+
+function customerSummary(customer: CustomerRecord): RecordSummary {
+  return {
+    id: customer.id,
+    code: customer.code,
+    name: customer.name
+  };
+}
+
+function productSummary(product: ProductRecord): AssetProductSummary {
+  return {
+    id: product.id,
+    code: product.code,
+    name: product.name,
+    category: product.category
+  };
 }
 
 function localAsset(
@@ -43,15 +74,19 @@ function localAsset(
     retestSchedule: values.nextRetestDueAt
       ? {
           dueAt: values.nextRetestDueAt,
-          status: values.lifecycleStatus
+          status: retestScheduleStatus(values.lifecycleStatus)
         }
       : current?.retestSchedule ?? null,
+    aEnd: values.aEnd,
+    bEnd: values.bEnd,
     etag: current?.etag ?? null
   };
 }
 
 export function useAssetsWorkspace() {
   const [assets, setAssets] = useState<AssetRecord[]>([]);
+  const [customers, setCustomers] = useState<RecordSummary[]>([]);
+  const [products, setProducts] = useState<AssetProductSummary[]>([]);
   const [source, setSource] = useState<DataSource>("mock");
   const [query, setQuery] = useState("");
   const [editingAsset, setEditingAsset] = useState<AssetRecord | null>(null);
@@ -59,12 +94,28 @@ export function useAssetsWorkspace() {
 
   useEffect(() => {
     let active = true;
-    loadAssetsWithFallback({ sort: "asset_number" }).then((result) => {
+    Promise.all([
+      loadAssetsWithFallback({ sort: "asset_number" }),
+      loadCustomersWithFallback({ sort: "name", limit: 100 }),
+      loadProductsWithFallback({ sort: "name", limit: 100 })
+    ]).then(([assetResult, customerResult, productResult]) => {
       if (!active) {
         return;
       }
-      setAssets(result.items);
-      setSource(result.source);
+      setAssets(assetResult.items);
+      setCustomers(
+        uniqueById([
+          ...customerResult.items.map(customerSummary),
+          ...assetResult.items.map((asset) => asset.customer)
+        ])
+      );
+      setProducts(
+        uniqueById([
+          ...productResult.items.map(productSummary),
+          ...assetResult.items.map((asset) => asset.product)
+        ])
+      );
+      setSource(assetResult.source);
     });
     return () => {
       active = false;
@@ -94,13 +145,19 @@ export function useAssetsWorkspace() {
   }, [assets, query]);
 
   const customerOptions = useMemo(
-    () => uniqueById(assets.map((asset) => asset.customer)),
-    [assets]
+    () =>
+      customers.length > 0
+        ? customers
+        : uniqueById(assets.map((asset) => asset.customer)),
+    [assets, customers]
   );
 
   const productOptions = useMemo(
-    () => uniqueById(assets.map((asset) => asset.product)),
-    [assets]
+    () =>
+      products.length > 0
+        ? products
+        : uniqueById(assets.map((asset) => asset.product)),
+    [assets, products]
   );
 
   function openCreate() {

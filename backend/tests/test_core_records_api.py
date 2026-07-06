@@ -14,7 +14,11 @@ from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
 from hms_backend.app.models.foundation import AuditEvent, SyncChange
-from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
+from hms_backend.app.modules.assets.models import (
+    Asset,
+    AssetEndConfiguration,
+    AssetLifecycleStatus,
+)
 from hms_backend.app.modules.certificates.models import Certificate, CertificateStatus
 from hms_backend.app.modules.customers.models import (
     Customer,
@@ -1235,6 +1239,14 @@ async def test_create_asset_with_retest_schedule_writes_audit_and_sync(
                     "reminder_interval_days": 30,
                     "escalation_interval_days": 7,
                 },
+                "a_end": {
+                    "fitting": "Camlock M",
+                    "size": "2 inch",
+                },
+                "b_end": {
+                    "fitting": "Flange W",
+                    "size": "2 inch",
+                },
             },
         )
 
@@ -1244,11 +1256,20 @@ async def test_create_asset_with_retest_schedule_writes_audit_and_sync(
     assert body["customer"]["code"] == "VOPA"
     assert body["location"]["name"] == "Site A"
     assert body["retest_schedule"]["status"] == "DUE"
+    assert body["a_end"] == {"fitting": "Camlock M", "size": "2 inch"}
+    assert body["b_end"] == {"fitting": "Flange W", "size": "2 inch"}
 
     async with session_factory() as session:
         asset = (
             await session.scalars(select(Asset).where(Asset.asset_number == "NEW-100"))
         ).one()
+        ends = (
+            await session.scalars(
+                select(AssetEndConfiguration)
+                .where(AssetEndConfiguration.asset_id == asset.id)
+                .order_by(AssetEndConfiguration.end)
+            )
+        ).all()
         sync_changes = (
             await session.scalars(select(SyncChange).order_by(SyncChange.seq))
         ).all()
@@ -1258,10 +1279,26 @@ async def test_create_asset_with_retest_schedule_writes_audit_and_sync(
 
         assert asset.version == 1
         assert asset.customer_id == seeded_session["vopak_id"]
-        assert [change.entity for change in sync_changes] == ["Asset", "RetestSchedule"]
-        assert [change.op for change in sync_changes] == ["create", "create"]
+        assert [(end.end, end.fitting, end.size) for end in ends] == [
+            ("A", "Camlock M", "2 inch"),
+            ("B", "Flange W", "2 inch"),
+        ]
+        assert [change.entity for change in sync_changes] == [
+            "Asset",
+            "AssetEndConfiguration",
+            "AssetEndConfiguration",
+            "RetestSchedule",
+        ]
+        assert [change.op for change in sync_changes] == [
+            "create",
+            "create",
+            "create",
+            "create",
+        ]
         assert [event.action for event in audit_events] == [
             "asset.created",
+            "asset_end_configuration.created",
+            "asset_end_configuration.created",
             "retest_schedule.created",
         ]
         assert audit_events[0].after is not None
@@ -1460,23 +1497,38 @@ async def test_patch_retest_schedule_updates_status_intervals_with_audit_and_syn
 
     async with session_factory() as session:
         schedule = await session.get(RetestSchedule, schedule_id)
-        sync_change = (await session.scalars(select(SyncChange))).one()
-        audit_event = (await session.scalars(select(AuditEvent))).one()
+        asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        sync_changes = (
+            await session.scalars(select(SyncChange).order_by(SyncChange.seq))
+        ).all()
+        audit_events = (
+            await session.scalars(select(AuditEvent).order_by(AuditEvent.sequence))
+        ).all()
 
         assert schedule is not None
+        assert asset is not None
         assert schedule.version == 2
         assert schedule.due_at == date(2026, 9, 15)
         assert schedule.status == RetestScheduleStatus.UPCOMING.value
         assert schedule.reminder_interval_days == 45
-        assert sync_change.entity == "RetestSchedule"
-        assert sync_change.entity_id == schedule.id
-        assert sync_change.op == "update"
-        assert sync_change.version == 2
-        assert audit_event.action == "retest_schedule.updated"
-        assert audit_event.before is not None
-        assert audit_event.before["status"] == RetestScheduleStatus.OVERDUE.value
-        assert audit_event.after is not None
-        assert audit_event.after["status"] == RetestScheduleStatus.UPCOMING.value
+        assert asset.next_retest_due_at == date(2026, 9, 15)
+        assert [change.entity for change in sync_changes] == [
+            "RetestSchedule",
+            "Asset",
+        ]
+        assert [change.op for change in sync_changes] == ["update", "update"]
+        assert sync_changes[0].entity_id == schedule.id
+        assert sync_changes[0].version == 2
+        assert [event.action for event in audit_events] == [
+            "retest_schedule.updated",
+            "asset.retest_due_synced",
+        ]
+        assert audit_events[0].before is not None
+        assert audit_events[0].before["status"] == RetestScheduleStatus.OVERDUE.value
+        assert audit_events[0].after is not None
+        assert audit_events[0].after["status"] == RetestScheduleStatus.UPCOMING.value
+        assert audit_events[1].after is not None
+        assert audit_events[1].after["next_retest_due_at"] == "2026-09-15"
         assert await verify_audit_chain(session)
 
 

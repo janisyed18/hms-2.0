@@ -124,7 +124,8 @@ export function RetestScheduleDetail({
           <span>Retest due date</span>
           <input
             aria-label="Retest due date"
-            type="date"
+            inputMode="numeric"
+            placeholder="YYYY-MM-DD"
             value={dueAt}
             onChange={(event) => setDueAt(event.target.value)}
           />
