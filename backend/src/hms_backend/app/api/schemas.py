@@ -404,6 +404,66 @@ class CertificateBatchJobListResponse(BaseModel):
     items: list[CertificateBatchJobRead]
 
 
+# --- Notifications ---
+
+
+class NotificationRead(BaseModel):
+    id: str
+    event_ref: str
+    category: str
+    tier: str
+    channel: str
+    recipient_type: str
+    recipient_id: str
+    recipient_address: str | None
+    subject: str | None
+    body: str
+    status: str
+    attempts: int
+    provider_message_id: str | None
+    error: str | None
+    customer_id: str | None
+    asset_id: str | None
+    created_at: datetime
+    sent_at: datetime | None
+
+
+class NotificationListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[NotificationRead]
+
+
+class NotificationPreferenceItem(BaseModel):
+    category: str
+    channel: str
+    opted_in: bool
+
+
+class NotificationPreferenceUpdate(BaseModel):
+    category: str
+    channel: str
+    opted_in: bool
+
+
+class NotificationPreferenceListResponse(BaseModel):
+    items: list[NotificationPreferenceItem]
+
+
+class PhoneVerificationRequest(BaseModel):
+    phone_e164: str
+
+
+class PhoneVerificationConfirm(BaseModel):
+    code: str
+
+
+class MessageResponse(BaseModel):
+    message: str
+    ok: bool = True
+
+
 class CertificateInspectionSummary(BaseModel):
     id: str
     inspection_type: str

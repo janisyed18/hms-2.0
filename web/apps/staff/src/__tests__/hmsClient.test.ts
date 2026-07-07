@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createHmsClient,
+  loadAuthSessionWithFallback,
   loadAdminUsersWithFallback,
   loadAssetsWithFallback,
   loadAuditEventsWithFallback,
@@ -253,6 +254,14 @@ const apiAuditEvent = {
   hash: "audit-hash-42"
 };
 
+const apiAuthSession = {
+  user_id: "inspector-1",
+  roles: ["INSPECTOR"],
+  permissions: ["customer:read", "asset:read", "inspection:write"],
+  customer_ids: [],
+  auth_mode: "bearer"
+};
+
 function okJson(body: unknown, headers: Record<string, string> = {}) {
   return {
     ok: true,
@@ -310,6 +319,55 @@ describe("hmsClient", () => {
       locations: expect.arrayContaining([
         expect.objectContaining({ name: "Aberdeen Yard" })
       ])
+    });
+  });
+
+  it("uses bearer authorization without dev identity headers", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okJson({
+        total: 1,
+        limit: 50,
+        offset: 0,
+        items: [apiCustomer]
+      })
+    );
+
+    const client = createHmsClient({
+      fetcher: fetchMock,
+      baseUrl: "",
+      identity: { accessToken: "staff-access-token" }
+    });
+    await client.listCustomers();
+
+    const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(headers.authorization).toBe("Bearer staff-access-token");
+    expect(headers["x-hms-user-id"]).toBeUndefined();
+    expect(headers["x-hms-roles"]).toBeUndefined();
+  });
+
+  it("maps the authenticated staff session", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(apiAuthSession));
+    const client = createHmsClient({
+      fetcher: fetchMock,
+      baseUrl: "",
+      identity: { accessToken: "staff-access-token" }
+    });
+
+    const session = await client.getAuthSession();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/auth/me",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: "Bearer staff-access-token"
+        })
+      })
+    );
+    expect(session).toMatchObject({
+      userId: "inspector-1",
+      roles: ["INSPECTOR"],
+      permissions: ["customer:read", "asset:read", "inspection:write"],
+      authMode: "bearer"
     });
   });
 
@@ -1067,6 +1125,10 @@ describe("hmsClient", () => {
       fetcher: rejectedFetch,
       baseUrl: ""
     });
+    const fallbackSession = await loadAuthSessionWithFallback({
+      fetcher: rejectedFetch,
+      baseUrl: ""
+    });
 
     expect(apiProducts.source).toBe("api");
     expect(apiProducts.items[0].code).toBe("1000GY");
@@ -1088,6 +1150,7 @@ describe("hmsClient", () => {
     expect(fallbackDevices.items[0].deviceId).toBe("field-tablet-01");
     expect(fallbackAuditEvents.source).toBe("mock");
     expect(fallbackAuditEvents.items[0].entity).toBe("Inspection");
+    expect(fallbackSession.roles).toContain("HMS_ADMIN");
   });
 
   it("falls back to mock customer data when the backend is unavailable", async () => {

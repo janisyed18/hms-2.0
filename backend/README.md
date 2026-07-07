@@ -59,20 +59,33 @@ Open `http://127.0.0.1:5173/`. Vite proxies `/api` and `/health` to
 reference standards, inspections, and certificates from the local backend when
 it is running.
 
-Current auth is still local development scaffolding; real OIDC token validation
-is not wired yet. Phase 3C resolves `X-HMS-User-Id` against persisted `users`
-rows seeded by `uv run hms-seed`. The staff UI sends:
+Phase 3D introduces an explicit auth boundary with two modes:
+
+- `AUTH_MODE=dev` keeps local HMS identity headers available for development
+  and resolves `X-HMS-User-Id` against persisted `users` rows seeded by
+  `uv run hms-seed`.
+- `AUTH_MODE=bearer` rejects HMS dev headers and requires
+  `Authorization: Bearer <token>`. The current implementation validates HS256
+  tokens using `AUTH_BEARER_HMAC_SECRET`, optional issuer/audience settings, and
+  then resolves the token subject against persisted HMS users. External OIDC
+  JWKS integration remains a later adapter on top of this boundary.
+
+The staff UI still sends local dev headers by default:
 
 - `X-HMS-User-Id: staff-ui-dev`
 
-`X-HMS-Roles` remains available only as a local fallback when no seeded user row
-exists. Manual API checks can use:
+`X-HMS-Roles` remains available only in `AUTH_MODE=dev` and only as a local
+fallback when no seeded user row exists. Manual API checks can use:
 
 ```bash
 curl \
   -H "X-HMS-User-Id: staff-ui-dev" \
   http://127.0.0.1:8000/api/v1/customers
 ```
+
+The current resolved session is available at:
+
+- `GET /api/v1/auth/me`
 
 Admin endpoints added in Phase 3C:
 
@@ -203,6 +216,54 @@ the app degrades gracefully, does not by itself fail readiness.
 Settings: `REDIS_URL`, `CACHE_ENABLED`, `CACHE_TTL_SECONDS`,
 `CACHE_CIRCUIT_BREAKER_SECONDS`, `REDIS_CONNECT_TIMEOUT_SECONDS`,
 `REDIS_COMMAND_TIMEOUT_SECONDS`.
+
+## Notifications
+
+Event-driven, outbox-first notifications (email + SMS + in-app) per the
+Notifications & Alerting spec. Flow:
+
+1. Business code writes a domain event to the **transactional outbox** in the
+   same transaction as the change (e.g. certificate issued, inspection
+   submitted, asset condemned) — so a rolled-back change never notifies (N-01).
+2. The **relay** (`notifications.relay`, Celery beat every 30s) turns committed
+   events into per-recipient, per-channel `Notification` rows, applying the
+   criticality-tier + consent policy: Critical/Transactional are mandatory;
+   Important sends email always and SMS only on opt-in; Informational honours
+   unsubscribe; SMS always needs a verified phone (N-04, N-05, N-10). Each row
+   has an idempotency key so duplicates never occur (N-07).
+3. The **dispatcher** (`notifications.dispatch`, every 30s) sends PENDING rows
+   through channel adapters (console in dev; OCI Email Delivery + Twilio in
+   `live` mode), with retry/backoff and dead-lettering (N-06).
+4. The **daily scheduler** (`notifications.schedule_retests`, 07:00 UTC) raises
+   advance / due / overdue-with-escalation retest reminders (N-02, N-11).
+
+The `beat` service in `docker-compose.yml` drives all three. In dev
+(`NOTIFICATION_CHANNEL_MODE=console`, the default) messages are logged rather
+than sent, so no SMTP/Twilio credentials are needed.
+
+Endpoints:
+
+- `GET/PUT /api/v1/notifications/preferences` — per-category channel opt-in.
+- `GET /api/v1/notifications/unsubscribe?party_type=&party_id=&category=` —
+  public one-click unsubscribe (N-10).
+- `POST /api/v1/notifications/phone/verify/request` + `/confirm` — SMS opt-in
+  via one-time code (dev returns the code in the response).
+- `GET /api/v1/notifications/me` — the current user's in-app feed.
+- `GET /api/v1/admin/notifications` — admin delivery log (N-09).
+
+Key settings: `NOTIFICATION_CHANNEL_MODE` (`console`|`live`),
+`NOTIFICATION_SENDER_NAME`, `NOTIFICATION_MAX_ATTEMPTS`, `RETEST_ADVANCE_DAYS`,
+`RETEST_OVERDUE_ESCALATION_DAYS`, and (live mode) `SMTP_*` / `TWILIO_*`.
+
+Force one cycle without waiting for beat:
+
+```bash
+docker compose exec worker \
+  celery -A hms_backend.app.core.celery_app:celery_app call notifications.relay
+docker compose exec worker \
+  celery -A hms_backend.app.core.celery_app:celery_app call notifications.dispatch
+docker compose logs worker | grep -E "\[EMAIL\]|\[SMS\]"
+```
 
 ## Local Endpoints
 

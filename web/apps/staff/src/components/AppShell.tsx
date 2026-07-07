@@ -22,6 +22,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
+import type { StaffSession } from "../domain/types";
 
 export type AppModule =
   | "dashboard"
@@ -49,11 +50,14 @@ interface NavItem {
 
 interface AppShellProps {
   activeModule: AppModule;
+  canCreateAsset: boolean;
   children: ReactNode;
   description: string;
   onModuleChange: (module: AppModule) => void;
+  session: StaffSession;
   source: "api" | "mock";
   title: string;
+  visibleModules: AppModule[];
 }
 
 const navGroups: Array<{ label: string; items: NavItem[] }> = [
@@ -92,8 +96,6 @@ const navGroups: Array<{ label: string; items: NavItem[] }> = [
   }
 ];
 
-const navItems = navGroups.flatMap((group) => group.items);
-
 function popoverTitle(menu: TopbarMenu) {
   if (menu === "environment") {
     return "Environment details";
@@ -107,7 +109,7 @@ function popoverTitle(menu: TopbarMenu) {
   return "User menu";
 }
 
-function popoverBody(menu: TopbarMenu, source: "api" | "mock") {
+function popoverBody(menu: TopbarMenu, source: "api" | "mock", session: StaffSession) {
   if (menu === "environment") {
     return source === "api" ? "Backend connection active." : "Demo mode uses local mock data.";
   }
@@ -117,24 +119,47 @@ function popoverBody(menu: TopbarMenu, source: "api" | "mock") {
   if (menu === "help") {
     return "Support, release notes, and workflow guidance.";
   }
-  return "Alex Williams. Administrator workspace.";
+  return `${session.displayName}. ${session.roles.join(", ")} workspace.`;
+}
+
+function initialsFor(name: string): string {
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+  return initials || "HM";
 }
 
 export function AppShell({
   activeModule,
+  canCreateAsset,
   children,
   description,
   onModuleChange,
+  session,
   source,
-  title
+  title,
+  visibleModules
 }: AppShellProps) {
   const [openMenu, setOpenMenu] = useState<TopbarMenu | null>(null);
   const [globalQuery, setGlobalQuery] = useState("");
+  const visibleModuleSet = new Set(visibleModules);
+  const visibleNavGroups = navGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => visibleModuleSet.has(item.module))
+    }))
+    .filter((group) => group.items.length > 0);
+  const visibleNavItems = visibleNavGroups.flatMap((group) => group.items);
 
   function handleGlobalSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const normalized = globalQuery.trim().toLowerCase();
-    const target = navItems.find((item) => item.label.toLowerCase().includes(normalized));
+    const target = visibleNavItems.find((item) =>
+      item.label.toLowerCase().includes(normalized)
+    );
     if (target && normalized) {
       onModuleChange(target.module);
       setGlobalQuery("");
@@ -170,7 +195,7 @@ export function AppShell({
           </form>
         </div>
         <nav className="nav-list">
-          {navGroups.map((group) => (
+          {visibleNavGroups.map((group) => (
             <div className="nav-group" key={group.label}>
               <span className="nav-group-label">{group.label}</span>
               {group.items.map((item) => {
@@ -200,10 +225,10 @@ export function AppShell({
           ))}
         </nav>
         <div className="sidebar-user">
-          <div className="avatar">JM</div>
+          <div className="avatar">{initialsFor(session.displayName)}</div>
           <div>
-            <strong>James Mitchell</strong>
-            <span>HMS Admin</span>
+            <strong>{session.displayName}</strong>
+            <span>{session.roles.join(", ")}</span>
           </div>
           <LogOut aria-hidden="true" size={17} />
         </div>
@@ -248,14 +273,16 @@ export function AppShell({
               <span>Live Environment</span>
               <ChevronDown aria-hidden="true" size={15} />
             </button>
-            <button
-              className="primary-button topbar-primary"
-              onClick={() => onModuleChange("assets")}
-              type="button"
-            >
-              <Plus aria-hidden="true" size={17} />
-              New Asset
-            </button>
+            {canCreateAsset ? (
+              <button
+                className="primary-button topbar-primary"
+                onClick={() => onModuleChange("assets")}
+                type="button"
+              >
+                <Plus aria-hidden="true" size={17} />
+                New Asset
+              </button>
+            ) : null}
             <button
               className="icon-button has-count"
               aria-label="Notifications"
@@ -281,10 +308,10 @@ export function AppShell({
               onClick={() => setOpenMenu(openMenu === "user" ? null : "user")}
               type="button"
             >
-              <div className="avatar">AW</div>
+              <div className="avatar">{initialsFor(session.displayName)}</div>
               <div>
-                <strong>Alex Williams</strong>
-                <span>{source === "api" ? "Administrator" : "Demo mode"}</span>
+                <strong>{session.displayName}</strong>
+                <span>{session.roles.join(", ")}</span>
               </div>
               <ChevronDown aria-hidden="true" size={15} />
             </button>
@@ -292,7 +319,7 @@ export function AppShell({
           {openMenu ? (
             <div className="topbar-popover" role="dialog" aria-label={popoverTitle(openMenu)}>
               <strong>{popoverTitle(openMenu)}</strong>
-              <p>{popoverBody(openMenu, source)}</p>
+              <p>{popoverBody(openMenu, source, session)}</p>
             </div>
           ) : null}
         </header>

@@ -1,8 +1,29 @@
 import type {
   AdminUserRecord,
   AuditEventRecord,
-  DeviceRecord
+  DeviceRecord,
+  StaffSession
 } from "../domain/types";
+
+export const mockStaffSession: StaffSession = {
+  userId: "staff-ui-dev",
+  displayName: "Alex Williams",
+  roles: ["HMS_ADMIN", "INSPECTOR", "REVIEWER"],
+  permissions: [
+    "customer:read",
+    "customer:write",
+    "asset:read",
+    "asset:write",
+    "inspection:write",
+    "certificate:approve",
+    "reference:admin",
+    "user:admin",
+    "device:admin",
+    "audit:read"
+  ],
+  customerIds: [],
+  authMode: "mock"
+};
 
 export const mockAdminUsers: AdminUserRecord[] = [
   {

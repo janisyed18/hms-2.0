@@ -24,7 +24,7 @@ from hms_backend.app.core.object_storage import LocalObjectStorage
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
-from hms_backend.app.modules.assets.models import Asset
+from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
 from hms_backend.app.modules.certificates.engine_client import RenderedCertificate
 from hms_backend.app.modules.certificates.models import Certificate
 from hms_backend.app.modules.certificates.tasks import _run_batch
@@ -85,10 +85,16 @@ async def _make_inspection(
     asset_number: str,
     status: str = InspectionStatus.APPROVED.value,
     with_certificate: bool = False,
+    lifecycle_status: str = AssetLifecycleStatus.IN_SERVICE.value,
 ) -> str:
     product = Product(category="Hydraulic", code=f"P-{asset_number}", name="Hose")
     customer = Customer(code=f"C-{asset_number}", name="Cust")
-    asset = Asset(customer=customer, product=product, asset_number=asset_number)
+    asset = Asset(
+        customer=customer,
+        product=product,
+        asset_number=asset_number,
+        lifecycle_status=lifecycle_status,
+    )
     inspection = Inspection(
         asset=asset,
         inspection_type=InspectionType.SERVICE.value,
@@ -252,6 +258,31 @@ async def test_bulk_generate_auto_selects_eligible(
         got = await client.get(f"/api/v1/jobs/certificate-batches/{body['id']}")
     assert got.status_code == 200
     assert got.json()["total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_bulk_auto_select_excludes_condemned_and_retired(
+    session_factory, _mock_dispatch
+) -> None:
+    async with session_factory() as session:
+        await _make_inspection(session, asset_number="OK-1")
+        await _make_inspection(
+            session,
+            asset_number="COND-1",
+            lifecycle_status=AssetLifecycleStatus.CONDEMNED.value,
+        )
+        await _make_inspection(
+            session,
+            asset_number="RET-1",
+            lifecycle_status=AssetLifecycleStatus.RETIRED.value,
+        )
+
+    async with _client(session_factory, _REVIEWER) as client:
+        response = await client.post("/api/v1/certificates/bulk-generate", json={})
+
+    assert response.status_code == 202, response.text
+    # Only the IN_SERVICE asset is eligible; condemned/retired are excluded.
+    assert response.json()["total"] == 1
 
 
 @pytest.mark.asyncio

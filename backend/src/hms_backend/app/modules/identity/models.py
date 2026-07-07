@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import Boolean, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from hms_backend.app.core.rbac import Role
@@ -22,4 +22,13 @@ class User(SyncableMixin, Base):
         ForeignKey("customers.id"),
         nullable=True,
         index=True,
+    )
+    # Contact verification for notifications (spec §9). A normalised E.164 phone
+    # and per-address verification flags gate email/SMS delivery.
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    phone_e164: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    phone_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
     )

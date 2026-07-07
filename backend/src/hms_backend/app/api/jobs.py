@@ -29,7 +29,10 @@ from hms_backend.app.core.rbac import (
     require_permission,
 )
 from hms_backend.app.modules.assets.models import Asset
-from hms_backend.app.modules.certificates.models import Certificate
+from hms_backend.app.modules.certificates.models import (
+    NON_CERTIFIABLE_ASSET_STATUSES,
+    Certificate,
+)
 from hms_backend.app.modules.certificates.tasks import generate_certificate_batch
 from hms_backend.app.modules.inspections.models import Inspection, InspectionStatus
 from hms_backend.app.modules.jobs.models import CertificateBatchJob, JobStatus
@@ -77,6 +80,8 @@ async def _eligible_inspection_ids(
             Inspection.status == InspectionStatus.APPROVED.value,
             Inspection.deleted_at.is_(None),
             Certificate.id.is_(None),
+            # Never auto-target assets that can't hold a certificate.
+            Asset.lifecycle_status.notin_(NON_CERTIFIABLE_ASSET_STATUSES),
         )
         .order_by(Inspection.id)
     )
