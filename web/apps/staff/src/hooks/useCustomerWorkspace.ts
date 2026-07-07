@@ -49,6 +49,7 @@ export function useCustomerWorkspace() {
         [
           customer.name,
           customer.code,
+          customer.notes,
           customer.locations[0]?.city,
           customer.locations[0]?.country,
           customer.metrics.inspectionDueLabel

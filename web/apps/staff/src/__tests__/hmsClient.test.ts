@@ -22,6 +22,7 @@ const apiCustomer = {
   id: "cust-api-1",
   code: "NSD",
   name: "North Sea Drilling Ltd.",
+  notes: "Coordinate vessel access before retests.",
   retest_enabled: true,
   default_retest_months: 12,
   locations: [
@@ -72,6 +73,7 @@ const apiAsset = {
   next_retest_due_at: "2023-11-02",
   condemned_at: null,
   length_m: "6.100",
+  notes: "Stored in Bay 3 for scheduled retest.",
   customer: {
     id: "cust-api-1",
     code: "VOPA",
@@ -86,6 +88,8 @@ const apiAsset = {
   location: {
     id: "loc-api-1",
     name: "Site A",
+    address_1: "1 Friendship Road",
+    address_2: "Bay 3",
     city: "Port Botany",
     state: "NSW",
     country: "AU"
@@ -265,6 +269,7 @@ describe("hmsClient", () => {
       id: "cust-api-1",
       code: "NSD",
       name: "North Sea Drilling Ltd.",
+      notes: "Coordinate vessel access before retests.",
       locations: expect.arrayContaining([
         expect.objectContaining({ name: "Aberdeen Yard" })
       ])
@@ -306,18 +311,30 @@ describe("hmsClient", () => {
       );
 
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
-    const products = await client.listProducts({ search: "fuel", sort: "-code" });
-    const assets = await client.listAssets({ status: "OVERDUE", sort: "asset_number" });
+    const products = await client.listProducts({
+      standardCode: "AS2683",
+      enabled: true,
+      search: "fuel",
+      sort: "-code"
+    });
+    const assets = await client.listAssets({
+      status: "OVERDUE",
+      productId: "product-api-1",
+      locationId: "location-api-1",
+      dueFrom: "2023-11-01",
+      dueTo: "2023-11-30",
+      sort: "asset_number"
+    });
     const standards = await client.listReferenceStandards({ sort: "code" });
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/v1/products?limit=50&offset=0&search=fuel&sort=-code",
+      "/api/v1/products?limit=50&offset=0&standard_code=AS2683&enabled=true&search=fuel&sort=-code",
       expect.any(Object)
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "/api/v1/assets?limit=50&offset=0&status=OVERDUE&sort=asset_number",
+      "/api/v1/assets?limit=50&offset=0&status=OVERDUE&product_id=product-api-1&location_id=location-api-1&due_from=2023-11-01&due_to=2023-11-30&sort=asset_number",
       expect.any(Object)
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -337,6 +354,7 @@ describe("hmsClient", () => {
       id: "asset-api-1",
       assetNumber: "997950",
       lifecycleStatus: "OVERDUE",
+      notes: "Stored in Bay 3 for scheduled retest.",
       customer: expect.objectContaining({ code: "VOPA" }),
       product: expect.objectContaining({ code: "1000GY" }),
       retestSchedule: expect.objectContaining({ status: "OVERDUE" })
@@ -398,6 +416,41 @@ describe("hmsClient", () => {
     );
   });
 
+  it("sends customer notes in create payloads", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okJson({
+        ...apiCustomer,
+        code: "SUM",
+        name: "Summit Marine Group",
+        notes: "Use Newcastle dispatch contact for retest planning."
+      })
+    );
+
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const created = await client.createCustomer({
+      code: "SUM",
+      name: "Summit Marine Group",
+      notes: "Use Newcastle dispatch contact for retest planning.",
+      retestEnabled: true,
+      defaultRetestMonths: 12
+    } as never);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/customers",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          code: "SUM",
+          name: "Summit Marine Group",
+          notes: "Use Newcastle dispatch contact for retest planning.",
+          retest_enabled: true,
+          default_retest_months: 12
+        })
+      })
+    );
+    expect(created.notes).toBe("Use Newcastle dispatch contact for retest planning.");
+  });
+
   it("sends asset retest schedule and end configuration payloads", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       okJson({
@@ -406,6 +459,7 @@ describe("hmsClient", () => {
         customer_serial_no: "SER-E2E-001",
         lifecycle_status: "IN_SERVICE",
         next_retest_due_at: "2026-09-15",
+        notes: "Install after pressure test approval.",
         retest_schedule: {
           due_at: "2026-09-15",
           status: "UPCOMING"
@@ -425,10 +479,12 @@ describe("hmsClient", () => {
     const created = await client.createAsset({
       assetNumber: "E2E-ASSET-001",
       customerId: "cust-api-1",
+      locationId: "loc-1",
       customerSerialNo: "SER-E2E-001",
       productId: "product-api-1",
       lifecycleStatus: "IN_SERVICE",
       nextRetestDueAt: "2026-09-15",
+      notes: "Install after pressure test approval.",
       aEnd: {
         fitting: "Camlock M",
         size: "2 inch"
@@ -445,11 +501,13 @@ describe("hmsClient", () => {
         method: "POST",
         body: JSON.stringify({
           customer_id: "cust-api-1",
+          location_id: "loc-1",
           product_id: "product-api-1",
           asset_number: "E2E-ASSET-001",
           customer_serial_no: "SER-E2E-001",
           lifecycle_status: "IN_SERVICE",
           next_retest_due_at: "2026-09-15",
+          notes: "Install after pressure test approval.",
           retest_schedule: {
             due_at: "2026-09-15",
             status: "UPCOMING"
@@ -470,6 +528,7 @@ describe("hmsClient", () => {
       dueAt: "2026-09-15",
       status: "UPCOMING"
     });
+    expect(created.notes).toBe("Install after pressure test approval.");
     expect(created.aEnd).toEqual({ fitting: "Camlock M", size: "2 inch" });
     expect(created.bEnd).toEqual({ fitting: "Flange W", size: "2 inch" });
   });
@@ -508,6 +567,8 @@ describe("hmsClient", () => {
     const list = await client.listInspections({
       status: "DRAFT",
       inspectionType: "SERVICE",
+      result: "PASS",
+      productId: "product-api-1",
       search: "997",
       sort: "-created_at"
     });
@@ -531,7 +592,7 @@ describe("hmsClient", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/v1/inspections?limit=50&offset=0&status=DRAFT&inspection_type=SERVICE&search=997&sort=-created_at",
+      "/api/v1/inspections?limit=50&offset=0&status=DRAFT&inspection_type=SERVICE&result=PASS&product_id=product-api-1&search=997&sort=-created_at",
       expect.any(Object)
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -607,6 +668,9 @@ describe("hmsClient", () => {
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
     const list = await client.listCertificates({
       status: "ISSUED",
+      productId: "product-api-1",
+      validFrom: "2027-06-01",
+      validTo: "2027-06-30",
       search: "997",
       sort: "-issued_at"
     });
@@ -618,7 +682,7 @@ describe("hmsClient", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/v1/certificates?limit=50&offset=0&status=ISSUED&search=997&sort=-issued_at",
+      "/api/v1/certificates?limit=50&offset=0&status=ISSUED&product_id=product-api-1&valid_from=2027-06-01&valid_to=2027-06-30&search=997&sort=-issued_at",
       expect.any(Object)
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -683,6 +747,9 @@ describe("hmsClient", () => {
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
     const list = await client.listRetestSchedules({
       status: "OVERDUE",
+      productId: "product-api-1",
+      dueFrom: "2023-11-01",
+      dueTo: "2023-11-30",
       search: "997",
       sort: "due_at"
     });
@@ -697,7 +764,7 @@ describe("hmsClient", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/v1/retest-schedules?limit=50&offset=0&status=OVERDUE&search=997&sort=due_at",
+      "/api/v1/retest-schedules?limit=50&offset=0&status=OVERDUE&product_id=product-api-1&due_from=2023-11-01&due_to=2023-11-30&search=997&sort=due_at",
       expect.any(Object)
     );
     expect(fetchMock).toHaveBeenNthCalledWith(

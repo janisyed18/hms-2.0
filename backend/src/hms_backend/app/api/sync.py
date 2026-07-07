@@ -448,16 +448,63 @@ async def _apply_sync_operation(
     principal: Principal,
     operation: SyncOperationWrite,
 ) -> SyncOperationResult:
+    if operation.entity == "Asset":
+        return await _update_asset_from_sync(session, principal, operation)
+    if operation.entity == "PressureTestResult":
+        return await _apply_pressure_test_from_sync(session, principal, operation)
     if operation.entity != "Inspection":
         return _rejected(
             operation,
-            "Only Inspection sync push is supported in Phase 3A",
+            "Only Asset, Inspection, and PressureTestResult sync push are supported",
         )
     if operation.op == "delete":
         return _rejected(operation, "Inspection delete is not supported by sync push")
     if operation.op == "create":
         return await _create_inspection_from_sync(session, principal, operation)
     return await _update_inspection_from_sync(session, principal, operation)
+
+
+async def _update_asset_from_sync(
+    session: AsyncSession,
+    principal: Principal,
+    operation: SyncOperationWrite,
+) -> SyncOperationResult:
+    if operation.op != "update":
+        return _rejected(operation, "Only Asset update is supported by sync push")
+
+    supported_fields = {"customer_serial_no", "tag"}
+    unsupported_fields = set(operation.payload) - supported_fields
+    if unsupported_fields:
+        field_list = ", ".join(sorted(unsupported_fields))
+        return _rejected(operation, f"Unsupported Asset sync field: {field_list}")
+
+    asset = await _visible_asset_or_none(session, principal, operation.entity_id)
+    if asset is None:
+        return _rejected(operation, "Asset is not visible for sync push")
+    if operation.base_version != asset.version:
+        return _conflict(operation, asset)
+    if not operation.payload:
+        return _rejected(
+            operation,
+            "Asset update requires at least one supported field",
+        )
+
+    before = asset.to_audit_dict()
+    if "customer_serial_no" in operation.payload:
+        asset.customer_serial_no = _optional_string_payload(
+            operation,
+            "customer_serial_no",
+        )
+    if "tag" in operation.payload:
+        asset.tag = _optional_string_payload(operation, "tag")
+    await record_update(
+        session,
+        asset,
+        actor_id=principal.user_id,
+        action="asset.updated",
+        before=before,
+    )
+    return _applied(operation, asset)
 
 
 async def _create_inspection_from_sync(
@@ -504,6 +551,131 @@ async def _create_inspection_from_sync(
             actor_id=principal.user_id,
         )
     return _applied(operation, inspection)
+
+
+async def _apply_pressure_test_from_sync(
+    session: AsyncSession,
+    principal: Principal,
+    operation: SyncOperationWrite,
+) -> SyncOperationResult:
+    if operation.op == "delete":
+        return _rejected(
+            operation,
+            "PressureTestResult delete is not supported by sync push",
+        )
+    if operation.op == "create":
+        return await _create_pressure_test_entity_from_sync(
+            session,
+            principal,
+            operation,
+        )
+    return await _update_pressure_test_entity_from_sync(
+        session,
+        principal,
+        operation,
+    )
+
+
+async def _create_pressure_test_entity_from_sync(
+    session: AsyncSession,
+    principal: Principal,
+    operation: SyncOperationWrite,
+) -> SyncOperationResult:
+    existing = await session.get(PressureTestResult, operation.entity_id)
+    if existing is not None:
+        return _rejected(operation, "PressureTestResult already exists")
+
+    inspection_id = _string_payload(operation, "inspection_id")
+    if inspection_id is None:
+        return _rejected(
+            operation,
+            "PressureTestResult create requires inspection_id",
+        )
+    inspection = await _visible_inspection_or_none(
+        session,
+        principal,
+        inspection_id,
+    )
+    if inspection is None:
+        return _rejected(operation, "Inspection is not visible for sync push")
+    if inspection.status != InspectionStatus.DRAFT.value:
+        return _rejected(
+            operation,
+            "Only draft inspection pressure tests can be updated by sync push",
+        )
+    if inspection.pressure_test is not None:
+        return _rejected(
+            operation,
+            "Inspection already has a pressure test result",
+        )
+
+    pressure_test = PressureTestResult(
+        id=operation.entity_id,
+        inspection=inspection,
+        applied_pressure_kpa=_int_payload(operation.payload, "applied_pressure_kpa"),
+        hold_time_seconds=_int_payload(operation.payload, "hold_time_seconds"),
+        passed=_bool_payload(operation.payload, "passed"),
+        measurements=_dict_payload(operation.payload, "measurements"),
+    )
+    session.add(pressure_test)
+    await record_create(
+        session,
+        pressure_test,
+        actor_id=principal.user_id,
+        action="pressure_test_result.created",
+    )
+    return _applied(operation, pressure_test)
+
+
+async def _update_pressure_test_entity_from_sync(
+    session: AsyncSession,
+    principal: Principal,
+    operation: SyncOperationWrite,
+) -> SyncOperationResult:
+    pressure_test = await _visible_pressure_test_or_none(
+        session,
+        principal,
+        operation.entity_id,
+    )
+    if pressure_test is None:
+        return _rejected(
+            operation,
+            "PressureTestResult is not visible for sync push",
+        )
+    if operation.base_version != pressure_test.version:
+        return _conflict(operation, pressure_test)
+    if pressure_test.inspection.status != InspectionStatus.DRAFT.value:
+        return _rejected(
+            operation,
+            "Only draft inspection pressure tests can be updated by sync push",
+        )
+
+    before = pressure_test.to_audit_dict()
+    if "applied_pressure_kpa" in operation.payload:
+        pressure_test.applied_pressure_kpa = _int_payload(
+            operation.payload,
+            "applied_pressure_kpa",
+        )
+    if "hold_time_seconds" in operation.payload:
+        pressure_test.hold_time_seconds = _int_payload(
+            operation.payload,
+            "hold_time_seconds",
+        )
+    if "passed" in operation.payload:
+        pressure_test.passed = _bool_payload(operation.payload, "passed")
+    if "measurements" in operation.payload:
+        pressure_test.measurements = _dict_payload(
+            operation.payload,
+            "measurements",
+        )
+    await record_update(
+        session,
+        pressure_test,
+        actor_id=principal.user_id,
+        action="pressure_test_result.updated",
+        before=before,
+    )
+    return _applied(operation, pressure_test)
 
 
 async def _update_inspection_from_sync(
@@ -580,6 +752,25 @@ async def _visible_inspection_or_none(
     ):
         return None
     return inspection
+
+
+async def _visible_pressure_test_or_none(
+    session: AsyncSession,
+    principal: Principal,
+    pressure_test_id: str,
+) -> PressureTestResult | None:
+    pressure_test = await session.get(PressureTestResult, pressure_test_id)
+    if pressure_test is None or pressure_test.deleted_at is not None:
+        return None
+    inspection = await _visible_inspection_or_none(
+        session,
+        principal,
+        pressure_test.inspection_id,
+    )
+    if inspection is None:
+        return None
+    pressure_test.inspection = inspection
+    return pressure_test
 
 
 async def _create_pressure_test_from_sync(

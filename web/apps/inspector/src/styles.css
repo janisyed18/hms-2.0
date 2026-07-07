@@ -162,6 +162,7 @@ button:disabled {
 .work-card,
 .queue-card,
 .asset-context,
+.capture-panel,
 .empty-state,
 .queue-summary {
   border: 1px solid #dbe5f1;
@@ -263,6 +264,7 @@ button:disabled {
 .work-card,
 .queue-card,
 .asset-context,
+.capture-panel,
 .queue-summary {
   padding: 16px;
 }
@@ -320,6 +322,15 @@ button:disabled {
   font-size: 13px;
   font-weight: 750;
   overflow-wrap: anywhere;
+}
+
+.work-meta dd span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .status-pill {
@@ -390,6 +401,11 @@ button:disabled {
   color: #334155;
 }
 
+.secondary-action--full {
+  width: 100%;
+  margin-top: 12px;
+}
+
 .text-action {
   width: max-content;
   min-height: 32px;
@@ -409,6 +425,34 @@ button:disabled {
   background: linear-gradient(135deg, #ffffff, #eff6ff);
 }
 
+.capture-panel {
+  background: #ffffff;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.panel-heading p {
+  margin: 0;
+  color: #182235;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.panel-heading span {
+  color: #71819a;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  text-align: right;
+}
+
 .asset-context span,
 .asset-context small {
   display: block;
@@ -419,11 +463,20 @@ button:disabled {
 }
 
 .segmented-control,
-.result-toggle,
-.action-row {
+.result-toggle {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.action-row > button {
+  flex: 1 1 132px;
 }
 
 .capture-form {
@@ -458,6 +511,11 @@ button:disabled {
   color: #182235;
   font-size: 21px;
   font-weight: 850;
+}
+
+.capture-form--compact input {
+  font-size: 16px;
+  font-weight: 800;
 }
 
 .capture-form small {

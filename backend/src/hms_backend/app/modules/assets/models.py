@@ -7,7 +7,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import Date, ForeignKey, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hms_backend.app.models.base import Base, SyncableMixin
@@ -74,6 +74,7 @@ class Asset(SyncableMixin, Base):
     next_retest_due_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     condemned_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     length_m: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     customer: Mapped[Customer] = relationship(back_populates="assets", lazy="selectin")
     location: Mapped[CustomerLocation | None] = relationship(

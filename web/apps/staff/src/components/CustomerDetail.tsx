@@ -205,7 +205,11 @@ export function CustomerDetail({
                 <MapPin aria-hidden="true" size={17} />
                 <div>
                   <strong>{location.name}</strong>
-                  <span>{[location.city, location.country].filter(Boolean).join(", ")}</span>
+                  <span>
+                    {[location.address1, location.address2, location.city, location.state, location.country]
+                      .filter(Boolean)
+                      .join(", ") || "No address recorded"}
+                  </span>
                 </div>
               </article>
             ))}
@@ -230,12 +234,27 @@ export function CustomerDetail({
         </section>
       ) : null}
 
-      {activeTab === "Documents" || activeTab === "Notes" ? (
+      {activeTab === "Documents" ? (
         <section className="detail-section empty-section">
           <FileText aria-hidden="true" size={20} />
-          <h3>{activeTab}</h3>
-          <p>No {activeTab.toLowerCase()} are attached to this development record.</p>
+          <h3>Documents</h3>
+          <p>No documents are attached to this development record.</p>
         </section>
+      ) : null}
+
+      {activeTab === "Notes" ? (
+        customer.notes ? (
+          <section className="detail-section">
+            <h3>Notes</h3>
+            <p className="record-notes">{customer.notes}</p>
+          </section>
+        ) : (
+          <section className="detail-section empty-section">
+            <FileText aria-hidden="true" size={20} />
+            <h3>Notes</h3>
+            <p>No notes are attached to this development record.</p>
+          </section>
+        )
       ) : null}
 
       <button className="detail-link" type="button">

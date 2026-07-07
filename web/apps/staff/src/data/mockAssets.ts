@@ -11,6 +11,7 @@ export const mockAssets: AssetRecord[] = [
     nextRetestDueAt: "2023-11-02",
     condemnedAt: null,
     lengthM: "6.100",
+    notes: "Overdue assembly staged for retest coordination at Site A.",
     customer: {
       id: "cust-1005",
       code: "VOPA",
@@ -25,6 +26,8 @@ export const mockAssets: AssetRecord[] = [
     location: {
       id: "loc-1001",
       name: "Site A",
+      address1: "Primary operations site",
+      address2: null,
       city: "Port Botany",
       state: "NSW",
       country: "AU"
@@ -52,6 +55,7 @@ export const mockAssets: AssetRecord[] = [
     nextRetestDueAt: null,
     condemnedAt: null,
     lengthM: null,
+    notes: "In-service stainless assembly with no scheduled retest date.",
     customer: {
       id: "cust-1006",
       code: "ORIC",

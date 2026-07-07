@@ -86,6 +86,7 @@ class CustomerRead(BaseModel):
     id: str
     code: str
     name: str
+    notes: str | None
     retest_enabled: bool
     default_retest_months: int | None
     locations: list[CustomerLocationRead]
@@ -102,6 +103,7 @@ class CustomerListResponse(BaseModel):
 class CustomerCreate(BaseModel):
     code: str
     name: str
+    notes: str | None = None
     retest_enabled: bool = False
     default_retest_months: int | None = None
 
@@ -109,6 +111,7 @@ class CustomerCreate(BaseModel):
 class CustomerUpdate(BaseModel):
     code: str | None = None
     name: str | None = None
+    notes: str | None = None
     retest_enabled: bool | None = None
     default_retest_months: int | None = None
 
@@ -156,6 +159,8 @@ class CustomerSummary(BaseModel):
 class LocationSummary(BaseModel):
     id: str
     name: str
+    address_1: str | None
+    address_2: str | None
     city: str | None
     state: str | None
     country: str | None
@@ -207,6 +212,7 @@ class AssetRead(BaseModel):
     next_retest_due_at: date | None
     condemned_at: date | None
     length_m: Decimal | None
+    notes: str | None
     customer: CustomerSummary
     product: ProductSummary
     location: LocationSummary | None
@@ -234,6 +240,7 @@ class AssetCreate(BaseModel):
     next_retest_due_at: date | None = None
     condemned_at: date | None = None
     length_m: Decimal | None = None
+    notes: str | None = None
     retest_schedule: RetestScheduleWrite | None = None
     a_end: AssetEndWrite | None = None
     b_end: AssetEndWrite | None = None
@@ -251,6 +258,7 @@ class AssetUpdate(BaseModel):
     next_retest_due_at: date | None = None
     condemned_at: date | None = None
     length_m: Decimal | None = None
+    notes: str | None = None
     retest_schedule: RetestScheduleWrite | None = None
     a_end: AssetEndWrite | None = None
     b_end: AssetEndWrite | None = None

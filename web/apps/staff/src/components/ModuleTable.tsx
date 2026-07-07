@@ -14,6 +14,8 @@ interface ModuleTableProps<TItem> {
   countLabel: string;
   emptyLabel: string;
   exportRows: (item: TItem) => string[];
+  filterControls?: ReactNode;
+  activeFilterCount?: number;
   getRowKey: (item: TItem) => string;
   items: TItem[];
   onAction: () => void;
@@ -46,6 +48,8 @@ export function ModuleTable<TItem>({
   countLabel,
   emptyLabel,
   exportRows,
+  filterControls,
+  activeFilterCount = 0,
   getRowKey,
   items,
   onAction,
@@ -87,14 +91,19 @@ export function ModuleTable<TItem>({
         >
           <Filter aria-hidden="true" size={16} />
           Filters
+          {activeFilterCount > 0 ? <span className="button-count">{activeFilterCount}</span> : null}
         </button>
       </div>
 
       {filtersOpen ? (
-        <div className="filter-summary" role="status" aria-label={`${tableLabel} filter summary`}>
-          <strong>Active view</strong>
-          <span>Source: {source === "api" ? "Backend" : "Mock data"}</span>
-          <span>Search: {query.trim() || "All records"}</span>
+        <div className="filter-panel" aria-label={`${tableLabel} filters`}>
+          <div className="filter-summary" role="status" aria-label={`${tableLabel} filter summary`}>
+            <strong>Active view</strong>
+            <span>Source: {source === "api" ? "Backend" : "Mock data"}</span>
+            <span>Search: {query.trim() || "All records"}</span>
+            <span>{activeFilterCount} active filters</span>
+          </div>
+          {filterControls ? <div className="filter-grid">{filterControls}</div> : null}
         </div>
       ) : null}
 

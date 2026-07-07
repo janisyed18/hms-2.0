@@ -22,6 +22,8 @@ export function useProductsWorkspace() {
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [source, setSource] = useState<DataSource>("mock");
   const [query, setQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("ALL");
+  const [standardFilter, setStandardFilter] = useState("ALL");
   const [editingProduct, setEditingProduct] = useState<ProductRecord | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
 
@@ -41,15 +43,33 @@ export function useProductsWorkspace() {
 
   const visibleProducts = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) {
-      return products;
-    }
-    return products.filter((product) =>
-      [product.code, product.name, product.category, product.subCategory, product.standardCode]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(normalized))
-    );
-  }, [products, query]);
+    return products.filter((product) => {
+      const matchesCategory =
+        categoryFilter === "ALL" || product.category === categoryFilter;
+      const matchesStandard =
+        standardFilter === "ALL" || product.standardCode === standardFilter;
+      const matchesSearch =
+        !normalized ||
+        [product.code, product.name, product.category, product.subCategory, product.standardCode]
+          .filter(Boolean)
+          .some((value) => value?.toLowerCase().includes(normalized));
+
+      return matchesCategory && matchesStandard && matchesSearch;
+    });
+  }, [categoryFilter, products, query, standardFilter]);
+
+  const categoryOptions = useMemo(
+    () => Array.from(new Set(products.map((product) => product.category))).sort(),
+    [products]
+  );
+
+  const standardOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(products.map((product) => product.standardCode).filter(Boolean))
+      ).sort() as string[],
+    [products]
+  );
 
   function openCreate() {
     setEditingProduct(null);
@@ -96,8 +116,22 @@ export function useProductsWorkspace() {
     setProducts((current) => current.filter((item) => item.id !== product.id));
   }
 
+  function clearProductFilters() {
+    setCategoryFilter("ALL");
+    setStandardFilter("ALL");
+  }
+
+  const activeFilterCount = [
+    categoryFilter !== "ALL",
+    standardFilter !== "ALL"
+  ].filter(Boolean).length;
+
   return {
+    activeFilterCount,
     archiveProduct,
+    categoryFilter,
+    categoryOptions,
+    clearProductFilters,
     editingProduct,
     isFormOpen,
     openCreate,
@@ -105,9 +139,13 @@ export function useProductsWorkspace() {
     products,
     query,
     saveProduct,
+    setCategoryFilter,
     setFormOpen,
     setQuery,
+    setStandardFilter,
     source,
+    standardFilter,
+    standardOptions,
     visibleProducts
   };
 }

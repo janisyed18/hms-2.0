@@ -16,6 +16,8 @@ export default function App() {
     content = (
       <InspectionCapture
         onBack={() => workspace.setView("work")}
+        onQueueAssetUpdate={workspace.queueAssetUpdate}
+        onQueuePressureTest={workspace.queuePressureTest}
         onSaveDraft={(values) =>
           workspace.saveInspection({ ...values, status: "DRAFT" })
         }

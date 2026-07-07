@@ -159,6 +159,32 @@ export function RetestScheduleWorkspace() {
               schedule.status,
               ""
             ]}
+            activeFilterCount={workspace.activeFilterCount}
+            filterControls={
+              <>
+                <label className="filter-field">
+                  <span>Due from</span>
+                  <input
+                    aria-label="Retest due from"
+                    type="date"
+                    value={workspace.dueFrom}
+                    onChange={(event) => workspace.setDueFrom(event.target.value)}
+                  />
+                </label>
+                <label className="filter-field">
+                  <span>Due to</span>
+                  <input
+                    aria-label="Retest due to"
+                    type="date"
+                    value={workspace.dueTo}
+                    onChange={(event) => workspace.setDueTo(event.target.value)}
+                  />
+                </label>
+                <button className="secondary-button filter-clear" type="button" onClick={workspace.clearDateFilters}>
+                  Clear date filters
+                </button>
+              </>
+            }
             getRowKey={(schedule) => schedule.id}
             items={workspace.visibleSchedules}
             onAction={() => {

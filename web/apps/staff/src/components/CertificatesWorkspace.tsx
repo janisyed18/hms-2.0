@@ -161,6 +161,32 @@ export function CertificatesWorkspace() {
               certificate.publicToken,
               ""
             ]}
+            activeFilterCount={workspace.activeFilterCount}
+            filterControls={
+              <>
+                <label className="filter-field">
+                  <span>Valid from</span>
+                  <input
+                    aria-label="Certificate valid from"
+                    type="date"
+                    value={workspace.validFrom}
+                    onChange={(event) => workspace.setValidFrom(event.target.value)}
+                  />
+                </label>
+                <label className="filter-field">
+                  <span>Valid to</span>
+                  <input
+                    aria-label="Certificate valid to"
+                    type="date"
+                    value={workspace.validTo}
+                    onChange={(event) => workspace.setValidTo(event.target.value)}
+                  />
+                </label>
+                <button className="secondary-button filter-clear" type="button" onClick={workspace.clearCertificateFilters}>
+                  Clear certificate filters
+                </button>
+              </>
+            }
             getRowKey={(certificate) => certificate.id}
             items={workspace.visibleCertificates}
             onAction={workspace.openCreate}

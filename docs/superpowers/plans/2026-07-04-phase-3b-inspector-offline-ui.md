@@ -1,5 +1,7 @@
 # Phase 3B Inspector Offline UI Implementation Plan
 
+**Status:** Completed for the browser/mobile-web development slice.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a separate queue-first React/Vite inspector app with local offline outbox simulation and sync API integration.
@@ -90,7 +92,7 @@ Expected: `29 passed` and Vite build succeeds.
 - Create: `web/apps/inspector/src/App.tsx`
 - Create: `web/apps/inspector/src/test/setup.ts`
 
-- [ ] **Step 1: Write the failing smoke test**
+- [x] **Step 1: Write the failing smoke test**
 
 Create `web/apps/inspector/src/__tests__/App.test.tsx` with:
 
@@ -110,7 +112,7 @@ describe("Inspector app", () => {
 });
 ```
 
-- [ ] **Step 2: Verify the smoke test fails**
+- [x] **Step 2: Verify the smoke test fails**
 
 Run:
 
@@ -121,7 +123,7 @@ npm test -- --run src/__tests__/App.test.tsx
 
 Expected: fail because `../App` does not exist.
 
-- [ ] **Step 3: Add the minimal Vite app scaffold**
+- [x] **Step 3: Add the minimal Vite app scaffold**
 
 Create package/config files equivalent to the staff app, with package name `@bat-hms/inspector`. Add `src/App.tsx`:
 
@@ -139,7 +141,7 @@ export default function App() {
 }
 ```
 
-- [ ] **Step 4: Verify the smoke test passes**
+- [x] **Step 4: Verify the smoke test passes**
 
 Run:
 
@@ -151,7 +153,7 @@ npm test -- --run src/__tests__/App.test.tsx
 
 Expected: smoke test passes.
 
-- [ ] **Step 5: Commit scaffold**
+- [x] **Step 5: Commit scaffold**
 
 Run:
 
@@ -167,7 +169,7 @@ git commit -m "feat: scaffold inspector app"
 - Create: `web/apps/inspector/src/offline/outboxStore.ts`
 - Create: `web/apps/inspector/src/__tests__/outboxStore.test.ts`
 
-- [ ] **Step 1: Write failing outbox tests**
+- [x] **Step 1: Write failing outbox tests**
 
 Create `outboxStore.test.ts` with tests for add/update, mark-applied, mark-conflict, and corrupt storage reset:
 
@@ -265,7 +267,7 @@ describe("outboxStore", () => {
 });
 ```
 
-- [ ] **Step 2: Verify outbox tests fail**
+- [x] **Step 2: Verify outbox tests fail**
 
 Run:
 
@@ -276,7 +278,7 @@ npm test -- --run src/__tests__/outboxStore.test.ts
 
 Expected: fail because `../offline/outboxStore` does not exist.
 
-- [ ] **Step 3: Implement outbox types and store**
+- [x] **Step 3: Implement outbox types and store**
 
 Add domain types:
 
@@ -304,7 +306,7 @@ export interface OutboxOperation {
 
 Implement `loadOutbox`, `saveOutbox`, `createInspectionOperation`, `markOperationApplied`, and `markOperationConflict` against key `bat-hms-inspector-outbox`.
 
-- [ ] **Step 4: Verify outbox tests pass**
+- [x] **Step 4: Verify outbox tests pass**
 
 Run:
 
@@ -315,7 +317,7 @@ npm test -- --run src/__tests__/outboxStore.test.ts
 
 Expected: all outbox tests pass.
 
-- [ ] **Step 5: Commit outbox store**
+- [x] **Step 5: Commit outbox store**
 
 Run:
 
@@ -332,7 +334,7 @@ git commit -m "feat: add inspector local outbox"
 - Create: `web/apps/inspector/src/__tests__/syncClient.test.ts`
 - Modify: `web/apps/inspector/src/domain/types.ts`
 
-- [ ] **Step 1: Write failing sync client tests**
+- [x] **Step 1: Write failing sync client tests**
 
 Create `syncClient.test.ts` with:
 
@@ -424,7 +426,7 @@ describe("syncClient", () => {
 });
 ```
 
-- [ ] **Step 2: Verify sync client tests fail**
+- [x] **Step 2: Verify sync client tests fail**
 
 Run:
 
@@ -435,7 +437,7 @@ npm test -- --run src/__tests__/syncClient.test.ts
 
 Expected: fail because `../api/syncClient` and `../data/mockSync` do not exist.
 
-- [ ] **Step 3: Implement sync client and mock response**
+- [x] **Step 3: Implement sync client and mock response**
 
 Implement:
 
@@ -455,7 +457,7 @@ export function createSyncClient(options: { fetchImpl?: typeof fetch } = {}) {
 
 Mock data must include synthetic asset, customer, product, retest schedule, and inspection records for `HOS-2024-0891`, `HOS-2025-0201`, and `HOS-2025-0156`.
 
-- [ ] **Step 4: Verify sync client tests pass**
+- [x] **Step 4: Verify sync client tests pass**
 
 Run:
 
@@ -466,7 +468,7 @@ npm test -- --run src/__tests__/syncClient.test.ts
 
 Expected: all sync client tests pass.
 
-- [ ] **Step 5: Commit sync client**
+- [x] **Step 5: Commit sync client**
 
 Run:
 
@@ -481,7 +483,7 @@ git commit -m "feat: add inspector sync client"
 - Create: `web/apps/inspector/src/hooks/useInspectorWorkspace.ts`
 - Modify: `web/apps/inspector/src/__tests__/App.test.tsx`
 
-- [ ] **Step 1: Extend failing UI workflow test**
+- [x] **Step 1: Extend failing UI workflow test**
 
 Extend `App.test.tsx` with:
 
@@ -505,7 +507,7 @@ it("saves a pressure test draft into the local queue", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify workflow test fails**
+- [x] **Step 2: Verify workflow test fails**
 
 Run:
 
@@ -516,7 +518,7 @@ npm test -- --run src/__tests__/App.test.tsx
 
 Expected: fail because the UI has no work item, capture form, or queue navigation yet.
 
-- [ ] **Step 3: Implement workspace hook**
+- [x] **Step 3: Implement workspace hook**
 
 Implement state for:
 
@@ -544,7 +546,7 @@ export function useInspectorWorkspace() {
 
 Use mock bootstrap on API failure and local outbox persistence for draft/submission actions.
 
-- [ ] **Step 4: Verify workflow test moves to component failures only**
+- [x] **Step 4: Verify workflow test moves to component failures only**
 
 Run:
 
@@ -567,7 +569,7 @@ Expected: still fails until components are implemented, but hook imports resolve
 - Create: `web/apps/inspector/src/components/StatusPill.tsx`
 - Modify: `web/apps/inspector/src/styles.css`
 
-- [ ] **Step 1: Implement components from the failing workflow tests**
+- [x] **Step 1: Implement components from the failing workflow tests**
 
 Required component contracts:
 
@@ -586,7 +588,7 @@ Buttons that tests depend on:
 <button>Queue</button>
 ```
 
-- [ ] **Step 2: Verify UI tests pass**
+- [x] **Step 2: Verify UI tests pass**
 
 Run:
 
@@ -597,11 +599,11 @@ npm test -- --run src/__tests__/App.test.tsx
 
 Expected: smoke and draft workflow tests pass.
 
-- [ ] **Step 3: Add sync queue conflict UI test**
+- [x] **Step 3: Add sync queue conflict UI test**
 
 Extend `App.test.tsx` with a mocked `fetch` response that returns a conflict for `POST /api/v1/sync/push`, then assert `Conflict` and `Server version 4` appear in Sync Queue.
 
-- [ ] **Step 4: Verify conflict test fails**
+- [x] **Step 4: Verify conflict test fails**
 
 Run:
 
@@ -612,7 +614,7 @@ npm test -- --run src/__tests__/App.test.tsx
 
 Expected: fail because conflict mapping is not fully rendered.
 
-- [ ] **Step 5: Implement conflict rendering and local conflict actions**
+- [x] **Step 5: Implement conflict rendering and local conflict actions**
 
 Show:
 
@@ -623,7 +625,7 @@ Show:
 <button>Accept Server State</button>
 ```
 
-- [ ] **Step 6: Verify all inspector tests pass**
+- [x] **Step 6: Verify all inspector tests pass**
 
 Run:
 
@@ -634,7 +636,7 @@ npm test -- --run
 
 Expected: all inspector tests pass.
 
-- [ ] **Step 7: Commit UI workflow**
+- [x] **Step 7: Commit UI workflow**
 
 Run:
 
@@ -649,7 +651,7 @@ git commit -m "feat: build inspector offline workflow"
 - Modify: `.github/workflows/ci.yml`
 - Modify: `README.md`
 
-- [ ] **Step 1: Write CI/docs changes**
+- [x] **Step 1: Write CI/docs changes**
 
 Add `inspector-web` job to `.github/workflows/ci.yml`:
 
@@ -688,7 +690,7 @@ Open the printed Vite URL.
 The inspector app is a browser/mobile-web development slice for Phase 3B. It uses localStorage to simulate an offline outbox; this is not the final encrypted native offline store.
 ```
 
-- [ ] **Step 2: Run full verification**
+- [x] **Step 2: Run full verification**
 
 Run:
 
@@ -709,7 +711,7 @@ uv run pytest
 
 Expected: all commands pass.
 
-- [ ] **Step 3: Commit CI and docs**
+- [x] **Step 3: Commit CI and docs**
 
 Run:
 
@@ -723,7 +725,7 @@ git commit -m "chore: add inspector app ci and docs"
 **Files:**
 - No required file changes unless visual verification exposes defects.
 
-- [ ] **Step 1: Start inspector dev server**
+- [x] **Step 1: Start inspector dev server**
 
 Run:
 
@@ -734,7 +736,7 @@ npm run dev -- --host 127.0.0.1
 
 Expected: Vite prints a local URL.
 
-- [ ] **Step 2: Verify in browser**
+- [x] **Step 2: Verify in browser**
 
 Check:
 
@@ -746,7 +748,7 @@ Check:
 - Mobile viewport has no overlapping text.
 - Desktop browser keeps the app constrained and professional.
 
-- [ ] **Step 3: Final git status**
+- [x] **Step 3: Final git status**
 
 Run:
 

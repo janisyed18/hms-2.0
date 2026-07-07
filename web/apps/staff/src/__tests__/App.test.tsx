@@ -8,9 +8,20 @@ const apiCustomer = {
   id: "cust-api-1",
   code: "VOPA",
   name: "Vopak API",
+  notes: "Coordinate terminal access before field work.",
   retest_enabled: true,
   default_retest_months: 12,
-  locations: [],
+  locations: [
+    {
+      id: "loc-api-1",
+      name: "API Terminal",
+      address_1: "1 Friendship Road",
+      address_2: "Bay 3",
+      city: "Port Botany",
+      state: "NSW",
+      country: "AU"
+    }
+  ],
   contacts: []
 };
 
@@ -20,7 +31,17 @@ const apiUnassignedCustomer = {
   name: "E2E API Customer",
   retest_enabled: true,
   default_retest_months: 12,
-  locations: [],
+  locations: [
+    {
+      id: "loc-api-2",
+      name: "E2E Test Yard",
+      address_1: "42 Test Avenue",
+      address_2: null,
+      city: "Newcastle",
+      state: "NSW",
+      country: "AU"
+    }
+  ],
   contacts: []
 };
 
@@ -52,6 +73,7 @@ const apiAsset = {
   next_retest_due_at: "2026-07-15",
   condemned_at: null,
   length_m: "5.000",
+  notes: "API asset staged in Bay 3.",
   customer: {
     id: "cust-api-1",
     code: "VOPA",
@@ -66,6 +88,8 @@ const apiAsset = {
   location: {
     id: "loc-api-1",
     name: "API Terminal",
+    address_1: "1 Friendship Road",
+    address_2: "Bay 3",
     city: "Port Botany",
     state: "NSW",
     country: "AU"
@@ -389,6 +413,10 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: /Add Customer/i }));
     await user.type(screen.getByLabelText("Customer name"), "Summit Marine Group");
     await user.type(screen.getByLabelText("Customer code"), "SMG");
+    await user.type(
+      screen.getByLabelText("Customer notes"),
+      "Call operations before scheduling the first retest."
+    );
     await user.click(screen.getByRole("button", { name: "Save customer" }));
 
     expect(
@@ -396,6 +424,10 @@ describe("App", () => {
     ).toBeVisible();
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
       "Summit Marine Group"
+    );
+    await user.click(screen.getByRole("tab", { name: "Notes" }));
+    expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
+      "Call operations before scheduling the first retest."
     );
   });
 
@@ -672,6 +704,7 @@ describe("App", () => {
     await user.type(screen.getByLabelText("Asset number"), "ASSET-200");
     await user.type(screen.getByLabelText("Customer serial number"), "SER-200");
     await user.type(screen.getByLabelText("Next retest due"), "2026-09-15");
+    await user.type(screen.getByLabelText("Asset notes"), "Keep capped until install.");
     await user.type(screen.getByLabelText("A end fitting"), "Camlock A");
     await user.type(screen.getByLabelText("A end size"), "2 inch");
     await user.type(screen.getByLabelText("B end fitting"), "Flange B");
@@ -686,6 +719,76 @@ describe("App", () => {
     expect(assetRow).toBeVisible();
     expect(assetRow).toHaveTextContent("2026-09-15");
     expect(assetRow).toHaveTextContent("Camlock A 2 inch / Flange B 2 inch");
+    expect(assetRow).toHaveTextContent("Keep capped until install.");
+  });
+
+  it("filters asset and product records from the filter panel", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Assets" }));
+    await user.click(screen.getByRole("button", { name: "Filters" }));
+    await user.selectOptions(screen.getByLabelText("Asset lifecycle filter"), "OVERDUE");
+    await user.selectOptions(screen.getByLabelText("Asset customer filter"), "cust-1005");
+    await user.selectOptions(screen.getByLabelText("Asset product filter"), "product-1001");
+    await user.type(screen.getByLabelText("Asset due from"), "2023-11-01");
+    await user.type(screen.getByLabelText("Asset due to"), "2023-11-30");
+
+    const assetTable = screen.getByRole("table", { name: "Asset records" });
+    expect(assetTable).toHaveTextContent("997950");
+    expect(assetTable).not.toHaveTextContent("ORIC-100");
+
+    await user.click(screen.getByRole("button", { name: "Clear asset filters" }));
+    expect(assetTable).toHaveTextContent("ORIC-100");
+
+    await user.click(screen.getByRole("button", { name: "Products" }));
+    await user.click(screen.getByRole("button", { name: "Filters" }));
+    await user.selectOptions(screen.getByLabelText("Product category filter"), "Composite");
+    await user.selectOptions(screen.getByLabelText("Product standard filter"), "AS2683");
+
+    const productTable = screen.getByRole("table", { name: "Product records" });
+    expect(productTable).toHaveTextContent("FUELFLEX GREEN");
+    expect(productTable).not.toHaveTextContent("SS1 CONV");
+    expect(productTable).not.toHaveTextContent("Rubber Water Hose");
+  });
+
+  it("filters retest schedules by due-date range", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: /Retest Schedule/i }));
+    await user.click(screen.getByRole("button", { name: "Filters" }));
+    await user.type(screen.getByLabelText("Retest due from"), "2026-07-20");
+    await user.type(screen.getByLabelText("Retest due to"), "2026-08-01");
+
+    const scheduleTable = screen.getByRole("table", { name: "Retest schedule records" });
+    expect(scheduleTable).toHaveTextContent("ORIC-100");
+    expect(scheduleTable).not.toHaveTextContent("997950");
+    expect(scheduleTable).not.toHaveTextContent("VOPA-NEW");
+  });
+
+  it("uses date picker controls for user-entered dates", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Assets" }));
+    await user.click(screen.getByRole("button", { name: "Add Asset" }));
+    expect(screen.getByLabelText("Next retest due")).toHaveAttribute("type", "date");
+    await user.click(screen.getByRole("button", { name: "Close form" }));
+
+    await user.click(screen.getByRole("button", { name: /Retest Schedule/i }));
+    await user.click(screen.getByRole("button", { name: "Open schedule 997950" }));
+    expect(screen.getByLabelText("Retest due date")).toHaveAttribute("type", "date");
+
+    await user.click(screen.getByRole("button", { name: "Certificates" }));
+    await user.click(screen.getByRole("button", { name: "Issue Certificate" }));
+    expect(screen.getByLabelText("Valid until")).toHaveAttribute("type", "date");
   });
 
   it("confirms archive actions and calls soft-delete endpoints", async () => {

@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { createSyncClient, mapBootstrapToWorkItems } from "../api/syncClient";
+import {
+  applySyncChangesToRecords,
+  createSyncClient,
+  mapBootstrapToWorkItems
+} from "../api/syncClient";
 import { mockBootstrapResponse } from "../data/mockSync";
 import type {
   DataSource,
-  InspectionDraftInput,
   InspectionStatus,
   OutboxOperation,
   OutboxState,
@@ -11,7 +14,9 @@ import type {
   WorkItem
 } from "../domain/types";
 import {
+  createAssetUpdateOperation,
   createInspectionOperation,
+  createPressureTestOperation,
   loadOutbox,
   markOperationApplied,
   markOperationConflict,
@@ -31,6 +36,20 @@ interface SaveInspectionInput {
   holdTimeSeconds: number;
   passed: boolean;
   notes: string;
+}
+
+interface QueueAssetUpdateInput {
+  workItem: WorkItem;
+  customerSerialNo: string;
+  tag: string;
+}
+
+interface QueuePressureTestInput {
+  workItem: WorkItem;
+  appliedPressureMpa: number;
+  requiredPressureMpa: number;
+  holdTimeSeconds: number;
+  passed: boolean;
 }
 
 function pendingOperations(operations: OutboxOperation[]) {
@@ -60,10 +79,45 @@ function applyResultToOutbox(result: SyncOperationResult) {
   markOperationRejected(result.op_id, result.error ?? "Sync operation rejected.");
 }
 
+function localInspectionStatus(operation: OutboxOperation): InspectionStatus | null {
+  const status = operation.payload.status;
+  if (status === "DRAFT" || status === "SUBMITTED") {
+    return status;
+  }
+
+  return null;
+}
+
+function applyLocalOutboxState(
+  workItems: WorkItem[],
+  operations: OutboxOperation[]
+) {
+  const localOperationsByAsset = new Map<string, OutboxOperation>();
+
+  for (const operation of operations) {
+    if (operation.status !== "applied") {
+      localOperationsByAsset.set(operation.assetId, operation);
+    }
+  }
+
+  return workItems.map((item) => {
+    const operation = localOperationsByAsset.get(item.assetId);
+    if (!operation) {
+      return item;
+    }
+
+    return {
+      ...item,
+      urgency: "draft" as const,
+      inspectionStatus: localInspectionStatus(operation) ?? item.inspectionStatus
+    };
+  });
+}
+
 export function useInspectorWorkspace() {
   const [view, setView] = useState<InspectorView>("work");
-  const [workItems, setWorkItems] = useState<WorkItem[]>(
-    mapBootstrapToWorkItems(mockBootstrapResponse)
+  const [syncRecords, setSyncRecords] = useState(
+    () => mockBootstrapResponse.records
   );
   const [source, setSource] = useState<DataSource>("mock");
   const [cursor, setCursor] = useState(mockBootstrapResponse.cursor);
@@ -75,6 +129,15 @@ export function useInspectorWorkspace() {
     typeof navigator === "undefined" ? true : navigator.onLine
   );
   const [lastSyncLabel, setLastSyncLabel] = useState("Mock data loaded");
+
+  const workItems = useMemo(
+    () =>
+      applyLocalOutboxState(
+        mapBootstrapToWorkItems({ records: syncRecords }),
+        outbox.operations
+      ),
+    [outbox.operations, syncRecords]
+  );
 
   const queuedCount = useMemo(
     () => pendingOperations(outbox.operations).length,
@@ -91,7 +154,7 @@ export function useInspectorWorkspace() {
         if (cancelled) {
           return;
         }
-        setWorkItems(mapBootstrapToWorkItems(response));
+        setSyncRecords(response.records);
         setSource("api");
         setCursor(response.cursor);
         setLastSyncLabel("Last sync just now");
@@ -157,13 +220,44 @@ export function useInspectorWorkspace() {
 
     upsertOutboxOperation(operation);
     refreshOutbox();
-    setWorkItems((items) =>
-      items.map((item) =>
-        item.assetId === input.workItem.assetId
-          ? { ...item, urgency: "draft", inspectionStatus: input.status }
-          : item
-      )
-    );
+  }
+
+  function queueAssetUpdate(input: QueueAssetUpdateInput) {
+    const operation = createAssetUpdateOperation({
+      assetId: input.workItem.assetId,
+      assetNumber: input.workItem.assetNumber,
+      customerName: input.workItem.customerName,
+      baseVersion: input.workItem.assetVersion,
+      customerSerialNo: input.customerSerialNo,
+      tag: input.tag
+    });
+
+    upsertOutboxOperation(operation);
+    refreshOutbox();
+  }
+
+  function queuePressureTest(input: QueuePressureTestInput) {
+    const inspectionId =
+      input.workItem.inspectionId ??
+      `local-${input.workItem.assetNumber.toLowerCase()}`;
+    const pressureTestId =
+      input.workItem.pressureTestId ??
+      `local-pressure-${input.workItem.assetNumber.toLowerCase()}`;
+    const operation = createPressureTestOperation({
+      assetId: input.workItem.assetId,
+      assetNumber: input.workItem.assetNumber,
+      customerName: input.workItem.customerName,
+      inspectionId,
+      pressureTestId,
+      baseVersion: input.workItem.pressureTestVersion,
+      appliedPressureKpa: Math.round(input.appliedPressureMpa * 1000),
+      requiredPressureKpa: Math.round(input.requiredPressureMpa * 1000),
+      holdTimeSeconds: input.holdTimeSeconds,
+      passed: input.passed
+    });
+
+    upsertOutboxOperation(operation);
+    refreshOutbox();
   }
 
   async function pushQueuedOperations() {
@@ -207,6 +301,9 @@ export function useInspectorWorkspace() {
   async function pullChanges() {
     try {
       const result = await createSyncClient().changes(cursor);
+      setSyncRecords((records) =>
+        applySyncChangesToRecords(records, result.changes)
+      );
       setCursor(result.cursor);
       setLastSyncLabel("Last sync just now");
     } catch {
@@ -231,6 +328,8 @@ export function useInspectorWorkspace() {
     queuedCount,
     openWorkItem,
     saveInspection,
+    queueAssetUpdate,
+    queuePressureTest,
     pushQueuedOperations,
     pullChanges,
     resolveConflict

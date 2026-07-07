@@ -72,6 +72,7 @@ interface ApiCustomer {
   id: string;
   code: string;
   name: string;
+  notes: string | null;
   retest_enabled: boolean;
   default_retest_months: number | null;
   locations: ApiLocation[];
@@ -124,6 +125,8 @@ interface ApiProductSummary extends ApiSummary {
 interface ApiLocationSummary {
   id: string;
   name: string;
+  address_1: string | null;
+  address_2: string | null;
   city: string | null;
   state: string | null;
   country: string | null;
@@ -149,6 +152,7 @@ interface ApiAsset {
   next_retest_due_at: string | null;
   condemned_at: string | null;
   length_m: string | null;
+  notes: string | null;
   customer: ApiSummary;
   product: ApiProductSummary;
   location: ApiLocationSummary | null;
@@ -278,6 +282,8 @@ interface ListCustomerOptions {
 
 interface ListProductOptions {
   category?: string;
+  standardCode?: string;
+  enabled?: boolean;
   search?: string;
   sort?: string;
   limit?: number;
@@ -288,6 +294,10 @@ interface ListAssetOptions {
   search?: string;
   status?: string;
   customerId?: string;
+  productId?: string;
+  locationId?: string;
+  dueFrom?: string;
+  dueTo?: string;
   sort?: string;
   limit?: number;
   offset?: number;
@@ -297,8 +307,10 @@ interface ListInspectionOptions {
   search?: string;
   status?: InspectionStatus;
   inspectionType?: InspectionType;
+  result?: string;
   assetId?: string;
   customerId?: string;
+  productId?: string;
   sort?: string;
   limit?: number;
   offset?: number;
@@ -309,6 +321,9 @@ interface ListRetestScheduleOptions {
   status?: RetestScheduleStatus;
   assetId?: string;
   customerId?: string;
+  productId?: string;
+  dueFrom?: string;
+  dueTo?: string;
   sort?: string;
   limit?: number;
   offset?: number;
@@ -319,7 +334,10 @@ interface ListCertificateOptions {
   status?: CertificateStatus;
   assetId?: string;
   customerId?: string;
+  productId?: string;
   inspectionId?: string;
+  validFrom?: string;
+  validTo?: string;
   sort?: string;
   limit?: number;
   offset?: number;
@@ -379,6 +397,7 @@ function toCustomer(customer: ApiCustomer, etag: string | null = null): Customer
         id: customer.id,
         code: customer.code,
         name: customer.name,
+        notes: customer.notes,
         retestEnabled: customer.retest_enabled,
         defaultRetestMonths: customer.default_retest_months,
         locations: customer.locations.map(toLocation),
@@ -393,6 +412,7 @@ function toCustomer(customer: ApiCustomer, etag: string | null = null): Customer
         metrics: makeLocalCustomer({
           name: customer.name,
           code: customer.code,
+          notes: customer.notes,
           retestEnabled: customer.retest_enabled,
           defaultRetestMonths: customer.default_retest_months
         }).metrics
@@ -456,6 +476,8 @@ function toLocationSummary(
   return {
     id: location.id,
     name: location.name,
+    address1: location.address_1,
+    address2: location.address_2,
     city: location.city,
     state: location.state,
     country: location.country
@@ -493,6 +515,7 @@ function toAsset(asset: ApiAsset, etag: string | null = null): AssetRecord {
       nextRetestDueAt: asset.next_retest_due_at,
       condemnedAt: asset.condemned_at,
       lengthM: asset.length_m,
+      notes: asset.notes,
       customer: toSummary(asset.customer),
       product: toProductSummary(asset.product),
       location: toLocationSummary(asset.location),
@@ -647,11 +670,13 @@ function assetEndPayload(end: AssetEndValues): Record<string, string | null> {
 function assetPayload(values: AssetFormValues) {
   return {
     customer_id: values.customerId,
+    location_id: values.locationId,
     product_id: values.productId,
     asset_number: values.assetNumber,
     customer_serial_no: values.customerSerialNo,
     lifecycle_status: values.lifecycleStatus,
     next_retest_due_at: values.nextRetestDueAt,
+    notes: values.notes,
     retest_schedule: values.nextRetestDueAt
       ? {
           due_at: values.nextRetestDueAt,
@@ -685,7 +710,7 @@ function certificateIssuePayload(values: CertificateIssueValues) {
 function buildUrl(
   baseUrl: string,
   path: string,
-  params: Record<string, string | number | undefined> = {}
+  params: Record<string, string | number | boolean | undefined> = {}
 ): string {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
@@ -723,7 +748,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
   async function request<T>(
     path: string,
     init: RequestInit = {},
-    params: Record<string, string | number | undefined> = {}
+    params: Record<string, string | number | boolean | undefined> = {}
   ): Promise<HmsApiResponse<T>> {
     const response = await fetcher(buildUrl(baseUrl, path, params), {
       ...init,
@@ -781,6 +806,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           body: JSON.stringify({
             code: values.code,
             name: values.name,
+            notes: values.notes,
             retest_enabled: values.retestEnabled,
             default_retest_months: values.defaultRetestMonths
           })
@@ -832,6 +858,8 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         limit: listOptions.limit ?? 50,
         offset: listOptions.offset ?? 0,
         category: listOptions.category?.trim() || undefined,
+        standard_code: listOptions.standardCode?.trim() || undefined,
+        enabled: listOptions.enabled,
         search: listOptions.search?.trim() || undefined,
         sort: listOptions.sort
       });
@@ -894,6 +922,10 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         search: listOptions.search?.trim() || undefined,
         status: listOptions.status,
         customer_id: listOptions.customerId,
+        product_id: listOptions.productId,
+        location_id: listOptions.locationId,
+        due_from: listOptions.dueFrom,
+        due_to: listOptions.dueTo,
         sort: listOptions.sort
       });
       return {
@@ -938,8 +970,10 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         offset: listOptions.offset ?? 0,
         status: listOptions.status,
         inspection_type: listOptions.inspectionType,
+        result: listOptions.result?.trim() || undefined,
         asset_id: listOptions.assetId,
         customer_id: listOptions.customerId,
+        product_id: listOptions.productId,
         search: listOptions.search?.trim() || undefined,
         sort: listOptions.sort
       });
@@ -1018,6 +1052,9 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           status: listOptions.status,
           asset_id: listOptions.assetId,
           customer_id: listOptions.customerId,
+          product_id: listOptions.productId,
+          due_from: listOptions.dueFrom,
+          due_to: listOptions.dueTo,
           search: listOptions.search?.trim() || undefined,
           sort: listOptions.sort
         }
@@ -1061,7 +1098,10 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         status: listOptions.status,
         asset_id: listOptions.assetId,
         customer_id: listOptions.customerId,
+        product_id: listOptions.productId,
         inspection_id: listOptions.inspectionId,
+        valid_from: listOptions.validFrom,
+        valid_to: listOptions.validTo,
         search: listOptions.search?.trim() || undefined,
         sort: listOptions.sort
       });
@@ -1171,6 +1211,7 @@ function filterMockCustomers(search?: string): CustomerRecord[] {
     [
       customer.name,
       customer.code,
+      customer.notes,
       customer.locations[0]?.city,
       customer.locations[0]?.country
     ]
@@ -1182,15 +1223,19 @@ function filterMockCustomers(search?: string): CustomerRecord[] {
 function filterMockProducts(options: ListProductOptions = {}): ProductRecord[] {
   const normalized = options.search?.trim().toLowerCase();
   return mockProducts.filter((product) => {
+    const matchesEnabled = options.enabled !== false;
     const matchesCategory =
       !options.category ||
       product.category.toLowerCase() === options.category.toLowerCase();
+    const matchesStandard =
+      !options.standardCode ||
+      product.standardCode?.toLowerCase() === options.standardCode.toLowerCase();
     const matchesSearch =
       !normalized ||
       [product.code, product.name, product.category, product.subCategory]
         .filter(Boolean)
         .some((value) => value?.toLowerCase().includes(normalized));
-    return matchesCategory && matchesSearch;
+    return matchesEnabled && matchesCategory && matchesStandard && matchesSearch;
   });
 }
 
@@ -1201,6 +1246,13 @@ function filterMockAssets(options: ListAssetOptions = {}): AssetRecord[] {
       !options.status || asset.lifecycleStatus === options.status;
     const matchesCustomer =
       !options.customerId || asset.customer.id === options.customerId;
+    const matchesProduct =
+      !options.productId || asset.product.id === options.productId;
+    const matchesLocation =
+      !options.locationId || asset.location?.id === options.locationId;
+    const dueAt = asset.nextRetestDueAt ?? "";
+    const matchesDueFrom = !options.dueFrom || (dueAt && dueAt >= options.dueFrom);
+    const matchesDueTo = !options.dueTo || (dueAt && dueAt <= options.dueTo);
     const matchesSearch =
       !normalized ||
       [
@@ -1210,11 +1262,20 @@ function filterMockAssets(options: ListAssetOptions = {}): AssetRecord[] {
         asset.customer.code,
         asset.customer.name,
         asset.product.code,
-        asset.product.name
+        asset.product.name,
+        asset.notes
       ]
         .filter(Boolean)
         .some((value) => value?.toLowerCase().includes(normalized));
-    return matchesStatus && matchesCustomer && matchesSearch;
+    return (
+      matchesStatus &&
+      matchesCustomer &&
+      matchesProduct &&
+      matchesLocation &&
+      matchesDueFrom &&
+      matchesDueTo &&
+      matchesSearch
+    );
   });
 }
 
@@ -1232,6 +1293,10 @@ function filterMockInspections(
       !options.assetId || inspection.assetId === options.assetId;
     const matchesCustomer =
       !options.customerId || inspection.customer.id === options.customerId;
+    const matchesProduct =
+      !options.productId || inspection.product.id === options.productId;
+    const matchesResult =
+      !options.result || inspection.result === options.result;
     const matchesSearch =
       !normalized ||
       [
@@ -1253,6 +1318,8 @@ function filterMockInspections(
       matchesType &&
       matchesAsset &&
       matchesCustomer &&
+      matchesProduct &&
+      matchesResult &&
       matchesSearch
     );
   });
@@ -1269,6 +1336,10 @@ function filterMockRetestSchedules(
       !options.assetId || schedule.assetId === options.assetId;
     const matchesCustomer =
       !options.customerId || schedule.customerId === options.customerId;
+    const matchesProduct =
+      !options.productId || schedule.product.id === options.productId;
+    const matchesDueFrom = !options.dueFrom || schedule.dueAt >= options.dueFrom;
+    const matchesDueTo = !options.dueTo || schedule.dueAt <= options.dueTo;
     const matchesSearch =
       !normalized ||
       [
@@ -1283,7 +1354,15 @@ function filterMockRetestSchedules(
       ]
         .filter(Boolean)
         .some((value) => value?.toLowerCase().includes(normalized));
-    return matchesStatus && matchesAsset && matchesCustomer && matchesSearch;
+    return (
+      matchesStatus &&
+      matchesAsset &&
+      matchesCustomer &&
+      matchesProduct &&
+      matchesDueFrom &&
+      matchesDueTo &&
+      matchesSearch
+    );
   });
   const sorted = [...filtered].sort((left, right) =>
     left.dueAt.localeCompare(right.dueAt)
@@ -1304,6 +1383,13 @@ function filterMockCertificates(
       !options.customerId || certificate.customer.id === options.customerId;
     const matchesInspection =
       !options.inspectionId || certificate.inspectionId === options.inspectionId;
+    const matchesProduct =
+      !options.productId || certificate.product.id === options.productId;
+    const validUntil = certificate.validUntil ?? "";
+    const matchesValidFrom =
+      !options.validFrom || (validUntil && validUntil >= options.validFrom);
+    const matchesValidTo =
+      !options.validTo || (validUntil && validUntil <= options.validTo);
     const matchesSearch =
       !normalized ||
       [
@@ -1325,6 +1411,9 @@ function filterMockCertificates(
       matchesAsset &&
       matchesCustomer &&
       matchesInspection &&
+      matchesProduct &&
+      matchesValidFrom &&
+      matchesValidTo &&
       matchesSearch
     );
   });
