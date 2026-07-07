@@ -13,6 +13,46 @@ class TokenValidationError(ValueError):
     """Raised when a bearer token cannot be trusted."""
 
 
+def encode_hs256_bearer_token(
+    *,
+    subject: str,
+    secret: str,
+    issuer: str | None = None,
+    audience: str | None = None,
+    ttl_seconds: int = 3600,
+    now: datetime | None = None,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
+    """Mint an HS256 access token (used by the Argon2 password-login flow)."""
+    if not secret:
+        raise TokenValidationError("Token signing secret is not configured")
+    issued_at = int((now or datetime.now(UTC)).timestamp())
+    payload: dict[str, Any] = {
+        "sub": subject,
+        "iat": issued_at,
+        "exp": issued_at + ttl_seconds,
+    }
+    if issuer:
+        payload["iss"] = issuer
+    if audience:
+        payload["aud"] = audience
+    if extra_claims:
+        payload.update(extra_claims)
+
+    header = {"alg": "HS256", "typ": "JWT"}
+    encoded_header = _b64url_encode(json.dumps(header, separators=(",", ":")).encode())
+    encoded_payload = _b64url_encode(
+        json.dumps(payload, separators=(",", ":")).encode()
+    )
+    signing_input = f"{encoded_header}.{encoded_payload}".encode()
+    signature = hmac.new(secret.encode(), signing_input, hashlib.sha256).digest()
+    return f"{encoded_header}.{encoded_payload}.{_b64url_encode(signature)}"
+
+
+def _b64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+
+
 @dataclass(frozen=True)
 class BearerClaims:
     subject: str

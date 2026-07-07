@@ -10,6 +10,9 @@ class User(SyncableMixin, Base):
 
     oidc_subject: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    # Argon2 password hash for local (bearer) login; null for OIDC-only users.
+    # Never exposed in any API response, grid or form.
+    password_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     role: Mapped[str] = mapped_column(

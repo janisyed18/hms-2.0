@@ -5,6 +5,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from hms_backend.app.api.schemas import UserRead
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
@@ -92,9 +93,16 @@ async def test_customer_scope_does_not_limit_hms_admin(session: AsyncSession) ->
     assert [customer.code for customer in customers] == ["ORIC", "VOPA"]
 
 
-def test_user_model_has_no_password_column() -> None:
+def test_user_model_has_no_plaintext_password_column() -> None:
     column_names = {column.name for column in User.__table__.columns}
 
     assert "password" not in column_names
-    assert "password_hash" not in column_names
+    assert "password_hash" in column_names
     assert "oidc_subject" in column_names
+
+
+def test_user_read_schema_does_not_expose_password_hash() -> None:
+    field_names = set(UserRead.model_fields)
+
+    assert "password" not in field_names
+    assert "password_hash" not in field_names

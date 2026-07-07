@@ -6,9 +6,15 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from starlette.concurrency import run_in_threadpool
 
 from hms_backend.app.core.auth import TokenValidationError, decode_hs256_bearer_token
 from hms_backend.app.core.config import settings
+from hms_backend.app.core.oidc import (
+    OidcConfigurationError,
+    OidcValidationError,
+    get_oidc_validator,
+)
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.modules.identity.models import User
 
@@ -31,6 +37,9 @@ async def get_current_principal(
     x_hms_roles: str | None = Header(default=None),
     x_hms_customer_ids: str | None = Header(default=None),
 ) -> Principal:
+    if settings.auth_mode == "oidc":
+        return await _oidc_principal(session, authorization)
+
     if settings.auth_mode == "bearer":
         return await _bearer_principal(session, authorization)
 
@@ -90,6 +99,60 @@ async def _bearer_principal(
             detail="Unknown HMS user identity",
         )
     return principal
+
+
+async def _oidc_principal(
+    session: AsyncSession,
+    authorization: str | None,
+) -> Principal:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing bearer token",
+        )
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        # JWKS/signature verification is blocking IO; keep the loop responsive.
+        claims = await run_in_threadpool(get_oidc_validator().validate, token)
+    except OidcValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
+        ) from exc
+    except OidcConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+
+    principal = await _persisted_user_principal(session, claims.subject)
+    if principal is not None:
+        return principal
+    if settings.auth_oidc_jit_provisioning and claims.email:
+        return await _provision_oidc_user(session, claims.subject, claims.email)
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Unknown HMS user identity",
+    )
+
+
+async def _provision_oidc_user(
+    session: AsyncSession,
+    subject: str,
+    email: str,
+) -> Principal:
+    # JIT provisioning creates a least-privilege user; an admin elevates roles.
+    user = User(
+        oidc_subject=subject,
+        email=email.strip().lower(),
+        role=Role.CUSTOMER_USER.value,
+        email_verified=True,
+    )
+    session.add(user)
+    await session.commit()
+    return Principal(
+        user_id=user.oidc_subject,
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset(),
+    )
 
 
 async def _persisted_user_principal(
