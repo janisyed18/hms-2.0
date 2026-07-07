@@ -259,6 +259,88 @@ export interface RetestScheduleUpdateValues {
   escalationIntervalDays: number;
 }
 
+export interface AdminUserRecord {
+  id: string;
+  oidcSubject: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  displayName: string;
+  role: string;
+  customerId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  etag?: string | null;
+}
+
+export interface AdminUserFormValues {
+  oidcSubject: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  role: string;
+  customerId: string | null;
+}
+
+export interface AdminUserUpdateValues {
+  email?: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  role?: string;
+  customerId?: string | null;
+}
+
+export interface AdminUserListResult {
+  source: DataSource;
+  total: number;
+  etag?: string | null;
+  items: AdminUserRecord[];
+}
+
+export interface DeviceRecord {
+  deviceId: string;
+  displayName?: string;
+  userId: string;
+  platform: string;
+  appVersion: string;
+  lastSyncAt: string | null;
+  offlineWindowDays: number;
+  revoked: boolean;
+  state: string;
+  etag?: string | null;
+}
+
+export interface DeviceUpdateValues {
+  offlineWindowDays?: number;
+  revoked?: boolean;
+}
+
+export interface DeviceListResult {
+  source: DataSource;
+  total: number;
+  etag?: string | null;
+  items: DeviceRecord[];
+}
+
+export interface AuditEventRecord {
+  sequence: number;
+  actorId: string;
+  action: string;
+  entity: string;
+  entityId: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  timestamp: string;
+  hash: string;
+}
+
+export interface AuditEventListResult {
+  source: DataSource;
+  total: number;
+  etag?: string | null;
+  items: AuditEventRecord[];
+}
+
 export interface PressureTestRecord {
   id: string;
   appliedPressureKpa: number;

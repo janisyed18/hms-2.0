@@ -23,3 +23,9 @@ coverage/
 htmlcov/
 .idea/
 .vscode/
+
+# Generated certificate artifacts and signing material — never commit.
+var/
+**/object-store/
+*.key.pem
+*.cert.pem

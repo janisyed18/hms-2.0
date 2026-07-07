@@ -19,6 +19,7 @@ from hms_backend.app.modules.identity import models as identity_models  # noqa: 
 from hms_backend.app.modules.inspections import (  # noqa: F401
     models as inspection_models,
 )
+from hms_backend.app.modules.jobs import models as jobs_models  # noqa: F401
 from hms_backend.app.modules.products import models as product_models  # noqa: F401
 from hms_backend.app.modules.reference import models as reference_models  # noqa: F401
 from hms_backend.app.modules.scheduling import (  # noqa: F401

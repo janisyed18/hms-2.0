@@ -1,0 +1,140 @@
+# HMS 2.0 — full local stack.
+#
+#   docker compose up --build            # backend stack (db, redis, engine, api, worker)
+#   docker compose --profile frontend up --build   # also build & serve the staff UI
+#
+# API:        http://localhost:8000  (docs at /api/v1/docs, readiness at /health/ready)
+# Staff UI:   http://localhost:8080   (frontend profile)
+# Postgres:   localhost:5432  (hms/hms)   Redis: localhost:6379
+#
+# Redis backs both the cache and the Celery broker; the worker handles bulk
+# certificate generation; the certificate-engine renders + signs PDFs.
+
+x-backend: &backend
+  build:
+    context: ./backend
+  image: hms-backend:local
+  environment: &backend-env
+    DATABASE_URL: postgresql+asyncpg://hms:hms@postgres:5432/hms
+    REDIS_URL: redis://redis:6379/0
+    CERTIFICATE_SERVICE_ADDRESS: certificate-engine:50051
+    PUBLIC_BASE_URL: http://localhost:8000
+    OBJECT_STORAGE_DIR: /data/object-store
+    ISSUER_NAME: BAT Engineering Pty Ltd
+    ISSUER_IDENTIFIER: ABN 00 000 000 000
+  volumes:
+    - object-store:/data/object-store
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hms
+      POSTGRES_PASSWORD: hms
+      POSTGRES_DB: hms
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hms -d hms"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  certificate-engine:
+    build:
+      context: ./services/certificate
+    image: hms-certificate-engine:local
+    volumes:
+      - engine-signing:/root/.hms
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import socket; socket.create_connection(('127.0.0.1', 50051), 3)"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: apply migrations and seed synthetic demo data, then exit.
+  migrate:
+    <<: *backend
+    command: ["sh", "-c", "alembic upgrade head && python -m hms_backend.app.tooling.local_seed"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    command:
+      - "uvicorn"
+      - "hms_backend.app.main:app"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      certificate-engine:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    <<: *backend
+    command:
+      - "celery"
+      - "-A"
+      - "hms_backend.app.core.celery_app:celery_app"
+      - "worker"
+      - "--loglevel=info"
+    depends_on:
+      redis:
+        condition: service_healthy
+      certificate-engine:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  staff:
+    profiles: ["frontend"]
+    build:
+      context: ./web/apps/staff
+    image: hms-staff:local
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:
+  object-store:
+  engine-signing:

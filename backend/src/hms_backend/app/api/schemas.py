@@ -344,11 +344,64 @@ class InspectionListResponse(BaseModel):
 
 
 class CertificateCreate(BaseModel):
-    number: str
-    pdf_object_key: str
-    verification_hash: str
-    public_token: str
+    # When these are omitted the server renders + signs the PDF via the
+    # certificate engine and generates the object key, verification hash, and
+    # public token itself (the normal path). Supplying pdf_object_key keeps the
+    # legacy "bring your own artifact" behaviour for imports/backfills.
+    number: str | None = None
+    pdf_object_key: str | None = None
+    verification_hash: str | None = None
+    public_token: str | None = None
     valid_until: date | None = None
+
+
+class CertificateVerifyResponse(BaseModel):
+    """Public, unauthenticated verification result for a certificate token."""
+
+    valid: bool
+    status: str
+    hash_matches: bool
+    signed: bool
+    certificate_number: str
+    certificate_version: int
+    issued_at: datetime
+    valid_until: date | None
+    verification_hash: str
+    asset_number: str
+    customer_name: str
+    product_name: str
+    standard_code: str | None
+    inspection_result: str | None
+    message: str
+
+
+class BulkCertificateGenerateRequest(BaseModel):
+    # Explicit inspection ids to generate certificates for. When omitted, the
+    # server targets every eligible APPROVED inspection without a certificate
+    # (respecting the caller's customer scope).
+    inspection_ids: list[str] | None = None
+
+
+class CertificateBatchJobRead(BaseModel):
+    id: str
+    status: str
+    requested_by_user_id: str
+    task_id: str | None
+    total: int
+    succeeded: int
+    failed: int
+    results: list[dict[str, Any]]
+    error: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class CertificateBatchJobListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[CertificateBatchJobRead]
 
 
 class CertificateInspectionSummary(BaseModel):
@@ -383,3 +436,80 @@ class CertificateListResponse(BaseModel):
     limit: int
     offset: int
     items: list[CertificateRead]
+
+
+class UserRead(BaseModel):
+    id: str
+    oidc_subject: str
+    email: str
+    first_name: str | None
+    last_name: str | None
+    role: str
+    customer_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class UserListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[UserRead]
+
+
+class UserCreate(BaseModel):
+    oidc_subject: str
+    email: str
+    first_name: str | None = None
+    last_name: str | None = None
+    role: str
+    customer_id: str | None = None
+
+
+class UserUpdate(BaseModel):
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    role: str | None = None
+    customer_id: str | None = None
+
+
+class DeviceRead(BaseModel):
+    device_id: str
+    user_id: str
+    platform: str
+    app_version: str
+    last_sync_at: datetime | None
+    offline_window_days: int
+    revoked: bool
+
+
+class DeviceListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[DeviceRead]
+
+
+class DeviceUpdate(BaseModel):
+    offline_window_days: int | None = None
+    revoked: bool | None = None
+
+
+class AuditEventRead(BaseModel):
+    sequence: int
+    actor_id: str
+    action: str
+    entity: str
+    entity_id: str
+    before: dict[str, object] | None
+    after: dict[str, object] | None
+    timestamp: datetime
+    hash: str
+
+
+class AuditEventListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[AuditEventRead]

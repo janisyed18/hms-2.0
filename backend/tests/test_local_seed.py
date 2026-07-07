@@ -10,6 +10,7 @@ from hms_backend.app.modules.customers.models import (
     CustomerContact,
     CustomerLocation,
 )
+from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.inspections.models import Inspection, PressureTestResult
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Standard
@@ -44,6 +45,7 @@ async def test_seed_local_demo_data_creates_idempotent_core_records() -> None:
             "inspections": 3,
             "pressure_test_results": 2,
             "certificates": 1,
+            "users": 3,
         }
         assert await _count(session, Standard) == 2
         assert await _count(session, Customer) == 3
@@ -55,5 +57,11 @@ async def test_seed_local_demo_data_creates_idempotent_core_records() -> None:
         assert await _count(session, Inspection) == 3
         assert await _count(session, PressureTestResult) == 2
         assert await _count(session, Certificate) == 1
+        users = (await session.scalars(select(User).order_by(User.oidc_subject))).all()
+        assert [(user.oidc_subject, user.role) for user in users] == [
+            ("inspector-1", "INSPECTOR"),
+            ("reviewer-1", "REVIEWER"),
+            ("staff-ui-dev", "HMS_ADMIN"),
+        ]
 
     await engine.dispose()

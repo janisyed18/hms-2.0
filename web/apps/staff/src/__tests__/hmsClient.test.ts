@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createHmsClient,
+  loadAdminUsersWithFallback,
   loadAssetsWithFallback,
+  loadAuditEventsWithFallback,
   loadCertificatesWithFallback,
   loadCustomersWithFallback,
+  loadDevicesWithFallback,
   loadInspectionsWithFallback,
   loadProductsWithFallback,
   loadReferenceStandardsWithFallback,
@@ -214,6 +217,40 @@ const apiRetestSchedule = {
     name: "FUELFLEX GREEN",
     category: "Composite"
   }
+};
+
+const apiAdminUser = {
+  id: "user-api-1",
+  oidc_subject: "staff-ui-dev",
+  email: "staff@example.com",
+  first_name: "Alex",
+  last_name: "Williams",
+  role: "HMS_ADMIN",
+  customer_id: null,
+  created_at: "2026-07-07T00:00:00Z",
+  updated_at: "2026-07-07T00:00:00Z"
+};
+
+const apiDevice = {
+  device_id: "field-tablet-01",
+  user_id: "inspector-1",
+  platform: "ios",
+  app_version: "26.4.1",
+  last_sync_at: "2026-07-07T01:30:00Z",
+  offline_window_days: 7,
+  revoked: false
+};
+
+const apiAuditEvent = {
+  sequence: 42,
+  actor_id: "staff-ui-dev",
+  action: "user.created",
+  entity: "User",
+  entity_id: "user-api-1",
+  before: null,
+  after: { email: "staff@example.com" },
+  timestamp: "2026-07-07T01:35:00Z",
+  hash: "audit-hash-42"
 };
 
 function okJson(body: unknown, headers: Record<string, string> = {}) {
@@ -802,6 +839,177 @@ describe("hmsClient", () => {
     expect(superseded.status).toBe("SUPERSEDED");
   });
 
+  it("maps admin user, device, and audit APIs", async () => {
+    const updatedUser = {
+      ...apiAdminUser,
+      role: "REVIEWER",
+      first_name: "Alicia"
+    };
+    const updatedDevice = {
+      ...apiDevice,
+      revoked: true,
+      offline_window_days: 3
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okJson({
+          total: 1,
+          limit: 50,
+          offset: 0,
+          items: [apiAdminUser]
+        })
+      )
+      .mockResolvedValueOnce(okJson(apiAdminUser))
+      .mockResolvedValueOnce(okJson(updatedUser))
+      .mockResolvedValueOnce(noContent())
+      .mockResolvedValueOnce(
+        okJson({
+          total: 1,
+          limit: 50,
+          offset: 0,
+          items: [apiDevice]
+        })
+      )
+      .mockResolvedValueOnce(okJson(updatedDevice))
+      .mockResolvedValueOnce(
+        okJson({
+          total: 1,
+          limit: 50,
+          offset: 0,
+          items: [apiAuditEvent]
+        })
+      );
+
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const users = await client.listAdminUsers({ search: "staff", sort: "email" });
+    const created = await client.createAdminUser({
+      oidcSubject: "staff-ui-dev",
+      email: "staff@example.com",
+      firstName: "Alex",
+      lastName: "Williams",
+      role: "HMS_ADMIN",
+      customerId: null
+    });
+    const updated = await client.updateAdminUser("user-api-1", {
+      firstName: "Alicia",
+      role: "REVIEWER",
+      customerId: null
+    });
+    await client.archiveAdminUser("user-api-1");
+    const devices = await client.listDevices({ search: "tablet", sort: "device_id" });
+    const device = await client.updateDevice("field-tablet-01", {
+      revoked: true,
+      offlineWindowDays: 3
+    });
+    const audit = await client.listAuditEvents({
+      entity: "User",
+      search: "staff",
+      sort: "-sequence"
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/admin/users?limit=50&offset=0&search=staff&sort=email",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/admin/users",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          oidc_subject: "staff-ui-dev",
+          email: "staff@example.com",
+          first_name: "Alex",
+          last_name: "Williams",
+          role: "HMS_ADMIN",
+          customer_id: null
+        })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/admin/users/user-api-1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          first_name: "Alicia",
+          role: "REVIEWER",
+          customer_id: null
+        })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/api/v1/admin/users/user-api-1",
+      expect.objectContaining({ method: "DELETE" })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      "/api/v1/admin/devices?limit=50&offset=0&search=tablet&sort=device_id",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      6,
+      "/api/v1/admin/devices/field-tablet-01",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          revoked: true,
+          offline_window_days: 3
+        })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      7,
+      "/api/v1/admin/audit-events?limit=50&offset=0&entity=User&search=staff&sort=-sequence",
+      expect.any(Object)
+    );
+    expect(users.items[0]).toMatchObject({
+      oidcSubject: "staff-ui-dev",
+      email: "staff@example.com",
+      displayName: "Alex Williams",
+      role: "HMS_ADMIN"
+    });
+    expect(created.oidcSubject).toBe("staff-ui-dev");
+    expect(updated.displayName).toBe("Alicia Williams");
+    expect(devices.items[0]).toMatchObject({
+      deviceId: "field-tablet-01",
+      state: "Active"
+    });
+    expect(device.revoked).toBe(true);
+    expect(audit.items[0]).toMatchObject({
+      sequence: 42,
+      action: "user.created",
+      actorId: "staff-ui-dev"
+    });
+  });
+
+  it("surfaces structured HMS API errors", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: new Headers(),
+      json: async () => ({
+        error: {
+          code: "forbidden",
+          message: "Missing permission: user:admin",
+          details: null
+        }
+      })
+    });
+
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    await expect(client.listAdminUsers()).rejects.toMatchObject({
+      name: "HmsApiError",
+      status: 403,
+      code: "forbidden",
+      message: "Missing permission: user:admin"
+    });
+  });
+
   it("uses mock fallback only when list requests reject or return non-OK", async () => {
     const apiFetch = vi.fn().mockResolvedValue(
       okJson({
@@ -847,6 +1055,18 @@ describe("hmsClient", () => {
       fetcher: rejectedFetch,
       baseUrl: ""
     });
+    const fallbackUsers = await loadAdminUsersWithFallback({
+      fetcher: rejectedFetch,
+      baseUrl: ""
+    });
+    const fallbackDevices = await loadDevicesWithFallback({
+      fetcher: rejectedFetch,
+      baseUrl: ""
+    });
+    const fallbackAuditEvents = await loadAuditEventsWithFallback({
+      fetcher: rejectedFetch,
+      baseUrl: ""
+    });
 
     expect(apiProducts.source).toBe("api");
     expect(apiProducts.items[0].code).toBe("1000GY");
@@ -862,6 +1082,12 @@ describe("hmsClient", () => {
     expect(fallbackCertificates.items).toHaveLength(mockCertificates.length);
     expect(fallbackRetestSchedules.source).toBe("mock");
     expect(fallbackRetestSchedules.items).toHaveLength(mockRetestSchedules.length);
+    expect(fallbackUsers.source).toBe("mock");
+    expect(fallbackUsers.items[0].role).toBe("HMS_ADMIN");
+    expect(fallbackDevices.source).toBe("mock");
+    expect(fallbackDevices.items[0].deviceId).toBe("field-tablet-01");
+    expect(fallbackAuditEvents.source).toBe("mock");
+    expect(fallbackAuditEvents.items[0].entity).toBe("Inspection");
   });
 
   it("falls back to mock customer data when the backend is unavailable", async () => {

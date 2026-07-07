@@ -1,0 +1,112 @@
+// HMS 2.0 Certificate Engine — gRPC contract.
+//
+// A single Render RPC turns structured, already-approved certificate data into a
+// signed, archival PDF. The service is intentionally stateless: it owns document
+// production and cryptographic signing only. Persistence, authorization, and
+// object storage stay in the calling backend.
+syntax = "proto3";
+
+package hms.certificate.v1;
+
+// One physical end of a hose assembly (A or B), fully described from reference
+// data. All fields are pre-resolved display strings; the engine never looks up
+// reference data itself.
+message EndConfiguration {
+  string end = 1;              // "A" or "B"
+  string nominal_bore = 2;
+  string material = 3;
+  string coupling = 4;
+  string coupling_add_on = 5;
+  string attach_method = 6;
+}
+
+message PressureTest {
+  int32 working_pressure_kpa = 1;   // rated WP from the product matrix
+  int32 test_pressure_kpa = 2;      // rated TP from the product matrix
+  int32 applied_pressure_kpa = 3;   // pressure actually applied on test
+  int32 hold_time_seconds = 4;
+  bool passed = 5;
+  string medium = 6;                // e.g. "water", "air"
+}
+
+message Party {
+  string id = 1;
+  string name = 2;
+}
+
+message Issuer {
+  string name = 1;
+  string address = 2;
+  string contact = 3;    // phone / email line
+  string identifier = 4; // e.g. ABN / registration number
+}
+
+// The full semantic payload of a certificate. The tuple of these fields (see
+// rendering.canonical_payload) is what the verification hash is computed over,
+// so both the engine and the backend must serialise it identically.
+message CertificateData {
+  string certificate_number = 1;
+  int32 certificate_version = 2;
+  string status = 3;               // ISSUED / SUPERSEDED / REVOKED
+  string issued_at = 4;            // RFC 3339 timestamp (UTC)
+  string valid_until = 5;          // ISO 8601 date, optional ("")
+
+  // Customer & site
+  string customer_code = 10;
+  string customer_name = 11;
+  string site_name = 12;
+  string site_location = 13;       // "City, State, Country"
+
+  // Asset
+  string asset_number = 20;
+  string asset_tag = 21;
+  string customer_serial_no = 22;
+  string manufacture_date = 23;    // ISO date, optional
+  string length_m = 24;            // decimal as string, optional
+  string lifecycle_status = 25;
+
+  // Product / standard
+  string product_code = 30;
+  string product_name = 31;
+  string product_category = 32;
+  string standard_code = 33;
+  string standard_name = 34;
+
+  repeated EndConfiguration ends = 40;
+  PressureTest pressure_test = 41;
+
+  // Inspection provenance
+  string inspection_id = 50;
+  string inspection_type = 51;
+  string inspection_result = 52;
+  Party inspector = 53;
+  Party reviewer = 54;
+  string submitted_at = 55;
+  string approved_at = 56;
+
+  Party issued_by = 60;
+  Issuer issuer = 61;
+
+  // Public verification
+  string public_token = 70;
+  string verify_url = 71;          // full URL encoded into the QR code
+}
+
+message RenderRequest {
+  CertificateData certificate = 1;
+}
+
+message RenderResponse {
+  bytes pdf = 1;                   // signed PDF bytes
+  string verification_hash = 2;    // SHA-256 hex of the canonical payload
+  int32 page_count = 3;
+  string signer_common_name = 4;
+  string signed_at = 5;            // RFC 3339 timestamp (UTC)
+  bool signed = 6;                 // false if signing was disabled
+}
+
+service CertificateEngine {
+  // Render (and sign) a certificate PDF. Deterministic for a given payload
+  // except for the embedded signing time.
+  rpc Render(RenderRequest) returns (RenderResponse);
+}

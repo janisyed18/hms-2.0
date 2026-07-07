@@ -9,14 +9,15 @@ commands at production HMS data.
 ```bash
 uv sync
 uv run alembic upgrade head
-uv run python -m hms_backend.app.tooling.local_seed
+uv run hms-seed
 uv run uvicorn hms_backend.app.main:app --reload
 ```
 
 The seed command uses synthetic HMS-shaped records only. It is idempotent, so it
 can be run more than once against the same local database.
 The seed includes customers, assets, products, retest schedules, inspections,
-pressure-test examples, and an issued certificate for local UI verification.
+pressure-test examples, an issued certificate, and synthetic staff/inspector
+users for local UI verification.
 
 ## Sync API
 
@@ -33,11 +34,15 @@ Phase 3A adds the backend sync contract for offline-capable field clients:
 - `POST /api/v1/sync/operations` is an alias for clients following the original
   mobile addendum endpoint name.
 
-Sync requests require the development HMS identity headers plus device headers:
+Sync requests require the development HMS identity header plus device headers:
 
+- `X-HMS-User-Id`
 - `X-HMS-Device-Id`
 - `X-HMS-Device-Platform`
 - `X-HMS-App-Version`
+
+`X-HMS-Roles` remains available only as a local fallback for unseeded
+development clients.
 
 ## Staff UI With Backend Data
 
@@ -54,19 +59,26 @@ Open `http://127.0.0.1:5173/`. Vite proxies `/api` and `/health` to
 reference standards, inspections, and certificates from the local backend when
 it is running.
 
-Current auth is development header scaffolding. The staff UI sends:
+Current auth is still local development scaffolding; real OIDC token validation
+is not wired yet. Phase 3C resolves `X-HMS-User-Id` against persisted `users`
+rows seeded by `uv run hms-seed`. The staff UI sends:
 
 - `X-HMS-User-Id: staff-ui-dev`
-- `X-HMS-Roles: HMS_ADMIN,INSPECTOR,REVIEWER`
 
-Manual API checks can use the same headers:
+`X-HMS-Roles` remains available only as a local fallback when no seeded user row
+exists. Manual API checks can use:
 
 ```bash
 curl \
   -H "X-HMS-User-Id: staff-ui-dev" \
-  -H "X-HMS-Roles: HMS_ADMIN" \
   http://127.0.0.1:8000/api/v1/customers
 ```
+
+Admin endpoints added in Phase 3C:
+
+- `GET/POST/PATCH/DELETE /api/v1/admin/users`
+- `GET/PATCH /api/v1/admin/devices`
+- `GET /api/v1/admin/audit-events`
 
 ## Verification
 
@@ -84,8 +96,117 @@ npm test -- --run
 npm run build
 ```
 
+## Certificate generation & verification
+
+Issuing a certificate from an **approved** inspection renders a signed,
+archival PDF via the certificate engine (a separate gRPC service) and stores it
+in object storage. Start the engine in its own terminal first:
+
+```bash
+cd ../services/certificate
+uv sync
+uv run hms-certificate-engine        # listens on 127.0.0.1:50051
+```
+
+Then, with the backend running:
+
+```bash
+# Issue (server renders + signs; omit pdf_object_key to trigger generation)
+curl -X POST \
+  -H "X-HMS-User-Id: reviewer-1" -H "X-HMS-Roles: REVIEWER" \
+  -H "Content-Type: application/json" \
+  -d '{"valid_until": "2027-07-07"}' \
+  http://127.0.0.1:8000/api/v1/inspections/<APPROVED_INSPECTION_ID>/certificate
+```
+
+The response includes the `public_token`. Anyone can then verify without auth:
+
+- Verify: `GET /api/v1/certificates/verify/{public_token}` — recomputes the
+  SHA-256 content hash and reports `valid`, `hash_matches`, and status.
+- Download: `GET /api/v1/certificates/verify/{public_token}/pdf` — the signed PDF.
+
+The QR code printed on the PDF points at the verify URL
+(`public_base_url` config). If the engine is not running, issuance returns
+`503`; supplying `pdf_object_key` + `verification_hash` keeps the legacy
+bring-your-own-artifact path (used by imports).
+
+Relevant settings (env or `.env`): `CERTIFICATE_SERVICE_ADDRESS`,
+`PUBLIC_BASE_URL`, `OBJECT_STORAGE_DIR`, `ISSUER_NAME`, `ISSUER_IDENTIFIER`.
+
+## Bulk certificate generation (Celery)
+
+Bulk generation runs as a tracked background job. It needs **Redis** (broker +
+result backend) and a **Celery worker**, plus the certificate engine running.
+
+```bash
+# 1. Redis (broker) — e.g. via Docker
+docker run -p 6379:6379 redis:7
+
+# 2. Certificate engine (separate terminal)
+cd ../services/certificate && uv run hms-certificate-engine
+
+# 3. Celery worker (separate terminal)
+cd backend
+uv run celery -A hms_backend.app.core.celery_app:celery_app worker --loglevel=info
+```
+
+Enqueue a batch (omit `inspection_ids` to target every eligible APPROVED
+inspection that has no certificate yet):
+
+```bash
+curl -X POST \
+  -H "X-HMS-User-Id: reviewer-1" -H "X-HMS-Roles: REVIEWER" \
+  -H "Content-Type: application/json" -d '{}' \
+  http://127.0.0.1:8000/api/v1/certificates/bulk-generate
+```
+
+Poll progress (per-item results, counts, and status
+`PENDING → RUNNING → COMPLETED / COMPLETED_WITH_ERRORS / FAILED`):
+
+```bash
+curl -H "X-HMS-User-Id: reviewer-1" -H "X-HMS-Roles: REVIEWER" \
+  http://127.0.0.1:8000/api/v1/jobs/certificate-batches/<JOB_ID>
+```
+
+Each item is processed in its own transaction, so one failure never rolls back
+the others. Without a worker/broker you can run tasks inline for local testing by
+setting `CELERY_TASK_ALWAYS_EAGER=true`. Settings: `REDIS_URL`,
+`CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `CELERY_TASK_ALWAYS_EAGER`,
+`BULK_CERTIFICATE_MAX_ITEMS`.
+
+## Redis (cache & broker)
+
+Redis backs two things: the **cache-aside layer** and the **Celery** broker /
+result backend. Start it with Docker from the repo root:
+
+```bash
+docker compose up -d redis      # redis://127.0.0.1:6379
+```
+
+The cache degrades gracefully: if Redis is unreachable, requests still serve from
+the database (after one fast-failing attempt a circuit breaker skips cache calls
+for `CACHE_CIRCUIT_BREAKER_SECONDS`). Reference standards (`GET
+/api/v1/reference/standards`) are cached and invalidated automatically on any
+standard create/update/delete — the pattern (`core/cache.py`) extends to other
+global, read-heavy lookups.
+
+Readiness reflects dependencies:
+
+```bash
+curl http://127.0.0.1:8000/health/ready
+# {"status":"ready","checks":{"database":"ok","redis":"ok"}}
+```
+
+The database is the hard dependency (503 if down); Redis is reported but, because
+the app degrades gracefully, does not by itself fail readiness.
+
+Settings: `REDIS_URL`, `CACHE_ENABLED`, `CACHE_TTL_SECONDS`,
+`CACHE_CIRCUIT_BREAKER_SECONDS`, `REDIS_CONNECT_TIMEOUT_SECONDS`,
+`REDIS_COMMAND_TIMEOUT_SECONDS`.
+
 ## Local Endpoints
 
-- Health: `GET /health`
+- Liveness: `GET /health`
+- Readiness: `GET /health/ready` (database + Redis)
 - OpenAPI: `GET /api/v1/openapi.json`
 - Swagger UI: `GET /api/v1/docs`

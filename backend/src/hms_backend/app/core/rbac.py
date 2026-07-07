@@ -26,6 +26,8 @@ class Permission(StrEnum):
     CERTIFICATE_APPROVE = "certificate:approve"
     REFERENCE_ADMIN = "reference:admin"
     USER_ADMIN = "user:admin"
+    DEVICE_ADMIN = "device:admin"
+    AUDIT_READ = "audit:read"
 
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
@@ -38,6 +40,8 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.ASSET_WRITE,
             Permission.REFERENCE_ADMIN,
             Permission.USER_ADMIN,
+            Permission.DEVICE_ADMIN,
+            Permission.AUDIT_READ,
         }
     ),
     Role.INSPECTOR: frozenset(

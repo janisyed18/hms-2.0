@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
@@ -55,6 +55,11 @@ from hms_backend.app.api.schemas import (
     StandardCreate,
     StandardUpdate,
 )
+from hms_backend.app.core.cache import (
+    cache_delete_prefix,
+    cache_get_json,
+    cache_set_json,
+)
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
@@ -64,6 +69,17 @@ from hms_backend.app.core.rbac import (
 from hms_backend.app.core.repository import record_create, record_update, soft_delete
 from hms_backend.app.models.base import utc_now
 from hms_backend.app.modules.assets.models import Asset, AssetEndConfiguration
+from hms_backend.app.modules.certificates.engine_client import (
+    CertificateEngineError,
+    get_certificate_engine,
+)
+from hms_backend.app.modules.certificates.issuance import (
+    CertificateAlreadyIssuedError,
+    InspectionNotApprovedError,
+    generate_and_store_certificate,
+    generate_certificate_number,
+    generate_public_token,
+)
 from hms_backend.app.modules.certificates.models import (
     Certificate,
     CertificateIssueError,
@@ -236,7 +252,11 @@ async def create_standard(
         action="standard.created",
     )
     await session.commit()
+    await cache_delete_prefix(_STANDARDS_CACHE_PREFIX)
     return LookupRead(id=standard.id, code=standard.code, name=standard.name)
+
+
+_STANDARDS_CACHE_PREFIX = "reference:standards:"
 
 
 @router.get("/reference/standards", response_model=LookupListResponse)
@@ -246,6 +266,14 @@ async def list_standards(
     sort: str | None = None,
 ) -> LookupListResponse:
     _require_asset_read(principal)
+
+    # Reference standards are global (not customer-scoped) and change rarely, so
+    # the enabled list is cached and invalidated on any standard mutation.
+    cache_key = f"{_STANDARDS_CACHE_PREFIX}{sort or 'default'}"
+    cached = await cache_get_json(cache_key)
+    if cached is not None:
+        return LookupListResponse.model_validate(cached)
+
     statement = select(Standard).where(
         Standard.enabled.is_(True),
         Standard.deleted_at.is_(None),
@@ -259,12 +287,14 @@ async def list_standards(
     )
     standards = (await session.scalars(statement)).all()
 
-    return LookupListResponse(
+    result = LookupListResponse(
         items=[
             LookupRead(id=standard.id, code=standard.code, name=standard.name)
             for standard in standards
         ]
     )
+    await cache_set_json(cache_key, result.model_dump(mode="json"))
+    return result
 
 
 @router.patch("/reference/standards/{standard_id}", response_model=LookupRead)
@@ -302,6 +332,7 @@ async def update_standard(
         before=before,
     )
     await session.commit()
+    await cache_delete_prefix(_STANDARDS_CACHE_PREFIX)
     _set_etag(response, standard.version)
     return LookupRead(id=standard.id, code=standard.code, name=standard.name)
 
@@ -332,6 +363,7 @@ async def delete_standard(
         action="standard.deleted",
     )
     await session.commit()
+    await cache_delete_prefix(_STANDARDS_CACHE_PREFIX)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -1154,30 +1186,75 @@ async def issue_certificate(
             status_code=status.HTTP_409_CONFLICT,
             detail="Certificate already issued for inspection",
         )
-
-    try:
-        certificate = Certificate.issue_from_inspection(
-            inspection,
-            number=payload.number.strip(),
-            pdf_object_key=payload.pdf_object_key.strip(),
-            verification_hash=payload.verification_hash.strip(),
-            public_token=payload.public_token.strip(),
-            issued_by_user_id=principal.user_id,
-            valid_until=payload.valid_until,
-        )
-    except CertificateIssueError as exc:
+    if inspection.status != InspectionStatus.APPROVED.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=str(exc),
-        ) from exc
+            detail="certificate can only be issued from an approved inspection",
+        )
 
-    session.add(certificate)
-    await record_create(
-        session,
-        certificate,
-        actor_id=principal.user_id,
-        action="certificate.issued",
-    )
+    if payload.pdf_object_key:
+        # Legacy path: caller brings a pre-rendered artifact + hash (imports).
+        issued_at = datetime.now(UTC).replace(microsecond=0)
+        number = (payload.number or "").strip() or generate_certificate_number(
+            inspection, issued_at
+        )
+        public_token = (payload.public_token or "").strip() or generate_public_token()
+        verification_hash = (payload.verification_hash or "").strip()
+        if not verification_hash:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="verification_hash is required when pdf_object_key is supplied",
+            )
+        try:
+            certificate = Certificate.issue_from_inspection(
+                inspection,
+                number=number,
+                pdf_object_key=payload.pdf_object_key.strip(),
+                verification_hash=verification_hash,
+                public_token=public_token,
+                issued_by_user_id=principal.user_id,
+                valid_until=payload.valid_until,
+            )
+        except CertificateIssueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+        certificate.issued_at = issued_at
+        session.add(certificate)
+        await record_create(
+            session,
+            certificate,
+            actor_id=principal.user_id,
+            action="certificate.issued",
+        )
+    else:
+        # Standard path: render + sign via the certificate engine, then store.
+        try:
+            certificate = await generate_and_store_certificate(
+                session,
+                inspection,
+                actor_id=principal.user_id,
+                valid_until=payload.valid_until,
+                number=payload.number,
+                public_token=payload.public_token,
+                engine=get_certificate_engine(),
+            )
+        except CertificateEngineError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Certificate engine unavailable: {exc}",
+            ) from exc
+        except (
+            CertificateAlreadyIssuedError,
+            InspectionNotApprovedError,
+            CertificateIssueError,
+        ) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+
     await session.commit()
     return _certificate_read(certificate)
 

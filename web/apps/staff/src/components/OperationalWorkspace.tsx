@@ -8,25 +8,24 @@ import {
   RefreshCcw,
   ShieldCheck
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+
+import { HmsApiError, loadAuditEventsWithFallback } from "../api/hmsClient";
+import type { AuditEventRecord, DataSource } from "../domain/types";
+import { WorkspaceState } from "./WorkspaceState";
 
 export type OperationalModule = "dashboard" | "sync" | "audit";
 
 interface OperationalWorkspaceProps {
   module: OperationalModule;
-  source: "api" | "mock";
+  source: DataSource;
 }
 
 const syncRows = [
   ["Certificate issue", "Queued", "CERT-VOPA-NEW-1", "2 min ago"],
   ["Inspection draft", "Ready", "997950", "9 min ago"],
   ["Asset update", "Waiting", "ORIC-100", "18 min ago"]
-];
-
-const auditRows = [
-  ["Inspection approved", "Alex Williams", "ORIC-100", "2026-06-29 10:41"],
-  ["Certificate issued", "Alex Williams", "CERT-VOPA-NEW-1", "2026-06-29 10:48"],
-  ["Asset reviewed", "Alex Williams", "997950", "2026-06-29 11:02"]
 ];
 
 const overdueRows = [
@@ -51,6 +50,36 @@ const awaitingReviewRows = [
 ];
 
 export function OperationalWorkspace({ module, source }: OperationalWorkspaceProps) {
+  const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>([]);
+  const [auditSource, setAuditSource] = useState<DataSource>(source);
+  const [auditError, setAuditError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (module !== "audit") {
+      return;
+    }
+
+    let active = true;
+    setAuditError(null);
+    loadAuditEventsWithFallback({ sort: "-sequence" })
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+        setAuditEvents(result.items);
+        setAuditSource(result.source);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setAuditError(errorMessage(error));
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [module]);
+
   if (module === "sync") {
     return (
       <section className="operations-page" aria-label="Sync queue workspace">
@@ -71,19 +100,32 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
   }
 
   if (module === "audit") {
+    const auditRows = auditEvents.map((event) => [
+      auditSource === "mock" ? formatAuditAction(event.action) : event.action,
+      event.actorId,
+      `${event.entity}:${event.entityId}`,
+      formatDateTime(event.timestamp)
+    ]);
+
     return (
       <section className="operations-page" aria-label="Audit workspace">
         <OperationsHeader
           eyebrow="Governance"
           icon={<ShieldCheck aria-hidden="true" size={20} />}
-          source={source}
+          source={auditSource}
           title="Audit Trail"
           description="Recent inspection, certificate, and asset lifecycle events across the staff workspace."
         />
+        {auditError ? (
+          <WorkspaceState title="Audit log unavailable" tone="error">
+            {auditError}
+          </WorkspaceState>
+        ) : null}
         <OperationsTable
           ariaLabel="Audit trail events"
           columns={["Event", "Actor", "Record", "Time"]}
           rows={auditRows}
+          emptyMessage="No audit events have been recorded yet."
         />
       </section>
     );
@@ -219,7 +261,7 @@ function OperationsHeader({
   description: string;
   eyebrow: string;
   icon: ReactNode;
-  source: "api" | "mock";
+  source: DataSource;
   title: string;
 }) {
   return (
@@ -263,10 +305,12 @@ function MetricCard({
 function OperationsTable({
   ariaLabel,
   columns,
+  emptyMessage = "No records found.",
   rows
 }: {
   ariaLabel: string;
   columns: string[];
+  emptyMessage?: string;
   rows: string[][];
 }) {
   return (
@@ -281,16 +325,45 @@ function OperationsTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.join("-")}>
-                {row.map((cell, index) => (
-                  <td key={`${cell}-${index}`}>{index === 0 ? <strong>{cell}</strong> : cell}</td>
-                ))}
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={columns.length}>{emptyMessage}</td>
               </tr>
-            ))}
+            ) : (
+              rows.map((row) => (
+                <tr key={row.join("-")}>
+                  {row.map((cell, index) => (
+                    <td key={`${cell}-${index}`}>{index === 0 ? <strong>{cell}</strong> : cell}</td>
+                  ))}
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
     </section>
   );
+}
+
+function formatDateTime(value: string): string {
+  return value.replace("T", " ").replace(/Z$/, "");
+}
+
+function formatAuditAction(action: string): string {
+  return action
+    .split(".")
+    .map((part, index) =>
+      index === 0 ? part.charAt(0).toUpperCase() + part.slice(1) : part
+    )
+    .join(" ");
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof HmsApiError) {
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Audit events could not be loaded.";
 }
