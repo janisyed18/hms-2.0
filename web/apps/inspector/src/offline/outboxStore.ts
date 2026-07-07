@@ -1,8 +1,10 @@
 import type {
+  AssetUpdateInput,
   ConflictResolution,
   InspectionDraftInput,
   OutboxOperation,
-  OutboxState
+  OutboxState,
+  PressureTestOperationInput
 } from "../domain/types";
 
 export const OUTBOX_STORAGE_KEY = "bat-hms-inspector-outbox";
@@ -101,6 +103,62 @@ export function createInspectionOperation(
         required_pressure_kpa: input.requiredPressureKpa,
         hold_time_seconds: input.holdTimeSeconds,
         passed: input.passed
+      }
+    },
+    status: "pending",
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
+export function createAssetUpdateOperation(
+  input: AssetUpdateInput
+): OutboxOperation {
+  const timestamp = nowIso();
+
+  return {
+    opId: makeId("op"),
+    idempotencyKey: makeId("idem"),
+    entity: "Asset",
+    entityId: input.assetId,
+    assetId: input.assetId,
+    assetNumber: input.assetNumber,
+    customerName: input.customerName,
+    op: "update",
+    baseVersion: input.baseVersion,
+    payload: {
+      customer_serial_no: input.customerSerialNo,
+      tag: input.tag
+    },
+    status: "pending",
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
+
+export function createPressureTestOperation(
+  input: PressureTestOperationInput
+): OutboxOperation {
+  const timestamp = nowIso();
+  const op = input.baseVersion === null ? "create" : "update";
+
+  return {
+    opId: makeId("op"),
+    idempotencyKey: makeId("idem"),
+    entity: "PressureTestResult",
+    entityId: input.pressureTestId,
+    assetId: input.assetId,
+    assetNumber: input.assetNumber,
+    customerName: input.customerName,
+    op,
+    baseVersion: input.baseVersion,
+    payload: {
+      inspection_id: input.inspectionId,
+      applied_pressure_kpa: input.appliedPressureKpa,
+      hold_time_seconds: input.holdTimeSeconds,
+      passed: input.passed,
+      measurements: {
+        required_pressure_kpa: input.requiredPressureKpa
       }
     },
     status: "pending",

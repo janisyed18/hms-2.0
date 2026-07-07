@@ -60,6 +60,44 @@ export function ProductsWorkspace() {
           product.standardCode ?? "",
           ""
         ]}
+        activeFilterCount={workspace.activeFilterCount}
+        filterControls={
+          <>
+            <label className="filter-field">
+              <span>Category</span>
+              <select
+                aria-label="Product category filter"
+                value={workspace.categoryFilter}
+                onChange={(event) => workspace.setCategoryFilter(event.target.value)}
+              >
+                <option value="ALL">All categories</option>
+                {workspace.categoryOptions.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="filter-field">
+              <span>Standard</span>
+              <select
+                aria-label="Product standard filter"
+                value={workspace.standardFilter}
+                onChange={(event) => workspace.setStandardFilter(event.target.value)}
+              >
+                <option value="ALL">All standards</option>
+                {workspace.standardOptions.map((standard) => (
+                  <option key={standard} value={standard}>
+                    {standard}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="secondary-button filter-clear" type="button" onClick={workspace.clearProductFilters}>
+              Clear product filters
+            </button>
+          </>
+        }
         getRowKey={(product) => product.id}
         items={workspace.visibleProducts}
         onAction={workspace.openCreate}

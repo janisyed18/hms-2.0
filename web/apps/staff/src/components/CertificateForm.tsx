@@ -119,8 +119,7 @@ export function CertificateForm({
           <input
             aria-label="Valid until"
             disabled={inspectionOptions.length === 0}
-            inputMode="numeric"
-            placeholder="YYYY-MM-DD"
+            type="date"
             value={validUntil}
             onChange={(event) => setValidUntil(event.target.value)}
           />

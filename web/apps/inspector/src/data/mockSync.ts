@@ -39,6 +39,8 @@ export const mockBootstrapResponse: SyncBootstrapResponse = {
         location: {
           id: "loc-dock-a",
           name: "Dock A - Bay 3",
+          address_1: "1 Harbour Road",
+          address_2: "Bay 3",
           city: "Newcastle",
           state: "NSW",
           country: "AU"
@@ -85,6 +87,8 @@ export const mockBootstrapResponse: SyncBootstrapResponse = {
         location: {
           id: "loc-bay-1",
           name: "Dock B - Bay 1",
+          address_1: "4 Marina Drive",
+          address_2: "Bay 1",
           city: "Fremantle",
           state: "WA",
           country: "AU"
@@ -131,6 +135,8 @@ export const mockBootstrapResponse: SyncBootstrapResponse = {
         location: {
           id: "loc-vessel-deck",
           name: "Vessel deck",
+          address_1: "Pacific Star",
+          address_2: null,
           city: "Darwin",
           state: "NT",
           country: "AU"

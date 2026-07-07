@@ -76,6 +76,8 @@ async def seeded_session(
         location = CustomerLocation(
             customer=vopak,
             name="Site A",
+            address_1="1 Friendship Road",
+            address_2="Bay 3",
             city="Port Botany",
             state="NSW",
             country="AU",
@@ -258,6 +260,57 @@ async def test_products_endpoint_filters_by_category_and_search(
 
 
 @pytest.mark.asyncio
+async def test_products_endpoint_filters_by_standard_code_and_enabled_state(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with session_factory() as session:
+        standard = Standard(code="ISO10380", name="ISO 10380")
+        disabled_product = Product(
+            category="Rubber",
+            sub_category="Water",
+            code="RUB-DISABLED",
+            name="Disabled Rubber Hose",
+            standard=standard,
+            enabled=False,
+        )
+        enabled_product = Product(
+            category="Rubber",
+            sub_category="Water",
+            code="RUB-ENABLED",
+            name="Enabled Rubber Hose",
+            standard=standard,
+            enabled=True,
+        )
+        session.add_all([standard, disabled_product, enabled_product])
+        await session.commit()
+
+    async with api_client(session_factory, principal) as client:
+        standard_response = await client.get(
+            "/api/v1/products",
+            params={"standard_code": "ISO10380", "enabled": "true"},
+        )
+        disabled_response = await client.get(
+            "/api/v1/products",
+            params={"standard_code": "ISO10380", "enabled": "false"},
+        )
+
+    assert standard_response.status_code == 200
+    assert [item["code"] for item in standard_response.json()["items"]] == [
+        "RUB-ENABLED"
+    ]
+    assert disabled_response.status_code == 200
+    assert [item["code"] for item in disabled_response.json()["items"]] == [
+        "RUB-DISABLED"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_products_and_assets_support_allow_listed_sorting(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
@@ -348,6 +401,48 @@ async def test_assets_endpoint_searches_and_scopes_customer_user(
 
 
 @pytest.mark.asyncio
+async def test_assets_endpoint_filters_by_product_location_and_due_range(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        matching_response = await client.get(
+            "/api/v1/assets",
+            params={
+                "customer_id": seeded_session["vopak_id"],
+                "product_id": seeded_session["product_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "status": "OVERDUE",
+                "due_from": "2023-11-01",
+                "due_to": "2023-11-30",
+            },
+        )
+        non_matching_response = await client.get(
+            "/api/v1/assets",
+            params={
+                "customer_id": seeded_session["vopak_id"],
+                "product_id": seeded_session["other_product_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "status": "OVERDUE",
+                "due_from": "2023-11-01",
+                "due_to": "2023-11-30",
+            },
+        )
+
+    assert matching_response.status_code == 200
+    assert matching_response.json()["total"] == 1
+    assert matching_response.json()["items"][0]["asset_number"] == "997950"
+    assert non_matching_response.status_code == 200
+    assert non_matching_response.json()["total"] == 0
+
+
+@pytest.mark.asyncio
 async def test_asset_detail_includes_customer_product_location_and_retest_status(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
@@ -369,6 +464,8 @@ async def test_asset_detail_includes_customer_product_location_and_retest_status
     assert body["customer"]["code"] == "VOPA"
     assert body["product"]["code"] == "1000GY"
     assert body["location"]["name"] == "Site A"
+    assert body["location"]["address_1"] == "1 Friendship Road"
+    assert body["location"]["address_2"] == "Bay 3"
     assert body["retest_schedule"]["status"] == "OVERDUE"
 
 
@@ -496,6 +593,7 @@ async def test_create_customer_writes_sync_change_and_audit_event(
             json={
                 "code": " acme ",
                 "name": " ACME Mining ",
+                "notes": "Preferred contact before scheduling retests.",
                 "retest_enabled": True,
                 "default_retest_months": 6,
             },
@@ -505,6 +603,7 @@ async def test_create_customer_writes_sync_change_and_audit_event(
     body = response.json()
     assert body["code"] == "ACME"
     assert body["name"] == "ACME Mining"
+    assert body["notes"] == "Preferred contact before scheduling retests."
     assert body["retest_enabled"] is True
     assert body["default_retest_months"] == 6
     assert body["locations"] == []
@@ -519,6 +618,7 @@ async def test_create_customer_writes_sync_change_and_audit_event(
 
         assert customer.version == 1
         assert customer.name == "ACME Mining"
+        assert customer.notes == "Preferred contact before scheduling retests."
         assert sync_change.entity == "Customer"
         assert sync_change.entity_id == customer.id
         assert sync_change.op == "create"
@@ -530,6 +630,9 @@ async def test_create_customer_writes_sync_change_and_audit_event(
         assert audit_event.before is None
         assert audit_event.after is not None
         assert audit_event.after["code"] == "ACME"
+        assert audit_event.after["notes"] == (
+            "Preferred contact before scheduling retests."
+        )
         assert await verify_audit_chain(session)
 
 
@@ -549,6 +652,7 @@ async def test_update_customer_writes_sync_change_and_audit_event(
             f"/api/v1/customers/{seeded_session['vopak_id']}",
             json={
                 "name": "Vopak Updated",
+                "notes": "Retest window confirmed with site supervisor.",
                 "retest_enabled": True,
                 "default_retest_months": 12,
             },
@@ -556,6 +660,7 @@ async def test_update_customer_writes_sync_change_and_audit_event(
 
     assert response.status_code == 200
     assert response.json()["name"] == "Vopak Updated"
+    assert response.json()["notes"] == "Retest window confirmed with site supervisor."
     assert response.json()["retest_enabled"] is True
     assert response.json()["default_retest_months"] == 12
 
@@ -567,6 +672,7 @@ async def test_update_customer_writes_sync_change_and_audit_event(
         assert customer is not None
         assert customer.version == 2
         assert customer.name == "Vopak Updated"
+        assert customer.notes == "Retest window confirmed with site supervisor."
         assert sync_change.entity == "Customer"
         assert sync_change.op == "update"
         assert sync_change.version == 2
@@ -575,6 +681,9 @@ async def test_update_customer_writes_sync_change_and_audit_event(
         assert audit_event.before["name"] == "Vopak"
         assert audit_event.after is not None
         assert audit_event.after["name"] == "Vopak Updated"
+        assert audit_event.after["notes"] == (
+            "Retest window confirmed with site supervisor."
+        )
         assert await verify_audit_chain(session)
 
 
@@ -1232,6 +1341,7 @@ async def test_create_asset_with_retest_schedule_writes_audit_and_sync(
                 "lifecycle_status": "DUE",
                 "manufacture_date": "2026-01-15",
                 "next_retest_due_at": "2026-07-15",
+                "notes": "Install on Bay 3 manifold before first retest.",
                 "length_m": "6.100",
                 "retest_schedule": {
                     "due_at": "2026-07-15",
@@ -1253,8 +1363,11 @@ async def test_create_asset_with_retest_schedule_writes_audit_and_sync(
     assert response.status_code == 201
     body = response.json()
     assert body["asset_number"] == "NEW-100"
+    assert body["notes"] == "Install on Bay 3 manifold before first retest."
     assert body["customer"]["code"] == "VOPA"
     assert body["location"]["name"] == "Site A"
+    assert body["location"]["address_1"] == "1 Friendship Road"
+    assert body["location"]["address_2"] == "Bay 3"
     assert body["retest_schedule"]["status"] == "DUE"
     assert body["a_end"] == {"fitting": "Camlock M", "size": "2 inch"}
     assert body["b_end"] == {"fitting": "Flange W", "size": "2 inch"}
@@ -1279,6 +1392,7 @@ async def test_create_asset_with_retest_schedule_writes_audit_and_sync(
 
         assert asset.version == 1
         assert asset.customer_id == seeded_session["vopak_id"]
+        assert asset.notes == "Install on Bay 3 manifold before first retest."
         assert [(end.end, end.fitting, end.size) for end in ends] == [
             ("A", "Camlock M", "2 inch"),
             ("B", "Flange W", "2 inch"),
@@ -1303,6 +1417,9 @@ async def test_create_asset_with_retest_schedule_writes_audit_and_sync(
         ]
         assert audit_events[0].after is not None
         assert audit_events[0].after["asset_number"] == "NEW-100"
+        assert audit_events[0].after["notes"] == (
+            "Install on Bay 3 manifold before first retest."
+        )
         assert await verify_audit_chain(session)
 
 
@@ -1350,6 +1467,7 @@ async def test_update_asset_and_retest_schedule_writes_audit_and_sync(
             json={
                 "lifecycle_status": "IN_SERVICE",
                 "next_retest_due_at": "2027-01-15",
+                "notes": "Retest completed; return to primary rack.",
                 "retest_schedule": {
                     "due_at": "2027-01-15",
                     "status": "UPCOMING",
@@ -1362,6 +1480,7 @@ async def test_update_asset_and_retest_schedule_writes_audit_and_sync(
     assert response.status_code == 200
     body = response.json()
     assert body["lifecycle_status"] == "IN_SERVICE"
+    assert body["notes"] == "Retest completed; return to primary rack."
     assert body["retest_schedule"]["status"] == "UPCOMING"
 
     async with session_factory() as session:
@@ -1383,6 +1502,7 @@ async def test_update_asset_and_retest_schedule_writes_audit_and_sync(
         assert asset is not None
         assert asset.version == 2
         assert asset.lifecycle_status == "IN_SERVICE"
+        assert asset.notes == "Retest completed; return to primary rack."
         assert schedule.version == 2
         assert schedule.status == "UPCOMING"
         assert [change.entity for change in sync_changes] == ["Asset", "RetestSchedule"]
@@ -1395,6 +1515,9 @@ async def test_update_asset_and_retest_schedule_writes_audit_and_sync(
         assert audit_events[0].before["lifecycle_status"] == "OVERDUE"
         assert audit_events[0].after is not None
         assert audit_events[0].after["lifecycle_status"] == "IN_SERVICE"
+        assert audit_events[0].after["notes"] == (
+            "Retest completed; return to primary rack."
+        )
         assert await verify_audit_chain(session)
 
 
@@ -1457,6 +1580,49 @@ async def test_retest_schedules_endpoint_lists_with_asset_customer_context(
     assert detail_response.status_code == 200
     assert detail_response.json()["id"] == schedule_id
     assert detail_response.json()["reminder_interval_days"] == 30
+
+
+@pytest.mark.asyncio
+async def test_retest_schedules_endpoint_filters_by_product_and_due_range(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        orica_asset = await session.get(Asset, seeded_session["orica_asset_id"])
+        orica_customer = await session.get(Customer, seeded_session["orica_id"])
+        assert orica_asset is not None
+        assert orica_customer is not None
+        session.add(
+            RetestSchedule(
+                customer=orica_customer,
+                asset=orica_asset,
+                due_at=date(2026, 8, 1),
+                status=RetestScheduleStatus.UPCOMING.value,
+                reminder_interval_days=30,
+                escalation_interval_days=7,
+            )
+        )
+        await session.commit()
+
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.get(
+            "/api/v1/retest-schedules",
+            params={
+                "product_id": seeded_session["other_product_id"],
+                "due_from": "2026-08-01",
+                "due_to": "2026-08-31",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["asset"]["asset_number"] == "ORIC-100"
 
 
 @pytest.mark.asyncio
@@ -1912,6 +2078,54 @@ async def test_inspections_endpoint_filters_and_returns_detail(
 
 
 @pytest.mark.asyncio
+async def test_inspections_endpoint_filters_by_result_and_product(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        session.add_all(
+            [
+                Inspection(
+                    asset_id=seeded_session["vopak_asset_id"],
+                    inspection_type=InspectionType.SERVICE.value,
+                    status=InspectionStatus.SUBMITTED.value,
+                    result="PASS",
+                    inspector_user_id="inspector-1",
+                ),
+                Inspection(
+                    asset_id=seeded_session["vopak_asset_id"],
+                    inspection_type=InspectionType.SERVICE.value,
+                    status=InspectionStatus.SUBMITTED.value,
+                    result="FAIL",
+                    inspector_user_id="inspector-2",
+                ),
+            ]
+        )
+        await session.commit()
+
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.get(
+            "/api/v1/inspections",
+            params={
+                "inspection_type": "SERVICE",
+                "result": "FAIL",
+                "product_id": seeded_session["product_id"],
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["result"] == "FAIL"
+    assert response.json()["items"][0]["asset"]["asset_number"] == "997950"
+
+
+@pytest.mark.asyncio
 async def test_patch_draft_inspection_updates_result_and_pressure_test_with_audit(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
@@ -2287,6 +2501,79 @@ async def test_certificates_endpoint_lists_with_asset_customer_inspection_contex
     assert certificate["product"]["code"] == "1000GY"
     assert certificate["inspection"]["inspection_type"] == "SERVICE"
     assert certificate["inspection"]["result"] == "PASS"
+
+
+@pytest.mark.asyncio
+async def test_certificates_endpoint_filters_by_product_and_valid_until_range(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        vopak_asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        orica_asset = await session.get(Asset, seeded_session["orica_asset_id"])
+        assert vopak_asset is not None
+        assert orica_asset is not None
+        vopak_inspection = Inspection(
+            asset=vopak_asset,
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+            reviewer_user_id="reviewer-1",
+        )
+        orica_inspection = Inspection(
+            asset=orica_asset,
+            inspection_type=InspectionType.NEW_ASSET.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-2",
+            reviewer_user_id="reviewer-1",
+        )
+        session.add_all([vopak_inspection, orica_inspection])
+        await session.flush()
+        session.add_all(
+            [
+                Certificate.issue_from_inspection(
+                    vopak_inspection,
+                    number="CERT-997950-1",
+                    pdf_object_key="certificates/CERT-997950-1.pdf",
+                    verification_hash="hash-997950-1",
+                    public_token="public-token-997950-1",
+                    issued_by_user_id="reviewer-1",
+                    valid_until=date(2027, 6, 28),
+                ),
+                Certificate.issue_from_inspection(
+                    orica_inspection,
+                    number="CERT-ORIC-100-1",
+                    pdf_object_key="certificates/CERT-ORIC-100-1.pdf",
+                    verification_hash="hash-oric-100-1",
+                    public_token="public-token-oric-100-1",
+                    issued_by_user_id="reviewer-1",
+                    valid_until=date(2027, 7, 1),
+                ),
+            ]
+        )
+        await session.commit()
+
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.get(
+            "/api/v1/certificates",
+            params={
+                "product_id": seeded_session["other_product_id"],
+                "valid_from": "2027-07-01",
+                "valid_to": "2027-07-31",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["number"] == "CERT-ORIC-100-1"
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -37,6 +37,24 @@ describe("Inspector app", () => {
 
     expect(screen.getByText("1 pending")).toBeInTheDocument();
     expect(screen.getByText("HOS-2024-0891")).toBeInTheDocument();
+  });
+
+  it("queues asset metadata changes from capture", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(
+      await screen.findByRole("button", { name: /open HOS-2024-0891/i })
+    );
+    await user.clear(screen.getByLabelText("Customer serial number"));
+    await user.type(screen.getByLabelText("Customer serial number"), "FIELD-SN-0891");
+    await user.clear(screen.getByLabelText("Asset tag"));
+    await user.type(screen.getByLabelText("Asset tag"), "FIELD-TAG-0891");
+    await user.click(screen.getByRole("button", { name: "Queue Asset Details" }));
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+    expect(screen.getByText("Asset · update · asset-0891")).toBeInTheDocument();
   });
 
   it("filters the field work queue by search text and urgency", async () => {
@@ -178,5 +196,68 @@ describe("Inspector app", () => {
     expect(
       screen.getByRole("button", { name: "Accept Server State" })
     ).toBeInTheDocument();
+  });
+
+  it("pulls backend changes into the visible work queue", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      const path = String(url);
+
+      if (path.endsWith("/api/v1/sync/bootstrap")) {
+        return new Response(JSON.stringify(mockBootstrapResponse), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      if (path.endsWith("/api/v1/sync/changes?since=8")) {
+        return new Response(
+          JSON.stringify({
+            cursor: 9,
+            has_more: false,
+            changes: [
+              {
+                seq: 9,
+                entity: "RetestSchedule",
+                entity_id: "schedule-0891",
+                op: "upsert",
+                version: 3,
+                changed_at: "2026-07-04T01:00:00.000Z",
+                payload: {
+                  id: "schedule-0891",
+                  asset_id: "asset-0891",
+                  due_at: "2026-07-04",
+                  status: "DUE"
+                }
+              }
+            ]
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response("Not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    const assetBefore = await screen.findByRole("heading", {
+      name: "HOS-2024-0891"
+    });
+    expect(within(assetBefore.closest("article")!).getByText("Overdue retest"))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    await user.click(screen.getByRole("button", { name: "Pull Updates" }));
+    await user.click(screen.getByRole("button", { name: "Work" }));
+
+    await waitFor(() => {
+      const assetAfter = screen.getByRole("heading", {
+        name: "HOS-2024-0891"
+      });
+      expect(within(assetAfter.closest("article")!).getByText("Due today"))
+        .toBeInTheDocument();
+    });
   });
 });

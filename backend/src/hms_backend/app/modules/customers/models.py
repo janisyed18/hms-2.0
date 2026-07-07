@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hms_backend.app.models.base import Base, SyncableMixin
@@ -19,6 +19,7 @@ class Customer(SyncableMixin, Base):
 
     code: Mapped[str] = mapped_column(String(40), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     retest_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     default_retest_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

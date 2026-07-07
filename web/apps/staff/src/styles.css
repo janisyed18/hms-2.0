@@ -266,7 +266,8 @@ button:disabled {
 .field input,
 .field select,
 .customer-drawer input,
-.customer-drawer select {
+.customer-drawer select,
+.customer-drawer textarea {
   min-width: 0;
   width: 100%;
   border: 0;
@@ -594,6 +595,23 @@ td {
 td strong {
   color: #172033;
   font-weight: 700;
+}
+
+.asset-id-cell {
+  display: grid;
+  gap: 2px;
+  min-width: 160px;
+}
+
+.asset-id-cell small {
+  display: block;
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .row-actions {
@@ -1032,6 +1050,13 @@ tr.is-selected .row-check {
   font-size: 12px;
 }
 
+.record-notes {
+  margin: 8px 0 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .empty-section {
   display: grid;
   justify-items: start;
@@ -1125,11 +1150,26 @@ tr.is-selected .row-check {
 }
 
 .customer-drawer input,
-.customer-drawer select {
+.customer-drawer select,
+.customer-drawer textarea {
   height: 40px;
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0 11px;
+}
+
+.customer-drawer textarea {
+  min-height: 92px;
+  padding: 10px 11px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 .toggle-row {
@@ -1693,6 +1733,7 @@ tbody tr.is-selected {
 .drawer-section,
 .customer-drawer input,
 .customer-drawer select,
+.customer-drawer textarea,
 .inspection-detail-form input,
 .inspection-detail-form select,
 .inspection-facts > div,
@@ -1925,6 +1966,58 @@ tbody tr.is-selected {
 
 .filter-summary strong {
   color: var(--ink);
+}
+
+.filter-panel {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin: 0 18px;
+  align-items: end;
+}
+
+.filter-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.filter-field input,
+.filter-field select {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0 10px;
+}
+
+.filter-clear {
+  min-height: 38px;
+  justify-content: center;
+}
+
+.button-count {
+  display: inline-grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 850;
 }
 
 @keyframes fade-in {

@@ -26,8 +26,10 @@ Phase 3A adds the backend sync contract for offline-capable field clients:
   caller's scoped current records.
 - `GET /api/v1/sync/changes?since=0` returns ordered `SyncChange` upserts and
   tombstones after a monotonic cursor.
-- `POST /api/v1/sync/push` applies batched inspection outbox operations with
-  idempotency keys and optimistic version conflict reporting.
+- `POST /api/v1/sync/push` applies batched outbox operations with idempotency
+  keys and optimistic version conflict reporting. The current slice supports
+  inspection create/update, safe asset serial/tag updates, and standalone
+  pressure-test result create/update operations.
 - `POST /api/v1/sync/operations` is an alias for clients following the original
   mobile addendum endpoint name.
 

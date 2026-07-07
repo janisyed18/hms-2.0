@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
@@ -348,6 +349,7 @@ async def create_customer(
     customer = Customer(
         code=payload.code.strip().upper(),
         name=payload.name.strip(),
+        notes=_clean_optional(payload.notes),
         retest_enabled=payload.retest_enabled,
         default_retest_months=payload.default_retest_months,
     )
@@ -629,6 +631,8 @@ async def update_customer(
         customer.code = payload.code.strip().upper()
     if "name" in updates and payload.name is not None:
         customer.name = payload.name.strip()
+    if "notes" in updates:
+        customer.notes = _clean_optional(payload.notes)
     if "retest_enabled" in updates and payload.retest_enabled is not None:
         customer.retest_enabled = payload.retest_enabled
     if "default_retest_months" in updates:
@@ -740,6 +744,7 @@ async def create_asset(
         next_retest_due_at=payload.next_retest_due_at,
         condemned_at=payload.condemned_at,
         length_m=payload.length_m,
+        notes=_clean_optional(payload.notes),
     )
     session.add(asset)
     await record_create(
@@ -787,6 +792,9 @@ async def list_retest_schedules(
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     asset_id: str | None = None,
     customer_id: str | None = None,
+    product_id: str | None = None,
+    due_from: date | None = None,
+    due_to: date | None = None,
     search: str | None = None,
     sort: str | None = None,
     limit: LimitParam = 50,
@@ -801,6 +809,12 @@ async def list_retest_schedules(
         statement = statement.where(RetestSchedule.asset_id == asset_id)
     if customer_id:
         statement = statement.where(RetestSchedule.customer_id == customer_id)
+    if product_id:
+        statement = statement.where(Asset.product_id == product_id)
+    if due_from:
+        statement = statement.where(RetestSchedule.due_at >= due_from)
+    if due_to:
+        statement = statement.where(RetestSchedule.due_at <= due_to)
     if search:
         search_pattern = f"%{search.lower()}%"
         statement = statement.where(
@@ -904,8 +918,10 @@ async def list_inspections(
     principal: PrincipalDep,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     inspection_type: str | None = None,
+    result: str | None = None,
     asset_id: str | None = None,
     customer_id: str | None = None,
+    product_id: str | None = None,
     search: str | None = None,
     sort: str | None = None,
     limit: LimitParam = 50,
@@ -918,10 +934,14 @@ async def list_inspections(
         statement = statement.where(Inspection.status == status_filter)
     if inspection_type:
         statement = statement.where(Inspection.inspection_type == inspection_type)
+    if result:
+        statement = statement.where(Inspection.result == result)
     if asset_id:
         statement = statement.where(Inspection.asset_id == asset_id)
     if customer_id:
         statement = statement.where(Asset.customer_id == customer_id)
+    if product_id:
+        statement = statement.where(Asset.product_id == product_id)
     if search:
         search_pattern = f"%{search.lower()}%"
         statement = statement.where(
@@ -1169,7 +1189,10 @@ async def list_certificates(
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     asset_id: str | None = None,
     customer_id: str | None = None,
+    product_id: str | None = None,
     inspection_id: str | None = None,
+    valid_from: date | None = None,
+    valid_to: date | None = None,
     search: str | None = None,
     sort: str | None = None,
     limit: LimitParam = 50,
@@ -1184,8 +1207,14 @@ async def list_certificates(
         statement = statement.where(Certificate.asset_id == asset_id)
     if customer_id:
         statement = statement.where(Asset.customer_id == customer_id)
+    if product_id:
+        statement = statement.where(Asset.product_id == product_id)
     if inspection_id:
         statement = statement.where(Certificate.inspection_id == inspection_id)
+    if valid_from:
+        statement = statement.where(Certificate.valid_until >= valid_from)
+    if valid_to:
+        statement = statement.where(Certificate.valid_until <= valid_to)
     if search:
         search_pattern = f"%{search.lower()}%"
         statement = statement.where(
@@ -1284,6 +1313,8 @@ async def list_products(
     session: SessionDep,
     principal: PrincipalDep,
     category: str | None = None,
+    standard_code: str | None = None,
+    enabled: bool | None = True,
     search: str | None = None,
     sort: str | None = None,
     limit: LimitParam = 50,
@@ -1293,10 +1324,16 @@ async def list_products(
     statement = (
         select(Product)
         .options(selectinload(Product.standard))
-        .where(Product.enabled.is_(True), Product.deleted_at.is_(None))
+        .where(Product.deleted_at.is_(None))
     )
+    if enabled is not None:
+        statement = statement.where(Product.enabled.is_(enabled))
     if category:
         statement = statement.where(func.lower(Product.category) == category.lower())
+    if standard_code:
+        statement = statement.where(
+            Product.standard.has(func.lower(Standard.code) == standard_code.lower())
+        )
     if search:
         search_pattern = f"%{search.lower()}%"
         statement = statement.where(
@@ -1399,6 +1436,10 @@ async def list_assets(
     search: str | None = None,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     customer_id: str | None = None,
+    product_id: str | None = None,
+    location_id: str | None = None,
+    due_from: date | None = None,
+    due_to: date | None = None,
     sort: str | None = None,
     limit: LimitParam = 50,
     offset: OffsetParam = 0,
@@ -1411,8 +1452,16 @@ async def list_assets(
 
     if customer_id:
         statement = statement.where(Asset.customer_id == customer_id)
+    if product_id:
+        statement = statement.where(Asset.product_id == product_id)
+    if location_id:
+        statement = statement.where(Asset.location_id == location_id)
     if status_filter:
         statement = statement.where(Asset.lifecycle_status == status_filter)
+    if due_from:
+        statement = statement.where(Asset.next_retest_due_at >= due_from)
+    if due_to:
+        statement = statement.where(Asset.next_retest_due_at <= due_to)
     if search:
         search_pattern = f"%{search.lower()}%"
         statement = statement.where(
@@ -1495,6 +1544,8 @@ async def update_asset(
         asset.condemned_at = payload.condemned_at
     if "length_m" in updates:
         asset.length_m = payload.length_m
+    if "notes" in updates:
+        asset.notes = _clean_optional(payload.notes)
 
     await record_update(
         session,
@@ -1711,6 +1762,7 @@ def _customer_read(customer: Customer) -> CustomerRead:
         id=customer.id,
         code=customer.code,
         name=customer.name,
+        notes=customer.notes,
         retest_enabled=customer.retest_enabled,
         default_retest_months=customer.default_retest_months,
         locations=[_customer_location_read(location) for location in locations],
@@ -2231,6 +2283,7 @@ def _asset_read(asset: Asset) -> AssetRead:
         next_retest_due_at=asset.next_retest_due_at,
         condemned_at=asset.condemned_at,
         length_m=asset.length_m,
+        notes=asset.notes,
         customer=CustomerSummary(
             id=asset.customer.id,
             code=asset.customer.code,
@@ -2246,6 +2299,8 @@ def _asset_read(asset: Asset) -> AssetRead:
             LocationSummary(
                 id=asset.location.id,
                 name=asset.location.name,
+                address_1=asset.location.address_1,
+                address_2=asset.location.address_2,
                 city=asset.location.city,
                 state=asset.location.state,
                 country=asset.location.country,

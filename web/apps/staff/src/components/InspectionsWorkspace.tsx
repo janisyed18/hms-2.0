@@ -165,6 +165,41 @@ export function InspectionsWorkspace() {
               pressureLabel(inspection),
               ""
             ]}
+            activeFilterCount={workspace.activeFilterCount}
+            filterControls={
+              <>
+                <label className="filter-field">
+                  <span>Type</span>
+                  <select
+                    aria-label="Inspection type filter"
+                    value={workspace.typeFilter}
+                    onChange={(event) => workspace.setTypeFilter(event.target.value as typeof workspace.typeFilter)}
+                  >
+                    <option value="ALL">All types</option>
+                    <option value="NEW_ASSET">New asset</option>
+                    <option value="SERVICE">Service</option>
+                  </select>
+                </label>
+                <label className="filter-field">
+                  <span>Result</span>
+                  <select
+                    aria-label="Inspection result filter"
+                    value={workspace.resultFilter}
+                    onChange={(event) => workspace.setResultFilter(event.target.value)}
+                  >
+                    <option value="ALL">All results</option>
+                    {workspace.resultOptions.map((result) => (
+                      <option key={result} value={result}>
+                        {result === "PENDING" ? "Pending" : result}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="secondary-button filter-clear" type="button" onClick={workspace.clearInspectionFilters}>
+                  Clear inspection filters
+                </button>
+              </>
+            }
             getRowKey={(inspection) => inspection.id}
             items={workspace.visibleInspections}
             onAction={workspace.openCreate}

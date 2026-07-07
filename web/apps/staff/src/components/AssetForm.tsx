@@ -7,12 +7,17 @@ import type {
   AssetFormValues,
   AssetRecord,
   AssetProductSummary,
+  CustomerLocation,
   RecordSummary
 } from "../domain/types";
 
 interface AssetFormProps {
   asset: AssetRecord | null;
   customerOptions: RecordSummary[];
+  locationOptions: Array<{
+    customerId: string;
+    locations: CustomerLocation[];
+  }>;
   productOptions: AssetProductSummary[];
   open: boolean;
   onClose: () => void;
@@ -27,6 +32,7 @@ const blankEnd: AssetEndValues = {
 export function AssetForm({
   asset,
   customerOptions,
+  locationOptions,
   productOptions,
   open,
   onClose,
@@ -35,9 +41,11 @@ export function AssetForm({
   const [assetNumber, setAssetNumber] = useState("");
   const [customerSerialNo, setCustomerSerialNo] = useState("");
   const [customerId, setCustomerId] = useState("");
+  const [locationId, setLocationId] = useState("");
   const [productId, setProductId] = useState("");
   const [lifecycleStatus, setLifecycleStatus] = useState("IN_SERVICE");
   const [nextRetestDueAt, setNextRetestDueAt] = useState("");
+  const [notes, setNotes] = useState("");
   const [aEnd, setAEnd] = useState<AssetEndValues>(blankEnd);
   const [bEnd, setBEnd] = useState<AssetEndValues>(blankEnd);
   const [isSubmitting, setSubmitting] = useState(false);
@@ -46,15 +54,38 @@ export function AssetForm({
     if (!open) {
       return;
     }
+    const defaultCustomerId = asset?.customer.id ?? customerOptions[0]?.id ?? "";
+    const defaultLocations =
+      locationOptions.find((group) => group.customerId === defaultCustomerId)?.locations ?? [];
     setAssetNumber(asset?.assetNumber ?? "");
     setCustomerSerialNo(asset?.customerSerialNo ?? "");
-    setCustomerId(asset?.customer.id ?? customerOptions[0]?.id ?? "");
+    setCustomerId(defaultCustomerId);
+    setLocationId(asset?.location?.id ?? defaultLocations[0]?.id ?? "");
     setProductId(asset?.product.id ?? productOptions[0]?.id ?? "");
     setLifecycleStatus(asset?.lifecycleStatus ?? "IN_SERVICE");
     setNextRetestDueAt(asset?.nextRetestDueAt ?? "");
+    setNotes(asset?.notes ?? "");
     setAEnd(asset?.aEnd ?? blankEnd);
     setBEnd(asset?.bEnd ?? blankEnd);
-  }, [asset, customerOptions, open, productOptions]);
+  }, [asset, customerOptions, locationOptions, open, productOptions]);
+
+  const customerLocations =
+    locationOptions.find((group) => group.customerId === customerId)?.locations ?? [];
+  const selectedLocation =
+    customerLocations.find((location) => location.id === locationId) ?? null;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    if (customerLocations.length === 0) {
+      setLocationId("");
+      return;
+    }
+    if (!customerLocations.some((location) => location.id === locationId)) {
+      setLocationId(customerLocations[0].id);
+    }
+  }, [customerLocations, locationId, open]);
 
   if (!open) {
     return null;
@@ -66,10 +97,12 @@ export function AssetForm({
     await onSubmit({
       assetNumber,
       customerId,
+      locationId: locationId || null,
       customerSerialNo: customerSerialNo || null,
       productId,
       lifecycleStatus,
       nextRetestDueAt: nextRetestDueAt || null,
+      notes: notes.trim() || null,
       aEnd,
       bEnd
     });
@@ -120,6 +153,27 @@ export function AssetForm({
           </select>
         </label>
         <label>
+          <span>Customer site/address</span>
+          <select
+            aria-label="Asset location"
+            disabled={customerLocations.length === 0}
+            value={locationId}
+            onChange={(event) => setLocationId(event.target.value)}
+          >
+            {customerLocations.length === 0 ? (
+              <option value="">No customer locations available</option>
+            ) : null}
+            {customerLocations.map((location) => (
+              <option key={location.id} value={location.id}>
+                {location.name}
+              </option>
+            ))}
+          </select>
+          <small className="field-hint">
+            {selectedLocation ? locationAddress(selectedLocation) : "Create a customer location before assigning this asset."}
+          </small>
+        </label>
+        <label>
           <span>Product</span>
           <select
             aria-label="Asset product"
@@ -149,10 +203,18 @@ export function AssetForm({
           <span>Next retest due</span>
           <input
             aria-label="Next retest due"
-            inputMode="numeric"
-            placeholder="YYYY-MM-DD"
+            type="date"
             value={nextRetestDueAt}
             onChange={(event) => setNextRetestDueAt(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Asset notes</span>
+          <textarea
+            aria-label="Asset notes"
+            rows={4}
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
           />
         </label>
         <AssetEndEditor label="A" values={aEnd} onChange={setAEnd} />
@@ -168,4 +230,15 @@ export function AssetForm({
       </form>
     </div>
   );
+}
+
+function locationAddress(location: CustomerLocation): string {
+  const parts = [
+    location.address1,
+    location.address2,
+    location.city,
+    location.state,
+    location.country
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : "No address recorded for this site.";
 }

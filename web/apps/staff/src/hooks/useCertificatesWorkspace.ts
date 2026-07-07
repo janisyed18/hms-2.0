@@ -75,6 +75,8 @@ export function useCertificatesWorkspace() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<CertificateStatusFilter>("ALL");
+  const [validFrom, setValidFrom] = useState("");
+  const [validTo, setValidTo] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
 
@@ -111,6 +113,9 @@ export function useCertificatesWorkspace() {
     return certificates.filter((certificate) => {
       const matchesStatus =
         statusFilter === "ALL" || certificate.status === statusFilter;
+      const validUntil = certificate.validUntil ?? "";
+      const matchesValidFrom = !validFrom || (validUntil && validUntil >= validFrom);
+      const matchesValidTo = !validTo || (validUntil && validUntil <= validTo);
       const matchesSearch =
         !normalized ||
         [
@@ -127,9 +132,9 @@ export function useCertificatesWorkspace() {
         ]
           .filter(Boolean)
           .some((value) => value?.toLowerCase().includes(normalized));
-      return matchesStatus && matchesSearch;
+      return matchesStatus && matchesValidFrom && matchesValidTo && matchesSearch;
     });
-  }, [certificates, query, statusFilter]);
+  }, [certificates, query, statusFilter, validFrom, validTo]);
 
   const selectedCertificate = useMemo(
     () =>
@@ -163,6 +168,8 @@ export function useCertificatesWorkspace() {
     setFormOpen(false);
     setQuery("");
     setStatusFilter("ALL");
+    setValidFrom("");
+    setValidTo("");
   }
 
   function replaceCertificate(updated: CertificateRecord) {
@@ -206,8 +213,17 @@ export function useCertificatesWorkspace() {
     replaceCertificate(updated);
   }
 
+  function clearCertificateFilters() {
+    setValidFrom("");
+    setValidTo("");
+  }
+
+  const activeFilterCount = [Boolean(validFrom), Boolean(validTo)].filter(Boolean).length;
+
   return {
+    activeFilterCount,
     certificates,
+    clearCertificateFilters,
     closeDetail,
     eligibleInspections,
     isFormOpen,
@@ -219,8 +235,12 @@ export function useCertificatesWorkspace() {
     setFormOpen,
     setQuery,
     setStatusFilter,
+    setValidFrom,
+    setValidTo,
     source,
     statusFilter,
+    validFrom,
+    validTo,
     revokeCertificate,
     supersedeCertificate,
     visibleCertificates

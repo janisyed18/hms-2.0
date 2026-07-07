@@ -8,8 +8,10 @@ import {
 } from "../api/hmsClient";
 import type {
   AssetFormValues,
+  AssetLocationSummary,
   AssetProductSummary,
   AssetRecord,
+  CustomerLocation,
   CustomerRecord,
   DataSource,
   ProductRecord,
@@ -46,18 +48,31 @@ function productSummary(product: ProductRecord): AssetProductSummary {
 
 function localAsset(
   values: AssetFormValues,
-  customers: RecordSummary[],
+  customers: CustomerRecord[],
   products: AssetProductSummary[],
   current?: AssetRecord | null
 ): AssetRecord {
   const customer =
-    customers.find((item) => item.id === values.customerId) ??
+    customers.map(customerSummary).find((item) => item.id === values.customerId) ??
     current?.customer ??
-    customers[0];
+    (customers[0] ? customerSummary(customers[0]) : null) ?? {
+      id: values.customerId,
+      code: "",
+      name: "Unknown customer"
+    };
   const product =
     products.find((item) => item.id === values.productId) ??
     current?.product ??
-    products[0];
+    products[0] ?? {
+      id: values.productId,
+      code: "",
+      name: "Unknown product",
+      category: ""
+    };
+  const selectedLocation = customers
+    .flatMap((item) => item.locations ?? [])
+    .filter((location): location is CustomerLocation => Boolean(location))
+    .find((location) => location.id === values.locationId);
   return {
     id: current?.id ?? `asset-${Date.now()}`,
     assetNumber: values.assetNumber.trim().toUpperCase(),
@@ -68,9 +83,10 @@ function localAsset(
     nextRetestDueAt: values.nextRetestDueAt,
     condemnedAt: current?.condemnedAt ?? null,
     lengthM: current?.lengthM ?? null,
+    notes: values.notes,
     customer,
     product,
-    location: current?.location ?? null,
+    location: selectedLocation ? assetLocationSummary(selectedLocation) : null,
     retestSchedule: values.nextRetestDueAt
       ? {
           dueAt: values.nextRetestDueAt,
@@ -83,12 +99,29 @@ function localAsset(
   };
 }
 
+function assetLocationSummary(location: CustomerLocation): AssetLocationSummary {
+  return {
+    id: location.id,
+    name: location.name,
+    address1: location.address1,
+    address2: location.address2,
+    city: location.city,
+    state: location.state,
+    country: location.country
+  };
+}
+
 export function useAssetsWorkspace() {
   const [assets, setAssets] = useState<AssetRecord[]>([]);
-  const [customers, setCustomers] = useState<RecordSummary[]>([]);
+  const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [products, setProducts] = useState<AssetProductSummary[]>([]);
   const [source, setSource] = useState<DataSource>("mock");
   const [query, setQuery] = useState("");
+  const [customerFilter, setCustomerFilter] = useState("ALL");
+  const [productFilter, setProductFilter] = useState("ALL");
+  const [lifecycleFilter, setLifecycleFilter] = useState("ALL");
+  const [dueFrom, setDueFrom] = useState("");
+  const [dueTo, setDueTo] = useState("");
   const [editingAsset, setEditingAsset] = useState<AssetRecord | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
 
@@ -103,12 +136,7 @@ export function useAssetsWorkspace() {
         return;
       }
       setAssets(assetResult.items);
-      setCustomers(
-        uniqueById([
-          ...customerResult.items.map(customerSummary),
-          ...assetResult.items.map((asset) => asset.customer)
-        ])
-      );
+      setCustomers(customerResult.items);
       setProducts(
         uniqueById([
           ...productResult.items.map(productSummary),
@@ -124,32 +152,74 @@ export function useAssetsWorkspace() {
 
   const visibleAssets = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) {
-      return assets;
-    }
-    return assets.filter((asset) =>
-      [
-        asset.assetNumber,
-        asset.customerSerialNo,
-        asset.tag,
-        asset.lifecycleStatus,
-        asset.customer.code,
-        asset.customer.name,
-        asset.product.code,
-        asset.product.name,
-        asset.location?.name
-      ]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(normalized))
-    );
-  }, [assets, query]);
+    return assets.filter((asset) => {
+      const matchesCustomer =
+        customerFilter === "ALL" || asset.customer.id === customerFilter;
+      const matchesProduct =
+        productFilter === "ALL" || asset.product.id === productFilter;
+      const matchesLifecycle =
+        lifecycleFilter === "ALL" || asset.lifecycleStatus === lifecycleFilter;
+      const dueAt = asset.nextRetestDueAt ?? "";
+      const matchesDueFrom = !dueFrom || (dueAt && dueAt >= dueFrom);
+      const matchesDueTo = !dueTo || (dueAt && dueAt <= dueTo);
+      const matchesSearch =
+        !normalized ||
+        [
+          asset.assetNumber,
+          asset.customerSerialNo,
+          asset.tag,
+          asset.lifecycleStatus,
+          asset.customer.code,
+          asset.customer.name,
+          asset.product.code,
+          asset.product.name,
+          asset.location?.name,
+          asset.location?.address1,
+          asset.location?.address2,
+          asset.location?.city,
+          asset.location?.state,
+          asset.location?.country,
+          asset.notes
+        ]
+          .filter(Boolean)
+          .some((value) => value?.toLowerCase().includes(normalized));
+
+      return (
+        matchesCustomer &&
+        matchesProduct &&
+        matchesLifecycle &&
+        matchesDueFrom &&
+        matchesDueTo &&
+        matchesSearch
+      );
+    });
+  }, [
+    assets,
+    customerFilter,
+    dueFrom,
+    dueTo,
+    lifecycleFilter,
+    productFilter,
+    query
+  ]);
 
   const customerOptions = useMemo(
     () =>
       customers.length > 0
-        ? customers
+        ? customers.map(customerSummary)
         : uniqueById(assets.map((asset) => asset.customer)),
     [assets, customers]
+  );
+
+  const locationOptions = useMemo(
+    () =>
+      customers.map((customer) => ({
+        customerId: customer.id,
+        locations: (customer.locations ?? []).filter(
+          (location): location is CustomerLocation => Boolean(location)
+        )
+      })),
+    [customers]
   );
 
   const productOptions = useMemo(
@@ -171,7 +241,7 @@ export function useAssetsWorkspace() {
   }
 
   async function saveAsset(values: AssetFormValues) {
-    let saved = localAsset(values, customerOptions, productOptions, editingAsset);
+    let saved = localAsset(values, customers, productOptions, editingAsset);
     if (source === "api") {
       try {
         const client = createHmsClient();
@@ -179,7 +249,7 @@ export function useAssetsWorkspace() {
           ? await client.updateAsset(editingAsset.id, values, editingAsset.etag)
           : await client.createAsset(values);
       } catch {
-        saved = localAsset(values, customerOptions, productOptions, editingAsset);
+        saved = localAsset(values, customers, productOptions, editingAsset);
       }
     }
 
@@ -205,18 +275,47 @@ export function useAssetsWorkspace() {
     setAssets((current) => current.filter((item) => item.id !== asset.id));
   }
 
+  function clearAssetFilters() {
+    setCustomerFilter("ALL");
+    setProductFilter("ALL");
+    setLifecycleFilter("ALL");
+    setDueFrom("");
+    setDueTo("");
+  }
+
+  const activeFilterCount = [
+    customerFilter !== "ALL",
+    productFilter !== "ALL",
+    lifecycleFilter !== "ALL",
+    Boolean(dueFrom),
+    Boolean(dueTo)
+  ].filter(Boolean).length;
+
   return {
+    activeFilterCount,
     archiveAsset,
     assets,
+    clearAssetFilters,
+    customerFilter,
     customerOptions,
+    dueFrom,
+    dueTo,
     editingAsset,
     isFormOpen,
+    lifecycleFilter,
+    locationOptions,
     openCreate,
     openEdit,
+    productFilter,
     productOptions,
     query,
     saveAsset,
+    setCustomerFilter,
+    setDueFrom,
+    setDueTo,
     setFormOpen,
+    setLifecycleFilter,
+    setProductFilter,
     setQuery,
     source,
     visibleAssets

@@ -11,11 +11,13 @@ import type {
   InspectionCreateValues,
   InspectionRecord,
   InspectionStatus,
+  InspectionType,
   InspectionUpdateValues,
   PressureTestValues
 } from "../domain/types";
 
 export type InspectionStatusFilter = "ALL" | InspectionStatus;
+export type InspectionTypeFilter = "ALL" | InspectionType;
 
 function localPressureTest(
   values: PressureTestValues | null,
@@ -94,6 +96,8 @@ export function useInspectionsWorkspace() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<InspectionStatusFilter>("ALL");
+  const [typeFilter, setTypeFilter] = useState<InspectionTypeFilter>("ALL");
+  const [resultFilter, setResultFilter] = useState("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
 
@@ -120,6 +124,10 @@ export function useInspectionsWorkspace() {
     return inspections.filter((inspection) => {
       const matchesStatus =
         statusFilter === "ALL" || inspection.status === statusFilter;
+      const matchesType =
+        typeFilter === "ALL" || inspection.inspectionType === typeFilter;
+      const matchesResult =
+        resultFilter === "ALL" || (inspection.result ?? "PENDING") === resultFilter;
       const matchesSearch =
         !normalized ||
         [
@@ -135,9 +143,17 @@ export function useInspectionsWorkspace() {
         ]
           .filter(Boolean)
           .some((value) => value?.toLowerCase().includes(normalized));
-      return matchesStatus && matchesSearch;
+      return matchesStatus && matchesType && matchesResult && matchesSearch;
     });
-  }, [inspections, query, statusFilter]);
+  }, [inspections, query, resultFilter, statusFilter, typeFilter]);
+
+  const resultOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(inspections.map((inspection) => inspection.result ?? "PENDING"))
+      ).sort(),
+    [inspections]
+  );
 
   const selectedInspection = useMemo(
     () => inspections.find((inspection) => inspection.id === selectedId) ?? null,
@@ -179,6 +195,8 @@ export function useInspectionsWorkspace() {
     setFormOpen(false);
     setQuery("");
     setStatusFilter("ALL");
+    setTypeFilter("ALL");
+    setResultFilter("ALL");
   }
 
   async function saveInspectionUpdate(values: InspectionUpdateValues) {
@@ -247,24 +265,41 @@ export function useInspectionsWorkspace() {
     replaceInspection(saved);
   }
 
+  function clearInspectionFilters() {
+    setTypeFilter("ALL");
+    setResultFilter("ALL");
+  }
+
+  const activeFilterCount = [
+    typeFilter !== "ALL",
+    resultFilter !== "ALL"
+  ].filter(Boolean).length;
+
   return {
+    activeFilterCount,
     approveInspection,
     assetOptions: assets,
+    clearInspectionFilters,
     closeDetail,
     inspections,
     isFormOpen,
     openCreate,
     openDetail,
     query,
+    resultFilter,
+    resultOptions,
     saveInspection,
     saveInspectionUpdate,
     selectedInspection,
     setFormOpen,
     setQuery,
+    setResultFilter,
     setStatusFilter,
+    setTypeFilter,
     source,
     statusFilter,
     submitInspection,
+    typeFilter,
     visibleInspections
   };
 }

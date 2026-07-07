@@ -1,10 +1,22 @@
 import { ArrowLeft, ClipboardCheck } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { WorkItem } from "../domain/types";
 
 interface InspectionCaptureProps {
   workItem: WorkItem | null;
   onBack: () => void;
+  onQueueAssetUpdate: (values: {
+    workItem: WorkItem;
+    customerSerialNo: string;
+    tag: string;
+  }) => void;
+  onQueuePressureTest: (values: {
+    workItem: WorkItem;
+    appliedPressureMpa: number;
+    requiredPressureMpa: number;
+    holdTimeSeconds: number;
+    passed: boolean;
+  }) => void;
   onSaveDraft: (values: {
     workItem: WorkItem;
     appliedPressureMpa: number;
@@ -26,6 +38,8 @@ interface InspectionCaptureProps {
 export function InspectionCapture({
   workItem,
   onBack,
+  onQueueAssetUpdate,
+  onQueuePressureTest,
   onSaveDraft,
   onSubmit
 }: InspectionCaptureProps) {
@@ -34,6 +48,13 @@ export function InspectionCapture({
   const [holdTimeSeconds, setHoldTimeSeconds] = useState("300");
   const [passed, setPassed] = useState(true);
   const [notes, setNotes] = useState("");
+  const [customerSerialNo, setCustomerSerialNo] = useState("");
+  const [tag, setTag] = useState("");
+
+  useEffect(() => {
+    setCustomerSerialNo(workItem?.customerSerialNo ?? "");
+    setTag(workItem?.tag ?? "");
+  }, [workItem]);
 
   if (!workItem) {
     return (
@@ -52,9 +73,16 @@ export function InspectionCapture({
     workItem,
     appliedPressureMpa: Number(appliedPressureMpa) || 0,
     requiredPressureMpa: Number(requiredPressureMpa) || 0,
-    holdTimeSeconds: Number(holdTimeSeconds) || 0,
-    passed,
-    notes
+      holdTimeSeconds: Number(holdTimeSeconds) || 0,
+      passed,
+      notes
+  };
+  const pressureValues = {
+    workItem,
+    appliedPressureMpa: values.appliedPressureMpa,
+    requiredPressureMpa: values.requiredPressureMpa,
+    holdTimeSeconds: values.holdTimeSeconds,
+    passed: values.passed
   };
 
   return (
@@ -69,6 +97,40 @@ export function InspectionCapture({
         <h2>{workItem.assetNumber}</h2>
         <span>{workItem.customerName}</span>
         <small>{workItem.productName}</small>
+      </article>
+
+      <article className="capture-panel">
+        <div className="panel-heading">
+          <p>Asset details</p>
+          <span>Sync-safe fields</span>
+        </div>
+        <div className="capture-form capture-form--compact">
+          <label>
+            <span>Customer serial number</span>
+            <input
+              aria-label="Customer serial number"
+              onChange={(event) => setCustomerSerialNo(event.target.value)}
+              value={customerSerialNo}
+            />
+          </label>
+          <label>
+            <span>Asset tag</span>
+            <input
+              aria-label="Asset tag"
+              onChange={(event) => setTag(event.target.value)}
+              value={tag}
+            />
+          </label>
+        </div>
+        <button
+          className="secondary-action secondary-action--full"
+          onClick={() =>
+            onQueueAssetUpdate({ workItem, customerSerialNo, tag })
+          }
+          type="button"
+        >
+          Queue Asset Details
+        </button>
       </article>
 
       <div className="segmented-control" aria-label="Inspection type">
@@ -143,6 +205,13 @@ export function InspectionCapture({
       </form>
 
       <div className="action-row">
+        <button
+          className="secondary-action"
+          onClick={() => onQueuePressureTest(pressureValues)}
+          type="button"
+        >
+          Queue Test Result
+        </button>
         <button
           className="secondary-action"
           onClick={() => onSaveDraft(values)}

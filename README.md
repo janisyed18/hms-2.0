@@ -137,6 +137,8 @@ Completed foundation and core staff workflows:
 - Certificate issue/revoke/supersede flow
 - Analytics, sync queue placeholder workspace, audit, users, and devices UI
 - Backend sync bootstrap, changes, and inspection push endpoints
+- Sync push handlers for safe asset serial/tag edits and pressure-test child
+  records
 - Field inspector mobile-web app with work queue, inspection capture, local
   outbox, and sync queue
 - GitHub Actions CI for backend, staff app, and inspector app checks
@@ -150,7 +152,6 @@ Current sync API slice:
 
 Planned next phase:
 
-- Broader push handlers for asset field edits and inspection child records
 - Native offline hardening for encrypted local storage and device security
 - Notification rules for retests, submitted inspections, and certificate events
 

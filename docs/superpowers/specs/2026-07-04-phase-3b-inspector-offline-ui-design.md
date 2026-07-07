@@ -1,6 +1,6 @@
 # Phase 3B Inspector Offline UI
 
-**Status:** Approved design direction, awaiting implementation plan  
+**Status:** Implemented for the browser/mobile-web development slice
 **Date:** 2026-07-04  
 **Project:** HMS 2.0 inspector app  
 **Accepted direction:** Queue-first Field Console  

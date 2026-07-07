@@ -12,6 +12,7 @@ interface CustomerFormProps {
 export function CustomerForm({ open, onClose, onSubmit }: CustomerFormProps) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
+  const [notes, setNotes] = useState("");
   const [retestEnabled, setRetestEnabled] = useState(true);
   const [defaultRetestMonths, setDefaultRetestMonths] = useState(12);
   const [isSubmitting, setSubmitting] = useState(false);
@@ -26,11 +27,13 @@ export function CustomerForm({ open, onClose, onSubmit }: CustomerFormProps) {
     await onSubmit({
       name,
       code,
+      notes: notes.trim() || null,
       retestEnabled,
       defaultRetestMonths
     });
     setName("");
     setCode("");
+    setNotes("");
     setRetestEnabled(true);
     setDefaultRetestMonths(12);
     setSubmitting(false);
@@ -76,6 +79,15 @@ export function CustomerForm({ open, onClose, onSubmit }: CustomerFormProps) {
             <option value={12}>12 months</option>
             <option value={24}>24 months</option>
           </select>
+        </label>
+        <label>
+          <span>Customer notes</span>
+          <textarea
+            aria-label="Customer notes"
+            rows={4}
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+          />
         </label>
         <label className="toggle-row">
           <input

@@ -59,6 +59,7 @@ export interface CustomerRecord {
   code: string;
   name: string;
   etag?: string | null;
+  notes: string | null;
   retestEnabled: boolean;
   defaultRetestMonths: number | null;
   locations: CustomerLocation[];
@@ -83,6 +84,7 @@ export interface CustomerListResult {
 export interface CustomerFormValues {
   name: string;
   code: string;
+  notes: string | null;
   retestEnabled: boolean;
   defaultRetestMonths: number | null;
 }
@@ -157,6 +159,8 @@ export interface AssetProductSummary extends RecordSummary {
 export interface AssetLocationSummary {
   id: string;
   name: string;
+  address1: string | null;
+  address2: string | null;
   city: string | null;
   state: string | null;
   country: string | null;
@@ -177,6 +181,7 @@ export interface AssetRecord {
   nextRetestDueAt: string | null;
   condemnedAt: string | null;
   lengthM: string | null;
+  notes: string | null;
   customer: RecordSummary;
   product: AssetProductSummary;
   location: AssetLocationSummary | null;
@@ -201,10 +206,12 @@ export interface AssetEndValues {
 export interface AssetFormValues {
   assetNumber: string;
   customerId: string;
+  locationId: string | null;
   customerSerialNo: string | null;
   productId: string;
   lifecycleStatus: string;
   nextRetestDueAt: string | null;
+  notes: string | null;
   aEnd: AssetEndValues;
   bEnd: AssetEndValues;
 }

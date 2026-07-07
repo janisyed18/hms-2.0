@@ -32,6 +32,8 @@ export function useRetestScheduleWorkspace() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<RetestScheduleStatusFilter>("ALL");
+  const [dueFrom, setDueFrom] = useState("");
+  const [dueTo, setDueTo] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,6 +55,8 @@ export function useRetestScheduleWorkspace() {
     return schedules.filter((schedule) => {
       const matchesStatus =
         statusFilter === "ALL" || schedule.status === statusFilter;
+      const matchesDueFrom = !dueFrom || schedule.dueAt >= dueFrom;
+      const matchesDueTo = !dueTo || schedule.dueAt <= dueTo;
       const matchesSearch =
         !normalized ||
         [
@@ -67,9 +71,9 @@ export function useRetestScheduleWorkspace() {
         ]
           .filter(Boolean)
           .some((value) => value?.toLowerCase().includes(normalized));
-      return matchesStatus && matchesSearch;
+      return matchesStatus && matchesDueFrom && matchesDueTo && matchesSearch;
     });
-  }, [query, schedules, statusFilter]);
+  }, [dueFrom, dueTo, query, schedules, statusFilter]);
 
   const selectedSchedule = useMemo(
     () => schedules.find((schedule) => schedule.id === selectedId) ?? null,
@@ -112,14 +116,27 @@ export function useRetestScheduleWorkspace() {
     replaceSchedule(saved);
   }
 
+  function clearDateFilters() {
+    setDueFrom("");
+    setDueTo("");
+  }
+
+  const activeFilterCount = [Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
+
   return {
+    activeFilterCount,
+    clearDateFilters,
     closeDetail,
+    dueFrom,
+    dueTo,
     openDetail,
     query,
     saveSchedule,
     schedules,
     selectedSchedule,
     setQuery,
+    setDueFrom,
+    setDueTo,
     setStatusFilter,
     source,
     statusFilter,

@@ -137,7 +137,10 @@ export function WorkQueue({ workItems, outbox, onOpenWorkItem }: WorkQueueProps)
                   </div>
                   <div>
                     <dt>Location</dt>
-                    <dd>{item.locationName ?? "Unassigned"}</dd>
+                    <dd>
+                      {item.locationName ?? "Unassigned"}
+                      {item.locationAddress ? <span>{item.locationAddress}</span> : null}
+                    </dd>
                   </div>
                 </dl>
                 <button

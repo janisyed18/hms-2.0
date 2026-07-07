@@ -33,19 +33,43 @@ export interface InspectionDraftInput extends PressureTestDraft {
   inspectionType?: InspectionType;
 }
 
+export interface AssetUpdateInput {
+  assetId: string;
+  assetNumber: string;
+  customerName: string;
+  baseVersion: number;
+  customerSerialNo: string;
+  tag: string;
+}
+
+export interface PressureTestOperationInput extends PressureTestDraft {
+  assetId: string;
+  assetNumber: string;
+  customerName: string;
+  inspectionId: string;
+  pressureTestId: string;
+  baseVersion: number | null;
+}
+
 export interface WorkItem {
   id: string;
   assetId: string;
   assetNumber: string;
+  customerSerialNo: string | null;
+  tag: string | null;
   customerName: string;
   locationName: string | null;
+  locationAddress: string | null;
   productName: string;
   lifecycleStatus: string;
   retestDueAt: string | null;
   urgency: WorkUrgency;
+  assetVersion: number;
   serverVersion: number;
   inspectionId: string | null;
   inspectionStatus: InspectionStatus | null;
+  pressureTestId: string | null;
+  pressureTestVersion: number | null;
 }
 
 export interface SyncDeviceRead {
@@ -99,7 +123,7 @@ export interface SyncPushResponse {
 export interface OutboxOperation {
   opId: string;
   idempotencyKey: string;
-  entity: "Inspection";
+  entity: "Asset" | "Inspection" | "PressureTestResult";
   entityId: string;
   assetId: string;
   assetNumber: string;
