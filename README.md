@@ -19,7 +19,56 @@ docs/                     Design notes, implementation plans, and decisions
 .github/workflows/ci.yml  Backend and frontend CI checks
 ```
 
-## Prerequisites
+## Run everything in Docker (recommended)
+
+The fastest way to run the full stack — Postgres, Redis, the certificate engine,
+the API, and the Celery worker — is Docker Compose. Only Docker is required.
+
+```bash
+docker compose up --build            # backend stack
+docker compose --profile frontend up --build   # also build & serve the staff UI
+```
+
+On startup a one-shot `migrate` service applies migrations and seeds synthetic
+demo data, then the API and worker come up. Then:
+
+- API + docs: http://localhost:8000/api/v1/docs
+- Readiness (DB + Redis): http://localhost:8000/health/ready
+- Staff UI (frontend profile): http://localhost:8080
+- Postgres: `localhost:5432` (`hms`/`hms`), Redis: `localhost:6379`
+
+Smoke-test the certificate + Celery + Redis path end to end:
+
+```bash
+# health
+curl http://localhost:8000/health/ready
+
+# find an approved inspection id, then bulk-generate certificates (uses the
+# worker + engine), and poll the job
+curl -X POST -H "X-HMS-User-Id: reviewer-1" -H "X-HMS-Roles: REVIEWER" \
+  -H "Content-Type: application/json" -d '{}' \
+  http://localhost:8000/api/v1/certificates/bulk-generate
+curl -H "X-HMS-User-Id: reviewer-1" -H "X-HMS-Roles: REVIEWER" \
+  http://localhost:8000/api/v1/jobs/certificate-batches/<JOB_ID>
+
+# a generated certificate's public token verifies + downloads the signed PDF
+curl http://localhost:8000/api/v1/certificates/verify/<PUBLIC_TOKEN>
+```
+
+Tear down (add `-v` to also drop the Postgres/Redis/object-store volumes):
+
+```bash
+docker compose down
+```
+
+Just need Redis (e.g. to run the app locally with `uv`)? `docker compose up -d
+redis`.
+
+> Note: the committed `backend/uv.lock` may lag `pyproject.toml`; the image
+> resolves dependencies at build time. Refresh the lock on a Python 3.12 host
+> with `cd backend && uv lock`.
+
+## Prerequisites (local, non-Docker)
 
 - Python 3.12+
 - `uv`
@@ -33,7 +82,7 @@ cd backend
 cp .env.example .env
 uv sync --dev
 uv run alembic upgrade head
-uv run python -m hms_backend.app.tooling.local_seed
+uv run hms-seed
 uv run uvicorn hms_backend.app.main:app --reload
 ```
 
@@ -85,18 +134,20 @@ phases.
 
 ## Development Auth
 
-Authentication is still development scaffolding. The staff UI sends local HMS
-identity headers:
+Authentication is still development scaffolding; real OIDC token validation is
+not wired yet. Phase 3C resolves local HMS identity from persisted `users` rows
+created by `uv run hms-seed`. The staff UI sends:
 
 - `X-HMS-User-Id: staff-ui-dev`
-- `X-HMS-Roles: HMS_ADMIN,INSPECTOR,REVIEWER`
 
-Manual API checks can use the same headers:
+`X-HMS-Roles` is retained only as a local fallback for unseeded development
+clients. It is not the production authorization boundary.
+
+Manual API checks can use the seeded local identity:
 
 ```bash
 curl \
   -H "X-HMS-User-Id: staff-ui-dev" \
-  -H "X-HMS-Roles: HMS_ADMIN" \
   http://127.0.0.1:8000/api/v1/customers
 ```
 
@@ -106,8 +157,8 @@ Backend:
 
 ```bash
 cd backend
-uv run ruff check .
-uv run mypy src tests
+uv run ruff check . ../tooling
+uv run mypy src tests ../tooling
 uv run pytest
 ```
 
@@ -136,6 +187,8 @@ Completed foundation and core staff workflows:
 - Retest schedule list/detail/update flow
 - Certificate issue/revoke/supersede flow
 - Analytics, sync queue placeholder workspace, audit, users, and devices UI
+- Backend admin APIs for users, devices, and audit events
+- Database-backed local identity resolution with seeded staff/inspector users
 - Backend sync bootstrap, changes, and inspection push endpoints
 - Sync push handlers for safe asset serial/tag edits and pressure-test child
   records

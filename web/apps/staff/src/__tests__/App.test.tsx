@@ -228,6 +228,40 @@ const apiStandard = {
   name: "API Standard"
 };
 
+const apiAdminUser = {
+  id: "user-api-1",
+  oidc_subject: "staff-ui-dev",
+  email: "staff@example.com",
+  first_name: "Alex",
+  last_name: "Williams",
+  role: "HMS_ADMIN",
+  customer_id: null,
+  created_at: "2026-07-07T00:00:00Z",
+  updated_at: "2026-07-07T00:00:00Z"
+};
+
+const apiDevice = {
+  device_id: "field-tablet-01",
+  user_id: "inspector-1",
+  platform: "ios",
+  app_version: "26.4.1",
+  last_sync_at: "2026-07-07T01:30:00Z",
+  offline_window_days: 7,
+  revoked: false
+};
+
+const apiAuditEvent = {
+  sequence: 42,
+  actor_id: "staff-ui-dev",
+  action: "user.created",
+  entity: "User",
+  entity_id: "user-api-1",
+  before: null,
+  after: { email: "staff@example.com" },
+  timestamp: "2026-07-07T01:35:00Z",
+  hash: "audit-hash-42"
+};
+
 function okJson(body: unknown) {
   return {
     ok: true,
@@ -326,6 +360,52 @@ function routeFetch() {
     if (path.startsWith("/api/v1/reference/standards")) {
       return okJson({
         items: [apiStandard]
+      });
+    }
+    if (path.startsWith("/api/v1/admin/users")) {
+      if (init?.method === "POST") {
+        return {
+          ok: true,
+          status: 201,
+          headers: new Headers(),
+          json: async () => ({
+            ...apiAdminUser,
+            id: "user-api-created",
+            oidc_subject: "reviewer-2",
+            email: "reviewer2@example.com",
+            first_name: "Riley",
+            last_name: "Reviewer",
+            role: "REVIEWER"
+          })
+        };
+      }
+      if (init?.method === "DELETE") {
+        return noContent();
+      }
+      return okJson({
+        total: 1,
+        limit: 50,
+        offset: 0,
+        items: [apiAdminUser]
+      });
+    }
+    if (path.startsWith("/api/v1/admin/devices")) {
+      if (init?.method === "PATCH") {
+        return okJson({ ...apiDevice, revoked: true });
+      }
+      return okJson({
+        total: 1,
+        limit: 50,
+        offset: 0,
+        items: [apiDevice]
+      });
+    }
+    if (path.startsWith("/api/v1/admin/audit-events")) {
+      return okJson({
+        total: 1,
+        limit: 50,
+        offset: 0,
+        items: [apiAuditEvent]
       });
     }
     throw new Error(`Unhandled URL: ${path}`);
@@ -899,6 +979,91 @@ describe("App", () => {
     expect(screen.getByRole("table", { name: "Device records" })).toHaveTextContent(
       "Offline Ready"
     );
+  });
+
+  it("shows backend-backed audit, users, and devices admin records", async () => {
+    vi.stubGlobal("fetch", routeFetch());
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Audit Log" }));
+    expect(await screen.findByRole("row", { name: /user.created/i })).toHaveTextContent(
+      "staff-ui-dev"
+    );
+    expect(screen.getByText("Backend")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Users & Roles" }));
+    expect(await screen.findByRole("row", { name: /staff@example.com/i })).toHaveTextContent(
+      "HMS_ADMIN"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Devices" }));
+    expect(await screen.findByRole("row", { name: /field-tablet-01/i })).toHaveTextContent(
+      "Active"
+    );
+  });
+
+  it("creates and archives admin users from the users workspace", async () => {
+    vi.stubGlobal("fetch", routeFetch());
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Users & Roles" }));
+    await user.click(await screen.findByRole("button", { name: "Add User" }));
+    await user.type(screen.getByLabelText("OIDC subject"), "reviewer-2");
+    await user.type(screen.getByLabelText("Email"), "reviewer2@example.com");
+    await user.type(screen.getByLabelText("First name"), "Riley");
+    await user.type(screen.getByLabelText("Last name"), "Reviewer");
+    await user.selectOptions(screen.getByLabelText("Role"), "REVIEWER");
+    await user.click(screen.getByRole("button", { name: "Save user" }));
+
+    expect(await screen.findByRole("row", { name: /reviewer2@example.com/i })).toHaveTextContent(
+      "REVIEWER"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Archive user reviewer2@example.com" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("row", { name: /reviewer2@example.com/i })).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows structured admin API errors in system workspaces", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const path = String(url);
+      if (path.startsWith("/api/v1/customers")) {
+        return okJson({
+          total: 1,
+          limit: 50,
+          offset: 0,
+          items: [apiCustomer]
+        });
+      }
+      if (path.startsWith("/api/v1/admin/users")) {
+        return {
+          ok: false,
+          status: 403,
+          headers: new Headers(),
+          json: async () => ({
+            error: {
+              code: "forbidden",
+              message: "Missing permission: user:admin",
+              details: null
+            }
+          })
+        };
+      }
+      throw new Error(`Unhandled URL: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Users & Roles" }));
+
+    expect(await screen.findByText("Missing permission: user:admin")).toBeVisible();
   });
 
   it("opens topbar menus and applies global search navigation", async () => {

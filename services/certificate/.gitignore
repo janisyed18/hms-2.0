@@ -1,0 +1,19 @@
+# Local dev signing material — never commit private keys or certs.
+*.key.pem
+*.cert.pem
+.hms/
+signing/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# Env
+.env

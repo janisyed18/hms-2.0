@@ -1,4 +1,5 @@
 import { mockAssets } from "../data/mockAssets";
+import { mockAdminUsers, mockAuditEvents, mockDevices } from "../data/mockAdmin";
 import { mockCertificates } from "../data/mockCertificates";
 import {
   makeLocalCustomer,
@@ -12,6 +13,10 @@ import { mockReferenceStandards } from "../data/mockReferenceData";
 import { mockRetestSchedules } from "../data/mockRetestSchedules";
 import type {
   ApiListResult,
+  AdminUserFormValues,
+  AdminUserListResult,
+  AdminUserRecord,
+  AdminUserUpdateValues,
   AssetEndValues,
   AssetListResult,
   AssetLocationSummary,
@@ -19,6 +24,8 @@ import type {
   AssetRecord,
   AssetRetestSummary,
   AssetProductSummary,
+  AuditEventListResult,
+  AuditEventRecord,
   CertificateIssueValues,
   CertificateListResult,
   CertificateRecord,
@@ -28,6 +35,9 @@ import type {
   CustomerListResult,
   CustomerLocation,
   CustomerRecord,
+  DeviceListResult,
+  DeviceRecord,
+  DeviceUpdateValues,
   InspectionCreateValues,
   InspectionListResult,
   InspectionRecord,
@@ -263,6 +273,61 @@ interface ApiCertificateList {
   items: ApiCertificate[];
 }
 
+interface ApiAdminUser {
+  id: string;
+  oidc_subject: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  role: string;
+  customer_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ApiAdminUserList {
+  total: number;
+  limit: number;
+  offset: number;
+  items: ApiAdminUser[];
+}
+
+interface ApiDevice {
+  device_id: string;
+  user_id: string;
+  platform: string;
+  app_version: string;
+  last_sync_at: string | null;
+  offline_window_days: number;
+  revoked: boolean;
+}
+
+interface ApiDeviceList {
+  total: number;
+  limit: number;
+  offset: number;
+  items: ApiDevice[];
+}
+
+interface ApiAuditEvent {
+  sequence: number;
+  actor_id: string;
+  action: string;
+  entity: string;
+  entity_id: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  timestamp: string;
+  hash: string;
+}
+
+interface ApiAuditEventList {
+  total: number;
+  limit: number;
+  offset: number;
+  items: ApiAuditEvent[];
+}
+
 export interface HmsClientOptions {
   baseUrl?: string;
   fetcher?: typeof fetch;
@@ -343,6 +408,30 @@ interface ListCertificateOptions {
   offset?: number;
 }
 
+interface ListAdminUserOptions {
+  search?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}
+
+interface ListDeviceOptions {
+  search?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}
+
+interface ListAuditEventOptions {
+  entity?: string;
+  actorId?: string;
+  action?: string;
+  search?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}
+
 interface ListReferenceStandardOptions {
   sort?: string;
 }
@@ -350,6 +439,20 @@ interface ListReferenceStandardOptions {
 interface HmsApiResponse<T> {
   data: T;
   etag: string | null;
+}
+
+export class HmsApiError extends Error {
+  status: number;
+  code: string;
+  details: unknown;
+
+  constructor(status: number, code: string, message: string, details: unknown) {
+    super(message);
+    this.name = "HmsApiError";
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
 }
 
 const defaultIdentity = {
@@ -639,6 +742,69 @@ function toCertificate(
   );
 }
 
+function displayName(user: ApiAdminUser): string {
+  return [user.first_name, user.last_name].filter(Boolean).join(" ") || user.email;
+}
+
+function toAdminUser(
+  user: ApiAdminUser,
+  etag: string | null = null
+): AdminUserRecord {
+  return withEtag(
+    {
+      id: user.id,
+      oidcSubject: user.oidc_subject,
+      email: user.email,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      displayName: displayName(user),
+      role: user.role,
+      customerId: user.customer_id,
+      createdAt: user.created_at,
+      updatedAt: user.updated_at
+    },
+    etag
+  );
+}
+
+function deviceState(device: ApiDevice): string {
+  if (device.revoked) {
+    return "Revoked";
+  }
+  return device.last_sync_at ? "Active" : "Pending";
+}
+
+function toDevice(device: ApiDevice, etag: string | null = null): DeviceRecord {
+  return withEtag(
+    {
+      deviceId: device.device_id,
+      displayName: device.device_id,
+      userId: device.user_id,
+      platform: device.platform,
+      appVersion: device.app_version,
+      lastSyncAt: device.last_sync_at,
+      offlineWindowDays: device.offline_window_days,
+      revoked: device.revoked,
+      state: deviceState(device)
+    },
+    etag
+  );
+}
+
+function toAuditEvent(event: ApiAuditEvent): AuditEventRecord {
+  return {
+    sequence: event.sequence,
+    actorId: event.actor_id,
+    action: event.action,
+    entity: event.entity,
+    entityId: event.entity_id,
+    before: event.before,
+    after: event.after,
+    timestamp: event.timestamp,
+    hash: event.hash
+  };
+}
+
 function pressureTestPayload(
   pressureTest: PressureTestValues | null
 ): Record<string, unknown> | null {
@@ -707,6 +873,36 @@ function certificateIssuePayload(values: CertificateIssueValues) {
   };
 }
 
+function adminUserPayload(values: AdminUserFormValues) {
+  return {
+    oidc_subject: values.oidcSubject,
+    email: values.email,
+    first_name: values.firstName,
+    last_name: values.lastName,
+    role: values.role,
+    customer_id: values.customerId
+  };
+}
+
+function adminUserUpdatePayload(values: AdminUserUpdateValues) {
+  return {
+    ...(values.email !== undefined ? { email: values.email } : {}),
+    ...(values.firstName !== undefined ? { first_name: values.firstName } : {}),
+    ...(values.lastName !== undefined ? { last_name: values.lastName } : {}),
+    ...(values.role !== undefined ? { role: values.role } : {}),
+    ...(values.customerId !== undefined ? { customer_id: values.customerId } : {})
+  };
+}
+
+function deviceUpdatePayload(values: DeviceUpdateValues) {
+  return {
+    ...(values.revoked !== undefined ? { revoked: values.revoked } : {}),
+    ...(values.offlineWindowDays !== undefined
+      ? { offline_window_days: values.offlineWindowDays }
+      : {})
+  };
+}
+
 function buildUrl(
   baseUrl: string,
   path: string,
@@ -759,7 +955,31 @@ export function createHmsClient(options: HmsClientOptions = {}) {
     });
 
     if (!response.ok) {
-      throw new Error(`HMS API request failed: ${response.status}`);
+      let code = "http_error";
+      let message = `HMS API request failed: ${response.status}`;
+      let details: unknown = null;
+      try {
+        const body = (await response.json()) as {
+          error?: {
+            code?: string;
+            message?: string;
+            details?: unknown;
+          };
+          detail?: unknown;
+        };
+        if (body.error) {
+          code = body.error.code ?? code;
+          message = body.error.message ?? message;
+          details = body.error.details ?? null;
+        } else if (typeof body.detail === "string") {
+          message = body.detail;
+        } else if (body.detail !== undefined) {
+          details = body.detail;
+        }
+      } catch {
+        // Keep the status-derived fallback when the body is unavailable.
+      }
+      throw new HmsApiError(response.status, code, message, details);
     }
 
     if (response.status === 204) {
@@ -1166,6 +1386,108 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       };
     },
 
+    async listAdminUsers(
+      listOptions: ListAdminUserOptions = {}
+    ): Promise<ApiListResult<AdminUserRecord>> {
+      const response = await request<ApiAdminUserList>("/api/v1/admin/users", {}, {
+        limit: listOptions.limit ?? 50,
+        offset: listOptions.offset ?? 0,
+        search: listOptions.search?.trim() || undefined,
+        sort: listOptions.sort
+      });
+      return {
+        total: response.data.total,
+        etag: response.etag,
+        items: response.data.items.map((user) => toAdminUser(user, response.etag))
+      };
+    },
+
+    async createAdminUser(
+      values: AdminUserFormValues
+    ): Promise<AdminUserRecord> {
+      const response = await request<ApiAdminUser>(
+        "/api/v1/admin/users",
+        {
+          method: "POST",
+          body: JSON.stringify(adminUserPayload(values))
+        }
+      );
+      return toAdminUser(response.data, response.etag);
+    },
+
+    async updateAdminUser(
+      id: string,
+      values: AdminUserUpdateValues
+    ): Promise<AdminUserRecord> {
+      const response = await request<ApiAdminUser>(
+        `/api/v1/admin/users/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(adminUserUpdatePayload(values))
+        }
+      );
+      return toAdminUser(response.data, response.etag);
+    },
+
+    async archiveAdminUser(id: string): Promise<void> {
+      await request<void>(`/api/v1/admin/users/${encodeURIComponent(id)}`, {
+        method: "DELETE"
+      });
+    },
+
+    async listDevices(
+      listOptions: ListDeviceOptions = {}
+    ): Promise<ApiListResult<DeviceRecord>> {
+      const response = await request<ApiDeviceList>("/api/v1/admin/devices", {}, {
+        limit: listOptions.limit ?? 50,
+        offset: listOptions.offset ?? 0,
+        search: listOptions.search?.trim() || undefined,
+        sort: listOptions.sort
+      });
+      return {
+        total: response.data.total,
+        etag: response.etag,
+        items: response.data.items.map((device) => toDevice(device, response.etag))
+      };
+    },
+
+    async updateDevice(
+      id: string,
+      values: DeviceUpdateValues
+    ): Promise<DeviceRecord> {
+      const response = await request<ApiDevice>(
+        `/api/v1/admin/devices/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(deviceUpdatePayload(values))
+        }
+      );
+      return toDevice(response.data, response.etag);
+    },
+
+    async listAuditEvents(
+      listOptions: ListAuditEventOptions = {}
+    ): Promise<ApiListResult<AuditEventRecord>> {
+      const response = await request<ApiAuditEventList>(
+        "/api/v1/admin/audit-events",
+        {},
+        {
+          limit: listOptions.limit ?? 50,
+          offset: listOptions.offset ?? 0,
+          entity: listOptions.entity?.trim() || undefined,
+          actor_id: listOptions.actorId?.trim() || undefined,
+          action: listOptions.action?.trim() || undefined,
+          search: listOptions.search?.trim() || undefined,
+          sort: listOptions.sort
+        }
+      );
+      return {
+        total: response.data.total,
+        etag: response.etag,
+        items: response.data.items.map(toAuditEvent)
+      };
+    },
+
     async archiveCustomer(id: string, etag?: string | null): Promise<void> {
       await request<void>(`/api/v1/customers/${encodeURIComponent(id)}`, {
         method: "DELETE",
@@ -1442,6 +1764,72 @@ function filterMockReferenceStandards(
   return descending ? sorted.reverse() : sorted;
 }
 
+function filterMockAdminUsers(
+  options: ListAdminUserOptions = {}
+): AdminUserRecord[] {
+  const normalized = options.search?.trim().toLowerCase();
+  const filtered = mockAdminUsers.filter(
+    (user) =>
+      !normalized ||
+      [
+        user.oidcSubject,
+        user.email,
+        user.displayName,
+        user.role,
+        user.customerId
+      ]
+        .filter(Boolean)
+        .some((value) => value?.toLowerCase().includes(normalized))
+  );
+  if (!options.sort) {
+    return filtered;
+  }
+  const sorted = [...filtered].sort((left, right) =>
+    left.email.localeCompare(right.email)
+  );
+  return options.sort.startsWith("-") ? sorted.reverse() : sorted;
+}
+
+function filterMockDevices(options: ListDeviceOptions = {}): DeviceRecord[] {
+  const normalized = options.search?.trim().toLowerCase();
+  const filtered = mockDevices.filter(
+    (device) =>
+      !normalized ||
+      [
+        device.deviceId,
+        device.userId,
+        device.platform,
+        device.appVersion,
+        device.state
+      ]
+        .filter(Boolean)
+        .some((value) => value?.toLowerCase().includes(normalized))
+  );
+  const sorted = [...filtered].sort((left, right) =>
+    left.deviceId.localeCompare(right.deviceId)
+  );
+  return options.sort?.startsWith("-") ? sorted.reverse() : sorted;
+}
+
+function filterMockAuditEvents(
+  options: ListAuditEventOptions = {}
+): AuditEventRecord[] {
+  const normalized = options.search?.trim().toLowerCase();
+  const filtered = mockAuditEvents.filter((event) => {
+    const matchesEntity = !options.entity || event.entity === options.entity;
+    const matchesActor = !options.actorId || event.actorId === options.actorId;
+    const matchesAction = !options.action || event.action === options.action;
+    const matchesSearch =
+      !normalized ||
+      [event.action, event.actorId, event.entity, event.entityId]
+        .filter(Boolean)
+        .some((value) => value.toLowerCase().includes(normalized));
+    return matchesEntity && matchesActor && matchesAction && matchesSearch;
+  });
+  const sorted = [...filtered].sort((left, right) => right.sequence - left.sequence);
+  return options.sort === "sequence" ? sorted.reverse() : sorted;
+}
+
 export async function loadCustomersWithFallback(
   options: HmsClientOptions & ListCustomerOptions = {}
 ): Promise<CustomerListResult> {
@@ -1591,6 +1979,81 @@ export async function loadReferenceStandardsWithFallback(
     return {
       source: "mock",
       total: mockReferenceStandards.length,
+      items
+    };
+  }
+}
+
+export async function loadAdminUsersWithFallback(
+  options: HmsClientOptions & ListAdminUserOptions = {}
+): Promise<AdminUserListResult> {
+  try {
+    const client = createHmsClient(options);
+    const response = await client.listAdminUsers(options);
+    return {
+      source: "api",
+      total: response.total,
+      etag: response.etag,
+      items: response.items
+    };
+  } catch (error) {
+    if (error instanceof HmsApiError) {
+      throw error;
+    }
+    const items = filterMockAdminUsers(options);
+    return {
+      source: "mock",
+      total: mockAdminUsers.length,
+      items
+    };
+  }
+}
+
+export async function loadDevicesWithFallback(
+  options: HmsClientOptions & ListDeviceOptions = {}
+): Promise<DeviceListResult> {
+  try {
+    const client = createHmsClient(options);
+    const response = await client.listDevices(options);
+    return {
+      source: "api",
+      total: response.total,
+      etag: response.etag,
+      items: response.items
+    };
+  } catch (error) {
+    if (error instanceof HmsApiError) {
+      throw error;
+    }
+    const items = filterMockDevices(options);
+    return {
+      source: "mock",
+      total: mockDevices.length,
+      items
+    };
+  }
+}
+
+export async function loadAuditEventsWithFallback(
+  options: HmsClientOptions & ListAuditEventOptions = {}
+): Promise<AuditEventListResult> {
+  try {
+    const client = createHmsClient(options);
+    const response = await client.listAuditEvents(options);
+    return {
+      source: "api",
+      total: response.total,
+      etag: response.etag,
+      items: response.items
+    };
+  } catch (error) {
+    if (error instanceof HmsApiError) {
+      throw error;
+    }
+    const items = filterMockAuditEvents(options);
+    return {
+      source: "mock",
+      total: mockAuditEvents.length,
       items
     };
   }

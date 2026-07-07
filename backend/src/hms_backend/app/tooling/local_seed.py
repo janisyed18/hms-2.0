@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from hms_backend.app.core.rbac import Role
 from hms_backend.app.core.repository import record_create
 from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.certificates.models import Certificate
@@ -17,6 +18,7 @@ from hms_backend.app.modules.customers.models import (
     CustomerContact,
     CustomerLocation,
 )
+from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.inspections.models import (
     Inspection,
     InspectionStatus,
@@ -65,6 +67,7 @@ async def seed_local_demo_data(
     )
     await _seed_inspections(session, assets_by_number)
     await _seed_certificates(session, assets_by_number)
+    await _seed_users(session)
 
     await session.commit()
     return {
@@ -73,6 +76,7 @@ async def seed_local_demo_data(
         "inspections": await _count(session, Inspection),
         "pressure_test_results": await _count(session, PressureTestResult),
         "certificates": await _count(session, Certificate),
+        "users": await _count(session, User),
     }
 
 
@@ -441,6 +445,47 @@ async def _seed_certificates(
     )
 
 
+async def _seed_users(session: AsyncSession) -> None:
+    rows = [
+        {
+            "oidc_subject": "staff-ui-dev",
+            "email": "staff-ui-dev@example.com",
+            "first_name": "Alex",
+            "last_name": "Williams",
+            "role": Role.HMS_ADMIN.value,
+        },
+        {
+            "oidc_subject": "inspector-1",
+            "email": "inspector-1@example.com",
+            "first_name": "Ivy",
+            "last_name": "Inspector",
+            "role": Role.INSPECTOR.value,
+        },
+        {
+            "oidc_subject": "reviewer-1",
+            "email": "reviewer-1@example.com",
+            "first_name": "Riley",
+            "last_name": "Reviewer",
+            "role": Role.REVIEWER.value,
+        },
+    ]
+    for row in rows:
+        user = await _scalar_one_or_none(
+            session,
+            select(User).where(User.oidc_subject == row["oidc_subject"]),
+        )
+        if user is not None:
+            continue
+        user = User(**row)
+        session.add(user)
+        await record_create(
+            session,
+            user,
+            actor_id=SEED_ACTOR_ID,
+            action="user.seeded",
+        )
+
+
 async def _scalar_one_or_none(session: AsyncSession, statement: Any) -> Any | None:
     result = await session.scalar(statement)
     return result
@@ -466,6 +511,7 @@ async def seed_configured_database() -> SeedSummary:
             "inspections": await _count(session, Inspection),
             "pressure_test_results": await _count(session, PressureTestResult),
             "certificates": await _count(session, Certificate),
+            "users": await _count(session, User),
         }
 
 
