@@ -26,6 +26,12 @@ class CertificateIssueError(ValueError):
     pass
 
 
+# Asset lifecycle states that must never receive a new compliance certificate.
+# String literals (not the AssetLifecycleStatus enum) are used to avoid a
+# circular import between the certificates and assets modules.
+NON_CERTIFIABLE_ASSET_STATUSES = frozenset({"CONDEMNED", "RETIRED"})
+
+
 class Certificate(SyncableMixin, Base):
     __tablename__ = "certificates"
 
@@ -84,6 +90,15 @@ class Certificate(SyncableMixin, Base):
         if inspection.status != InspectionStatus.APPROVED.value:
             raise CertificateIssueError(
                 "certificate can only be issued from an approved inspection"
+            )
+
+        asset = inspection.asset
+        if asset is not None and asset.lifecycle_status in (
+            NON_CERTIFIABLE_ASSET_STATUSES
+        ):
+            raise CertificateIssueError(
+                "cannot issue a certificate for a "
+                f"{asset.lifecycle_status.lower()} asset"
             )
 
         return cls(

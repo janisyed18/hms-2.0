@@ -1,5 +1,34 @@
 export type DataSource = "api" | "mock";
 
+export type StaffRole =
+  | "SUPER_ADMIN"
+  | "HMS_ADMIN"
+  | "INSPECTOR"
+  | "ASSEMBLY"
+  | "REVIEWER"
+  | "CUSTOMER_USER";
+
+export type StaffPermission =
+  | "customer:read"
+  | "customer:write"
+  | "asset:read"
+  | "asset:write"
+  | "inspection:write"
+  | "certificate:approve"
+  | "reference:admin"
+  | "user:admin"
+  | "device:admin"
+  | "audit:read";
+
+export interface StaffSession {
+  userId: string;
+  displayName: string;
+  roles: StaffRole[];
+  permissions: StaffPermission[];
+  customerIds: string[];
+  authMode: "dev" | "bearer" | "mock" | string;
+}
+
 export type RiskLevel = "High" | "Medium" | "Low";
 
 export type CustomerStatus = "Active" | "Review" | "Paused";

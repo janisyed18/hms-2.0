@@ -23,10 +23,13 @@ from hms_backend.app.modules.certificates.engine_client import (
 )
 from hms_backend.app.modules.certificates.mapping import build_facts, to_proto
 from hms_backend.app.modules.certificates.models import (
+    NON_CERTIFIABLE_ASSET_STATUSES,
     Certificate,
     CertificateStatus,
 )
 from hms_backend.app.modules.inspections.models import Inspection, InspectionStatus
+from hms_backend.app.modules.notifications.enums import NotificationCategory
+from hms_backend.app.modules.notifications.outbox import emit_event
 
 
 class CertificateAlreadyIssuedError(RuntimeError):
@@ -35,6 +38,10 @@ class CertificateAlreadyIssuedError(RuntimeError):
 
 class InspectionNotApprovedError(RuntimeError):
     """The inspection is not in the APPROVED state."""
+
+
+class AssetNotCertifiableError(RuntimeError):
+    """The asset's lifecycle state forbids issuing a certificate (e.g. condemned)."""
 
 
 def generate_public_token() -> str:
@@ -61,7 +68,7 @@ async def generate_and_store_certificate(
     """Render, sign, store and stage a certificate for an approved inspection.
 
     Raises :class:`CertificateAlreadyIssuedError`,
-    :class:`InspectionNotApprovedError`, or
+    :class:`InspectionNotApprovedError`, :class:`AssetNotCertifiableError`, or
     :class:`~hms_backend.app.modules.certificates.engine_client.CertificateEngineError`.
     Does not commit.
     """
@@ -76,6 +83,14 @@ async def generate_and_store_certificate(
     if inspection.status != InspectionStatus.APPROVED.value:
         raise InspectionNotApprovedError(
             "certificate can only be issued from an approved inspection"
+        )
+    asset = inspection.asset
+    if asset is not None and asset.lifecycle_status in NON_CERTIFIABLE_ASSET_STATUSES:
+        # Fail before the expensive render/sign/store so we never produce an
+        # orphaned PDF for an asset that can't hold a certificate.
+        raise AssetNotCertifiableError(
+            "cannot issue a certificate for a "
+            f"{asset.lifecycle_status.lower()} asset"
         )
 
     issued_at = datetime.now(UTC).replace(microsecond=0)
@@ -120,5 +135,22 @@ async def generate_and_store_certificate(
         certificate,
         actor_id=actor_id,
         action="certificate.issued",
+    )
+
+    # Emit a domain event on the transactional outbox (N-01): if the caller's
+    # transaction rolls back, no notification is ever produced.
+    await emit_event(
+        session,
+        category=NotificationCategory.CERTIFICATE_ISSUED,
+        aggregate_type="certificate",
+        aggregate_id=certificate.id,
+        payload={
+            "customer_id": inspection.asset.customer_id,
+            "asset_id": inspection.asset.id,
+            "asset_number": inspection.asset.asset_number,
+            "certificate_number": number,
+            "public_token": public_token,
+            "link": verify_url,
+        },
     )
     return certificate

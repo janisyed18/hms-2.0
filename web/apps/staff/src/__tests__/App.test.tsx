@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
+import type { StaffSession } from "../domain/types";
 
 const apiCustomer = {
   id: "cust-api-1",
@@ -262,6 +263,15 @@ const apiAuditEvent = {
   hash: "audit-hash-42"
 };
 
+const inspectorSession = {
+  userId: "inspector-1",
+  displayName: "Ivy Inspector",
+  roles: ["INSPECTOR"],
+  permissions: ["customer:read", "asset:read", "inspection:write"],
+  customerIds: [],
+  authMode: "dev"
+} satisfies StaffSession;
+
 function okJson(body: unknown) {
   return {
     ok: true,
@@ -445,6 +455,31 @@ describe("App", () => {
     ).toBeVisible();
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
       "North Sea Drilling Ltd."
+    );
+  });
+
+  it("hides admin-only navigation for inspector sessions", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App initialSession={inspectorSession} />);
+
+    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Assets" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Inspections" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Users & Roles" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Devices" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Audit Log" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New Asset" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Inspections" }));
+
+    expect(await screen.findByRole("heading", { name: "Inspection Management" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "User menu" })).toHaveTextContent(
+      "Ivy Inspector"
+    );
+    expect(screen.getByRole("button", { name: "User menu" })).toHaveTextContent(
+      "INSPECTOR"
     );
   });
 

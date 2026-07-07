@@ -13,6 +13,7 @@ Run a worker with::
 from __future__ import annotations
 
 from celery import Celery  # type: ignore[import-untyped]
+from celery.schedules import crontab  # type: ignore[import-untyped]
 
 from hms_backend.app.core.config import settings
 
@@ -20,7 +21,10 @@ celery_app = Celery(
     "hms",
     broker=settings.effective_broker_url,
     backend=settings.effective_result_backend,
-    include=["hms_backend.app.modules.certificates.tasks"],
+    include=[
+        "hms_backend.app.modules.certificates.tasks",
+        "hms_backend.app.modules.notifications.tasks",
+    ],
 )
 
 celery_app.conf.update(
@@ -33,6 +37,24 @@ celery_app.conf.update(
     task_always_eager=settings.celery_task_always_eager,
     task_eager_propagates=settings.celery_task_always_eager,
     result_expires=60 * 60 * 24 * 7,  # 7 days
+    timezone="UTC",
+    beat_schedule={
+        # Turn committed outbox events into notification rows.
+        "notifications-relay": {
+            "task": "notifications.relay",
+            "schedule": 30.0,
+        },
+        # Send pending notifications (and process retries).
+        "notifications-dispatch": {
+            "task": "notifications.dispatch",
+            "schedule": 30.0,
+        },
+        # Daily retest reminder + overdue escalation scheduler (07:00 UTC).
+        "notifications-schedule-retests": {
+            "task": "notifications.schedule_retests",
+            "schedule": crontab(hour=7, minute=0),
+        },
+    },
 )
 
 
@@ -57,6 +79,7 @@ def _register_all_models() -> None:
         "hms_backend.app.modules.identity.models",
         "hms_backend.app.modules.inspections.models",
         "hms_backend.app.modules.jobs.models",
+        "hms_backend.app.modules.notifications.models",
         "hms_backend.app.modules.products.models",
         "hms_backend.app.modules.reference.models",
         "hms_backend.app.modules.scheduling.models",

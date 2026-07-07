@@ -138,6 +138,8 @@ def _resolve_signer_paths(settings: Settings) -> SignerMaterial:
 
 def _common_name(signer: signers.SimpleSigner) -> str:
     cert = signer.signing_cert
+    if cert is None:
+        return ""
     try:
         values = cert.subject.native.get("common_name")
         if isinstance(values, list):

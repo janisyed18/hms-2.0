@@ -60,6 +60,7 @@ from hms_backend.app.core.cache import (
     cache_get_json,
     cache_set_json,
 )
+from hms_backend.app.core.config import settings
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
@@ -74,6 +75,7 @@ from hms_backend.app.modules.certificates.engine_client import (
     get_certificate_engine,
 )
 from hms_backend.app.modules.certificates.issuance import (
+    AssetNotCertifiableError,
     CertificateAlreadyIssuedError,
     InspectionNotApprovedError,
     generate_and_store_certificate,
@@ -95,6 +97,8 @@ from hms_backend.app.modules.inspections.models import (
     InspectionStatus,
     PressureTestResult,
 )
+from hms_backend.app.modules.notifications.enums import NotificationCategory
+from hms_backend.app.modules.notifications.outbox import emit_event
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Standard
 from hms_backend.app.modules.scheduling.models import RetestSchedule
@@ -1135,6 +1139,20 @@ async def submit_inspection(
         action="inspection.submitted",
         before=before,
     )
+    await emit_event(
+        session,
+        category=NotificationCategory.INSPECTION_SUBMITTED,
+        aggregate_type="inspection",
+        aggregate_id=inspection.id,
+        payload={
+            "inspection_id": inspection.id,
+            "asset_id": inspection.asset.id,
+            "asset_number": inspection.asset.asset_number,
+            "customer_id": inspection.asset.customer_id,
+            "reviewer_user_id": inspection.reviewer_user_id,
+            "link": settings.public_base_url.rstrip("/"),
+        },
+    )
     await session.commit()
     return _inspection_read(inspection)
 
@@ -1248,6 +1266,7 @@ async def issue_certificate(
         except (
             CertificateAlreadyIssuedError,
             InspectionNotApprovedError,
+            AssetNotCertifiableError,
             CertificateIssueError,
         ) as exc:
             raise HTTPException(
@@ -1631,6 +1650,23 @@ async def update_asset(
         action="asset.updated",
         before=before,
     )
+    # Safety event: newly condemned asset (spec §7 — Critical/safety).
+    if (
+        asset.lifecycle_status == "CONDEMNED"
+        and before.get("lifecycle_status") != "CONDEMNED"
+    ):
+        await emit_event(
+            session,
+            category=NotificationCategory.ASSET_CONDEMNED,
+            aggregate_type="asset",
+            aggregate_id=asset.id,
+            payload={
+                "customer_id": asset.customer_id,
+                "asset_id": asset.id,
+                "asset_number": asset.asset_number,
+                "link": settings.public_base_url.rstrip("/"),
+            },
+        )
     if "retest_schedule" in updates and payload.retest_schedule is not None:
         await _upsert_retest_schedule(
             session,

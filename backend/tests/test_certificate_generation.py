@@ -310,3 +310,49 @@ async def test_generate_requires_approved_inspection(
         )
     assert response.status_code == 409
     assert _engine.calls == 0
+
+
+@pytest.mark.parametrize("blocked_status", ["CONDEMNED", "RETIRED"])
+@pytest.mark.asyncio
+async def test_generate_refused_for_condemned_or_retired_asset(
+    session_factory, _storage, _engine, blocked_status
+) -> None:
+    async with session_factory() as session:
+        product = Product(category="Hydraulic", code="HPX", name="Hose")
+        customer = Customer(code="CX", name="Cust X")
+        asset = Asset(
+            customer=customer,
+            product=product,
+            asset_number="HA-BLOCKED",
+            lifecycle_status=blocked_status,
+        )
+        inspection = Inspection(
+            asset=asset,
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+            reviewer_user_id="reviewer-1",
+        )
+        session.add(inspection)
+        await session.commit()
+        inspection_id = inspection.id
+
+    async with _client(session_factory, _REVIEWER) as client:
+        response = await client.post(
+            f"/api/v1/inspections/{inspection_id}/certificate", json={}
+        )
+
+    assert response.status_code == 409
+    assert blocked_status.lower() in response.json()["detail"].lower()
+    # The engine must never be called and no certificate/PDF should exist.
+    assert _engine.calls == 0
+    async with session_factory() as session:
+        certs = (
+            await session.scalars(
+                select(Certificate).where(
+                    Certificate.inspection_id == inspection_id
+                )
+            )
+        ).all()
+        assert certs == []

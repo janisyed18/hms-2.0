@@ -22,6 +22,9 @@ x-backend: &backend
     OBJECT_STORAGE_DIR: /data/object-store
     ISSUER_NAME: BAT Engineering Pty Ltd
     ISSUER_IDENTIFIER: ABN 00 000 000 000
+    AUTH_MODE: dev
+    AUTH_DEV_HEADERS_ENABLED: "true"
+    AUTH_DEV_ALLOW_ROLE_FALLBACK: "true"
   volumes:
     - object-store:/data/object-store
 
@@ -118,6 +121,21 @@ services:
       redis:
         condition: service_healthy
       certificate-engine:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Celery beat: schedules the notification relay/dispatch + daily reminders.
+  beat:
+    <<: *backend
+    command:
+      - "celery"
+      - "-A"
+      - "hms_backend.app.core.celery_app:celery_app"
+      - "beat"
+      - "--loglevel=info"
+    depends_on:
+      redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully

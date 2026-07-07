@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ActivityFeed } from "./components/ActivityFeed";
 import { AnalyticsWorkspace } from "./components/AnalyticsWorkspace";
@@ -20,6 +20,9 @@ import {
   SystemWorkspace,
   type SystemModule
 } from "./components/SystemWorkspace";
+import { loadAuthSessionWithFallback } from "./api/hmsClient";
+import { mockStaffSession } from "./data/mockAdmin";
+import type { StaffPermission, StaffRole, StaffSession } from "./domain/types";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import "./styles.css";
 
@@ -80,6 +83,57 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
 
 const operationalModules = new Set<AppModule>(["dashboard", "sync", "audit"]);
 
+const allPermissions: StaffPermission[] = [
+  "customer:read",
+  "customer:write",
+  "asset:read",
+  "asset:write",
+  "inspection:write",
+  "certificate:approve",
+  "reference:admin",
+  "user:admin",
+  "device:admin",
+  "audit:read"
+];
+
+const rolePermissions: Record<StaffRole, StaffPermission[]> = {
+  SUPER_ADMIN: allPermissions,
+  HMS_ADMIN: [
+    "customer:read",
+    "customer:write",
+    "asset:read",
+    "asset:write",
+    "reference:admin",
+    "user:admin",
+    "device:admin",
+    "audit:read"
+  ],
+  INSPECTOR: ["customer:read", "asset:read", "inspection:write"],
+  ASSEMBLY: ["customer:read", "asset:read", "asset:write"],
+  REVIEWER: ["customer:read", "asset:read", "certificate:approve"],
+  CUSTOMER_USER: ["customer:read", "asset:read"]
+};
+
+const modulePermissions: Record<AppModule, StaffPermission[]> = {
+  dashboard: [],
+  analytics: ["audit:read"],
+  customers: ["customer:read"],
+  assets: ["asset:read"],
+  products: ["reference:admin"],
+  reference: ["reference:admin"],
+  inspections: ["inspection:write", "certificate:approve"],
+  certificates: ["certificate:approve"],
+  retest: ["asset:read"],
+  sync: ["inspection:write"],
+  audit: ["audit:read"],
+  users: ["user:admin"],
+  devices: ["device:admin"]
+};
+
+interface AppProps {
+  initialSession?: StaffSession;
+}
+
 function isOperationalModule(module: AppModule): module is OperationalModule {
   return operationalModules.has(module);
 }
@@ -88,26 +142,71 @@ function isSystemModule(module: AppModule): module is SystemModule {
   return module === "users" || module === "devices";
 }
 
-export default function App() {
+export default function App(props: AppProps = {}) {
+  return <HmsApp {...props} />;
+}
+
+export function HmsApp({ initialSession }: AppProps = {}) {
   const [activeModule, setActiveModule] = useState<AppModule>("dashboard");
+  const [session, setSession] = useState<StaffSession>(
+    normaliseSession(initialSession ?? mockStaffSession)
+  );
   const workspace = useCustomerWorkspace();
-  const activeCopy = moduleCopy[activeModule];
+  const visibleModules = useMemo(() => modulesForSession(session), [session]);
+  const renderedActiveModule = visibleModules.includes(activeModule)
+    ? activeModule
+    : visibleModules[0] ?? "dashboard";
+  const activeCopy = moduleCopy[renderedActiveModule];
+  const canCreateAsset = hasPermission(session, "asset:write");
+
+  useEffect(() => {
+    if (initialSession) {
+      return;
+    }
+    let cancelled = false;
+    void loadAuthSessionWithFallback().then((loadedSession) => {
+      if (!cancelled) {
+        setSession(normaliseSession(loadedSession));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [initialSession]);
+
+  useEffect(() => {
+    if (!visibleModules.includes(activeModule)) {
+      setActiveModule(visibleModules[0] ?? "dashboard");
+    }
+  }, [activeModule, visibleModules]);
+
+  function handleModuleChange(module: AppModule) {
+    if (visibleModules.includes(module)) {
+      setActiveModule(module);
+    }
+  }
 
   return (
     <AppShell
-      activeModule={activeModule}
+      activeModule={renderedActiveModule}
+      canCreateAsset={canCreateAsset}
       description={activeCopy.description}
-      onModuleChange={setActiveModule}
+      onModuleChange={handleModuleChange}
+      session={session}
       source={workspace.source}
       title={activeCopy.title}
+      visibleModules={visibleModules}
     >
-      {isOperationalModule(activeModule) ? (
+      {isOperationalModule(renderedActiveModule) ? (
         <main className="record-page">
           <div className="record-main">
-            <OperationalWorkspace module={activeModule} source={workspace.source} />
+            <OperationalWorkspace
+              module={renderedActiveModule}
+              source={workspace.source}
+            />
           </div>
         </main>
-      ) : activeModule === "customers" ? (
+      ) : renderedActiveModule === "customers" ? (
         <>
           <main className="customer-page">
             <div className="customer-main">
@@ -141,21 +240,48 @@ export default function App() {
       ) : (
         <main className="record-page">
           <div className="record-main">
-            {activeModule === "assets" ? <AssetsWorkspace /> : null}
-            {activeModule === "analytics" ? (
+            {renderedActiveModule === "assets" ? <AssetsWorkspace /> : null}
+            {renderedActiveModule === "analytics" ? (
               <AnalyticsWorkspace source={workspace.source} />
             ) : null}
-            {activeModule === "products" ? <ProductsWorkspace /> : null}
-            {activeModule === "reference" ? <ReferenceWorkspace /> : null}
-            {activeModule === "inspections" ? <InspectionsWorkspace /> : null}
-            {activeModule === "certificates" ? <CertificatesWorkspace /> : null}
-            {activeModule === "retest" ? <RetestScheduleWorkspace /> : null}
-            {isSystemModule(activeModule) ? (
-              <SystemWorkspace module={activeModule} source={workspace.source} />
+            {renderedActiveModule === "products" ? <ProductsWorkspace /> : null}
+            {renderedActiveModule === "reference" ? <ReferenceWorkspace /> : null}
+            {renderedActiveModule === "inspections" ? <InspectionsWorkspace /> : null}
+            {renderedActiveModule === "certificates" ? <CertificatesWorkspace /> : null}
+            {renderedActiveModule === "retest" ? <RetestScheduleWorkspace /> : null}
+            {isSystemModule(renderedActiveModule) ? (
+              <SystemWorkspace module={renderedActiveModule} source={workspace.source} />
             ) : null}
           </div>
         </main>
       )}
     </AppShell>
   );
+}
+
+function normaliseSession(session: StaffSession): StaffSession {
+  const permissions = new Set<StaffPermission>(session.permissions);
+  session.roles.forEach((role) => {
+    rolePermissions[role].forEach((permission) => permissions.add(permission));
+  });
+  return {
+    ...session,
+    permissions: Array.from(permissions)
+  };
+}
+
+function hasPermission(session: StaffSession, permission: StaffPermission): boolean {
+  return (
+    session.roles.includes("SUPER_ADMIN") || session.permissions.includes(permission)
+  );
+}
+
+function modulesForSession(session: StaffSession): AppModule[] {
+  return (Object.keys(modulePermissions) as AppModule[]).filter((module) => {
+    const required = modulePermissions[module];
+    return (
+      required.length === 0 ||
+      required.some((permission) => hasPermission(session, permission))
+    );
+  });
 }

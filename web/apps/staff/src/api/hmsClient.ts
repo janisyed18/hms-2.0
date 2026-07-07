@@ -1,5 +1,10 @@
 import { mockAssets } from "../data/mockAssets";
-import { mockAdminUsers, mockAuditEvents, mockDevices } from "../data/mockAdmin";
+import {
+  mockAdminUsers,
+  mockAuditEvents,
+  mockDevices,
+  mockStaffSession
+} from "../data/mockAdmin";
 import { mockCertificates } from "../data/mockCertificates";
 import {
   makeLocalCustomer,
@@ -56,7 +61,10 @@ import type {
   RetestScheduleListResult,
   RetestScheduleRecord,
   RetestScheduleStatus,
-  RetestScheduleUpdateValues
+  RetestScheduleUpdateValues,
+  StaffPermission,
+  StaffRole,
+  StaffSession
 } from "../domain/types";
 
 interface ApiLocation {
@@ -332,10 +340,19 @@ export interface HmsClientOptions {
   baseUrl?: string;
   fetcher?: typeof fetch;
   identity?: {
+    accessToken?: string;
     userId?: string;
     roles?: string;
     customerIds?: string;
   };
+}
+
+interface ApiAuthSession {
+  user_id: string;
+  roles: string[];
+  permissions: string[];
+  customer_ids: string[];
+  auth_mode: string;
 }
 
 interface ListCustomerOptions {
@@ -805,6 +822,17 @@ function toAuditEvent(event: ApiAuditEvent): AuditEventRecord {
   };
 }
 
+function toStaffSession(session: ApiAuthSession): StaffSession {
+  return {
+    userId: session.user_id,
+    displayName: session.user_id,
+    roles: session.roles as StaffRole[],
+    permissions: session.permissions as StaffPermission[],
+    customerIds: session.customer_ids,
+    authMode: session.auth_mode
+  };
+}
+
 function pressureTestPayload(
   pressureTest: PressureTestValues | null
 ): Record<string, unknown> | null {
@@ -919,6 +947,13 @@ function buildUrl(
 }
 
 function identityHeaders(options: HmsClientOptions): Record<string, string> {
+  if (options.identity?.accessToken) {
+    return {
+      "Content-Type": "application/json",
+      authorization: `Bearer ${options.identity.accessToken}`
+    };
+  }
+
   return {
     "Content-Type": "application/json",
     "x-hms-user-id": options.identity?.userId ?? defaultIdentity.userId,
@@ -996,6 +1031,11 @@ export function createHmsClient(options: HmsClientOptions = {}) {
   }
 
   return {
+    async getAuthSession(): Promise<StaffSession> {
+      const response = await request<ApiAuthSession>("/api/v1/auth/me");
+      return toStaffSession(response.data);
+    },
+
     async listCustomers(
       searchOrOptions: string | ListCustomerOptions = {}
     ): Promise<ApiListResult<CustomerRecord>> {
@@ -2056,5 +2096,16 @@ export async function loadAuditEventsWithFallback(
       total: mockAuditEvents.length,
       items
     };
+  }
+}
+
+export async function loadAuthSessionWithFallback(
+  options: HmsClientOptions = {}
+): Promise<StaffSession> {
+  try {
+    const client = createHmsClient(options);
+    return await client.getAuthSession();
+  } catch {
+    return mockStaffSession;
   }
 }

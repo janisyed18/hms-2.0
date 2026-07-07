@@ -87,6 +87,14 @@ class CustomerContact(SyncableMixin, Base):
         nullable=False,
         default=True,
     )
+    # Contact verification for notifications (spec §9).
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    phone_e164: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    phone_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
 
     customer: Mapped[Customer] = relationship(
         back_populates="contacts",

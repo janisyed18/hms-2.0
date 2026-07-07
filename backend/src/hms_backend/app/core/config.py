@@ -1,3 +1,6 @@
+from typing import Literal
+
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -41,6 +44,47 @@ class Settings(BaseSettings):
     celery_task_always_eager: bool = False
     # Max inspections a single bulk-generation request may target.
     bulk_certificate_max_items: int = 1000
+
+    # --- Notifications (spec: Notifications & Alerting) ---
+    notifications_enabled: bool = True
+    # "console" logs messages (dev default); "live" uses SMTP + Twilio.
+    notification_channel_mode: str = "console"
+    notification_sender_name: str = "BAT Engineering"
+    notification_max_attempts: int = 5
+    notification_retry_backoff_seconds: int = 60
+    # Reminder cadence (days). Advance before due; escalation after overdue;
+    # approaching-condemnation before the grave date.
+    retest_advance_days: list[int] = Field(default_factory=lambda: [30, 14])
+    retest_overdue_escalation_days: list[int] = Field(
+        default_factory=lambda: [7, 14, 30]
+    )
+    condemnation_advance_days: list[int] = Field(default_factory=lambda: [60, 30])
+    phone_verification_ttl_seconds: int = 600
+    phone_verification_max_attempts: int = 5
+
+    # Email (OCI Email Delivery via SMTP) — only used in "live" mode.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
+    email_from_address: str = "no-reply@batengineering.example"
+
+    # SMS (Twilio) — only used in "live" mode.
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from: str = ""  # E.164 number or alphanumeric sender ID
+
+    # Auth boundary. Local development keeps explicit HMS headers available;
+    # deployed environments should use bearer mode and resolve the token subject
+    # against persisted HMS users.
+    auth_mode: Literal["dev", "bearer"] = "dev"
+    auth_dev_headers_enabled: bool = True
+    auth_dev_allow_role_fallback: bool = True
+    auth_bearer_hmac_secret: str = ""
+    auth_bearer_issuer: str | None = None
+    auth_bearer_audience: str | None = None
+    auth_token_leeway_seconds: int = 60
 
     @property
     def effective_broker_url(self) -> str:
