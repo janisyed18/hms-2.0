@@ -1776,7 +1776,8 @@ tbody tr.is-selected {
   font-size: 13px;
 }
 
-.topbar-popover p {
+.topbar .topbar-popover p {
+  display: block;
   margin: 8px 0 0;
   color: var(--muted);
   font-size: 12px;

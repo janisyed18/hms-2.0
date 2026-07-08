@@ -882,21 +882,9 @@ function assetPayload(values: AssetFormValues) {
   };
 }
 
-function certificateSlug(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
 function certificateIssuePayload(values: CertificateIssueValues) {
-  const slug = certificateSlug(values.number);
   return {
     number: values.number,
-    pdf_object_key: `certificates/${values.number}.pdf`,
-    verification_hash: `dev-hash-${slug}-${values.inspectionId}`,
-    public_token: `verify-${slug}-${values.inspectionId.slice(0, 8)}`,
     valid_until: values.validUntil
   };
 }

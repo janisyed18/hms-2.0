@@ -787,9 +787,6 @@ describe("hmsClient", () => {
         method: "POST",
         body: JSON.stringify({
           number: "CERT-997950-1",
-          pdf_object_key: "certificates/CERT-997950-1.pdf",
-          verification_hash: "dev-hash-cert-997950-1-inspection-api-1",
-          public_token: "verify-cert-997950-1-inspecti",
           valid_until: "2027-06-29"
         })
       })
