@@ -24,6 +24,14 @@ htmlcov/
 .idea/
 .vscode/
 
+# Terraform local state and provider cache.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
 # Generated certificate artifacts and signing material — never commit.
 var/
 **/object-store/

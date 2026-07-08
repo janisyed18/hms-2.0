@@ -18,8 +18,12 @@ class Settings(BaseSettings):
     certificate_service_address: str = "127.0.0.1:50051"
     certificate_service_timeout_seconds: float = 30.0
 
-    # Local object storage root for certificate PDFs and media (dev only).
+    # Object storage for certificate PDFs and media.
+    object_storage_backend: Literal["local", "s3"] = "local"
     object_storage_dir: str = "./var/object-store"
+    object_storage_s3_bucket: str = ""
+    object_storage_s3_prefix: str = ""
+    object_storage_s3_region: str = ""
 
     # Issuer identity stamped onto certificates (mirrors the engine defaults).
     issuer_name: str = "BAT Engineering Pty Ltd"

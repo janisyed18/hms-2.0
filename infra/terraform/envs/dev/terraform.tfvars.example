@@ -1,0 +1,19 @@
+aws_profile = "hf-dev"
+aws_region  = "ap-southeast-2"
+
+project     = "hms"
+environment = "dev"
+
+github_repository = "janisyed18/hms-2.0"
+github_deploy_refs = [
+  "repo:janisyed18/hms-2.0:ref:refs/heads/main",
+  "repo:janisyed18/hms-2.0:ref:refs/heads/codex/aws-dev-deployment-foundation",
+]
+
+# Dev-sized defaults. Increase before staging/production.
+db_instance_class          = "db.t4g.micro"
+redis_node_type            = "cache.t4g.micro"
+api_desired_count          = 1
+worker_desired_count       = 1
+beat_desired_count         = 1
+enable_deletion_protection = false
