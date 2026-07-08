@@ -290,6 +290,14 @@ function noContent() {
   };
 }
 
+function deferredJson() {
+  let resolve!: (value: ReturnType<typeof okJson>) => void;
+  const promise = new Promise<ReturnType<typeof okJson>>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 function routeFetch() {
   return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const path = String(url);
@@ -666,6 +674,63 @@ describe("App", () => {
         name: "API Spare Hose"
       })
     ).toBeVisible();
+  });
+
+  it("preserves typed asset form values when option lists finish loading", async () => {
+    const customers = deferredJson();
+    const products = deferredJson();
+    const fallbackFetch = routeFetch();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const path = String(url);
+        if (path.startsWith("/api/v1/customers?limit=100")) {
+          return customers.promise;
+        }
+        if (path.startsWith("/api/v1/products?limit=100")) {
+          return products.promise;
+        }
+        return fallbackFetch(url, init);
+      })
+    );
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Assets" }));
+    await user.click(await screen.findByRole("button", { name: "Add Asset" }));
+    await user.type(screen.getByLabelText("Asset number"), "ASYNC-ASSET-001");
+    await user.type(screen.getByLabelText("Customer serial number"), "SERIAL-ASYNC");
+
+    customers.resolve(
+      okJson({
+        total: 2,
+        limit: 100,
+        offset: 0,
+        items: [apiCustomer, apiUnassignedCustomer]
+      })
+    );
+    products.resolve(
+      okJson({
+        total: 2,
+        limit: 100,
+        offset: 0,
+        items: [apiProduct, apiUnassignedProduct]
+      })
+    );
+
+    expect(
+      await within(screen.getByLabelText("Asset customer")).findByRole("option", {
+        name: "E2E API Customer"
+      })
+    ).toBeVisible();
+    expect(
+      await within(screen.getByLabelText("Asset product")).findByRole("option", {
+        name: "API Spare Hose"
+      })
+    ).toBeVisible();
+    expect(screen.getByLabelText("Asset number")).toHaveValue("ASYNC-ASSET-001");
+    expect(screen.getByLabelText("Customer serial number")).toHaveValue("SERIAL-ASYNC");
   });
 
   it("issues a certificate from an approved inspection in the staff UI", async () => {

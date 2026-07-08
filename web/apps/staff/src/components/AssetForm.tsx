@@ -54,20 +54,39 @@ export function AssetForm({
     if (!open) {
       return;
     }
-    const defaultCustomerId = asset?.customer.id ?? customerOptions[0]?.id ?? "";
-    const defaultLocations =
-      locationOptions.find((group) => group.customerId === defaultCustomerId)?.locations ?? [];
     setAssetNumber(asset?.assetNumber ?? "");
     setCustomerSerialNo(asset?.customerSerialNo ?? "");
-    setCustomerId(defaultCustomerId);
-    setLocationId(asset?.location?.id ?? defaultLocations[0]?.id ?? "");
-    setProductId(asset?.product.id ?? productOptions[0]?.id ?? "");
+    setCustomerId(asset?.customer.id ?? "");
+    setLocationId(asset?.location?.id ?? "");
+    setProductId(asset?.product.id ?? "");
     setLifecycleStatus(asset?.lifecycleStatus ?? "IN_SERVICE");
     setNextRetestDueAt(asset?.nextRetestDueAt ?? "");
     setNotes(asset?.notes ?? "");
     setAEnd(asset?.aEnd ?? blankEnd);
     setBEnd(asset?.bEnd ?? blankEnd);
-  }, [asset, customerOptions, locationOptions, open, productOptions]);
+  }, [asset, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    if (asset?.customer.id) {
+      setCustomerId(asset.customer.id);
+      return;
+    }
+    setCustomerId((current) => current || customerOptions[0]?.id || "");
+  }, [asset?.customer.id, customerOptions, open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    if (asset?.product.id) {
+      setProductId(asset.product.id);
+      return;
+    }
+    setProductId((current) => current || productOptions[0]?.id || "");
+  }, [asset?.product.id, productOptions, open]);
 
   const customerLocations =
     locationOptions.find((group) => group.customerId === customerId)?.locations ?? [];
@@ -78,14 +97,22 @@ export function AssetForm({
     if (!open) {
       return;
     }
-    if (customerLocations.length === 0) {
-      setLocationId("");
-      return;
-    }
-    if (!customerLocations.some((location) => location.id === locationId)) {
-      setLocationId(customerLocations[0].id);
-    }
-  }, [customerLocations, locationId, open]);
+    setLocationId((current) => {
+      if (customerLocations.length === 0) {
+        return "";
+      }
+      if (current && customerLocations.some((location) => location.id === current)) {
+        return current;
+      }
+      if (
+        asset?.location?.id &&
+        customerLocations.some((location) => location.id === asset.location?.id)
+      ) {
+        return asset.location.id;
+      }
+      return customerLocations[0].id;
+    });
+  }, [asset?.location?.id, customerLocations, open]);
 
   if (!open) {
     return null;

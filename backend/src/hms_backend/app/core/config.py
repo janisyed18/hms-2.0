@@ -78,13 +78,30 @@ class Settings(BaseSettings):
     # Auth boundary. Local development keeps explicit HMS headers available;
     # deployed environments should use bearer mode and resolve the token subject
     # against persisted HMS users.
-    auth_mode: Literal["dev", "bearer"] = "dev"
+    #   dev    - X-HMS-* headers (local only)
+    #   bearer - locally issued HS256 tokens (Argon2 password login)
+    #   oidc   - RS256/ES256 tokens from an external IdP (Keycloak / OCI IDs)
+    auth_mode: Literal["dev", "bearer", "oidc"] = "dev"
     auth_dev_headers_enabled: bool = True
     auth_dev_allow_role_fallback: bool = True
+    auth_token_leeway_seconds: int = 60
+
+    # Local HS256 tokens (bearer mode + Argon2 login output).
     auth_bearer_hmac_secret: str = ""
     auth_bearer_issuer: str | None = None
     auth_bearer_audience: str | None = None
-    auth_token_leeway_seconds: int = 60
+    auth_access_token_ttl_seconds: int = 3600
+    auth_password_login_enabled: bool = True
+
+    # External OIDC provider (oidc mode). JWKS is discovered from the issuer's
+    # ``/.well-known/openid-configuration`` unless a JWKS URL is given directly.
+    auth_oidc_issuer: str = ""
+    auth_oidc_audience: str = ""
+    auth_oidc_jwks_url: str = ""
+    auth_oidc_jwks_cache_seconds: int = 3600
+    # If true, a valid token for an unknown subject provisions a User row (JIT).
+    # Off by default: subjects must be provisioned by an admin first.
+    auth_oidc_jit_provisioning: bool = False
 
     @property
     def effective_broker_url(self) -> str:

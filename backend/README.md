@@ -265,6 +265,45 @@ docker compose exec worker \
 docker compose logs worker | grep -E "\[EMAIL\]|\[SMS\]"
 ```
 
+## Authentication
+
+Three modes, selected by `AUTH_MODE`:
+
+- **`dev`** (default, local only) — `X-HMS-User-Id` resolves a persisted user
+  (its DB role is authoritative); `X-HMS-Roles` is a fallback for unseeded ids.
+- **`bearer`** — locally issued **HS256** access tokens from the Argon2
+  **password login** below. Verifies signature, issuer, audience and expiry.
+- **`oidc`** — real **OIDC** tokens from an external IdP (Keycloak / OCI Identity
+  Domains). Tokens are **RS256/ES256** and verified against the provider's
+  **JWKS** (asymmetric; the server holds no signing secret), checking `iss`,
+  `aud` and `exp`. Identity comes from the token; the **HMS role comes from the
+  persisted user**, so authorization stays DB-authoritative.
+
+Passwords are **Argon2**-hashed and never returned in any response. Login flow:
+
+```bash
+# set an admin's password first (admin only), then log in
+curl -X POST -H "X-HMS-User-Id: <admin-oidc-sub>" -H "Content-Type: application/json" \
+  -d '{"new_password":"a-strong-passphrase"}' \
+  http://127.0.0.1:8000/api/v1/auth/users/<USER_ID>/password
+
+TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"a-strong-passphrase"}' \
+  http://127.0.0.1:8000/api/v1/auth/login | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+# with AUTH_MODE=bearer, use it as a bearer credential
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/auth/me
+```
+
+Endpoints: `POST /auth/login`, `POST /auth/password` (change own, verifies
+current), `POST /auth/users/{id}/password` (admin reset), `GET /auth/me`.
+
+Settings: `AUTH_MODE`, `AUTH_BEARER_HMAC_SECRET`, `AUTH_BEARER_ISSUER`,
+`AUTH_BEARER_AUDIENCE`, `AUTH_ACCESS_TOKEN_TTL_SECONDS`,
+`AUTH_PASSWORD_LOGIN_ENABLED`; OIDC: `AUTH_OIDC_ISSUER`, `AUTH_OIDC_AUDIENCE`,
+`AUTH_OIDC_JWKS_URL` (optional; discovered from the issuer otherwise),
+`AUTH_OIDC_JIT_PROVISIONING`.
+
 ## Local Endpoints
 
 - Liveness: `GET /health`
