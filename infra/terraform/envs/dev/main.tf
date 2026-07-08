@@ -832,6 +832,30 @@ resource "aws_cloudfront_origin_access_control" "inspector" {
   signing_protocol                  = "sigv4"
 }
 
+resource "aws_cloudfront_function" "spa_rewrite" {
+  name    = "${local.name}-spa-rewrite"
+  runtime = "cloudfront-js-2.0"
+  comment = "Rewrite frontend application routes to index.html without masking API errors"
+  publish = true
+  code    = <<-EOT
+function handler(event) {
+  var request = event.request;
+  var uri = request.uri;
+
+  if (uri.startsWith('/api/') || uri.startsWith('/health')) {
+    return request;
+  }
+
+  if (uri.includes('.')) {
+    return request;
+  }
+
+  request.uri = '/index.html';
+  return request;
+}
+EOT
+}
+
 resource "aws_cloudfront_distribution" "staff" {
   enabled             = true
   comment             = "${local.name} staff app"
@@ -870,6 +894,11 @@ resource "aws_cloudfront_distribution" "staff" {
         forward = "none"
       }
     }
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.spa_rewrite.arn
+    }
   }
 
   ordered_cache_behavior {
@@ -905,18 +934,6 @@ resource "aws_cloudfront_distribution" "staff" {
     }
   }
 
-  custom_error_response {
-    error_code         = 403
-    response_code      = 200
-    response_page_path = "/index.html"
-  }
-
-  custom_error_response {
-    error_code         = 404
-    response_code      = 200
-    response_page_path = "/index.html"
-  }
-
   restrictions {
     geo_restriction {
       restriction_type = "none"
@@ -925,7 +942,6 @@ resource "aws_cloudfront_distribution" "staff" {
 
   viewer_certificate {
     cloudfront_default_certificate = true
-    minimum_protocol_version       = "TLSv1.2_2021"
   }
 }
 
@@ -967,6 +983,11 @@ resource "aws_cloudfront_distribution" "inspector" {
         forward = "none"
       }
     }
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.spa_rewrite.arn
+    }
   }
 
   ordered_cache_behavior {
@@ -1002,18 +1023,6 @@ resource "aws_cloudfront_distribution" "inspector" {
     }
   }
 
-  custom_error_response {
-    error_code         = 403
-    response_code      = 200
-    response_page_path = "/index.html"
-  }
-
-  custom_error_response {
-    error_code         = 404
-    response_code      = 200
-    response_page_path = "/index.html"
-  }
-
   restrictions {
     geo_restriction {
       restriction_type = "none"
@@ -1022,7 +1031,6 @@ resource "aws_cloudfront_distribution" "inspector" {
 
   viewer_certificate {
     cloudfront_default_certificate = true
-    minimum_protocol_version       = "TLSv1.2_2021"
   }
 }
 
