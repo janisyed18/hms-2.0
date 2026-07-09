@@ -19,14 +19,13 @@ through the app.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from hms_backend.app.core.config import settings
 
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from mypy_boto3_s3 import S3Client
-else:  # runtime: boto3 is optional and only imported for the S3 backend
-    S3Client = object
+# boto3 is an optional runtime dependency — only the S3 backend imports it — and
+# we don't require the mypy_boto3_s3 type stubs, so the client is typed loosely.
+S3Client = Any
 
 
 class ObjectNotFoundError(FileNotFoundError):
@@ -194,11 +193,12 @@ class S3ObjectStorage:
     # -- PresignedObjectStorage --------------------------------------------------
 
     def presigned_get_url(self, key: str, *, expires_in: int | None = None) -> str:
-        return self._get_client().generate_presigned_url(
+        url = self._get_client().generate_presigned_url(
             "get_object",
             Params={"Bucket": self._bucket, "Key": self._object_key(key)},
             ExpiresIn=expires_in or self._presign_expiry,
         )
+        return cast(str, url)
 
 
 def _is_not_found(exc: Exception) -> bool:
