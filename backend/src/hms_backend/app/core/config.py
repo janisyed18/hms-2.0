@@ -27,14 +27,14 @@ class Settings(BaseSettings):
     # S3 backend. Credentials come from the environment/instance/task role
     # (never static keys in config). Region/endpoint are optional — boto3
     # resolves them from the standard AWS chain when blank.
-    s3_bucket: str = ""
-    s3_region: str = ""
-    s3_endpoint_url: str = ""  # e.g. LocalStack/MinIO for local S3 testing
-    s3_key_prefix: str = ""  # optional prefix namespacing keys within the bucket
-    s3_presign_expiry_seconds: int = 900
+    object_storage_s3_bucket: str = ""
+    object_storage_s3_region: str = ""
+    object_storage_s3_endpoint_url: str = ""  # e.g. LocalStack/MinIO
+    object_storage_s3_prefix: str = ""  # optional prefix namespacing keys
+    object_storage_s3_presign_expiry_seconds: int = 900
     # Server-side encryption applied on upload ("AES256" or "aws:kms"; blank off).
-    s3_sse: str = "AES256"
-    s3_sse_kms_key_id: str = ""  # required when s3_sse == "aws:kms"
+    object_storage_s3_sse: str = "AES256"
+    object_storage_s3_sse_kms_key_id: str = ""  # required when using aws:kms
 
     # Issuer identity stamped onto certificates (mirrors the engine defaults).
     issuer_name: str = "BAT Engineering Pty Ltd"

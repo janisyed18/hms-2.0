@@ -214,13 +214,13 @@ _storage: ObjectStorage | None = None
 def _build_storage() -> ObjectStorage:
     if settings.object_storage_backend == "s3":
         return S3ObjectStorage(
-            settings.s3_bucket,
-            region=settings.s3_region,
-            endpoint_url=settings.s3_endpoint_url,
-            key_prefix=settings.s3_key_prefix,
-            presign_expiry_seconds=settings.s3_presign_expiry_seconds,
-            sse=settings.s3_sse,
-            sse_kms_key_id=settings.s3_sse_kms_key_id,
+            settings.object_storage_s3_bucket,
+            region=settings.object_storage_s3_region,
+            endpoint_url=settings.object_storage_s3_endpoint_url,
+            key_prefix=settings.object_storage_s3_prefix,
+            presign_expiry_seconds=settings.object_storage_s3_presign_expiry_seconds,
+            sse=settings.object_storage_s3_sse,
+            sse_kms_key_id=settings.object_storage_s3_sse_kms_key_id,
         )
     return LocalObjectStorage(settings.object_storage_dir)
 

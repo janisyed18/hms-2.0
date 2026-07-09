@@ -11,6 +11,8 @@ from typing import Any
 
 import pytest
 
+import hms_backend.app.core.object_storage as storage_module
+from hms_backend.app.core.config import settings
 from hms_backend.app.core.object_storage import (
     ObjectNotFoundError,
     PresignedObjectStorage,
@@ -148,3 +150,36 @@ def test_satisfies_presigned_protocol() -> None:
 def test_requires_bucket() -> None:
     with pytest.raises(ValueError):
         S3ObjectStorage("")
+
+
+def test_factory_uses_deployed_object_storage_s3_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _SpyStorage:
+        def __init__(self, bucket: str, **kwargs: Any) -> None:
+            captured["bucket"] = bucket
+            captured.update(kwargs)
+
+    monkeypatch.setattr(settings, "object_storage_backend", "s3")
+    monkeypatch.setattr(settings, "object_storage_s3_bucket", "hms-dev-media")
+    monkeypatch.setattr(settings, "object_storage_s3_region", "ap-southeast-2")
+    monkeypatch.setattr(settings, "object_storage_s3_endpoint_url", "")
+    monkeypatch.setattr(settings, "object_storage_s3_prefix", "dev/media")
+    monkeypatch.setattr(settings, "object_storage_s3_presign_expiry_seconds", 120)
+    monkeypatch.setattr(settings, "object_storage_s3_sse", "AES256")
+    monkeypatch.setattr(settings, "object_storage_s3_sse_kms_key_id", "")
+    monkeypatch.setattr(storage_module, "S3ObjectStorage", _SpyStorage)
+
+    storage_module._build_storage()
+
+    assert captured == {
+        "bucket": "hms-dev-media",
+        "region": "ap-southeast-2",
+        "endpoint_url": "",
+        "key_prefix": "dev/media",
+        "presign_expiry_seconds": 120,
+        "sse": "AES256",
+        "sse_kms_key_id": "",
+    }

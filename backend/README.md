@@ -160,10 +160,12 @@ two backends, selected by `OBJECT_STORAGE_BACKEND`:
   the public PDF download issues a short-lived presigned URL (HTTP 307 redirect)
   so bytes are served by S3, not streamed through the API task.
 
-S3 settings (env): `OBJECT_STORAGE_BACKEND=s3`, `S3_BUCKET`, and optionally
-`S3_REGION`, `S3_ENDPOINT_URL` (LocalStack/MinIO), `S3_KEY_PREFIX`,
-`S3_PRESIGN_EXPIRY_SECONDS` (default 900), `S3_SSE` (`AES256` default, or
-`aws:kms` with `S3_SSE_KMS_KEY_ID`). The task role needs `s3:PutObject`,
+S3 settings (env): `OBJECT_STORAGE_BACKEND=s3`,
+`OBJECT_STORAGE_S3_BUCKET`, and optionally `OBJECT_STORAGE_S3_REGION`,
+`OBJECT_STORAGE_S3_ENDPOINT_URL` (LocalStack/MinIO),
+`OBJECT_STORAGE_S3_PREFIX`, `OBJECT_STORAGE_S3_PRESIGN_EXPIRY_SECONDS`
+(default 900), `OBJECT_STORAGE_S3_SSE` (`AES256` default, or `aws:kms` with
+`OBJECT_STORAGE_S3_SSE_KMS_KEY_ID`). The task role needs `s3:PutObject`,
 `s3:GetObject`, and `s3:ListBucket` on the media bucket.
 
 ## Bulk certificate generation (Celery)
