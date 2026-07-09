@@ -217,21 +217,27 @@ export function useInspectionsWorkspace() {
     replaceInspection(saved);
   }
 
-  async function submitInspection() {
+  async function submitInspection(values?: InspectionUpdateValues) {
     if (!selectedInspection) {
       return;
     }
+    const draftSnapshot = values
+      ? localInspectionUpdate(selectedInspection, values)
+      : selectedInspection;
     let saved: InspectionRecord = {
-      ...selectedInspection,
+      ...draftSnapshot,
       status: "SUBMITTED",
       submittedAt: new Date().toISOString()
     };
     if (source === "api") {
       try {
+        if (values) {
+          await createHmsClient().updateInspection(selectedInspection.id, values);
+        }
         saved = await createHmsClient().submitInspection(selectedInspection.id);
       } catch {
         saved = {
-          ...selectedInspection,
+          ...draftSnapshot,
           status: "SUBMITTED",
           submittedAt: new Date().toISOString()
         };

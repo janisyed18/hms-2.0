@@ -3172,6 +3172,15 @@ tbody tr.is-selected {
   gap: 18px;
 }
 
+.inspection-layout.detail-open {
+  grid-template-columns: 1fr;
+}
+
+.inspection-layout.detail-open .inspection-detail-panel {
+  position: static;
+  min-height: 0;
+}
+
 .inspection-detail-panel,
 .detail-panel,
 .activity-panel {

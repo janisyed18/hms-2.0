@@ -867,6 +867,11 @@ describe("App", () => {
     await user.type(screen.getByLabelText("Measurement notes"), "visual=ok");
     await user.click(screen.getByRole("button", { name: "Save inspection" }));
 
+    expect(screen.getByRole("complementary", { name: "Inspection detail" })).toHaveTextContent(
+      "DRAFT"
+    );
+    await user.click(screen.getByRole("button", { name: "Close inspection detail" }));
+
     const oricRows = await screen.findAllByRole("row", { name: /ORIC-100/i });
     expect(oricRows[0]).toHaveTextContent("DRAFT");
   });
@@ -891,6 +896,48 @@ describe("App", () => {
         )
       ).toBeVisible();
     });
+  });
+
+  it("opens a draft inspection in a focused record view and returns to the list", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Inspections" }));
+    await user.click(await screen.findByRole("button", { name: "Open inspection 997950" }));
+
+    expect(screen.queryByRole("table", { name: "Inspection records" })).not.toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Inspection detail" })).toHaveTextContent(
+      "Inspection 997950"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Close inspection detail" }));
+
+    expect(await screen.findByRole("table", { name: "Inspection records" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open inspection 997950" })).toBeVisible();
+  });
+
+  it("submits the current draft inspection values without requiring a separate save", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Inspections" }));
+    await user.click(await screen.findByRole("button", { name: "Open inspection 997950" }));
+    await user.clear(screen.getByLabelText("Detail applied pressure kPa"));
+    await user.type(screen.getByLabelText("Detail applied pressure kPa"), "1800");
+    await user.click(screen.getByRole("button", { name: "Submit inspection" }));
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("complementary", { name: "Inspection detail" })).getByText(
+          "SUBMITTED"
+        )
+      ).toBeVisible();
+    });
+    expect(screen.getByLabelText("Detail applied pressure kPa")).toHaveValue(1800);
   });
 
   it("approves a submitted inspection from the detail panel", async () => {

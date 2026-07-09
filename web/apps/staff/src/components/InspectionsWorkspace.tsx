@@ -149,70 +149,7 @@ export function InspectionsWorkspace() {
         </div>
       </div>
 
-      <div className={`inspection-layout${workspace.selectedInspection ? "" : " detail-closed"}`}>
-        <div className="inspection-table-wrap">
-          <ModuleTable
-            actionLabel="Add Inspection"
-            columns={columns}
-            countLabel={`${workspace.visibleInspections.length} inspections`}
-            emptyLabel="No inspections match the current filters."
-            exportRows={(inspection) => [
-              inspection.status,
-              inspection.asset.assetNumber,
-              inspection.customer.name,
-              inspection.inspectionType,
-              inspection.result ?? "",
-              pressureLabel(inspection),
-              ""
-            ]}
-            activeFilterCount={workspace.activeFilterCount}
-            filterControls={
-              <>
-                <label className="filter-field">
-                  <span>Type</span>
-                  <select
-                    aria-label="Inspection type filter"
-                    value={workspace.typeFilter}
-                    onChange={(event) => workspace.setTypeFilter(event.target.value as typeof workspace.typeFilter)}
-                  >
-                    <option value="ALL">All types</option>
-                    <option value="NEW_ASSET">New asset</option>
-                    <option value="SERVICE">Service</option>
-                  </select>
-                </label>
-                <label className="filter-field">
-                  <span>Result</span>
-                  <select
-                    aria-label="Inspection result filter"
-                    value={workspace.resultFilter}
-                    onChange={(event) => workspace.setResultFilter(event.target.value)}
-                  >
-                    <option value="ALL">All results</option>
-                    {workspace.resultOptions.map((result) => (
-                      <option key={result} value={result}>
-                        {result === "PENDING" ? "Pending" : result}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button className="secondary-button filter-clear" type="button" onClick={workspace.clearInspectionFilters}>
-                  Clear inspection filters
-                </button>
-              </>
-            }
-            getRowKey={(inspection) => inspection.id}
-            items={workspace.visibleInspections}
-            onAction={workspace.openCreate}
-            onQueryChange={workspace.setQuery}
-            onRowSelect={workspace.openDetail}
-            query={workspace.query}
-            searchLabel="Search inspections"
-            searchPlaceholder="Search inspections..."
-            selectedRowKey={workspace.selectedInspection?.id ?? null}
-            source={workspace.source}
-            tableLabel="Inspection records"
-          />
-        </div>
+      <div className={`inspection-layout${workspace.selectedInspection ? " detail-open" : " detail-closed"}`}>
         {workspace.selectedInspection ? (
           <InspectionDetail
             inspection={workspace.selectedInspection}
@@ -221,7 +158,70 @@ export function InspectionsWorkspace() {
             onSaveDraft={workspace.saveInspectionUpdate}
             onSubmit={workspace.submitInspection}
           />
-        ) : null}
+        ) : (
+          <div className="inspection-table-wrap">
+            <ModuleTable
+              actionLabel="Add Inspection"
+              columns={columns}
+              countLabel={`${workspace.visibleInspections.length} inspections`}
+              emptyLabel="No inspections match the current filters."
+              exportRows={(inspection) => [
+                inspection.status,
+                inspection.asset.assetNumber,
+                inspection.customer.name,
+                inspection.inspectionType,
+                inspection.result ?? "",
+                pressureLabel(inspection),
+                ""
+              ]}
+              activeFilterCount={workspace.activeFilterCount}
+              filterControls={
+                <>
+                  <label className="filter-field">
+                    <span>Type</span>
+                    <select
+                      aria-label="Inspection type filter"
+                      value={workspace.typeFilter}
+                      onChange={(event) => workspace.setTypeFilter(event.target.value as typeof workspace.typeFilter)}
+                    >
+                      <option value="ALL">All types</option>
+                      <option value="NEW_ASSET">New asset</option>
+                      <option value="SERVICE">Service</option>
+                    </select>
+                  </label>
+                  <label className="filter-field">
+                    <span>Result</span>
+                    <select
+                      aria-label="Inspection result filter"
+                      value={workspace.resultFilter}
+                      onChange={(event) => workspace.setResultFilter(event.target.value)}
+                    >
+                      <option value="ALL">All results</option>
+                      {workspace.resultOptions.map((result) => (
+                        <option key={result} value={result}>
+                          {result === "PENDING" ? "Pending" : result}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button className="secondary-button filter-clear" type="button" onClick={workspace.clearInspectionFilters}>
+                    Clear inspection filters
+                  </button>
+                </>
+              }
+              getRowKey={(inspection) => inspection.id}
+              items={workspace.visibleInspections}
+              onAction={workspace.openCreate}
+              onQueryChange={workspace.setQuery}
+              onRowSelect={workspace.openDetail}
+              query={workspace.query}
+              searchLabel="Search inspections"
+              searchPlaceholder="Search inspections..."
+              source={workspace.source}
+              tableLabel="Inspection records"
+            />
+          </div>
+        )}
       </div>
 
       <InspectionForm

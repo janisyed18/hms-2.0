@@ -12,7 +12,7 @@ interface InspectionDetailProps {
   onApprove: () => Promise<void>;
   onClose: () => void;
   onSaveDraft: (values: InspectionUpdateValues) => Promise<void>;
-  onSubmit: () => Promise<void>;
+  onSubmit: (values: InspectionUpdateValues) => Promise<void>;
 }
 
 function statusClass(status: string) {
@@ -68,6 +68,7 @@ export function InspectionDetail({
   const [passed, setPassed] = useState(true);
   const [measurementNote, setMeasurementNote] = useState("");
   const [isSaving, setSaving] = useState(false);
+  const [isSubmitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (!inspection) {
@@ -93,20 +94,36 @@ export function InspectionDetail({
     );
   }
 
-  async function handleSave(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function draftValues(): InspectionUpdateValues {
     const pressureTest: PressureTestValues = {
       appliedPressureKpa: Number(appliedPressureKpa),
       holdTimeSeconds: Number(holdTimeSeconds),
       passed,
       measurements: measurementsFromNote(measurementNote)
     };
-    setSaving(true);
-    await onSaveDraft({
+    return {
       result: result || null,
       pressureTest
-    });
-    setSaving(false);
+    };
+  }
+
+  async function handleSave(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    try {
+      await onSaveDraft(draftValues());
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSubmitInspection() {
+    setSubmitting(true);
+    try {
+      await onSubmit(draftValues());
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -218,11 +235,12 @@ export function InspectionDetail({
               </button>
               <button
                 className="primary-button"
-                onClick={onSubmit}
+                disabled={isSubmitting}
+                onClick={handleSubmitInspection}
                 type="button"
               >
                 <Send aria-hidden="true" size={16} />
-                Submit inspection
+                {isSubmitting ? "Submitting..." : "Submit inspection"}
               </button>
             </>
           ) : null}
