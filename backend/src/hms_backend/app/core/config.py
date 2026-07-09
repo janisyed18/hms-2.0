@@ -70,13 +70,15 @@ class Settings(BaseSettings):
     phone_verification_ttl_seconds: int = 600
     phone_verification_max_attempts: int = 5
 
-    # Email (OCI Email Delivery via SMTP) — only used in "live" mode.
+    # Email (SMTP provider such as AWS SES) — only used in "live" mode.
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_use_tls: bool = True
     email_from_address: str = "no-reply@batengineering.example"
+    notification_ses_configuration_set: str = ""
+    notification_webhook_secret: str = ""
 
     # SMS (Twilio) — only used in "live" mode.
     twilio_account_sid: str = ""

@@ -120,3 +120,91 @@ variable "enable_deletion_protection" {
   type        = bool
   default     = false
 }
+
+variable "notification_channel_mode" {
+  description = "Notification delivery mode for ECS tasks. Use live only after SES/Twilio secrets are populated."
+  type        = string
+  default     = "console"
+
+  validation {
+    condition     = contains(["console", "live"], var.notification_channel_mode)
+    error_message = "notification_channel_mode must be console or live."
+  }
+}
+
+variable "notification_sender_name" {
+  description = "Display name used in outbound notification emails."
+  type        = string
+  default     = "BAT Engineering"
+}
+
+variable "notification_smtp_host" {
+  description = "SMTP hostname used for live email notifications."
+  type        = string
+  default     = "email-smtp.ap-southeast-2.amazonaws.com"
+}
+
+variable "notification_smtp_port" {
+  description = "SMTP port used for live email notifications."
+  type        = number
+  default     = 587
+}
+
+variable "notification_smtp_use_tls" {
+  description = "Whether the SMTP adapter should negotiate STARTTLS."
+  type        = bool
+  default     = true
+}
+
+variable "notification_email_from_address" {
+  description = "Verified SES email identity used as the From address."
+  type        = string
+  default     = "no-reply@batengineering.example"
+}
+
+variable "notification_ses_configuration_set_name" {
+  description = "Optional existing SES configuration set name. Defaults to hms-dev-notifications."
+  type        = string
+  default     = ""
+}
+
+variable "notification_create_ses_email_identity" {
+  description = "Create an SES email identity for notification_email_from_address. Verification email approval is still manual."
+  type        = bool
+  default     = false
+}
+
+variable "notification_smtp_username" {
+  description = "Initial SES SMTP username stored in Secrets Manager. Prefer updating the created secret directly for rotations."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "notification_smtp_password" {
+  description = "Initial SES SMTP password stored in Secrets Manager. Prefer updating the created secret directly for rotations."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "notification_twilio_account_sid" {
+  description = "Initial Twilio Account SID stored in Secrets Manager."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "notification_twilio_auth_token" {
+  description = "Initial Twilio Auth Token stored in Secrets Manager."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "notification_twilio_from" {
+  description = "Initial Twilio sender, E.164 number or alphanumeric sender ID, stored in Secrets Manager."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

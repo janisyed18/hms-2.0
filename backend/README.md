@@ -236,8 +236,8 @@ Notifications & Alerting spec. Flow:
    unsubscribe; SMS always needs a verified phone (N-04, N-05, N-10). Each row
    has an idempotency key so duplicates never occur (N-07).
 3. The **dispatcher** (`notifications.dispatch`, every 30s) sends PENDING rows
-   through channel adapters (console in dev; OCI Email Delivery + Twilio in
-   `live` mode), with retry/backoff and dead-lettering (N-06).
+   through channel adapters (console in dev; SMTP provider such as AWS SES plus
+   Twilio in `live` mode), with retry/backoff and dead-lettering (N-06).
 4. The **daily scheduler** (`notifications.schedule_retests`, 07:00 UTC) raises
    advance / due / overdue-with-escalation retest reminders (N-02, N-11).
 
@@ -258,6 +258,8 @@ Endpoints:
 Key settings: `NOTIFICATION_CHANNEL_MODE` (`console`|`live`),
 `NOTIFICATION_SENDER_NAME`, `NOTIFICATION_MAX_ATTEMPTS`, `RETEST_ADVANCE_DAYS`,
 `RETEST_OVERDUE_ESCALATION_DAYS`, and (live mode) `SMTP_*` / `TWILIO_*`.
+For AWS SES event tracking, set `NOTIFICATION_SES_CONFIGURATION_SET`; the SMTP
+adapter sends it as the `X-SES-CONFIGURATION-SET` message header.
 
 Force one cycle without waiting for beat:
 

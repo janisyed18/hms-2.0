@@ -17,3 +17,17 @@ api_desired_count          = 1
 worker_desired_count       = 1
 beat_desired_count         = 1
 enable_deletion_protection = false
+
+# Keep console until SES SMTP and Twilio secrets have real values in Secrets Manager.
+notification_channel_mode = "console"
+
+# AWS SES SMTP defaults for ap-southeast-2. Replace the From address with a
+# verified SES identity before switching notification_channel_mode to "live".
+notification_smtp_host         = "email-smtp.ap-southeast-2.amazonaws.com"
+notification_smtp_port         = 587
+notification_smtp_use_tls      = true
+notification_email_from_address = "no-reply@batengineering.example"
+
+# Set true only when you want Terraform to create the SES email identity and
+# trigger the verification email for notification_email_from_address.
+notification_create_ses_email_identity = false

@@ -88,6 +88,26 @@ output "migrate_task_definition" {
   value       = aws_ecs_task_definition.migrate.family
 }
 
+output "notification_secret_name" {
+  description = "Secrets Manager secret containing SMTP/Twilio notification credentials."
+  value       = aws_secretsmanager_secret.notifications.name
+}
+
+output "notification_ses_configuration_set" {
+  description = "SES configuration set used by outbound HMS notification email."
+  value       = aws_sesv2_configuration_set.notifications.configuration_set_name
+}
+
+output "notification_sns_topic_arn" {
+  description = "SNS topic receiving SES notification delivery/bounce/complaint events."
+  value       = aws_sns_topic.notification_events.arn
+}
+
+output "notification_events_queue_url" {
+  description = "SQS queue subscribed to the notification SNS topic for retained provider events."
+  value       = aws_sqs_queue.notification_events.id
+}
+
 output "ecs_security_group_id" {
   description = "Security group used by ECS tasks."
   value       = aws_security_group.ecs.id

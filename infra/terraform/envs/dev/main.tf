@@ -30,9 +30,42 @@ locals {
 
   certificate_service_dns = "certificate-engine.${aws_service_discovery_private_dns_namespace.this.name}"
 
-  app_secret_arn = aws_secretsmanager_secret.app.arn
+  app_secret_arn          = aws_secretsmanager_secret.app.arn
+  notification_secret_arn = aws_secretsmanager_secret.notifications.arn
+  notification_ses_configuration_set_name = (
+    var.notification_ses_configuration_set_name != ""
+    ? var.notification_ses_configuration_set_name
+    : "${local.name}-notifications"
+  )
 
-  backend_secret_environment = [
+  notification_secret_environment = [
+    {
+      name      = "SMTP_USERNAME"
+      valueFrom = "${local.notification_secret_arn}:SMTP_USERNAME::"
+    },
+    {
+      name      = "SMTP_PASSWORD"
+      valueFrom = "${local.notification_secret_arn}:SMTP_PASSWORD::"
+    },
+    {
+      name      = "TWILIO_ACCOUNT_SID"
+      valueFrom = "${local.notification_secret_arn}:TWILIO_ACCOUNT_SID::"
+    },
+    {
+      name      = "TWILIO_AUTH_TOKEN"
+      valueFrom = "${local.notification_secret_arn}:TWILIO_AUTH_TOKEN::"
+    },
+    {
+      name      = "TWILIO_FROM"
+      valueFrom = "${local.notification_secret_arn}:TWILIO_FROM::"
+    },
+    {
+      name      = "NOTIFICATION_WEBHOOK_SECRET"
+      valueFrom = "${local.notification_secret_arn}:NOTIFICATION_WEBHOOK_SECRET::"
+    },
+  ]
+
+  backend_secret_environment = concat([
     {
       name      = "DATABASE_URL"
       valueFrom = "${local.app_secret_arn}:DATABASE_URL::"
@@ -41,7 +74,7 @@ locals {
       name      = "AUTH_BEARER_HMAC_SECRET"
       valueFrom = "${local.app_secret_arn}:AUTH_BEARER_HMAC_SECRET::"
     },
-  ]
+  ], local.notification_secret_environment)
 
   backend_environment = [
     {
@@ -90,7 +123,31 @@ locals {
     },
     {
       name  = "NOTIFICATION_CHANNEL_MODE"
-      value = "console"
+      value = var.notification_channel_mode
+    },
+    {
+      name  = "NOTIFICATION_SENDER_NAME"
+      value = var.notification_sender_name
+    },
+    {
+      name  = "SMTP_HOST"
+      value = var.notification_smtp_host
+    },
+    {
+      name  = "SMTP_PORT"
+      value = tostring(var.notification_smtp_port)
+    },
+    {
+      name  = "SMTP_USE_TLS"
+      value = tostring(var.notification_smtp_use_tls)
+    },
+    {
+      name  = "EMAIL_FROM_ADDRESS"
+      value = var.notification_email_from_address
+    },
+    {
+      name  = "NOTIFICATION_SES_CONFIGURATION_SET"
+      value = local.notification_ses_configuration_set_name
     },
     {
       name  = "ISSUER_NAME"
@@ -388,6 +445,130 @@ resource "aws_secretsmanager_secret_version" "app" {
   })
 }
 
+resource "random_password" "notification_webhook" {
+  length  = 48
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "notifications" {
+  name_prefix = "${local.name}-notifications-"
+}
+
+resource "aws_secretsmanager_secret_version" "notifications" {
+  secret_id = aws_secretsmanager_secret.notifications.id
+  secret_string = jsonencode({
+    SMTP_USERNAME               = var.notification_smtp_username
+    SMTP_PASSWORD               = var.notification_smtp_password
+    TWILIO_ACCOUNT_SID          = var.notification_twilio_account_sid
+    TWILIO_AUTH_TOKEN           = var.notification_twilio_auth_token
+    TWILIO_FROM                 = var.notification_twilio_from
+    NOTIFICATION_WEBHOOK_SECRET = random_password.notification_webhook.result
+  })
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
+
+resource "aws_sns_topic" "notification_events" {
+  name = "${local.name}-notification-events"
+}
+
+resource "aws_sqs_queue" "notification_events" {
+  name                      = "${local.name}-notification-events"
+  message_retention_seconds = 1209600
+}
+
+data "aws_iam_policy_document" "notification_events_queue" {
+  statement {
+    sid     = "AllowSnsSendMessage"
+    effect  = "Allow"
+    actions = ["SQS:SendMessage"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["sns.amazonaws.com"]
+    }
+
+    resources = [aws_sqs_queue.notification_events.arn]
+
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_sns_topic.notification_events.arn]
+    }
+  }
+}
+
+resource "aws_sqs_queue_policy" "notification_events" {
+  queue_url = aws_sqs_queue.notification_events.id
+  policy    = data.aws_iam_policy_document.notification_events_queue.json
+}
+
+resource "aws_sns_topic_subscription" "notification_events_queue" {
+  topic_arn            = aws_sns_topic.notification_events.arn
+  protocol             = "sqs"
+  endpoint             = aws_sqs_queue.notification_events.arn
+  raw_message_delivery = true
+}
+
+data "aws_iam_policy_document" "ses_publish_notification_events" {
+  statement {
+    sid     = "AllowSesPublish"
+    effect  = "Allow"
+    actions = ["SNS:Publish"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ses.amazonaws.com"]
+    }
+
+    resources = [aws_sns_topic.notification_events.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "notification_events" {
+  arn    = aws_sns_topic.notification_events.arn
+  policy = data.aws_iam_policy_document.ses_publish_notification_events.json
+}
+
+resource "aws_sesv2_configuration_set" "notifications" {
+  configuration_set_name = local.notification_ses_configuration_set_name
+}
+
+resource "aws_sesv2_configuration_set_event_destination" "notification_events" {
+  configuration_set_name = aws_sesv2_configuration_set.notifications.configuration_set_name
+  event_destination_name = "${local.name}-notification-events"
+
+  event_destination {
+    enabled = true
+    matching_event_types = [
+      "BOUNCE",
+      "COMPLAINT",
+      "DELIVERY",
+      "DELIVERY_DELAY",
+      "REJECT",
+      "RENDERING_FAILURE",
+      "SEND",
+    ]
+
+    sns_destination {
+      topic_arn = aws_sns_topic.notification_events.arn
+    }
+  }
+}
+
+resource "aws_sesv2_email_identity" "notification_from" {
+  count          = var.notification_create_ses_email_identity ? 1 : 0
+  email_identity = var.notification_email_from_address
+}
+
 resource "aws_iam_role" "ecs_task_execution" {
   name = "${local.name}-ecs-execution"
 
@@ -422,7 +603,10 @@ resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
         Action = [
           "secretsmanager:GetSecretValue",
         ]
-        Resource = aws_secretsmanager_secret.app.arn
+        Resource = [
+          aws_secretsmanager_secret.app.arn,
+          aws_secretsmanager_secret.notifications.arn,
+        ]
       }
     ]
   })
