@@ -138,6 +138,17 @@ variable "notification_sender_name" {
   default     = "BAT Engineering"
 }
 
+variable "notification_email_provider" {
+  description = "Live email provider. AWS dev uses aws_ses so ECS task role credentials are used instead of SMTP secrets."
+  type        = string
+  default     = "aws_ses"
+
+  validation {
+    condition     = contains(["smtp", "aws_ses"], var.notification_email_provider)
+    error_message = "notification_email_provider must be smtp or aws_ses."
+  }
+}
+
 variable "notification_smtp_host" {
   description = "SMTP hostname used for live email notifications."
   type        = string
@@ -159,7 +170,13 @@ variable "notification_smtp_use_tls" {
 variable "notification_email_from_address" {
   description = "Verified SES email identity used as the From address."
   type        = string
-  default     = "no-reply@batengineering.example"
+  default     = "no-reply@hftechnologies.com.au"
+}
+
+variable "notification_ses_region" {
+  description = "AWS region used by the SES API adapter. Defaults to aws_region."
+  type        = string
+  default     = ""
 }
 
 variable "notification_ses_configuration_set_name" {
@@ -171,7 +188,7 @@ variable "notification_ses_configuration_set_name" {
 variable "notification_create_ses_email_identity" {
   description = "Create an SES email identity for notification_email_from_address. Verification email approval is still manual."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "notification_smtp_username" {

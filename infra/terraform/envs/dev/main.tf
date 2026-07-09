@@ -130,6 +130,10 @@ locals {
       value = var.notification_sender_name
     },
     {
+      name  = "NOTIFICATION_EMAIL_PROVIDER"
+      value = var.notification_email_provider
+    },
+    {
       name  = "SMTP_HOST"
       value = var.notification_smtp_host
     },
@@ -144,6 +148,10 @@ locals {
     {
       name  = "EMAIL_FROM_ADDRESS"
       value = var.notification_email_from_address
+    },
+    {
+      name  = "NOTIFICATION_SES_REGION"
+      value = var.notification_ses_region != "" ? var.notification_ses_region : var.aws_region
     },
     {
       name  = "NOTIFICATION_SES_CONFIGURATION_SET"
@@ -651,6 +659,25 @@ resource "aws_iam_role_policy" "ecs_task_media" {
           "s3:ListBucket",
         ]
         Resource = aws_s3_bucket.media.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "ecs_task_notifications" {
+  name = "${local.name}-ecs-task-notifications"
+  role = aws_iam_role.ecs_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ses:SendEmail",
+          "ses:SendRawEmail",
+        ]
+        Resource = "*"
       }
     ]
   })

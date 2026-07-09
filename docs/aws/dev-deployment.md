@@ -93,34 +93,32 @@ curl "$(terraform output -raw api_url)/health/ready"
 The backend already supports in-app notifications in all environments. Live
 email/SMS delivery on AWS uses:
 
-- AWS SES SMTP for email.
+- AWS SES API for email through the ECS task role.
 - Twilio REST API for SMS.
-- AWS Secrets Manager for SMTP/Twilio credentials and the notification webhook
-  secret.
+- AWS Secrets Manager for Twilio credentials and the notification webhook secret.
 - SES configuration set `$(terraform output -raw notification_ses_configuration_set)`
   publishing delivery/bounce/complaint events to SNS topic
   `$(terraform output -raw notification_sns_topic_arn)`.
 - SQS queue `$(terraform output -raw notification_events_queue_url)` subscribed
   to that SNS topic so provider events are retained for later processing.
 
-Terraform creates the notification secret, but the real provider values must be
-stored before switching ECS to `NOTIFICATION_CHANNEL_MODE=live`.
+Terraform creates the notification secret, but the Twilio values must be stored
+and the SES sender must be verified before switching ECS to
+`NOTIFICATION_CHANNEL_MODE=live`.
 
 ```bash
 cd infra/terraform/envs/dev
 NOTIFICATION_SECRET="$(terraform output -raw notification_secret_name)"
 ```
 
-Set the provider values in your shell without printing them:
+Set the Twilio values in your shell without printing them:
 
 ```bash
-read -rsp "SES SMTP username: " SES_SMTP_USERNAME; echo
-read -rsp "SES SMTP password: " SES_SMTP_PASSWORD; echo
 read -rsp "Twilio Account SID: " TWILIO_ACCOUNT_SID; echo
 read -rsp "Twilio Auth Token: " TWILIO_AUTH_TOKEN; echo
 read -rp "Twilio From number/sender: " TWILIO_FROM
 WEBHOOK_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
-export SES_SMTP_USERNAME SES_SMTP_PASSWORD TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM WEBHOOK_SECRET
+export TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM WEBHOOK_SECRET
 ```
 
 Store them in AWS Secrets Manager:
@@ -131,8 +129,8 @@ import json
 import os
 
 print(json.dumps({
-    "SMTP_USERNAME": os.environ["SES_SMTP_USERNAME"],
-    "SMTP_PASSWORD": os.environ["SES_SMTP_PASSWORD"],
+    "SMTP_USERNAME": "",
+    "SMTP_PASSWORD": "",
     "TWILIO_ACCOUNT_SID": os.environ["TWILIO_ACCOUNT_SID"],
     "TWILIO_AUTH_TOKEN": os.environ["TWILIO_AUTH_TOKEN"],
     "TWILIO_FROM": os.environ["TWILIO_FROM"],
@@ -145,20 +143,20 @@ aws secretsmanager put-secret-value \
   --secret-id "$NOTIFICATION_SECRET" \
   --secret-string file:///tmp/hms-notifications-secret.json
 rm /tmp/hms-notifications-secret.json
-unset SES_SMTP_USERNAME SES_SMTP_PASSWORD TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM WEBHOOK_SECRET
+unset TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN TWILIO_FROM WEBHOOK_SECRET
 ```
 
-Use a real SES-verified From address. If Terraform should create the email
-identity verification request, set this in `terraform.tfvars` and approve the
-verification email:
+Use a real SES-verified From address. Terraform creates the email identity
+verification request when `notification_create_ses_email_identity = true`; the
+recipient still needs to approve the SES verification email.
 
 ```hcl
 notification_email_from_address       = "alerts@example.com"
 notification_create_ses_email_identity = true
 ```
 
-After the SES identity is verified and the secret contains real values, switch
-delivery mode:
+After the SES identity is verified and the Twilio secret contains real values,
+switch delivery mode:
 
 ```hcl
 notification_channel_mode = "live"

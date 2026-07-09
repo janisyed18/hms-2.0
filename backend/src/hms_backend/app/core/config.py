@@ -55,7 +55,7 @@ class Settings(BaseSettings):
 
     # --- Notifications (spec: Notifications & Alerting) ---
     notifications_enabled: bool = True
-    # "console" logs messages (dev default); "live" uses SMTP + Twilio.
+    # "console" logs messages (dev default); "live" uses email + Twilio.
     notification_channel_mode: str = "console"
     notification_sender_name: str = "BAT Engineering"
     notification_max_attempts: int = 5
@@ -70,13 +70,15 @@ class Settings(BaseSettings):
     phone_verification_ttl_seconds: int = 600
     phone_verification_max_attempts: int = 5
 
-    # Email (SMTP provider such as AWS SES) — only used in "live" mode.
+    # Email — only used in "live" mode.
+    notification_email_provider: Literal["smtp", "aws_ses"] = "smtp"
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_use_tls: bool = True
     email_from_address: str = "no-reply@batengineering.example"
+    notification_ses_region: str = ""
     notification_ses_configuration_set: str = ""
     notification_webhook_secret: str = ""
 
