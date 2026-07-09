@@ -1,3 +1,4 @@
+import { AssetDetail } from "./AssetDetail";
 import { AssetForm } from "./AssetForm";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
 import { useAssetsWorkspace } from "../hooks/useAssetsWorkspace";
@@ -96,16 +97,38 @@ export function AssetsWorkspace() {
       header: "Actions",
       render: (asset) => (
         <span className="row-actions">
-          <button type="button" onClick={() => workspace.openEdit(asset)}>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              workspace.openEdit(asset);
+            }}
+          >
             Edit
           </button>
-          <button type="button" onClick={() => workspace.archiveAsset(asset)}>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              workspace.archiveAsset(asset);
+            }}
+          >
             Archive
           </button>
         </span>
       )
     }
   ];
+
+  if (workspace.viewingAsset) {
+    return (
+      <AssetDetail
+        asset={workspace.viewingAsset}
+        onBack={workspace.closeDetail}
+        onEdit={workspace.openEdit}
+      />
+    );
+  }
 
   return (
     <>
@@ -199,6 +222,7 @@ export function AssetsWorkspace() {
         getRowKey={(asset) => asset.id}
         items={workspace.visibleAssets}
         onAction={workspace.openCreate}
+        onRowClick={workspace.openDetail}
         onQueryChange={workspace.setQuery}
         query={workspace.query}
         searchLabel="Search assets"

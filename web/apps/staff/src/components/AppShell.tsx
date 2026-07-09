@@ -19,6 +19,7 @@ import {
   TableProperties,
   UserCog,
   UsersRound,
+  X,
   type LucideIcon
 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
@@ -318,7 +319,17 @@ export function AppShell({
           </div>
           {openMenu ? (
             <div className="topbar-popover" role="dialog" aria-label={popoverTitle(openMenu)}>
-              <strong>{popoverTitle(openMenu)}</strong>
+              <div className="topbar-popover-header">
+                <strong>{popoverTitle(openMenu)}</strong>
+                <button
+                  aria-label={`Close ${popoverTitle(openMenu).toLowerCase()}`}
+                  className="icon-button light popover-close"
+                  onClick={() => setOpenMenu(null)}
+                  type="button"
+                >
+                  <X aria-hidden="true" size={16} />
+                </button>
+              </div>
               <p>{popoverBody(openMenu, source, session)}</p>
             </div>
           ) : null}
