@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,7 +20,11 @@ from sqlalchemy.orm import selectinload
 from hms_backend.app.api.dependencies import get_session
 from hms_backend.app.api.schemas import CertificateVerifyResponse
 from hms_backend.app.core.config import settings
-from hms_backend.app.core.object_storage import ObjectNotFoundError, get_object_storage
+from hms_backend.app.core.object_storage import (
+    ObjectNotFoundError,
+    PresignedObjectStorage,
+    get_object_storage,
+)
 from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.certificates.mapping import (
     build_facts,
@@ -120,8 +125,22 @@ async def download_certificate_pdf(
     session: SessionDep,
 ) -> Response:
     certificate = await _load_by_token(session, public_token)
+    storage = get_object_storage()
+
+    # With an S3-backed store, redirect the client straight to a short-lived
+    # presigned URL so the (potentially large) PDF is served by S3 rather than
+    # streamed through the API task. Missing objects surface as a clean 404.
+    if isinstance(storage, PresignedObjectStorage):
+        if not storage.exists(certificate.pdf_object_key):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Certificate PDF is not available",
+            )
+        url = storage.presigned_get_url(certificate.pdf_object_key)
+        return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
     try:
-        pdf = get_object_storage().get(certificate.pdf_object_key)
+        pdf = storage.get(certificate.pdf_object_key)
     except ObjectNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

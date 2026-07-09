@@ -19,6 +19,7 @@ interface ModuleTableProps<TItem> {
   getRowKey: (item: TItem) => string;
   items: TItem[];
   onAction: () => void;
+  onRowClick?: (item: TItem) => void;
   onQueryChange: (value: string) => void;
   query: string;
   searchLabel: string;
@@ -53,6 +54,7 @@ export function ModuleTable<TItem>({
   getRowKey,
   items,
   onAction,
+  onRowClick,
   onQueryChange,
   query,
   searchLabel,
@@ -141,7 +143,22 @@ export function ModuleTable<TItem>({
           </thead>
           <tbody>
             {items.map((item) => (
-              <tr key={getRowKey(item)}>
+              <tr
+                key={getRowKey(item)}
+                className={onRowClick ? "is-clickable" : undefined}
+                onClick={onRowClick ? () => onRowClick(item) : undefined}
+                onKeyDown={
+                  onRowClick
+                    ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onRowClick(item);
+                        }
+                      }
+                    : undefined
+                }
+                tabIndex={onRowClick ? 0 : undefined}
+              >
                 {columns.map((column) => (
                   <td key={column.header}>{column.render(item)}</td>
                 ))}

@@ -430,6 +430,41 @@ async def run_retest_scheduler(
     return {"emitted": emitted}
 
 
+async def apply_delivery_receipt(
+    session: AsyncSession,
+    *,
+    provider_message_id: str,
+    status: NotificationStatus,
+) -> bool:
+    """Update a notification's delivery status from a provider webhook (N-06).
+
+    Matches on ``provider_message_id``. Returns True if a row was updated.
+    """
+    if not provider_message_id:
+        return False
+    notification = await session.scalar(
+        select(Notification).where(
+            Notification.provider_message_id == provider_message_id
+        )
+    )
+    if notification is None:
+        return False
+    now = _utc_now()
+    if status is NotificationStatus.DELIVERED:
+        notification.status = status.value
+        notification.delivered_at = now
+    elif status in (NotificationStatus.FAILED, NotificationStatus.BOUNCED):
+        notification.status = status.value
+        notification.failed_at = now
+        notification.error = f"provider reported {status.value.lower()}"
+    elif status is NotificationStatus.SENT and notification.status == (
+        NotificationStatus.PENDING.value
+    ):
+        notification.status = status.value
+        notification.sent_at = now
+    return True
+
+
 async def _emit(
     session: AsyncSession,
     category: NotificationCategory,

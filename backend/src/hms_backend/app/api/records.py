@@ -36,6 +36,7 @@ from hms_backend.app.api.schemas import (
     InspectionCreate,
     InspectionListResponse,
     InspectionRead,
+    InspectionRejectRequest,
     InspectionUpdate,
     LocationSummary,
     LookupListResponse,
@@ -1182,8 +1183,77 @@ async def approve_inspection(
         action="inspection.approved",
         before=before,
     )
+    payload = _inspection_event_payload(inspection)
+    await emit_event(
+        session,
+        category=NotificationCategory.INSPECTION_APPROVED,
+        aggregate_type="inspection",
+        aggregate_id=inspection.id,
+        payload=payload,
+    )
+    # A failed result is a safety event to the customer/owner/reviewer.
+    if (inspection.result or "").upper() in {"FAIL", "FAILED"}:
+        await emit_event(
+            session,
+            category=NotificationCategory.INSPECTION_FAILED,
+            aggregate_type="inspection",
+            aggregate_id=inspection.id,
+            payload={**payload, "reviewer_user_id": principal.user_id},
+        )
     await session.commit()
     return _inspection_read(inspection)
+
+
+@router.post("/inspections/{inspection_id}/reject", response_model=InspectionRead)
+async def reject_inspection(
+    inspection_id: str,
+    payload: InspectionRejectRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionRead:
+    _require_certificate_approve(principal)
+    inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    if inspection.status != InspectionStatus.SUBMITTED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Inspection must be submitted before rejection",
+        )
+
+    before = inspection.to_audit_dict()
+    inspection.status = InspectionStatus.REJECTED.value
+    inspection.reviewer_user_id = principal.user_id
+    inspection.rejected_at = utc_now()
+    await record_update(
+        session,
+        inspection,
+        actor_id=principal.user_id,
+        action="inspection.rejected",
+        before=before,
+    )
+    event_payload = _inspection_event_payload(inspection)
+    event_payload["reason"] = (payload.reason or "").strip()
+    await emit_event(
+        session,
+        category=NotificationCategory.INSPECTION_REJECTED,
+        aggregate_type="inspection",
+        aggregate_id=inspection.id,
+        payload=event_payload,
+    )
+    await session.commit()
+    return _inspection_read(inspection)
+
+
+def _inspection_event_payload(inspection: Inspection) -> dict[str, object]:
+    asset = inspection.asset
+    return {
+        "inspection_id": inspection.id,
+        "asset_id": asset.id if asset else None,
+        "asset_number": asset.asset_number if asset else None,
+        "customer_id": asset.customer_id if asset else None,
+        "inspector_user_id": inspection.inspector_user_id,
+        "reviewer_user_id": inspection.reviewer_user_id,
+        "link": settings.public_base_url.rstrip("/"),
+    }
 
 
 @router.post(
@@ -1380,6 +1450,19 @@ async def revoke_certificate(
         actor_id=principal.user_id,
         action="certificate.revoked",
         next_status=CertificateStatus.REVOKED.value,
+    )
+    await emit_event(
+        session,
+        category=NotificationCategory.CERTIFICATE_REVOKED,
+        aggregate_type="certificate",
+        aggregate_id=certificate.id,
+        payload={
+            "customer_id": certificate.asset.customer_id,
+            "asset_id": certificate.asset_id,
+            "asset_number": certificate.asset.asset_number,
+            "certificate_number": certificate.number,
+            "link": settings.public_base_url.rstrip("/"),
+        },
     )
     await session.commit()
     return _certificate_read(certificate)

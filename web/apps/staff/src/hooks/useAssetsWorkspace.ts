@@ -124,6 +124,7 @@ export function useAssetsWorkspace() {
   const [dueTo, setDueTo] = useState("");
   const [editingAsset, setEditingAsset] = useState<AssetRecord | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
+  const [viewingAsset, setViewingAsset] = useState<AssetRecord | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -240,6 +241,14 @@ export function useAssetsWorkspace() {
     setFormOpen(true);
   }
 
+  function openDetail(asset: AssetRecord) {
+    setViewingAsset(asset);
+  }
+
+  function closeDetail() {
+    setViewingAsset(null);
+  }
+
   async function saveAsset(values: AssetFormValues) {
     let saved = localAsset(values, customers, productOptions, editingAsset);
     if (source === "api") {
@@ -261,6 +270,10 @@ export function useAssetsWorkspace() {
       }
       return [saved, ...current];
     });
+    // Keep an open detail view in sync with the saved record.
+    setViewingAsset((current) =>
+      current && editingAsset && current.id === editingAsset.id ? saved : current
+    );
     setFormOpen(false);
     setEditingAsset(null);
   }
@@ -273,6 +286,7 @@ export function useAssetsWorkspace() {
       await createHmsClient().archiveAsset(asset.id, asset.etag);
     }
     setAssets((current) => current.filter((item) => item.id !== asset.id));
+    setViewingAsset((current) => (current?.id === asset.id ? null : current));
   }
 
   function clearAssetFilters() {
@@ -296,6 +310,7 @@ export function useAssetsWorkspace() {
     archiveAsset,
     assets,
     clearAssetFilters,
+    closeDetail,
     customerFilter,
     customerOptions,
     dueFrom,
@@ -305,6 +320,7 @@ export function useAssetsWorkspace() {
     lifecycleFilter,
     locationOptions,
     openCreate,
+    openDetail,
     openEdit,
     productFilter,
     productOptions,
@@ -318,6 +334,7 @@ export function useAssetsWorkspace() {
     setProductFilter,
     setQuery,
     source,
+    viewingAsset,
     visibleAssets
   };
 }

@@ -123,6 +123,34 @@ _TEMPLATES: dict[tuple[NotificationCategory, NotificationChannel], _Template] = 
     (_Cat.RETEST_OVERDUE, _Ch.SMS): _Template(
         "", "HMS: asset {asset_number} retest OVERDUE {days_overdue}d. {link}"
     ),
+    # --- Device & identity ---
+    (_Cat.DEVICE_REGISTERED, _Ch.EMAIL): _Template(
+        "New device registered on your HMS account",
+        "A new device ({device_label}) was registered on your account. If this "
+        "was not you, contact BAT Engineering immediately.",
+    ),
+    (_Cat.DEVICE_REGISTERED, _Ch.SMS): _Template(
+        "", "HMS SECURITY: a new device was registered on your account. {link}"
+    ),
+    (_Cat.DEVICE_REVOKED, _Ch.EMAIL): _Template(
+        "A device on your HMS account was revoked",
+        "Device {device_label} has been revoked and will wipe its local data on "
+        "next sync.",
+    ),
+    (_Cat.USER_INVITATION, _Ch.EMAIL): _Template(
+        "You have been invited to BAT Engineering HMS",
+        "An account has been created for you in HMS.\n\nActivate it here: {link}",
+    ),
+    (_Cat.PASSWORD_RESET, _Ch.EMAIL): _Template(
+        "Reset your HMS password",
+        "A password reset was requested for your HMS account.\n\nReset it here "
+        "(link expires shortly): {link}\n\nIf you did not request this, you can "
+        "ignore this email.",
+    ),
+    (_Cat.ROLE_CHANGED, _Ch.EMAIL): _Template(
+        "Your HMS role was updated",
+        "Your role in HMS has changed to {role}.",
+    ),
 }
 
 _SENDER_LINE = "BAT Engineering — {issuer_identifier}"

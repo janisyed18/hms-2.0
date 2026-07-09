@@ -290,6 +290,10 @@ class InspectionUpdate(BaseModel):
     pressure_test: PressureTestWrite | None = None
 
 
+class InspectionRejectRequest(BaseModel):
+    reason: str | None = None
+
+
 class InspectionAssetSummary(BaseModel):
     id: str
     asset_number: str

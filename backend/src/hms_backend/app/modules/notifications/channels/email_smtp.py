@@ -17,6 +17,20 @@ from hms_backend.app.modules.notifications.enums import NotificationChannel
 logger = logging.getLogger("hms_backend.notifications.email")
 
 
+def build_email_message(settings: Settings, message: OutgoingMessage) -> EmailMessage:
+    """Build a multipart (text + optional HTML) email. Pure — testable, no IO."""
+    email = EmailMessage()
+    email["From"] = (
+        f"{settings.notification_sender_name} <{settings.email_from_address}>"
+    )
+    email["To"] = message.to_address
+    email["Subject"] = message.subject or settings.notification_sender_name
+    email.set_content(message.body_text)
+    if message.body_html:
+        email.add_alternative(message.body_html, subtype="html")
+    return email
+
+
 class SmtpEmailAdapter:
     channel = NotificationChannel.EMAIL
 
@@ -25,13 +39,7 @@ class SmtpEmailAdapter:
 
     async def send(self, message: OutgoingMessage) -> DeliveryResult:
         s = self._settings
-        email = EmailMessage()
-        email["From"] = f"{s.notification_sender_name} <{s.email_from_address}>"
-        email["To"] = message.to_address
-        email["Subject"] = message.subject or s.notification_sender_name
-        email.set_content(message.body_text)
-        if message.body_html:
-            email.add_alternative(message.body_html, subtype="html")
+        email = build_email_message(s, message)
 
         try:
             result = await aiosmtplib.send(
