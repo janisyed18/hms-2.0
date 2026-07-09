@@ -13,6 +13,7 @@ import type { CustomerRecord } from "../domain/types";
 interface CustomerDetailProps {
   customer: CustomerRecord | null;
   activeTab: string;
+  onClose: () => void;
   onTabChange: (tab: string) => void;
 }
 
@@ -25,6 +26,7 @@ function statusClass(value: string) {
 export function CustomerDetail({
   customer,
   activeTab,
+  onClose,
   onTabChange
 }: CustomerDetailProps) {
   if (!customer) {
@@ -52,7 +54,12 @@ export function CustomerDetail({
           </div>
         </div>
         <div className="detail-actions">
-          <button className="icon-button light" aria-label="Close detail" type="button">
+          <button
+            className="icon-button light"
+            aria-label="Close customer detail"
+            onClick={onClose}
+            type="button"
+          >
             <X size={17} />
           </button>
           <button className="icon-button light" aria-label="More detail actions" type="button">

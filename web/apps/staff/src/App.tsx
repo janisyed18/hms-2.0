@@ -208,7 +208,7 @@ export function HmsApp({ initialSession }: AppProps = {}) {
         </main>
       ) : renderedActiveModule === "customers" ? (
         <>
-          <main className="customer-page">
+          <main className={`customer-page${workspace.selectedCustomer ? "" : " detail-closed"}`}>
             <div className="customer-main">
               <CustomerTable
                 customers={workspace.visibleCustomers}
@@ -225,11 +225,14 @@ export function HmsApp({ initialSession }: AppProps = {}) {
               />
               <ActivityFeed items={workspace.selectedCustomer?.metrics.activity ?? []} />
             </div>
-            <CustomerDetail
-              customer={workspace.selectedCustomer}
-              activeTab={workspace.activeTab}
-              onTabChange={workspace.setActiveTab}
-            />
+            {workspace.selectedCustomer ? (
+              <CustomerDetail
+                customer={workspace.selectedCustomer}
+                activeTab={workspace.activeTab}
+                onClose={workspace.closeDetail}
+                onTabChange={workspace.setActiveTab}
+              />
+            ) : null}
           </main>
           <CustomerForm
             open={workspace.isFormOpen}

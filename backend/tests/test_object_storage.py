@@ -6,7 +6,11 @@ import pytest
 
 import hms_backend.app.core.object_storage as storage_module
 from hms_backend.app.core.config import settings
-from hms_backend.app.core.object_storage import ObjectNotFoundError, S3ObjectStorage
+from hms_backend.app.core.object_storage import (
+    ObjectNotFoundError,
+    PresignedObjectStorage,
+    S3ObjectStorage,
+)
 
 
 class _FakeS3Error(Exception):
@@ -17,9 +21,13 @@ class _FakeS3Error(Exception):
 class _FakeBody:
     def __init__(self, data: bytes) -> None:
         self._data = data
+        self.closed = False
 
     def read(self) -> bytes:
         return self._data
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class _FakeS3Client:
@@ -33,10 +41,12 @@ class _FakeS3Client:
         Key: str,
         Body: bytes,
         ContentType: str,
+        **kwargs: Any,
     ) -> dict[str, object]:
         self.objects[(Bucket, Key)] = {
             "Body": Body,
             "ContentType": ContentType,
+            **kwargs,
         }
         return {}
 
@@ -51,6 +61,18 @@ class _FakeS3Client:
         if (Bucket, Key) not in self.objects:
             raise _FakeS3Error("404")
         return {}
+
+    def generate_presigned_url(
+        self,
+        operation: str,
+        *,
+        Params: dict[str, str],
+        ExpiresIn: int,
+    ) -> str:
+        return (
+            f"https://s3.example/{Params['Bucket']}/{Params['Key']}"
+            f"?op={operation}&exp={ExpiresIn}"
+        )
 
 
 def test_s3_object_storage_round_trips_with_prefix() -> None:
@@ -73,6 +95,9 @@ def test_s3_object_storage_round_trips_with_prefix() -> None:
     assert client.objects[
         ("hms-dev-media", "dev/media/certificates/CERT-1.pdf")
     ]["ContentType"] == "application/pdf"
+    assert client.objects[("hms-dev-media", "dev/media/certificates/CERT-1.pdf")][
+        "ServerSideEncryption"
+    ] == "AES256"
 
 
 def test_s3_object_storage_reports_missing_objects() -> None:
@@ -98,6 +123,22 @@ def test_s3_object_storage_rejects_escaping_keys() -> None:
         storage.put("../secret.pdf", b"data")
 
 
+def test_s3_object_storage_presigns_downloads_with_prefix() -> None:
+    storage = S3ObjectStorage(
+        bucket="hms-dev-media",
+        prefix="dev/media",
+        presign_expiry_seconds=900,
+        client=_FakeS3Client(),
+    )
+
+    url = storage.presigned_get_url("certificates/CERT-1.pdf")
+
+    assert "hms-dev-media/dev/media/certificates/CERT-1.pdf" in url
+    assert "exp=900" in url
+    assert "exp=60" in storage.presigned_get_url("k", expires_in=60)
+    assert isinstance(storage, PresignedObjectStorage)
+
+
 def test_storage_factory_selects_s3_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_client = _FakeS3Client()
     monkeypatch.setattr(settings, "object_storage_backend", "s3")
@@ -108,11 +149,15 @@ def test_storage_factory_selects_s3_backend(monkeypatch: pytest.MonkeyPatch) -> 
         "object_storage_s3_region",
         "ap-southeast-2",
     )
+    monkeypatch.setattr(settings, "object_storage_s3_endpoint_url", "")
+    monkeypatch.setattr(settings, "object_storage_s3_presign_expiry_seconds", 120)
+    monkeypatch.setattr(settings, "object_storage_s3_sse", "AES256")
+    monkeypatch.setattr(settings, "object_storage_s3_sse_kms_key_id", "")
     monkeypatch.setattr(storage_module, "_storage", None)
     monkeypatch.setattr(
         storage_module,
         "_create_s3_client",
-        lambda region_name: fake_client,
+        lambda region_name, endpoint_url="": fake_client,
     )
 
     storage = storage_module.get_object_storage()

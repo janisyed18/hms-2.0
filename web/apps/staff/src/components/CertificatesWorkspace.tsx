@@ -145,7 +145,7 @@ export function CertificatesWorkspace() {
         </div>
       </div>
 
-      <div className="inspection-layout">
+      <div className={`inspection-layout${workspace.selectedCertificate ? "" : " detail-closed"}`}>
         <div className="inspection-table-wrap">
           <ModuleTable
             actionLabel="Issue Certificate"
@@ -191,19 +191,23 @@ export function CertificatesWorkspace() {
             items={workspace.visibleCertificates}
             onAction={workspace.openCreate}
             onQueryChange={workspace.setQuery}
+            onRowSelect={workspace.openDetail}
             query={workspace.query}
             searchLabel="Search certificates"
             searchPlaceholder="Search certificates..."
+            selectedRowKey={workspace.selectedCertificate?.id ?? null}
             source={workspace.source}
             tableLabel="Certificate records"
           />
         </div>
-        <CertificateDetail
-          certificate={workspace.selectedCertificate}
-          onClose={workspace.closeDetail}
-          onRevoke={workspace.revokeCertificate}
-          onSupersede={workspace.supersedeCertificate}
-        />
+        {workspace.selectedCertificate ? (
+          <CertificateDetail
+            certificate={workspace.selectedCertificate}
+            onClose={workspace.closeDetail}
+            onRevoke={workspace.revokeCertificate}
+            onSupersede={workspace.supersedeCertificate}
+          />
+        ) : null}
       </div>
 
       <CertificateForm

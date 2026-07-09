@@ -170,30 +170,52 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
       </div>
 
       <div className="dashboard-layout">
-        <section className="data-panel overdue-panel">
-          <div className="panel-heading">
-            <div>
-              <h2>Overdue Retests</h2>
-              <p>23 assets past their retest due date</p>
+        <div className="dashboard-primary">
+          <section className="data-panel overdue-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Overdue Retests</h2>
+                <p>23 assets past their retest due date</p>
+              </div>
+              <div className="panel-actions">
+                <button className="secondary-button" type="button">
+                  <Download aria-hidden="true" size={15} />
+                  Export
+                </button>
+                <button className="danger-button" type="button">Send Escalation</button>
+              </div>
             </div>
-            <div className="panel-actions">
-              <button className="secondary-button" type="button">
-                <Download aria-hidden="true" size={15} />
-                Export
-              </button>
-              <button className="danger-button" type="button">Send Escalation</button>
+            <OperationsTable
+              ariaLabel="Overdue retests"
+              columns={["Asset", "Customer", "Product", "Due Date", "Days Overdue", "Status"]}
+              rows={overdueRows}
+            />
+            <div className="panel-footer">
+              <span>Showing 5 of 23 overdue</span>
+              <button type="button">View all</button>
             </div>
-          </div>
-          <OperationsTable
-            ariaLabel="Overdue retests"
-            columns={["Asset", "Customer", "Product", "Due Date", "Days Overdue", "Status"]}
-            rows={overdueRows}
-          />
-          <div className="panel-footer">
-            <span>Showing 5 of 23 overdue</span>
-            <button type="button">View all</button>
-          </div>
-        </section>
+          </section>
+
+          <section className="data-panel awaiting-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Awaiting Review</h2>
+                <p>8 inspections submitted, pending reviewer approval</p>
+              </div>
+              <button className="secondary-button" type="button">Review All</button>
+            </div>
+            <div className="review-strip">
+              {awaitingReviewRows.map(([inspection, asset, status, note]) => (
+                <article key={inspection}>
+                  <span className="asset-code">{inspection}</span>
+                  <strong>{asset}</strong>
+                  <span className={`mini-status ${status.toLowerCase()}`}>{status}</span>
+                  <p>{note}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
 
         <aside className="dashboard-side">
           <section className="data-panel health-panel">
@@ -227,26 +249,6 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
           </section>
         </aside>
       </div>
-
-      <section className="data-panel awaiting-panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Awaiting Review</h2>
-            <p>8 inspections submitted, pending reviewer approval</p>
-          </div>
-          <button className="secondary-button" type="button">Review All</button>
-        </div>
-        <div className="review-strip">
-          {awaitingReviewRows.map(([inspection, asset, status, note]) => (
-            <article key={inspection}>
-              <span className="asset-code">{inspection}</span>
-              <strong>{asset}</strong>
-              <span className={`mini-status ${status.toLowerCase()}`}>{status}</span>
-              <p>{note}</p>
-            </article>
-          ))}
-        </div>
-      </section>
     </section>
   );
 }

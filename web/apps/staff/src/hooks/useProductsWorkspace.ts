@@ -25,6 +25,7 @@ export function useProductsWorkspace() {
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [standardFilter, setStandardFilter] = useState("ALL");
   const [editingProduct, setEditingProduct] = useState<ProductRecord | null>(null);
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
 
   useEffect(() => {
@@ -71,14 +72,28 @@ export function useProductsWorkspace() {
     [products]
   );
 
+  const selectedProduct =
+    selectedProductId
+      ? products.find((product) => product.id === selectedProductId) ?? null
+      : null;
+
   function openCreate() {
     setEditingProduct(null);
     setFormOpen(true);
   }
 
   function openEdit(product: ProductRecord) {
+    setSelectedProductId(product.id);
     setEditingProduct(product);
     setFormOpen(true);
+  }
+
+  function openDetail(product: ProductRecord) {
+    setSelectedProductId(product.id);
+  }
+
+  function closeDetail() {
+    setSelectedProductId(null);
   }
 
   async function saveProduct(values: ProductFormValues) {
@@ -102,6 +117,7 @@ export function useProductsWorkspace() {
       }
       return [saved, ...current];
     });
+    setSelectedProductId(saved.id);
     setFormOpen(false);
     setEditingProduct(null);
   }
@@ -114,6 +130,9 @@ export function useProductsWorkspace() {
       await createHmsClient().archiveProduct(product.id, product.etag);
     }
     setProducts((current) => current.filter((item) => item.id !== product.id));
+    if (selectedProductId === product.id) {
+      setSelectedProductId(null);
+    }
   }
 
   function clearProductFilters() {
@@ -131,14 +150,17 @@ export function useProductsWorkspace() {
     archiveProduct,
     categoryFilter,
     categoryOptions,
+    closeDetail,
     clearProductFilters,
     editingProduct,
     isFormOpen,
     openCreate,
+    openDetail,
     openEdit,
     products,
     query,
     saveProduct,
+    selectedProduct,
     setCategoryFilter,
     setFormOpen,
     setQuery,

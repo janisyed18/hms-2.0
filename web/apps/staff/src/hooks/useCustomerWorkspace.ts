@@ -64,11 +64,13 @@ export function useCustomerWorkspace() {
     });
   }, [customers, query, riskFilter, statusFilter]);
 
-  const selectedCustomer =
-    customers.find((customer) => customer.id === selectedId) ??
-    visibleCustomers[0] ??
-    customers[0] ??
-    null;
+  const selectedCustomer = selectedId
+    ? customers.find((customer) => customer.id === selectedId) ?? null
+    : null;
+
+  function closeDetail() {
+    setSelectedId(null);
+  }
 
   async function createCustomer(values: CustomerFormValues) {
     let created: CustomerRecord;
@@ -92,6 +94,7 @@ export function useCustomerWorkspace() {
 
   return {
     activeTab,
+    closeDetail,
     createCustomer,
     customers,
     isFormOpen,

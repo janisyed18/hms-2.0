@@ -149,7 +149,7 @@ export function InspectionsWorkspace() {
         </div>
       </div>
 
-      <div className="inspection-layout">
+      <div className={`inspection-layout${workspace.selectedInspection ? "" : " detail-closed"}`}>
         <div className="inspection-table-wrap">
           <ModuleTable
             actionLabel="Add Inspection"
@@ -204,20 +204,24 @@ export function InspectionsWorkspace() {
             items={workspace.visibleInspections}
             onAction={workspace.openCreate}
             onQueryChange={workspace.setQuery}
+            onRowSelect={workspace.openDetail}
             query={workspace.query}
             searchLabel="Search inspections"
             searchPlaceholder="Search inspections..."
+            selectedRowKey={workspace.selectedInspection?.id ?? null}
             source={workspace.source}
             tableLabel="Inspection records"
           />
         </div>
-        <InspectionDetail
-          inspection={workspace.selectedInspection}
-          onApprove={workspace.approveInspection}
-          onClose={workspace.closeDetail}
-          onSaveDraft={workspace.saveInspectionUpdate}
-          onSubmit={workspace.submitInspection}
-        />
+        {workspace.selectedInspection ? (
+          <InspectionDetail
+            inspection={workspace.selectedInspection}
+            onApprove={workspace.approveInspection}
+            onClose={workspace.closeDetail}
+            onSaveDraft={workspace.saveInspectionUpdate}
+            onSubmit={workspace.submitInspection}
+          />
+        ) : null}
       </div>
 
       <InspectionForm

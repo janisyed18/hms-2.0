@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     object_storage_s3_bucket: str = ""
     object_storage_s3_prefix: str = ""
     object_storage_s3_region: str = ""
+    object_storage_s3_endpoint_url: str = ""
+    object_storage_s3_presign_expiry_seconds: int = 900
+    object_storage_s3_sse: str = "AES256"
+    object_storage_s3_sse_kms_key_id: str = ""
 
     # Issuer identity stamped onto certificates (mirrors the engine defaults).
     issuer_name: str = "BAT Engineering Pty Ltd"

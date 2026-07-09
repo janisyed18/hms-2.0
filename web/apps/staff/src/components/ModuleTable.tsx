@@ -1,5 +1,10 @@
 import { Download, Filter, Plus, Search } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import {
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode
+} from "react";
 
 import { WorkspaceState } from "./WorkspaceState";
 
@@ -19,10 +24,12 @@ interface ModuleTableProps<TItem> {
   getRowKey: (item: TItem) => string;
   items: TItem[];
   onAction: () => void;
+  onRowSelect?: (item: TItem) => void;
   onQueryChange: (value: string) => void;
   query: string;
   searchLabel: string;
   searchPlaceholder: string;
+  selectedRowKey?: string | null;
   source: "api" | "mock";
   tableLabel: string;
 }
@@ -42,6 +49,17 @@ function downloadCsv(filename: string, rows: string[][]) {
   URL.revokeObjectURL(url);
 }
 
+function isInteractiveTarget(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    Boolean(
+      target.closest(
+        "a, button, input, select, textarea, label, summary, [role='button']"
+      )
+    )
+  );
+}
+
 export function ModuleTable<TItem>({
   actionLabel,
   columns,
@@ -53,15 +71,34 @@ export function ModuleTable<TItem>({
   getRowKey,
   items,
   onAction,
+  onRowSelect,
   onQueryChange,
   query,
   searchLabel,
   searchPlaceholder,
+  selectedRowKey = null,
   source,
   tableLabel
 }: ModuleTableProps<TItem>) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const exportData = [columns.map((column) => column.header), ...items.map(exportRows)];
+
+  function handleRowClick(event: MouseEvent<HTMLTableRowElement>, item: TItem) {
+    if (!onRowSelect || isInteractiveTarget(event.target)) {
+      return;
+    }
+    onRowSelect(item);
+  }
+
+  function handleRowKeyDown(event: KeyboardEvent<HTMLTableRowElement>, item: TItem) {
+    if (!onRowSelect || isInteractiveTarget(event.target)) {
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onRowSelect(item);
+    }
+  }
 
   return (
     <section className="table-panel module-panel" aria-label={tableLabel}>
@@ -140,13 +177,24 @@ export function ModuleTable<TItem>({
             </tr>
           </thead>
           <tbody>
-            {items.map((item) => (
-              <tr key={getRowKey(item)}>
-                {columns.map((column) => (
-                  <td key={column.header}>{column.render(item)}</td>
-                ))}
-              </tr>
-            ))}
+            {items.map((item) => {
+              const rowKey = getRowKey(item);
+              const isSelected = selectedRowKey === rowKey;
+              return (
+                <tr
+                  aria-selected={isSelected || undefined}
+                  className={`${onRowSelect ? "is-clickable" : ""}${isSelected ? " is-selected" : ""}`}
+                  key={rowKey}
+                  onClick={(event) => handleRowClick(event, item)}
+                  onKeyDown={(event) => handleRowKeyDown(event, item)}
+                  tabIndex={onRowSelect ? 0 : undefined}
+                >
+                  {columns.map((column) => (
+                    <td key={column.header}>{column.render(item)}</td>
+                  ))}
+                </tr>
+              );
+            })}
             {items.length === 0 ? (
               <tr>
                 <td colSpan={columns.length}>

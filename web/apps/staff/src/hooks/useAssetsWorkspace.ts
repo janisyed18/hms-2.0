@@ -123,6 +123,7 @@ export function useAssetsWorkspace() {
   const [dueFrom, setDueFrom] = useState("");
   const [dueTo, setDueTo] = useState("");
   const [editingAsset, setEditingAsset] = useState<AssetRecord | null>(null);
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
 
   useEffect(() => {
@@ -230,14 +231,26 @@ export function useAssetsWorkspace() {
     [assets, products]
   );
 
+  const selectedAsset =
+    selectedAssetId ? assets.find((asset) => asset.id === selectedAssetId) ?? null : null;
+
   function openCreate() {
     setEditingAsset(null);
     setFormOpen(true);
   }
 
   function openEdit(asset: AssetRecord) {
+    setSelectedAssetId(asset.id);
     setEditingAsset(asset);
     setFormOpen(true);
+  }
+
+  function openDetail(asset: AssetRecord) {
+    setSelectedAssetId(asset.id);
+  }
+
+  function closeDetail() {
+    setSelectedAssetId(null);
   }
 
   async function saveAsset(values: AssetFormValues) {
@@ -261,6 +274,7 @@ export function useAssetsWorkspace() {
       }
       return [saved, ...current];
     });
+    setSelectedAssetId(saved.id);
     setFormOpen(false);
     setEditingAsset(null);
   }
@@ -273,6 +287,9 @@ export function useAssetsWorkspace() {
       await createHmsClient().archiveAsset(asset.id, asset.etag);
     }
     setAssets((current) => current.filter((item) => item.id !== asset.id));
+    if (selectedAssetId === asset.id) {
+      setSelectedAssetId(null);
+    }
   }
 
   function clearAssetFilters() {
@@ -296,6 +313,7 @@ export function useAssetsWorkspace() {
     archiveAsset,
     assets,
     clearAssetFilters,
+    closeDetail,
     customerFilter,
     customerOptions,
     dueFrom,
@@ -305,11 +323,13 @@ export function useAssetsWorkspace() {
     lifecycleFilter,
     locationOptions,
     openCreate,
+    openDetail,
     openEdit,
     productFilter,
     productOptions,
     query,
     saveAsset,
+    selectedAsset,
     setCustomerFilter,
     setDueFrom,
     setDueTo,

@@ -638,6 +638,10 @@ tbody tr.is-selected {
   background: #eaf4ff;
 }
 
+tbody tr.is-clickable {
+  cursor: pointer;
+}
+
 tbody tr:focus {
   outline: 2px solid rgba(11, 101, 216, 0.32);
   outline-offset: -2px;
@@ -1770,6 +1774,13 @@ tbody tr.is-selected {
   box-shadow: var(--shadow);
 }
 
+.topbar-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .topbar-popover strong {
   display: block;
   color: var(--ink);
@@ -1782,6 +1793,11 @@ tbody tr.is-selected {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.inspection-layout.detail-closed,
+.customer-page.detail-closed {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .operations-page {
@@ -2607,6 +2623,13 @@ tbody tr.is-selected {
   grid-template-columns: minmax(0, 2.1fr) minmax(340px, 0.9fr);
   gap: 18px;
   align-items: start;
+}
+
+.dashboard-primary {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
 }
 
 .dashboard-side {

@@ -507,6 +507,80 @@ describe("App", () => {
     );
   });
 
+  it("closes the notification popover from its close control", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Notifications" }));
+    const dialog = screen.getByRole("dialog", { name: "Notifications" });
+    expect(dialog).toHaveTextContent("Inspection approval");
+
+    await user.click(within(dialog).getByRole("button", { name: "Close notifications" }));
+
+    expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
+  });
+
+  it("opens and closes selected record details across core modules", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Customers" }));
+    await user.click(
+      await screen.findByRole("button", { name: /Select customer Bluewater Energy/i })
+    );
+    expect(screen.getByRole("complementary", { name: "Customer detail" })).toHaveTextContent(
+      "Bluewater Energy"
+    );
+    await user.click(screen.getByRole("button", { name: "Close customer detail" }));
+    expect(screen.queryByRole("complementary", { name: "Customer detail" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Select customer Bluewater Energy/i })
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Assets" }));
+    await user.click(await screen.findByRole("row", { name: /997950/i }));
+    expect(screen.getByRole("complementary", { name: "Asset detail" })).toHaveTextContent(
+      "997950"
+    );
+    expect(screen.getByRole("complementary", { name: "Asset detail" })).toHaveTextContent(
+      "FUELFLEX GREEN"
+    );
+    await user.click(screen.getByRole("button", { name: "Close asset detail" }));
+    expect(screen.queryByRole("complementary", { name: "Asset detail" })).not.toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Asset records" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Products" }));
+    await user.click(await screen.findByRole("row", { name: /FUELFLEX GREEN/i }));
+    expect(screen.getByRole("complementary", { name: "Product detail" })).toHaveTextContent(
+      "FUELFLEX GREEN"
+    );
+    await user.click(screen.getByRole("button", { name: "Close product detail" }));
+    expect(screen.queryByRole("complementary", { name: "Product detail" })).not.toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Product records" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Inspections" }));
+    await user.click((await screen.findAllByRole("row", { name: /997950/i }))[0]);
+    expect(screen.getByRole("complementary", { name: "Inspection detail" })).toHaveTextContent(
+      "Inspection 997950"
+    );
+    await user.click(screen.getByRole("button", { name: "Close inspection detail" }));
+    expect(screen.queryByRole("complementary", { name: "Inspection detail" })).not.toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Inspection records" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Certificates" }));
+    await user.click(await screen.findByRole("row", { name: /CERT-VOPA-NEW-1/i }));
+    expect(screen.getByRole("complementary", { name: "Certificate detail" })).toHaveTextContent(
+      "CERT-VOPA-NEW-1"
+    );
+    await user.click(screen.getByRole("button", { name: "Close certificate detail" }));
+    expect(screen.queryByRole("complementary", { name: "Certificate detail" })).not.toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Certificate records" })).toBeVisible();
+  });
+
   it("filters customer rows from the toolbar search", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();

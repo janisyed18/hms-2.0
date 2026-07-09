@@ -19,6 +19,7 @@ import {
   TableProperties,
   UserCog,
   UsersRound,
+  X,
   type LucideIcon
 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
@@ -107,6 +108,10 @@ function popoverTitle(menu: TopbarMenu) {
     return "Help";
   }
   return "User menu";
+}
+
+function popoverCloseLabel(menu: TopbarMenu) {
+  return `Close ${popoverTitle(menu).toLowerCase()}`;
 }
 
 function popoverBody(menu: TopbarMenu, source: "api" | "mock", session: StaffSession) {
@@ -318,7 +323,17 @@ export function AppShell({
           </div>
           {openMenu ? (
             <div className="topbar-popover" role="dialog" aria-label={popoverTitle(openMenu)}>
-              <strong>{popoverTitle(openMenu)}</strong>
+              <div className="topbar-popover-header">
+                <strong>{popoverTitle(openMenu)}</strong>
+                <button
+                  aria-label={popoverCloseLabel(openMenu)}
+                  className="icon-button light"
+                  onClick={() => setOpenMenu(null)}
+                  type="button"
+                >
+                  <X size={16} />
+                </button>
+              </div>
               <p>{popoverBody(openMenu, source, session)}</p>
             </div>
           ) : null}
