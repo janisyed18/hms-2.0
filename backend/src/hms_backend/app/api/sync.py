@@ -20,6 +20,7 @@ from hms_backend.app.api.sync_schemas import (
     SyncRecordRead,
 )
 from hms_backend.app.core.audit import normalise_for_json
+from hms_backend.app.core.config import settings
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
@@ -40,6 +41,8 @@ from hms_backend.app.modules.inspections.models import (
     InspectionStatus,
     PressureTestResult,
 )
+from hms_backend.app.modules.notifications.enums import NotificationCategory
+from hms_backend.app.modules.notifications.outbox import emit_event
 from hms_backend.app.modules.products.models import Product, ProductPressureRating
 from hms_backend.app.modules.reference.models import (
     AttachMethod,
@@ -252,6 +255,18 @@ async def _upsert_sync_device(
             revoked=False,
         )
         session.add(device)
+        # New device registration is a security event to the device owner.
+        await emit_event(
+            session,
+            category=NotificationCategory.DEVICE_REGISTERED,
+            aggregate_type="device",
+            aggregate_id=device_id,
+            payload={
+                "user_id": principal.user_id,
+                "device_label": f"{platform} ({device_id})",
+                "link": settings.public_base_url.rstrip("/"),
+            },
+        )
     if device.revoked:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

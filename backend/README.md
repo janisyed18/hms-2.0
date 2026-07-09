@@ -146,6 +146,26 @@ bring-your-own-artifact path (used by imports).
 Relevant settings (env or `.env`): `CERTIFICATE_SERVICE_ADDRESS`,
 `PUBLIC_BASE_URL`, `OBJECT_STORAGE_DIR`, `ISSUER_NAME`, `ISSUER_IDENTIFIER`.
 
+### Object storage backends
+
+Certificate PDFs and media are written through a small storage abstraction with
+two backends, selected by `OBJECT_STORAGE_BACKEND`:
+
+- `local` (default) — filesystem store under `OBJECT_STORAGE_DIR`. Fine for a
+  single-node dev box, but **not** safe when more than one process serves
+  requests (a PDF written by one node is invisible to the others).
+- `s3` — Amazon S3. Required on ECS/Fargate, where tasks are ephemeral and share
+  no disk. Credentials come from the task/instance role via boto3's default
+  chain — **no static keys** anywhere. Uploads are server-side encrypted, and
+  the public PDF download issues a short-lived presigned URL (HTTP 307 redirect)
+  so bytes are served by S3, not streamed through the API task.
+
+S3 settings (env): `OBJECT_STORAGE_BACKEND=s3`, `S3_BUCKET`, and optionally
+`S3_REGION`, `S3_ENDPOINT_URL` (LocalStack/MinIO), `S3_KEY_PREFIX`,
+`S3_PRESIGN_EXPIRY_SECONDS` (default 900), `S3_SSE` (`AES256` default, or
+`aws:kms` with `S3_SSE_KMS_KEY_ID`). The task role needs `s3:PutObject`,
+`s3:GetObject`, and `s3:ListBucket` on the media bucket.
+
 ## Bulk certificate generation (Celery)
 
 Bulk generation runs as a tracked background job. It needs **Redis** (broker +
@@ -241,6 +261,11 @@ The `beat` service in `docker-compose.yml` drives all three. In dev
 (`NOTIFICATION_CHANNEL_MODE=console`, the default) messages are logged rather
 than sent, so no SMTP/Twilio credentials are needed.
 
+Events emitted (in-transaction, N-01): certificate issued/revoked, inspection
+submitted/approved/rejected, inspection failed (safety), asset condemned, device
+registered/revoked, user invitation, password reset, and the scheduled retest
+advance/due/overdue reminders.
+
 Endpoints:
 
 - `GET/PUT /api/v1/notifications/preferences` — per-category channel opt-in.
@@ -250,10 +275,32 @@ Endpoints:
   via one-time code (dev returns the code in the response).
 - `GET /api/v1/notifications/me` — the current user's in-app feed.
 - `GET /api/v1/admin/notifications` — admin delivery log (N-09).
+- `POST /api/v1/notifications/webhooks/{provider}` — provider delivery callbacks
+  (`twilio` status callbacks, `ses`/`sns` delivery/bounce/complaint, or
+  `generic`), matched to notifications by `provider_message_id` (N-06). Gated by
+  `NOTIFICATION_WEBHOOK_SECRET` (`?token=` or `X-HMS-Webhook-Secret` header).
+
+Password reset (transactional, N-12): `POST /api/v1/auth/password/reset-request`
+(email → short-TTL signed link) and `POST /api/v1/auth/password/reset-confirm`
+(token + new password).
 
 Key settings: `NOTIFICATION_CHANNEL_MODE` (`console`|`live`),
 `NOTIFICATION_SENDER_NAME`, `NOTIFICATION_MAX_ATTEMPTS`, `RETEST_ADVANCE_DAYS`,
-`RETEST_OVERDUE_ESCALATION_DAYS`, and (live mode) `SMTP_*` / `TWILIO_*`.
+`RETEST_OVERDUE_ESCALATION_DAYS`, `NOTIFICATION_WEBHOOK_SECRET`, and (live mode)
+`SMTP_*` / `TWILIO_*`.
+
+### AWS
+
+The channel adapters are AWS-ready:
+
+- **Email → Amazon SES**: SES exposes an SMTP endpoint, so set
+  `NOTIFICATION_CHANNEL_MODE=live` and point `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME`
+  /`SMTP_PASSWORD` at your SES SMTP credentials (`email-smtp.<region>.amazonaws.com`).
+- **SES bounce/delivery → SNS → webhook**: subscribe an SNS topic (fed by SES
+  event publishing) to `POST /notifications/webhooks/ses`; the parser handles the
+  SNS envelope and `Delivery`/`Bounce`/`Complaint` types.
+- **SMS → Twilio**: configure `TWILIO_*`; point Twilio's status callback at
+  `POST /notifications/webhooks/twilio`.
 
 Force one cycle without waiting for beat:
 

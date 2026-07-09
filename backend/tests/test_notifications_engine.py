@@ -33,6 +33,7 @@ from hms_backend.app.modules.notifications.models import (
 )
 from hms_backend.app.modules.notifications.outbox import emit_event
 from hms_backend.app.modules.notifications.service import (
+    apply_delivery_receipt,
     dispatch_pending,
     relay_outbox,
     run_retest_scheduler,
@@ -258,6 +259,40 @@ async def test_dispatch_dead_letters_after_max_attempts(
         assert n is not None
         assert n.status == NotificationStatus.DEAD_LETTER.value
         assert n.error == "provider down"
+
+
+@pytest.mark.asyncio
+async def test_delivery_receipt_marks_delivered(
+    session_factory: SessionFactory,
+) -> None:
+    async with session_factory() as session:
+        customer_id, asset_id = await _seed_customer_asset(session)
+        await session.commit()
+    await _emit_cert_issued(session_factory, customer_id, asset_id)
+    await relay_outbox(session_factory)
+    adapters: dict[NotificationChannel, ChannelAdapter] = {
+        NotificationChannel.EMAIL: _OkAdapter(NotificationChannel.EMAIL)
+    }
+    await dispatch_pending(session_factory, adapters=adapters)
+
+    # Provider webhook reports delivery for the sent message.
+    async with session_factory() as session:
+        updated = await apply_delivery_receipt(
+            session,
+            provider_message_id="ok-1",
+            status=NotificationStatus.DELIVERED,
+        )
+        await session.commit()
+        assert updated is True
+    async with session_factory() as session:
+        n = (
+            await session.scalars(
+                select(Notification).where(
+                    Notification.status == NotificationStatus.DELIVERED.value
+                )
+            )
+        ).one()
+        assert n.delivered_at is not None
 
 
 # --- N-02 / N-11: scheduler ------------------------------------------------------

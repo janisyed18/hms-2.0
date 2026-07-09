@@ -156,5 +156,24 @@ async def resolve_recipients(
         reviewer = await _user_by_id(session, payload.get("reviewer_user_id", ""))
         if reviewer is not None:
             add(_from_user(reviewer))
+    elif category in _USER_TARGETED:
+        # Device + identity events go to the single named user (device owner,
+        # invited user, or the account whose password/role changed).
+        target = await _user_by_id(session, payload.get("user_id", ""))
+        if target is not None:
+            add(_from_user(target))
 
     return list(recipients.values())
+
+
+# Categories addressed to one specific user identified by ``user_id``.
+_USER_TARGETED = {
+    _Cat.DEVICE_REGISTERED,
+    _Cat.DEVICE_REVOKED,
+    _Cat.OFFLINE_WINDOW_EXPIRING,
+    _Cat.USER_INVITATION,
+    _Cat.PASSWORD_RESET,
+    _Cat.MFA_CODE,
+    _Cat.ROLE_CHANGED,
+    _Cat.SUSPICIOUS_LOGIN,
+}

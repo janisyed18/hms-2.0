@@ -23,6 +23,19 @@ logger = logging.getLogger("hms_backend.notifications.sms")
 _TWILIO_API = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
 
 
+def build_twilio_request(
+    settings: Settings, message: OutgoingMessage
+) -> tuple[str, dict[str, str]]:
+    """Return the (url, form-data) for a Twilio Messages POST. Pure — testable."""
+    url = _TWILIO_API.format(sid=settings.twilio_account_sid)
+    data = {
+        "To": message.to_address,
+        "From": settings.twilio_from,
+        "Body": message.body_text,
+    }
+    return url, data
+
+
 class TwilioSmsAdapter:
     channel = NotificationChannel.SMS
 
@@ -31,12 +44,7 @@ class TwilioSmsAdapter:
 
     async def send(self, message: OutgoingMessage) -> DeliveryResult:
         s = self._settings
-        url = _TWILIO_API.format(sid=s.twilio_account_sid)
-        data = {
-            "To": message.to_address,
-            "From": s.twilio_from,
-            "Body": message.body_text,
-        }
+        url, data = build_twilio_request(s, message)
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 response = await client.post(
