@@ -19,15 +19,22 @@ class Settings(BaseSettings):
     certificate_service_timeout_seconds: float = 30.0
 
     # Object storage for certificate PDFs and media.
+    #   local - filesystem-backed store (dev/single-node; not multi-task safe)
+    #   s3    - Amazon S3 (multi-task safe; required for ECS/Fargate)
     object_storage_backend: Literal["local", "s3"] = "local"
+    # Local backend root (dev only).
     object_storage_dir: str = "./var/object-store"
+    # S3 backend. Credentials come from the environment/instance/task role
+    # (never static keys in config). Region/endpoint are optional — boto3
+    # resolves them from the standard AWS chain when blank.
     object_storage_s3_bucket: str = ""
-    object_storage_s3_prefix: str = ""
     object_storage_s3_region: str = ""
-    object_storage_s3_endpoint_url: str = ""
+    object_storage_s3_endpoint_url: str = ""  # e.g. LocalStack/MinIO
+    object_storage_s3_prefix: str = ""  # optional prefix namespacing keys
     object_storage_s3_presign_expiry_seconds: int = 900
+    # Server-side encryption applied on upload ("AES256" or "aws:kms"; blank off).
     object_storage_s3_sse: str = "AES256"
-    object_storage_s3_sse_kms_key_id: str = ""
+    object_storage_s3_sse_kms_key_id: str = ""  # required when using aws:kms
 
     # Issuer identity stamped onto certificates (mirrors the engine defaults).
     issuer_name: str = "BAT Engineering Pty Ltd"
@@ -69,6 +76,9 @@ class Settings(BaseSettings):
     condemnation_advance_days: list[int] = Field(default_factory=lambda: [60, 30])
     phone_verification_ttl_seconds: int = 600
     phone_verification_max_attempts: int = 5
+    # Shared secret gating provider delivery webhooks (Twilio status callbacks,
+    # SES/SNS delivery/bounce notifications). Empty = open (dev only).
+    notification_webhook_secret: str = ""
 
     # Email — only used in "live" mode.
     notification_email_provider: Literal["smtp", "aws_ses"] = "smtp"
@@ -80,7 +90,6 @@ class Settings(BaseSettings):
     email_from_address: str = "no-reply@batengineering.example"
     notification_ses_region: str = ""
     notification_ses_configuration_set: str = ""
-    notification_webhook_secret: str = ""
 
     # SMS (Twilio) — only used in "live" mode.
     twilio_account_sid: str = ""
@@ -104,6 +113,7 @@ class Settings(BaseSettings):
     auth_bearer_audience: str | None = None
     auth_access_token_ttl_seconds: int = 3600
     auth_password_login_enabled: bool = True
+    auth_password_reset_ttl_seconds: int = 900
 
     # External OIDC provider (oidc mode). JWKS is discovered from the issuer's
     # ``/.well-known/openid-configuration`` unless a JWKS URL is given directly.

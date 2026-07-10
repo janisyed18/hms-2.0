@@ -12,7 +12,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +40,8 @@ from hms_backend.app.modules.notifications.models import (
     NotificationPreference,
     PhoneVerification,
 )
+from hms_backend.app.modules.notifications.service import apply_delivery_receipt
+from hms_backend.app.modules.notifications.webhooks import parse_receipts
 
 router = APIRouter(tags=["notifications"])
 
@@ -345,6 +347,46 @@ async def _paginate(
         offset=offset,
         items=[_read(n) for n in rows],
     )
+
+
+# --- Provider delivery webhooks (N-06) ------------------------------------------
+
+
+def _check_webhook_secret(request: Request, token: str | None) -> None:
+    secret = settings.notification_webhook_secret
+    if not secret:
+        return  # open in dev
+    provided = token or request.headers.get("X-HMS-Webhook-Secret")
+    if provided != secret:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Invalid webhook secret"
+        )
+
+
+@router.post("/notifications/webhooks/{provider}")
+async def delivery_webhook(
+    provider: str,
+    request: Request,
+    session: SessionDep,
+    token: str | None = None,
+) -> dict[str, int]:
+    """Update delivery status from a provider callback (Twilio / SES-SNS / generic).
+
+    Matches notifications by ``provider_message_id``. Always returns 2xx so
+    providers do not retry indefinitely.
+    """
+    _check_webhook_secret(request, token)
+    receipts = parse_receipts(provider.lower(), await request.body())
+    updated = 0
+    for provider_message_id, receipt_status in receipts:
+        if await apply_delivery_receipt(
+            session,
+            provider_message_id=provider_message_id,
+            status=receipt_status,
+        ):
+            updated += 1
+    await session.commit()
+    return {"updated": updated}
 
 
 def _read(n: Notification) -> NotificationRead:

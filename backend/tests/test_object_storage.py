@@ -142,8 +142,8 @@ def test_s3_object_storage_presigns_downloads_with_prefix() -> None:
 def test_storage_factory_selects_s3_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_client = _FakeS3Client()
     monkeypatch.setattr(settings, "object_storage_backend", "s3")
-    monkeypatch.setattr(settings, "object_storage_s3_bucket", "hms-dev")
-    monkeypatch.setattr(settings, "object_storage_s3_prefix", "media")
+    monkeypatch.setattr(settings, "object_storage_s3_bucket", "hms-dev-media")
+    monkeypatch.setattr(settings, "object_storage_s3_prefix", "dev/media")
     monkeypatch.setattr(
         settings,
         "object_storage_s3_region",
@@ -164,6 +164,6 @@ def test_storage_factory_selects_s3_backend(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert isinstance(storage, S3ObjectStorage)
     storage.put("certificates/CERT-2.pdf", b"pdf")
-    assert fake_client.objects[("hms-dev", "media/certificates/CERT-2.pdf")][
+    assert fake_client.objects[("hms-dev-media", "dev/media/certificates/CERT-2.pdf")][
         "Body"
     ] == b"pdf"

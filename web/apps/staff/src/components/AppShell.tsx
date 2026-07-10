@@ -327,11 +327,11 @@ export function AppShell({
                 <strong>{popoverTitle(openMenu)}</strong>
                 <button
                   aria-label={popoverCloseLabel(openMenu)}
-                  className="icon-button light"
+                  className="icon-button light popover-close"
                   onClick={() => setOpenMenu(null)}
                   type="button"
                 >
-                  <X size={16} />
+                  <X aria-hidden="true" size={16} />
                 </button>
               </div>
               <p>{popoverBody(openMenu, source, session)}</p>

@@ -525,6 +525,21 @@ table {
   width: auto;
 }
 
+.module-table tr.is-clickable {
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.module-table tr.is-clickable:hover,
+.module-table tr.is-clickable:focus-visible {
+  background: var(--surface-muted, #f1f5f9);
+  outline: none;
+}
+
+.module-table tr.is-clickable:focus-visible {
+  box-shadow: inset 2px 0 0 var(--accent, #2563eb);
+}
+
 th:nth-child(1),
 td:nth-child(1) {
   width: 4%;
@@ -1779,6 +1794,10 @@ tbody tr.is-selected {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.topbar-popover .popover-close {
+  flex: 0 0 auto;
 }
 
 .topbar-popover strong {
@@ -3561,4 +3580,60 @@ tbody tr.is-selected {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     padding: 18px;
   }
+}
+
+/* Asset detail (record) page */
+.detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.detail-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.detail-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.detail-page-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-page-title h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.detail-page-title p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.detail-page .detail-section {
+  margin: 0;
 }

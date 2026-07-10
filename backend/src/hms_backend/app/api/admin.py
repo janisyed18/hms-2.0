@@ -20,10 +20,13 @@ from hms_backend.app.api.schemas import (
     UserUpdate,
 )
 from hms_backend.app.core.audit import append_audit_event, normalise_for_json
+from hms_backend.app.core.config import settings
 from hms_backend.app.core.rbac import Permission, Principal, Role, require_permission
 from hms_backend.app.core.repository import record_create, record_update, soft_delete
 from hms_backend.app.models.foundation import AuditEvent, Device
 from hms_backend.app.modules.identity.models import User
+from hms_backend.app.modules.notifications.enums import NotificationCategory
+from hms_backend.app.modules.notifications.outbox import emit_event
 
 router = APIRouter(prefix="/admin")
 
@@ -167,6 +170,17 @@ async def create_user(
         actor_id=principal.user_id,
         action="user.created",
     )
+    await emit_event(
+        session,
+        category=NotificationCategory.USER_INVITATION,
+        aggregate_type="user",
+        aggregate_id=user.id,
+        payload={
+            "user_id": user.id,
+            "email": user.email,
+            "link": f"{settings.public_base_url.rstrip('/')}/activate",
+        },
+    )
     await session.commit()
     return _user_read(user)
 
@@ -301,6 +315,19 @@ async def update_device(
         before=before,
         after=_device_audit_dict(device),
     )
+    # Security event when a device is newly revoked (it wipes on next sync).
+    if device.revoked and not before.get("revoked"):
+        await emit_event(
+            session,
+            category=NotificationCategory.DEVICE_REVOKED,
+            aggregate_type="device",
+            aggregate_id=device.device_id,
+            payload={
+                "user_id": device.user_id,
+                "device_label": f"{device.platform} ({device.device_id})",
+                "link": f"{settings.public_base_url.rstrip('/')}",
+            },
+        )
     await session.commit()
     return _device_read(device)
 

@@ -75,6 +75,10 @@ module = "hms_backend.app.modules.certificates.enginepb.*"
 ignore_errors = true
 
 [[tool.mypy.overrides]]
+module = ["boto3", "boto3.*", "botocore", "botocore.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = [
     "test_certificate_bulk_jobs",
     "test_certificate_generation",

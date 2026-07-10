@@ -1,9 +1,19 @@
 """Object storage abstraction for certificate PDFs and media.
 
-Local development uses a filesystem-backed store rooted at
-``settings.object_storage_dir``. AWS deployments use S3 behind the same
-:class:`ObjectStorage` protocol — callers only ever see opaque object keys and
-short-lived access via the API, never a bucket SDK.
+Two backends sit behind the same :class:`ObjectStorage` protocol, selected by
+``settings.object_storage_backend``:
+
+* ``local`` — a filesystem-backed store rooted at ``settings.object_storage_dir``.
+  Fine for a single-node dev box, but not safe when more than one process serves
+  requests because a PDF written by one node is invisible to the others.
+* ``s3`` — Amazon S3. Required for ECS/Fargate, where every task is ephemeral and
+  no local disk is shared. Credentials come from the task/instance role via the
+  standard AWS chain, never static keys.
+
+Callers only ever see opaque object keys. An S3-backed store additionally offers
+short-lived presigned download URLs (:class:`PresignedObjectStorage`) so the API
+can redirect large PDF downloads straight to S3 instead of streaming bytes
+through the app.
 """
 
 from __future__ import annotations
@@ -14,6 +24,8 @@ from pathlib import Path
 from typing import Any, Protocol, cast, runtime_checkable
 
 from hms_backend.app.core.config import settings
+
+S3Client = Any
 
 
 class ObjectNotFoundError(FileNotFoundError):
@@ -38,10 +50,7 @@ class PresignedObjectStorage(Protocol):
 
 
 class LocalObjectStorage:
-    """Filesystem-backed store. Keys map to paths under ``root``.
-
-    Keys are validated to prevent path traversal outside the storage root.
-    """
+    """Filesystem-backed store. Keys map to paths under ``root``."""
 
     def __init__(self, root: Path | str) -> None:
         self._root = Path(root).resolve()
@@ -76,17 +85,17 @@ def _normalise_object_key(key: str) -> str:
     if (
         not normalised
         or normalised == "."
-        or normalised.startswith("../")
         or normalised == ".."
+        or normalised.startswith("../")
         or normalised.startswith("/")
     ):
         raise ValueError(f"invalid object key: {key!r}")
     return normalised
 
 
-def _create_s3_client(region_name: str, endpoint_url: str = "") -> Any:
+def _create_s3_client(region_name: str, endpoint_url: str = "") -> S3Client:
     boto3 = importlib.import_module("boto3")
-    kwargs = {}
+    kwargs: dict[str, str] = {}
     if region_name:
         kwargs["region_name"] = region_name
     if endpoint_url:
@@ -117,7 +126,7 @@ class S3ObjectStorage:
         presign_expiry_seconds: int = 900,
         sse: str = "AES256",
         sse_kms_key_id: str = "",
-        client: Any | None = None,
+        client: S3Client | None = None,
     ) -> None:
         if not bucket.strip():
             raise ValueError("S3 object storage requires a bucket")
@@ -130,7 +139,7 @@ class S3ObjectStorage:
         self._sse_kms_key_id = sse_kms_key_id
         self._client = client
 
-    def _get_client(self) -> Any:
+    def _get_client(self) -> S3Client:
         if self._client is None:
             self._client = _create_s3_client(self._region_name, self._endpoint_url)
         return self._client
@@ -205,22 +214,29 @@ class S3ObjectStorage:
 _storage: ObjectStorage | None = None
 
 
+def _build_storage() -> ObjectStorage:
+    if settings.object_storage_backend == "s3":
+        return S3ObjectStorage(
+            bucket=settings.object_storage_s3_bucket,
+            prefix=settings.object_storage_s3_prefix,
+            region_name=settings.object_storage_s3_region,
+            endpoint_url=settings.object_storage_s3_endpoint_url,
+            presign_expiry_seconds=settings.object_storage_s3_presign_expiry_seconds,
+            sse=settings.object_storage_s3_sse,
+            sse_kms_key_id=settings.object_storage_s3_sse_kms_key_id,
+        )
+    return LocalObjectStorage(settings.object_storage_dir)
+
+
 def get_object_storage() -> ObjectStorage:
-    """Return the process-wide storage instance."""
+    """Return the process-wide storage instance for the configured backend."""
     global _storage
     if _storage is None:
-        if settings.object_storage_backend == "s3":
-            _storage = S3ObjectStorage(
-                bucket=settings.object_storage_s3_bucket,
-                prefix=settings.object_storage_s3_prefix,
-                region_name=settings.object_storage_s3_region,
-                endpoint_url=settings.object_storage_s3_endpoint_url,
-                presign_expiry_seconds=(
-                    settings.object_storage_s3_presign_expiry_seconds
-                ),
-                sse=settings.object_storage_s3_sse,
-                sse_kms_key_id=settings.object_storage_s3_sse_kms_key_id,
-            )
-        else:
-            _storage = LocalObjectStorage(settings.object_storage_dir)
+        _storage = _build_storage()
     return _storage
+
+
+def set_object_storage(storage: ObjectStorage | None) -> None:
+    """Override the process-wide storage instance (used by tests)."""
+    global _storage
+    _storage = storage

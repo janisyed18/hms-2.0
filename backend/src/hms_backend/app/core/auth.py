@@ -58,6 +58,7 @@ class BearerClaims:
     subject: str
     roles: tuple[str, ...]
     customer_ids: tuple[str, ...]
+    purpose: str | None = None  # e.g. "pw_reset" for single-use links
 
 
 def decode_hs256_bearer_token(
@@ -101,12 +102,14 @@ def decode_hs256_bearer_token(
     if not isinstance(subject, str) or not subject.strip():
         raise TokenValidationError("Invalid bearer token")
 
+    purpose = payload.get("purpose")
     return BearerClaims(
         subject=subject.strip(),
         roles=_string_sequence(payload.get("hms_roles", payload.get("roles", ()))),
         customer_ids=_string_sequence(
             payload.get("hms_customer_ids", payload.get("customer_ids", ()))
         ),
+        purpose=purpose if isinstance(purpose, str) else None,
     )
 
 

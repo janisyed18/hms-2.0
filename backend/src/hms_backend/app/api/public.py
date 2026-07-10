@@ -127,6 +127,9 @@ async def download_certificate_pdf(
     certificate = await _load_by_token(session, public_token)
     storage = get_object_storage()
 
+    # With an S3-backed store, redirect the client straight to a short-lived
+    # presigned URL so the (potentially large) PDF is served by S3 rather than
+    # streamed through the API task. Missing objects surface as a clean 404.
     if isinstance(storage, PresignedObjectStorage):
         if not storage.exists(certificate.pdf_object_key):
             raise HTTPException(

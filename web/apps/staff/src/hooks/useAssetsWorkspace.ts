@@ -123,8 +123,8 @@ export function useAssetsWorkspace() {
   const [dueFrom, setDueFrom] = useState("");
   const [dueTo, setDueTo] = useState("");
   const [editingAsset, setEditingAsset] = useState<AssetRecord | null>(null);
-  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
+  const [viewingAsset, setViewingAsset] = useState<AssetRecord | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -231,26 +231,22 @@ export function useAssetsWorkspace() {
     [assets, products]
   );
 
-  const selectedAsset =
-    selectedAssetId ? assets.find((asset) => asset.id === selectedAssetId) ?? null : null;
-
   function openCreate() {
     setEditingAsset(null);
     setFormOpen(true);
   }
 
   function openEdit(asset: AssetRecord) {
-    setSelectedAssetId(asset.id);
     setEditingAsset(asset);
     setFormOpen(true);
   }
 
   function openDetail(asset: AssetRecord) {
-    setSelectedAssetId(asset.id);
+    setViewingAsset(asset);
   }
 
   function closeDetail() {
-    setSelectedAssetId(null);
+    setViewingAsset(null);
   }
 
   async function saveAsset(values: AssetFormValues) {
@@ -274,7 +270,10 @@ export function useAssetsWorkspace() {
       }
       return [saved, ...current];
     });
-    setSelectedAssetId(saved.id);
+    // Keep an open detail view in sync with the saved record.
+    setViewingAsset((current) =>
+      current && editingAsset && current.id === editingAsset.id ? saved : current
+    );
     setFormOpen(false);
     setEditingAsset(null);
   }
@@ -287,9 +286,7 @@ export function useAssetsWorkspace() {
       await createHmsClient().archiveAsset(asset.id, asset.etag);
     }
     setAssets((current) => current.filter((item) => item.id !== asset.id));
-    if (selectedAssetId === asset.id) {
-      setSelectedAssetId(null);
-    }
+    setViewingAsset((current) => (current?.id === asset.id ? null : current));
   }
 
   function clearAssetFilters() {
@@ -329,7 +326,6 @@ export function useAssetsWorkspace() {
     productOptions,
     query,
     saveAsset,
-    selectedAsset,
     setCustomerFilter,
     setDueFrom,
     setDueTo,
@@ -338,6 +334,7 @@ export function useAssetsWorkspace() {
     setProductFilter,
     setQuery,
     source,
+    viewingAsset,
     visibleAssets
   };
 }
