@@ -32,6 +32,7 @@ variable "github_deploy_refs" {
   description = "GitHub OIDC subject claims allowed to deploy this environment."
   type        = list(string)
   default = [
+    "repo:janisyed18/hms-2.0:environment:aws-dev",
     "repo:janisyed18/hms-2.0:ref:refs/heads/main",
     "repo:janisyed18/hms-2.0:ref:refs/heads/codex/aws-dev-deployment-foundation",
   ]
