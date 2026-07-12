@@ -515,7 +515,45 @@ async def seed_configured_database() -> SeedSummary:
         }
 
 
+async def seed_auth_accounts_configured(reset_existing: bool) -> str:
+    from hms_backend.app.api.dependencies import SessionLocal
+    from hms_backend.app.core.config import settings
+    from hms_backend.app.tooling.auth_seed import (
+        format_credentials_table,
+        seed_auth_test_accounts,
+    )
+
+    async with SessionLocal() as session:
+        accounts = await seed_auth_test_accounts(
+            session,
+            environment=settings.environment,
+            reset_existing=reset_existing,
+        )
+        await session.commit()
+        return format_credentials_table(accounts)
+
+
 def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Seed the HMS development database.")
+    parser.add_argument(
+        "--auth-test-accounts",
+        action="store_true",
+        help="Seed one login account per HMS role (development only).",
+    )
+    parser.add_argument(
+        "--reset-existing",
+        action="store_true",
+        help="Rotate the temporary password of accounts that already exist.",
+    )
+    args = parser.parse_args()
+
+    if args.auth_test_accounts:
+        table = asyncio.run(seed_auth_accounts_configured(args.reset_existing))
+        print(table)
+        return
+
     summary = asyncio.run(seed_configured_database())
     print(json.dumps(summary, indent=2, sort_keys=True))
 

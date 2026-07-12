@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, status
@@ -16,7 +18,7 @@ from hms_backend.app.core.oidc import (
     get_oidc_validator,
 )
 from hms_backend.app.core.rbac import Principal, Role
-from hms_backend.app.modules.identity.models import User
+from hms_backend.app.modules.identity.models import AccountStatus, User
 
 engine = create_async_engine(settings.database_url)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
@@ -98,7 +100,8 @@ async def _bearer_principal(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unknown HMS user identity",
         )
-    return principal
+    # Carry the token's auth_time so privileged actions can require a recent login.
+    return replace(principal, auth_time=claims.auth_time)
 
 
 async def _oidc_principal(
@@ -168,6 +171,23 @@ async def _persisted_user_principal(
     if user is None:
         return None
 
+    # Reject disabled and currently-locked accounts across every auth mode; active
+    # users (incl. the native inspector app) are unaffected.
+    if user.account_status == AccountStatus.DISABLED.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled",
+        )
+    if user.locked_until is not None:
+        locked_until = user.locked_until
+        if locked_until.tzinfo is None:
+            locked_until = locked_until.replace(tzinfo=UTC)
+        if locked_until > datetime.now(UTC):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is temporarily locked",
+            )
+
     try:
         role = Role(user.role)
     except ValueError as exc:
@@ -211,3 +231,6 @@ def _dev_header_principal(
         roles=roles,
         customer_ids=customer_ids,
     )
+
+
+PrincipalDep = Annotated[Principal, Depends(get_current_principal)]

@@ -49,7 +49,7 @@ function endLabel(asset: AssetRecord) {
   return `${assetEndLabel(asset.aEnd)} / ${assetEndLabel(asset.bEnd)}`;
 }
 
-export function AssetsWorkspace() {
+export function AssetsWorkspace({ canWrite }: { canWrite: boolean }) {
   const workspace = useAssetsWorkspace();
   const assetColumns: ModuleColumn<AssetRecord>[] = [
     {
@@ -93,7 +93,7 @@ export function AssetsWorkspace() {
         </span>
       )
     },
-    {
+    ...(canWrite ? [{
       header: "Actions",
       render: (asset) => (
         <span className="row-actions">
@@ -117,13 +117,14 @@ export function AssetsWorkspace() {
           </button>
         </span>
       )
-    }
+    } satisfies ModuleColumn<AssetRecord>] : [])
   ];
 
   if (workspace.viewingAsset) {
     return (
       <AssetDetail
         asset={workspace.viewingAsset}
+        canWrite={canWrite}
         onBack={workspace.closeDetail}
         onEdit={workspace.openEdit}
       />
@@ -133,7 +134,7 @@ export function AssetsWorkspace() {
   return (
     <>
       <ModuleTable
-        actionLabel="Add Asset"
+        actionLabel={canWrite ? "Add Asset" : undefined}
         columns={assetColumns}
         countLabel={`${workspace.assets.length} assets`}
         emptyLabel="No assets match the current filters."
@@ -221,7 +222,7 @@ export function AssetsWorkspace() {
         }
         getRowKey={(asset) => asset.id}
         items={workspace.visibleAssets}
-        onAction={workspace.openCreate}
+        onAction={canWrite ? workspace.openCreate : undefined}
         onRowSelect={workspace.openDetail}
         onQueryChange={workspace.setQuery}
         query={workspace.query}
@@ -230,15 +231,17 @@ export function AssetsWorkspace() {
         source={workspace.source}
         tableLabel="Asset records"
       />
-      <AssetForm
-        asset={workspace.editingAsset}
-        customerOptions={workspace.customerOptions}
-        locationOptions={workspace.locationOptions}
-        productOptions={workspace.productOptions}
-        open={workspace.isFormOpen}
-        onClose={() => workspace.setFormOpen(false)}
-        onSubmit={workspace.saveAsset}
-      />
+      {canWrite ? (
+        <AssetForm
+          asset={workspace.editingAsset}
+          customerOptions={workspace.customerOptions}
+          locationOptions={workspace.locationOptions}
+          productOptions={workspace.productOptions}
+          open={workspace.isFormOpen}
+          onClose={() => workspace.setFormOpen(false)}
+          onSubmit={workspace.saveAsset}
+        />
+      ) : null}
     </>
   );
 }

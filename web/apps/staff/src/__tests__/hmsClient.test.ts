@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  configureHmsRuntimeAuth,
   createHmsClient,
-  loadAuthSessionWithFallback,
   loadAdminUsersWithFallback,
   loadAssetsWithFallback,
   loadAuditEventsWithFallback,
@@ -228,6 +228,11 @@ const apiAdminUser = {
   last_name: "Williams",
   role: "HMS_ADMIN",
   customer_id: null,
+  account_status: "ACTIVE",
+  must_change_password: false,
+  mfa_enabled: true,
+  locked_until: null,
+  last_login_at: "2026-07-07T02:00:00Z",
   created_at: "2026-07-07T00:00:00Z",
   updated_at: "2026-07-07T00:00:00Z"
 };
@@ -283,6 +288,62 @@ function noContent(headers: Record<string, string> = {}) {
 describe("hmsClient", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("uses runtime bearer auth and retries a protected request once after refresh", async () => {
+    let accessToken = "expired-access-token";
+    const refreshAccessToken = vi.fn(async () => {
+      accessToken = "fresh-access-token";
+      return accessToken;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        headers: new Headers(),
+        json: async () => ({ detail: "Expired access token" })
+      })
+      .mockResolvedValueOnce(
+        okJson({ total: 1, limit: 50, offset: 0, items: [apiCustomer] })
+      );
+    const clearRuntimeAuth = configureHmsRuntimeAuth({
+      getAccessToken: () => accessToken,
+      refreshAccessToken,
+      onAuthFailure: vi.fn()
+    });
+
+    try {
+      const result = await createHmsClient({ fetcher: fetchMock }).listCustomers();
+
+      expect(result.items).toHaveLength(1);
+      expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect((fetchMock.mock.calls[0][1]?.headers as Record<string, string>).authorization)
+        .toBe("Bearer expired-access-token");
+      expect((fetchMock.mock.calls[1][1]?.headers as Record<string, string>).authorization)
+        .toBe("Bearer fresh-access-token");
+    } finally {
+      clearRuntimeAuth();
+    }
+  });
+
+  it("does not synthesize mock records after an authenticated request fails", async () => {
+    const clearRuntimeAuth = configureHmsRuntimeAuth({
+      getAccessToken: () => "staff-access-token",
+      refreshAccessToken: vi.fn().mockRejectedValue(new Error("No refresh session")),
+      onAuthFailure: vi.fn()
+    });
+
+    try {
+      await expect(
+        loadAssetsWithFallback({
+          fetcher: vi.fn().mockRejectedValue(new TypeError("Network unavailable"))
+        })
+      ).rejects.toThrow("Network unavailable");
+    } finally {
+      clearRuntimeAuth();
+    }
   });
 
   it("sends HMS identity headers and maps customer list responses", async () => {
@@ -915,7 +976,9 @@ describe("hmsClient", () => {
           items: [apiAdminUser]
         })
       )
-      .mockResolvedValueOnce(okJson(apiAdminUser))
+      .mockResolvedValueOnce(
+        okJson({ user: apiAdminUser, temporary_password: "Temp-Password-1234" })
+      )
       .mockResolvedValueOnce(okJson(updatedUser))
       .mockResolvedValueOnce(noContent())
       .mockResolvedValueOnce(
@@ -1027,7 +1090,8 @@ describe("hmsClient", () => {
       displayName: "Alex Williams",
       role: "HMS_ADMIN"
     });
-    expect(created.oidcSubject).toBe("staff-ui-dev");
+    expect(created.user.oidcSubject).toBe("staff-ui-dev");
+    expect(created.temporaryPassword).toBe("Temp-Password-1234");
     expect(updated.displayName).toBe("Alicia Williams");
     expect(devices.items[0]).toMatchObject({
       deviceId: "field-tablet-01",
@@ -1038,6 +1102,59 @@ describe("hmsClient", () => {
       sequence: 42,
       action: "user.created",
       actorId: "staff-ui-dev"
+    });
+  });
+
+  it("maps secure admin-user lifecycle commands", async () => {
+    const disabled = { ...apiAdminUser, account_status: "DISABLED" };
+    const locked = {
+      ...apiAdminUser,
+      account_status: "LOCKED",
+      locked_until: "2026-07-07T03:00:00Z"
+    };
+    const unlocked = {
+      ...apiAdminUser,
+      account_status: "ACTIVE",
+      locked_until: null
+    };
+    const mfaReset = { ...apiAdminUser, mfa_enabled: false };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(okJson(disabled))
+      .mockResolvedValueOnce(okJson(apiAdminUser))
+      .mockResolvedValueOnce(okJson(locked))
+      .mockResolvedValueOnce(okJson(unlocked))
+      .mockResolvedValueOnce(
+        okJson({ user_id: "user-api-1", temporary_password: "Reset-Password-5678" })
+      )
+      .mockResolvedValueOnce(okJson(mfaReset));
+
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const disabledUser = await client.disableAdminUser("user-api-1");
+    const enabledUser = await client.enableAdminUser("user-api-1");
+    await client.disableAdminUser("user-api-1");
+    const unlockedUser = await client.unlockAdminUser("user-api-1");
+    const reset = await client.resetAdminUserPassword("user-api-1");
+    const resetMfaUser = await client.resetAdminUserMfa("user-api-1");
+
+    expect(disabledUser.accountStatus).toBe("DISABLED");
+    expect(enabledUser.accountStatus).toBe("ACTIVE");
+    expect(unlockedUser.lockedUntil).toBeNull();
+    expect(reset).toEqual({
+      userId: "user-api-1",
+      temporaryPassword: "Reset-Password-5678"
+    });
+    expect(resetMfaUser.mfaEnabled).toBe(false);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v1/admin/users/user-api-1/disable",
+      "/api/v1/admin/users/user-api-1/enable",
+      "/api/v1/admin/users/user-api-1/disable",
+      "/api/v1/admin/users/user-api-1/unlock",
+      "/api/v1/admin/users/user-api-1/password-reset",
+      "/api/v1/admin/users/user-api-1/mfa-reset"
+    ]);
+    fetchMock.mock.calls.forEach(([, init]) => {
+      expect(init).toEqual(expect.objectContaining({ method: "POST" }));
     });
   });
 
@@ -1122,11 +1239,6 @@ describe("hmsClient", () => {
       fetcher: rejectedFetch,
       baseUrl: ""
     });
-    const fallbackSession = await loadAuthSessionWithFallback({
-      fetcher: rejectedFetch,
-      baseUrl: ""
-    });
-
     expect(apiProducts.source).toBe("api");
     expect(apiProducts.items[0].code).toBe("1000GY");
     expect(fallbackProducts.source).toBe("mock");
@@ -1147,7 +1259,6 @@ describe("hmsClient", () => {
     expect(fallbackDevices.items[0].deviceId).toBe("field-tablet-01");
     expect(fallbackAuditEvents.source).toBe("mock");
     expect(fallbackAuditEvents.items[0].entity).toBe("Inspection");
-    expect(fallbackSession.roles).toContain("HMS_ADMIN");
   });
 
   it("falls back to mock customer data when the backend is unavailable", async () => {

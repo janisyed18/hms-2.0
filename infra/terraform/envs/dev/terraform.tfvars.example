@@ -18,6 +18,7 @@ api_desired_count          = 1
 worker_desired_count       = 1
 beat_desired_count         = 1
 enable_deletion_protection = false
+auth_mfa_key_version       = 1
 
 # Keep console until the SES sender is verified and Twilio secrets exist.
 notification_channel_mode = "console"

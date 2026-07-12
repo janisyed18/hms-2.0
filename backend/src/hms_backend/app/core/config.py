@@ -1,3 +1,4 @@
+import base64
 from typing import Literal
 
 from pydantic import Field
@@ -125,6 +126,89 @@ class Settings(BaseSettings):
     # Off by default: subjects must be provisioned by an admin first.
     auth_oidc_jit_provisioning: bool = False
 
+    # --- Staff browser authentication (Task 2+) ---
+    # Separate contract from the native bearer login: multi-role browser sign-in
+    # with forced password change, TOTP MFA, and rotating refresh cookies.
+    auth_browser_login_enabled: bool = False
+    # Password policy bounds (Unicode code points; no truncation).
+    auth_password_min_length: int = 12
+    auth_password_max_length: int = 128
+    # TOTP secrets are AES-256-GCM encrypted at rest. Key is base64/urlsafe of a
+    # 32-byte key; versioned so keys can be rotated without re-enrolling everyone.
+    auth_mfa_encryption_key: str = ""
+    auth_mfa_encryption_keys: dict[int, str] = Field(default_factory=dict)
+    auth_mfa_key_version: int = 1
+    auth_totp_issuer: str = "BAT Engineering HMS"
+    # Recovery codes are stored only as HMAC digests keyed by this pepper.
+    auth_recovery_code_pepper: str = ""
+    # Challenge / session lifetimes (seconds).
+    auth_browser_challenge_ttl_seconds: int = 600
+    auth_browser_access_ttl_seconds: int = 900
+    auth_browser_refresh_idle_ttl_seconds: int = 60 * 60 * 8
+    auth_browser_refresh_absolute_ttl_seconds: int = 60 * 60 * 24 * 30
+    # Refresh cookie attributes.
+    auth_browser_cookie_name: str = "hms_staff_refresh"
+    auth_browser_cookie_path: str = "/api/v1/auth/browser"
+    auth_browser_cookie_secure: bool = True
+    # Exact origins allowed to call refresh/logout (CSRF hardening).
+    auth_browser_allowed_origins: list[str] = Field(default_factory=list)
+    # Recent-auth window (seconds) required for privileged admin actions.
+    auth_browser_reauth_max_age_seconds: int = 300
+    # Max verification attempts against a single challenge before it is rejected.
+    auth_browser_challenge_max_attempts: int = 5
+    # Login throttling (per normalised account and per source IP, independently).
+    auth_login_rate_limit_max_attempts: int = 5
+    auth_login_rate_limit_window_seconds: int = 300
+    auth_login_lockout_seconds: int = 60
+
+    @property
+    def is_local_or_test(self) -> bool:
+        return self.environment.lower() in {"local", "test", "development"}
+
+    def browser_auth_config_errors(self) -> list[str]:
+        """Return blocking misconfigurations for deployed browser login.
+
+        Empty in local/test, or when browser login is disabled. Used by the app
+        startup validator so a broken auth configuration fails fast instead of
+        serving a login that cannot issue or verify sessions.
+        """
+        if not self.auth_browser_login_enabled or self.is_local_or_test:
+            return []
+        errors: list[str] = []
+        if not self.auth_bearer_hmac_secret:
+            errors.append("AUTH_BEARER_HMAC_SECRET is required")
+        if (
+            not self.auth_mfa_encryption_key
+            and self.auth_mfa_key_version not in self.auth_mfa_encryption_keys
+        ):
+            errors.append("AUTH_MFA_ENCRYPTION_KEY is required")
+        elif not all(
+            _decodes_to_32_bytes(value)
+            for value in [
+                *self.auth_mfa_encryption_keys.values(),
+                *(
+                    [self.auth_mfa_encryption_key]
+                    if self.auth_mfa_encryption_key
+                    else []
+                ),
+            ]
+        ):
+            errors.append("AUTH_MFA_ENCRYPTION_KEY values must decode to 32 bytes")
+        if not self.auth_recovery_code_pepper:
+            errors.append("AUTH_RECOVERY_CODE_PEPPER is required")
+        if not self.auth_browser_allowed_origins:
+            errors.append("AUTH_BROWSER_ALLOWED_ORIGINS must list the staff origin")
+        if not self.auth_browser_cookie_secure:
+            errors.append("AUTH_BROWSER_COOKIE_SECURE must be true when deployed")
+        return errors
+
+    def validate_browser_auth(self) -> None:
+        errors = self.browser_auth_config_errors()
+        if errors:
+            raise RuntimeError(
+                "Invalid browser auth configuration: " + "; ".join(errors)
+            )
+
     @property
     def effective_broker_url(self) -> str:
         return self.celery_broker_url or self.redis_url
@@ -135,3 +219,18 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def _decodes_to_32_bytes(raw: str) -> bool:
+    padded = raw + "=" * (-len(raw) % 4)
+    candidates: list[bytes] = []
+    for decoder in (base64.urlsafe_b64decode, base64.b64decode):
+        try:
+            candidates.append(decoder(padded))
+        except ValueError:
+            pass
+    try:
+        candidates.append(bytes.fromhex(raw))
+    except ValueError:
+        pass
+    return any(len(candidate) == 32 for candidate in candidates)

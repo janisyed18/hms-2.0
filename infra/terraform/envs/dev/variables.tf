@@ -116,6 +116,17 @@ variable "image_tag" {
   default     = "latest"
 }
 
+variable "auth_mfa_key_version" {
+  description = "Current version used to encrypt new TOTP secrets. Retain older keys in the app secret during rotation."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.auth_mfa_key_version >= 1 && floor(var.auth_mfa_key_version) == var.auth_mfa_key_version
+    error_message = "auth_mfa_key_version must be a positive integer."
+  }
+}
+
 variable "enable_deletion_protection" {
   description = "Enable deletion protection for stateful resources."
   type        = bool

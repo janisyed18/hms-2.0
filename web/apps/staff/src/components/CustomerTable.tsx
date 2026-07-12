@@ -5,6 +5,7 @@ import { WorkspaceState } from "./WorkspaceState";
 import type { CustomerRecord } from "../domain/types";
 
 interface CustomerTableProps {
+  canWrite: boolean;
   customers: CustomerRecord[];
   totalCount: number;
   selectedId: string | null;
@@ -66,6 +67,7 @@ function downloadCsv(filename: string, rows: string[][]) {
 }
 
 export function CustomerTable({
+  canWrite,
   customers,
   totalCount,
   selectedId,
@@ -130,10 +132,12 @@ export function CustomerTable({
         >
           <Download size={17} />
         </button>
-        <button className="primary-button" type="button" onClick={onAddCustomer}>
-          <Plus aria-hidden="true" size={17} />
-          Add Customer
-        </button>
+        {canWrite ? (
+          <button className="primary-button" type="button" onClick={onAddCustomer}>
+            <Plus aria-hidden="true" size={17} />
+            Add Customer
+          </button>
+        ) : null}
       </div>
 
       {filtersOpen ? (

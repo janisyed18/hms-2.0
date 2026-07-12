@@ -2,8 +2,7 @@ import { mockAssets } from "../data/mockAssets";
 import {
   mockAdminUsers,
   mockAuditEvents,
-  mockDevices,
-  mockStaffSession
+  mockDevices
 } from "../data/mockAdmin";
 import { mockCertificates } from "../data/mockCertificates";
 import {
@@ -19,9 +18,11 @@ import { mockRetestSchedules } from "../data/mockRetestSchedules";
 import type {
   ApiListResult,
   AdminUserFormValues,
+  AdminUserCreateResult,
   AdminUserListResult,
   AdminUserRecord,
   AdminUserUpdateValues,
+  TemporaryPasswordResult,
   AssetEndValues,
   AssetListResult,
   AssetLocationSummary,
@@ -289,6 +290,11 @@ interface ApiAdminUser {
   last_name: string | null;
   role: string;
   customer_id: string | null;
+  account_status?: "ACTIVE" | "LOCKED" | "DISABLED";
+  must_change_password?: boolean;
+  mfa_enabled?: boolean;
+  locked_until?: string | null;
+  last_login_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -298,6 +304,16 @@ interface ApiAdminUserList {
   limit: number;
   offset: number;
   items: ApiAdminUser[];
+}
+
+interface ApiAdminUserCreateResult {
+  user: ApiAdminUser;
+  temporary_password: string;
+}
+
+interface ApiTemporaryPasswordResult {
+  user_id: string;
+  temporary_password: string;
 }
 
 interface ApiDevice {
@@ -344,6 +360,23 @@ export interface HmsClientOptions {
     userId?: string;
     roles?: string;
     customerIds?: string;
+  };
+}
+
+interface HmsRuntimeAuth {
+  getAccessToken: () => string | null;
+  refreshAccessToken: () => Promise<string>;
+  onAuthFailure: () => void;
+}
+
+let runtimeAuth: HmsRuntimeAuth | null = null;
+
+export function configureHmsRuntimeAuth(auth: HmsRuntimeAuth): () => void {
+  runtimeAuth = auth;
+  return () => {
+    if (runtimeAuth === auth) {
+      runtimeAuth = null;
+    }
   };
 }
 
@@ -777,6 +810,11 @@ function toAdminUser(
       displayName: displayName(user),
       role: user.role,
       customerId: user.customer_id,
+      accountStatus: user.account_status ?? "ACTIVE",
+      mustChangePassword: user.must_change_password ?? false,
+      mfaEnabled: user.mfa_enabled ?? false,
+      lockedUntil: user.locked_until ?? null,
+      lastLoginAt: user.last_login_at ?? null,
       createdAt: user.created_at,
       updatedAt: user.updated_at
     },
@@ -891,7 +929,7 @@ function certificateIssuePayload(values: CertificateIssueValues) {
 
 function adminUserPayload(values: AdminUserFormValues) {
   return {
-    oidc_subject: values.oidcSubject,
+    ...(values.oidcSubject ? { oidc_subject: values.oidcSubject } : {}),
     email: values.email,
     first_name: values.firstName,
     last_name: values.lastName,
@@ -942,6 +980,14 @@ function identityHeaders(options: HmsClientOptions): Record<string, string> {
     };
   }
 
+  if (options.identity === undefined && runtimeAuth !== null) {
+    const accessToken = runtimeAuth.getAccessToken();
+    return {
+      "Content-Type": "application/json",
+      ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {})
+    };
+  }
+
   return {
     "Content-Type": "application/json",
     "x-hms-user-id": options.identity?.userId ?? defaultIdentity.userId,
@@ -969,13 +1015,27 @@ export function createHmsClient(options: HmsClientOptions = {}) {
     init: RequestInit = {},
     params: Record<string, string | number | boolean | undefined> = {}
   ): Promise<HmsApiResponse<T>> {
-    const response = await fetcher(buildUrl(baseUrl, path, params), {
-      ...init,
-      headers: {
-        ...identityHeaders(options),
-        ...init.headers
+    const url = buildUrl(baseUrl, path, params);
+    const send = () =>
+      fetcher(url, {
+        ...init,
+        headers: {
+          ...identityHeaders(options),
+          ...init.headers
+        }
+      });
+    let response = await send();
+    if (response.status === 401 && options.identity === undefined && runtimeAuth !== null) {
+      try {
+        await runtimeAuth.refreshAccessToken();
+        response = await send();
+      } catch {
+        runtimeAuth.onAuthFailure();
       }
-    });
+      if (response.status === 401) {
+        runtimeAuth.onAuthFailure();
+      }
+    }
 
     if (!response.ok) {
       let code = "http_error";
@@ -1432,15 +1492,18 @@ export function createHmsClient(options: HmsClientOptions = {}) {
 
     async createAdminUser(
       values: AdminUserFormValues
-    ): Promise<AdminUserRecord> {
-      const response = await request<ApiAdminUser>(
+    ): Promise<AdminUserCreateResult> {
+      const response = await request<ApiAdminUserCreateResult>(
         "/api/v1/admin/users",
         {
           method: "POST",
           body: JSON.stringify(adminUserPayload(values))
         }
       );
-      return toAdminUser(response.data, response.etag);
+      return {
+        user: toAdminUser(response.data.user, response.etag),
+        temporaryPassword: response.data.temporary_password
+      };
     },
 
     async updateAdminUser(
@@ -1461,6 +1524,49 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       await request<void>(`/api/v1/admin/users/${encodeURIComponent(id)}`, {
         method: "DELETE"
       });
+    },
+
+    async disableAdminUser(id: string): Promise<AdminUserRecord> {
+      const response = await request<ApiAdminUser>(
+        `/api/v1/admin/users/${encodeURIComponent(id)}/disable`,
+        { method: "POST" }
+      );
+      return toAdminUser(response.data, response.etag);
+    },
+
+    async enableAdminUser(id: string): Promise<AdminUserRecord> {
+      const response = await request<ApiAdminUser>(
+        `/api/v1/admin/users/${encodeURIComponent(id)}/enable`,
+        { method: "POST" }
+      );
+      return toAdminUser(response.data, response.etag);
+    },
+
+    async unlockAdminUser(id: string): Promise<AdminUserRecord> {
+      const response = await request<ApiAdminUser>(
+        `/api/v1/admin/users/${encodeURIComponent(id)}/unlock`,
+        { method: "POST" }
+      );
+      return toAdminUser(response.data, response.etag);
+    },
+
+    async resetAdminUserPassword(id: string): Promise<TemporaryPasswordResult> {
+      const response = await request<ApiTemporaryPasswordResult>(
+        `/api/v1/admin/users/${encodeURIComponent(id)}/password-reset`,
+        { method: "POST" }
+      );
+      return {
+        userId: response.data.user_id,
+        temporaryPassword: response.data.temporary_password
+      };
+    },
+
+    async resetAdminUserMfa(id: string): Promise<AdminUserRecord> {
+      const response = await request<ApiAdminUser>(
+        `/api/v1/admin/users/${encodeURIComponent(id)}/mfa-reset`,
+        { method: "POST" }
+      );
+      return toAdminUser(response.data, response.etag);
     },
 
     async listDevices(
@@ -1550,6 +1656,10 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       );
     }
   };
+}
+
+function mockFallbackAllowed(options: HmsClientOptions): boolean {
+  return runtimeAuth === null && options.identity?.accessToken === undefined;
 }
 
 function filterMockCustomers(search?: string): CustomerRecord[] {
@@ -1870,7 +1980,10 @@ export async function loadCustomersWithFallback(
       etag: response.etag,
       items: response.items
     };
-  } catch {
+  } catch (error) {
+    if (!mockFallbackAllowed(options)) {
+      throw error;
+    }
     const items = filterMockCustomers(options.search);
     return {
       source: "mock",
@@ -1892,7 +2005,10 @@ export async function loadProductsWithFallback(
       etag: response.etag,
       items: response.items
     };
-  } catch {
+  } catch (error) {
+    if (!mockFallbackAllowed(options)) {
+      throw error;
+    }
     const items = filterMockProducts(options);
     return {
       source: "mock",
@@ -1914,7 +2030,10 @@ export async function loadAssetsWithFallback(
       etag: response.etag,
       items: response.items
     };
-  } catch {
+  } catch (error) {
+    if (!mockFallbackAllowed(options)) {
+      throw error;
+    }
     const items = filterMockAssets(options);
     return {
       source: "mock",
@@ -1936,7 +2055,10 @@ export async function loadInspectionsWithFallback(
       etag: response.etag,
       items: response.items
     };
-  } catch {
+  } catch (error) {
+    if (!mockFallbackAllowed(options)) {
+      throw error;
+    }
     const items = filterMockInspections(options);
     return {
       source: "mock",
@@ -1958,7 +2080,10 @@ export async function loadRetestSchedulesWithFallback(
       etag: response.etag,
       items: response.items
     };
-  } catch {
+  } catch (error) {
+    if (!mockFallbackAllowed(options)) {
+      throw error;
+    }
     const items = filterMockRetestSchedules(options);
     return {
       source: "mock",
@@ -1980,7 +2105,10 @@ export async function loadCertificatesWithFallback(
       etag: response.etag,
       items: response.items
     };
-  } catch {
+  } catch (error) {
+    if (!mockFallbackAllowed(options)) {
+      throw error;
+    }
     const items = filterMockCertificates(options);
     return {
       source: "mock",
@@ -2002,7 +2130,10 @@ export async function loadReferenceStandardsWithFallback(
       etag: response.etag,
       items: response.items
     };
-  } catch {
+  } catch (error) {
+    if (!mockFallbackAllowed(options)) {
+      throw error;
+    }
     const items = filterMockReferenceStandards(options);
     return {
       source: "mock",
@@ -2025,7 +2156,7 @@ export async function loadAdminUsersWithFallback(
       items: response.items
     };
   } catch (error) {
-    if (error instanceof HmsApiError) {
+    if (error instanceof HmsApiError || !mockFallbackAllowed(options)) {
       throw error;
     }
     const items = filterMockAdminUsers(options);
@@ -2050,7 +2181,7 @@ export async function loadDevicesWithFallback(
       items: response.items
     };
   } catch (error) {
-    if (error instanceof HmsApiError) {
+    if (error instanceof HmsApiError || !mockFallbackAllowed(options)) {
       throw error;
     }
     const items = filterMockDevices(options);
@@ -2075,7 +2206,7 @@ export async function loadAuditEventsWithFallback(
       items: response.items
     };
   } catch (error) {
-    if (error instanceof HmsApiError) {
+    if (error instanceof HmsApiError || !mockFallbackAllowed(options)) {
       throw error;
     }
     const items = filterMockAuditEvents(options);
@@ -2084,16 +2215,5 @@ export async function loadAuditEventsWithFallback(
       total: mockAuditEvents.length,
       items
     };
-  }
-}
-
-export async function loadAuthSessionWithFallback(
-  options: HmsClientOptions = {}
-): Promise<StaffSession> {
-  try {
-    const client = createHmsClient(options);
-    return await client.getAuthSession();
-  } catch {
-    return mockStaffSession;
   }
 }

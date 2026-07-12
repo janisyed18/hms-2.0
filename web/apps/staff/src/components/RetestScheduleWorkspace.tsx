@@ -41,7 +41,7 @@ function countByStatus(
   return schedules.filter((schedule) => schedule.status === status).length;
 }
 
-export function RetestScheduleWorkspace() {
+export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
   const workspace = useRetestScheduleWorkspace();
   const overdueCount = countByStatus(workspace.schedules, "OVERDUE");
   const dueCount = countByStatus(workspace.schedules, "DUE");
@@ -202,6 +202,7 @@ export function RetestScheduleWorkspace() {
           />
         </div>
         <RetestScheduleDetail
+          canWrite={canWrite}
           onClose={workspace.closeDetail}
           onSave={workspace.saveSchedule}
           schedule={workspace.selectedSchedule}

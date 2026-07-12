@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
+from uuid6 import uuid7
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.api.schemas import (
@@ -14,21 +16,41 @@ from hms_backend.app.api.schemas import (
     DeviceListResponse,
     DeviceRead,
     DeviceUpdate,
+    TemporaryPasswordResult,
     UserCreate,
+    UserCreateResult,
     UserListResponse,
     UserRead,
     UserUpdate,
 )
 from hms_backend.app.core.audit import append_audit_event, normalise_for_json
 from hms_backend.app.core.config import settings
+from hms_backend.app.core.passwords import (
+    generate_temporary_password,
+    hash_password,
+)
 from hms_backend.app.core.rbac import Permission, Principal, Role, require_permission
 from hms_backend.app.core.repository import record_create, record_update, soft_delete
 from hms_backend.app.models.foundation import AuditEvent, Device
-from hms_backend.app.modules.identity.models import User
+from hms_backend.app.modules.identity.browser_auth import BrowserAuthService
+from hms_backend.app.modules.identity.models import (
+    AccountStatus,
+    MfaRecoveryCode,
+    User,
+)
+from hms_backend.app.modules.identity.user_admin import (
+    PrivilegeError,
+    ensure_can_change_role,
+    ensure_can_manage_role,
+    ensure_recent_auth,
+    normalise_customer_ids,
+)
 from hms_backend.app.modules.notifications.enums import NotificationCategory
 from hms_backend.app.modules.notifications.outbox import emit_event
 
 router = APIRouter(prefix="/admin")
+
+_auth_service = BrowserAuthService()
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 PrincipalDep = Annotated[Principal, Depends(get_current_principal)]
@@ -44,6 +66,45 @@ def _require_admin(principal: Principal, permission: Permission) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+
+
+def _guard(action: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run a user_admin rule, turning a PrivilegeError into a 403."""
+    try:
+        return action(*args, **kwargs)
+    except PrivilegeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
+
+
+def _require_recent_auth(principal: Principal) -> None:
+    """Require a recent sign-in for privileged actions. Only enforced for
+    token-based identities; dev-header principals (local only) carry no
+    ``auth_time`` and are exempt."""
+    if principal.auth_time is None:
+        return
+    try:
+        ensure_recent_auth(
+            principal.auth_time,
+            now=datetime.now(UTC),
+            max_age_seconds=settings.auth_browser_reauth_max_age_seconds,
+        )
+    except PrivilegeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
+        ) from exc
+
+
+def _security_snapshot(user: User) -> dict[str, object | None]:
+    """Redacted audit view of a user's security state (never secret material)."""
+    return {
+        "account_status": user.account_status,
+        "must_change_password": user.must_change_password,
+        "mfa_enabled": user.mfa_enabled,
+        "role": user.role,
+        "locked_until": normalise_for_json(user.locked_until),
+    }
 
 
 def _apply_sort(
@@ -132,18 +193,27 @@ async def list_users(
 
 @router.post(
     "/users",
-    response_model=UserRead,
+    response_model=UserCreateResult,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_user(
     payload: UserCreate,
     session: SessionDep,
     principal: PrincipalDep,
-) -> UserRead:
+) -> UserCreateResult:
     _require_admin(principal, Permission.USER_ADMIN)
 
-    oidc_subject = payload.oidc_subject.strip()
+    role = Role(_role_value(payload.role))
+    _guard(ensure_can_manage_role, principal.roles, role)
+    scoped = _guard(
+        normalise_customer_ids,
+        role,
+        [payload.customer_id] if payload.customer_id else [],
+    )
+
     email = payload.email.strip().lower()
+    # Local users get a server-generated subject; operators never invent one.
+    oidc_subject = (payload.oidc_subject or "").strip() or f"local:{uuid7()}"
     existing = await session.scalar(
         select(User).where(
             or_(User.oidc_subject == oidc_subject, func.lower(User.email) == email)
@@ -155,13 +225,17 @@ async def create_user(
             detail="User OIDC subject or email already exists",
         )
 
+    temporary_password = generate_temporary_password()
     user = User(
         oidc_subject=oidc_subject,
         email=email,
         first_name=_clean_optional(payload.first_name),
         last_name=_clean_optional(payload.last_name),
-        role=_role_value(payload.role),
-        customer_id=payload.customer_id,
+        role=role.value,
+        customer_id=scoped[0] if scoped else None,
+        password_hash=hash_password(temporary_password),
+        must_change_password=True,
+        account_status=AccountStatus.ACTIVE.value,
     )
     session.add(user)
     await record_create(
@@ -182,7 +256,10 @@ async def create_user(
         },
     )
     await session.commit()
-    return _user_read(user)
+    # The plaintext temporary password is returned exactly once, here.
+    return UserCreateResult(
+        user=_user_read(user), temporary_password=temporary_password
+    )
 
 
 @router.patch("/users/{user_id}", response_model=UserRead)
@@ -195,19 +272,47 @@ async def update_user(
     _require_admin(principal, Permission.USER_ADMIN)
 
     user = await _active_user(session, user_id)
+    current_role = Role(user.role)
+    _guard(ensure_can_manage_role, principal.roles, current_role)
     before = user.to_audit_dict()
     updates = payload.model_fields_set
+    security_change = False
+    effective_role = current_role
 
+    if "role" in updates and payload.role is not None:
+        effective_role = Role(_role_value(payload.role))
+        if effective_role is not current_role:
+            _require_recent_auth(principal)
+            _guard(
+                ensure_can_change_role,
+                principal.roles,
+                current=current_role,
+                new=effective_role,
+            )
+            user.role = effective_role.value
+            security_change = True
     if "email" in updates and payload.email is not None:
-        user.email = payload.email.strip().lower()
+        new_email = payload.email.strip().lower()
+        if new_email != user.email:
+            _require_recent_auth(principal)
+            user.email = new_email
+            security_change = True
     if "first_name" in updates:
         user.first_name = _clean_optional(payload.first_name)
     if "last_name" in updates:
         user.last_name = _clean_optional(payload.last_name)
-    if "role" in updates and payload.role is not None:
-        user.role = _role_value(payload.role)
-    if "customer_id" in updates:
-        user.customer_id = payload.customer_id
+
+    # Re-validate customer scope against the effective role (covers a role change
+    # to/from Customer User even when customer_id is not in this request).
+    effective_cid = (
+        payload.customer_id if "customer_id" in updates else user.customer_id
+    )
+    scoped = _guard(
+        normalise_customer_ids,
+        effective_role,
+        [effective_cid] if effective_cid else [],
+    )
+    user.customer_id = scoped[0] if scoped else None
 
     await record_update(
         session,
@@ -215,6 +320,141 @@ async def update_user(
         actor_id=principal.user_id,
         action="user.updated",
         before=before,
+    )
+    if security_change:
+        await _auth_service.revoke_all_sessions(session, user.id)
+    await session.commit()
+    return _user_read(user)
+
+
+@router.post("/users/{user_id}/disable", response_model=UserRead)
+async def disable_user(
+    user_id: str, session: SessionDep, principal: PrincipalDep
+) -> UserRead:
+    _require_admin(principal, Permission.USER_ADMIN)
+    user = await _active_user(session, user_id)
+    _guard(ensure_can_manage_role, principal.roles, Role(user.role))
+    _require_recent_auth(principal)
+    before = _security_snapshot(user)
+    user.account_status = AccountStatus.DISABLED.value
+    await _auth_service.revoke_all_sessions(session, user.id)
+    await append_audit_event(
+        session,
+        actor_id=principal.user_id,
+        action="user.disabled",
+        entity="user",
+        entity_id=user.id,
+        before=before,
+        after=_security_snapshot(user),
+    )
+    await session.commit()
+    return _user_read(user)
+
+
+@router.post("/users/{user_id}/enable", response_model=UserRead)
+async def enable_user(
+    user_id: str, session: SessionDep, principal: PrincipalDep
+) -> UserRead:
+    _require_admin(principal, Permission.USER_ADMIN)
+    user = await _active_user(session, user_id)
+    _guard(ensure_can_manage_role, principal.roles, Role(user.role))
+    before = _security_snapshot(user)
+    user.account_status = AccountStatus.ACTIVE.value
+    user.locked_until = None
+    user.failed_password_attempts = 0
+    user.failed_mfa_attempts = 0
+    await append_audit_event(
+        session,
+        actor_id=principal.user_id,
+        action="user.enabled",
+        entity="user",
+        entity_id=user.id,
+        before=before,
+        after=_security_snapshot(user),
+    )
+    await session.commit()
+    return _user_read(user)
+
+
+@router.post("/users/{user_id}/unlock", response_model=UserRead)
+async def unlock_user(
+    user_id: str, session: SessionDep, principal: PrincipalDep
+) -> UserRead:
+    _require_admin(principal, Permission.USER_ADMIN)
+    user = await _active_user(session, user_id)
+    _guard(ensure_can_manage_role, principal.roles, Role(user.role))
+    before = _security_snapshot(user)
+    user.locked_until = None
+    user.failed_password_attempts = 0
+    if user.account_status == AccountStatus.LOCKED.value:
+        user.account_status = AccountStatus.ACTIVE.value
+    await append_audit_event(
+        session,
+        actor_id=principal.user_id,
+        action="user.unlocked",
+        entity="user",
+        entity_id=user.id,
+        before=before,
+        after=_security_snapshot(user),
+    )
+    await session.commit()
+    return _user_read(user)
+
+
+@router.post(
+    "/users/{user_id}/password-reset", response_model=TemporaryPasswordResult
+)
+async def reset_user_password(
+    user_id: str, session: SessionDep, principal: PrincipalDep
+) -> TemporaryPasswordResult:
+    _require_admin(principal, Permission.USER_ADMIN)
+    user = await _active_user(session, user_id)
+    _guard(ensure_can_manage_role, principal.roles, Role(user.role))
+    _require_recent_auth(principal)
+    temporary_password = generate_temporary_password()
+    user.password_hash = hash_password(temporary_password)
+    user.must_change_password = True
+    await _auth_service.revoke_all_sessions(session, user.id)
+    await append_audit_event(
+        session,
+        actor_id=principal.user_id,
+        action="user.password_reset",
+        entity="user",
+        entity_id=user.id,
+        before=None,
+        after={"must_change_password": True},
+    )
+    await session.commit()
+    return TemporaryPasswordResult(
+        user_id=user.id, temporary_password=temporary_password
+    )
+
+
+@router.post("/users/{user_id}/mfa-reset", response_model=UserRead)
+async def reset_user_mfa(
+    user_id: str, session: SessionDep, principal: PrincipalDep
+) -> UserRead:
+    _require_admin(principal, Permission.USER_ADMIN)
+    user = await _active_user(session, user_id)
+    _guard(ensure_can_manage_role, principal.roles, Role(user.role))
+    _require_recent_auth(principal)
+    before = _security_snapshot(user)
+    user.mfa_enabled = False
+    user.mfa_secret_ciphertext = None
+    user.mfa_secret_key_version = None
+    user.mfa_last_accepted_step = None
+    await session.execute(
+        delete(MfaRecoveryCode).where(MfaRecoveryCode.user_id == user.id)
+    )
+    await _auth_service.revoke_all_sessions(session, user.id)
+    await append_audit_event(
+        session,
+        actor_id=principal.user_id,
+        action="user.mfa_reset",
+        entity="user",
+        entity_id=user.id,
+        before=before,
+        after=_security_snapshot(user),
     )
     await session.commit()
     return _user_read(user)

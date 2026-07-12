@@ -4,6 +4,7 @@ import type { AssetRecord } from "../domain/types";
 
 interface AssetDetailProps {
   asset: AssetRecord;
+  canWrite: boolean;
   onBack: () => void;
   onEdit: (asset: AssetRecord) => void;
 }
@@ -45,7 +46,7 @@ function orDash(value: string | null | undefined) {
   return value && value.trim() ? value : "—";
 }
 
-export function AssetDetail({ asset, onBack, onEdit }: AssetDetailProps) {
+export function AssetDetail({ asset, canWrite, onBack, onEdit }: AssetDetailProps) {
   return (
     <section className="detail-page" role="complementary" aria-label="Asset detail">
       <div className="detail-page-header">
@@ -66,14 +67,16 @@ export function AssetDetail({ asset, onBack, onEdit }: AssetDetailProps) {
           >
             <X aria-hidden="true" size={16} />
           </button>
-          <button
-            className="primary-button"
-            onClick={() => onEdit(asset)}
-            type="button"
-          >
-            <Edit3 aria-hidden="true" size={16} />
-            Edit
-          </button>
+          {canWrite ? (
+            <button
+              className="primary-button"
+              onClick={() => onEdit(asset)}
+              type="button"
+            >
+              <Edit3 aria-hidden="true" size={16} />
+              Edit
+            </button>
+          ) : null}
         </div>
       </div>
 

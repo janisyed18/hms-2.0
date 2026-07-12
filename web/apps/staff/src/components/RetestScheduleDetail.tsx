@@ -8,6 +8,7 @@ import type {
 } from "../domain/types";
 
 interface RetestScheduleDetailProps {
+  canWrite: boolean;
   onClose: () => void;
   onSave: (values: RetestScheduleUpdateValues) => Promise<void>;
   schedule: RetestScheduleRecord | null;
@@ -34,6 +35,7 @@ function statusClass(status: RetestScheduleStatus) {
 }
 
 export function RetestScheduleDetail({
+  canWrite,
   onClose,
   onSave,
   schedule
@@ -124,6 +126,7 @@ export function RetestScheduleDetail({
           <span>Retest due date</span>
           <input
             aria-label="Retest due date"
+            disabled={!canWrite}
             type="date"
             value={dueAt}
             onChange={(event) => setDueAt(event.target.value)}
@@ -133,6 +136,7 @@ export function RetestScheduleDetail({
           <span>Retest status</span>
           <select
             aria-label="Retest status"
+            disabled={!canWrite}
             value={status}
             onChange={(event) =>
               setStatus(event.target.value as RetestScheduleStatus)
@@ -149,6 +153,7 @@ export function RetestScheduleDetail({
           <span>Reminder interval days</span>
           <input
             aria-label="Reminder interval days"
+            disabled={!canWrite}
             inputMode="numeric"
             min="1"
             type="number"
@@ -160,6 +165,7 @@ export function RetestScheduleDetail({
           <span>Escalation interval days</span>
           <input
             aria-label="Escalation interval days"
+            disabled={!canWrite}
             inputMode="numeric"
             min="1"
             type="number"
@@ -171,12 +177,14 @@ export function RetestScheduleDetail({
           <CalendarClock aria-hidden="true" size={18} />
           <span>Schedule changes are captured through the HMS audit trail.</span>
         </div>
-        <div className="inspection-action-row">
-          <button className="primary-button" disabled={isSaving} type="submit">
-            <Save aria-hidden="true" size={16} />
-            {isSaving ? "Saving..." : "Save schedule"}
-          </button>
-        </div>
+        {canWrite ? (
+          <div className="inspection-action-row">
+            <button className="primary-button" disabled={isSaving} type="submit">
+              <Save aria-hidden="true" size={16} />
+              {isSaving ? "Saving..." : "Save schedule"}
+            </button>
+          </div>
+        ) : null}
       </form>
     </aside>
   );

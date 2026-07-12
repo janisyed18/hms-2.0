@@ -79,6 +79,10 @@ class Principal:
     user_id: str
     roles: frozenset[Role]
     customer_ids: frozenset[str]
+    # Unix seconds of the credential presentation (from the token ``auth_time``
+    # claim), used to gate privileged actions on a recent sign-in. None for
+    # dev-header identities.
+    auth_time: int | None = None
 
 
 def has_permission(principal: Principal, permission: Permission) -> bool:

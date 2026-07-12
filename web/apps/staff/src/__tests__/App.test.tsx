@@ -237,6 +237,11 @@ const apiAdminUser = {
   last_name: "Williams",
   role: "HMS_ADMIN",
   customer_id: null,
+  account_status: "ACTIVE",
+  must_change_password: false,
+  mfa_enabled: true,
+  locked_until: null,
+  last_login_at: "2026-07-07T01:00:00Z",
   created_at: "2026-07-07T00:00:00Z",
   updated_at: "2026-07-07T00:00:00Z"
 };
@@ -268,6 +273,17 @@ const inspectorSession = {
   displayName: "Ivy Inspector",
   roles: ["INSPECTOR"],
   permissions: ["customer:read", "asset:read", "inspection:write"],
+  customerIds: [],
+  authMode: "dev"
+} satisfies StaffSession;
+
+// Production now gates on auth; these tests exercise the workspace UI directly
+// via the explicit initialSession seam (a full-access admin session).
+const adminSession = {
+  userId: "admin-1",
+  displayName: "Sam Admin",
+  roles: ["SUPER_ADMIN"],
+  permissions: [],
   customerIds: [],
   authMode: "dev"
 } satisfies StaffSession;
@@ -381,19 +397,38 @@ function routeFetch() {
       });
     }
     if (path.startsWith("/api/v1/admin/users")) {
-      if (init?.method === "POST") {
+      if (init?.method === "POST" && path.endsWith("/disable")) {
+        return okJson({
+          ...apiAdminUser,
+          id: "user-api-created",
+          oidc_subject: "local:user-api-created",
+          email: "reviewer2@example.com",
+          first_name: "Riley",
+          last_name: "Reviewer",
+          role: "REVIEWER",
+          account_status: "DISABLED",
+          must_change_password: true,
+          mfa_enabled: false
+        });
+      }
+      if (init?.method === "POST" && path === "/api/v1/admin/users") {
         return {
           ok: true,
           status: 201,
           headers: new Headers(),
           json: async () => ({
-            ...apiAdminUser,
-            id: "user-api-created",
-            oidc_subject: "reviewer-2",
-            email: "reviewer2@example.com",
-            first_name: "Riley",
-            last_name: "Reviewer",
-            role: "REVIEWER"
+            user: {
+              ...apiAdminUser,
+              id: "user-api-created",
+              oidc_subject: "local:user-api-created",
+              email: "reviewer2@example.com",
+              first_name: "Riley",
+              last_name: "Reviewer",
+              role: "REVIEWER",
+              must_change_password: true,
+              mfa_enabled: false
+            },
+            temporary_password: "Generated-Temp-Password-1234"
           })
         };
       }
@@ -432,6 +467,7 @@ function routeFetch() {
 
 describe("App", () => {
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -439,7 +475,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
     expect(screen.getByText("Overview")).toBeVisible();
@@ -495,7 +531,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.click(
@@ -511,7 +547,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Notifications" }));
     const dialog = screen.getByRole("dialog", { name: "Notifications" });
@@ -526,7 +562,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.click(
@@ -585,7 +621,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.type(await screen.findByLabelText("Search customers"), "arctic");
@@ -604,7 +640,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.click(await screen.findByRole("button", { name: /Add Customer/i }));
@@ -632,7 +668,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.type(await screen.findByLabelText("Search customers"), "arctic");
@@ -651,7 +687,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
     await screen.findByRole("heading", { name: "Customer Management" });
@@ -701,7 +737,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
     expect(
@@ -733,7 +769,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Assets" }));
     await user.click(screen.getByRole("button", { name: "Add Asset" }));
@@ -769,7 +805,7 @@ describe("App", () => {
     );
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Assets" }));
     await user.click(await screen.findByRole("button", { name: "Add Asset" }));
@@ -811,7 +847,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Certificates" }));
     await user.click(screen.getByRole("button", { name: "Issue Certificate" }));
@@ -835,7 +871,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Certificates" }));
     await user.click(await screen.findByRole("button", { name: "Open certificate CERT-VOPA-NEW-1" }));
@@ -853,7 +889,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Inspections" }));
     await user.click(screen.getByRole("button", { name: "Add Inspection" }));
@@ -880,7 +916,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Inspections" }));
     await user.click(await screen.findByRole("button", { name: "Open inspection 997950" }));
@@ -902,7 +938,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Inspections" }));
     await user.click(await screen.findByRole("button", { name: "Open inspection 997950" }));
@@ -922,7 +958,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Inspections" }));
     await user.click(await screen.findByRole("button", { name: "Open inspection 997950" }));
@@ -944,7 +980,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Inspections" }));
     await user.click(await screen.findByRole("button", { name: "Open inspection ORIC-100" }));
@@ -963,7 +999,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Reference Data" }));
     await user.click(screen.getByRole("button", { name: "Add Standard" }));
@@ -978,7 +1014,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Products" }));
     await user.click(screen.getByRole("button", { name: "Add Product" }));
@@ -998,7 +1034,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Assets" }));
     await user.click(screen.getByRole("button", { name: "Add Asset" }));
@@ -1027,7 +1063,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Assets" }));
     await user.click(screen.getByRole("button", { name: "Filters" }));
@@ -1059,7 +1095,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: /Retest Schedule/i }));
     await user.click(screen.getByRole("button", { name: "Filters" }));
@@ -1076,7 +1112,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Assets" }));
     await user.click(screen.getByRole("button", { name: "Add Asset" }));
@@ -1099,7 +1135,7 @@ describe("App", () => {
     vi.stubGlobal("confirm", confirmMock);
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Products" }));
     await user.click(await screen.findByRole("button", { name: "Archive API Fuel Hose" }));
@@ -1117,7 +1153,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Dashboard" }));
     expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
@@ -1140,7 +1176,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: /Retest Schedule/i }));
 
@@ -1170,7 +1206,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Analytics" }));
     expect(await screen.findByRole("heading", { name: "Analytics" })).toBeVisible();
@@ -1206,7 +1242,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Audit Log" }));
     expect(await screen.findByRole("row", { name: /user.created/i })).toHaveTextContent(
@@ -1225,28 +1261,34 @@ describe("App", () => {
     );
   });
 
-  it("creates and archives admin users from the users workspace", async () => {
+  it("creates and disables admin users from the users workspace", async () => {
     vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Users & Roles" }));
     await user.click(await screen.findByRole("button", { name: "Add User" }));
-    await user.type(screen.getByLabelText("OIDC subject"), "reviewer-2");
     await user.type(screen.getByLabelText("Email"), "reviewer2@example.com");
     await user.type(screen.getByLabelText("First name"), "Riley");
     await user.type(screen.getByLabelText("Last name"), "Reviewer");
     await user.selectOptions(screen.getByLabelText("Role"), "REVIEWER");
-    await user.click(screen.getByRole("button", { name: "Save user" }));
+    await user.click(screen.getByRole("button", { name: "Create user" }));
+
+    expect(await screen.findByTestId("credential-value")).toHaveTextContent(
+      "Generated-Temp-Password-1234"
+    );
+    await user.click(screen.getByRole("button", { name: "Done" }));
 
     expect(await screen.findByRole("row", { name: /reviewer2@example.com/i })).toHaveTextContent(
       "REVIEWER"
     );
 
-    await user.click(screen.getByRole("button", { name: "Archive user reviewer2@example.com" }));
+    await user.click(screen.getByRole("button", { name: "Manage reviewer2@example.com" }));
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    await user.click(screen.getByRole("menuitem", { name: "Disable account" }));
     await waitFor(() => {
-      expect(screen.queryByRole("row", { name: /reviewer2@example.com/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("row", { name: /reviewer2@example.com/i })).toHaveTextContent("DISABLED");
     });
   });
 
@@ -1280,7 +1322,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Users & Roles" }));
 
@@ -1291,7 +1333,7 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.type(await screen.findByLabelText("Global search"), "certificate");
     await user.click(screen.getByRole("button", { name: "Run global search" }));
@@ -1312,7 +1354,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "User menu" }));
     expect(screen.getByRole("dialog", { name: "User menu" })).toHaveTextContent(
-      "Alex Williams"
+      "Sam Admin"
     );
   });
 
@@ -1329,7 +1371,7 @@ describe("App", () => {
       revokeObjectURL
     });
 
-    render(<App />);
+    render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.click(screen.getByRole("button", { name: "More Filters" }));

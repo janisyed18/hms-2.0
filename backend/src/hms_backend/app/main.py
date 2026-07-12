@@ -8,17 +8,20 @@ from sqlalchemy import text
 
 from hms_backend.app.api.admin import router as admin_router
 from hms_backend.app.api.auth import router as auth_router
+from hms_backend.app.api.browser_auth import router as browser_auth_router
 from hms_backend.app.api.dependencies import engine
 from hms_backend.app.api.jobs import router as jobs_router
 from hms_backend.app.api.notifications import router as notifications_router
 from hms_backend.app.api.public import router as public_router
 from hms_backend.app.api.records import router as records_router
 from hms_backend.app.api.sync import router as sync_router
+from hms_backend.app.core.config import settings
 from hms_backend.app.core.redis import close_redis, ping_redis
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    settings.validate_browser_auth()
     yield
     # Release the Redis connection pool on shutdown.
     await close_redis()
@@ -107,6 +110,7 @@ def create_app() -> FastAPI:
     app.include_router(records_router, prefix="/api/v1", tags=["core-records"])
     app.include_router(sync_router, prefix="/api/v1", tags=["sync"])
     app.include_router(auth_router, prefix="/api/v1", tags=["auth"])
+    app.include_router(browser_auth_router, prefix="/api/v1", tags=["auth-browser"])
     app.include_router(admin_router, prefix="/api/v1", tags=["admin"])
     app.include_router(jobs_router, prefix="/api/v1")
     app.include_router(notifications_router, prefix="/api/v1")

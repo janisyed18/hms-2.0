@@ -146,7 +146,7 @@ async def test_admin_user_crud_writes_audit_events(
                 "customer_id": None,
             },
         )
-        user_id = create_response.json()["id"]
+        user_id = create_response.json()["user"]["id"]
         list_response = await client.get(
             "/api/v1/admin/users",
             params={"search": "inspector", "sort": "-email"},

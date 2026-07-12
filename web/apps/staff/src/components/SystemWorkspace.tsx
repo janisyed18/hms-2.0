@@ -1,19 +1,24 @@
 import {
   BadgeCheck,
   Clock3,
+  Edit3,
   KeyRound,
   Laptop,
   LockKeyhole,
+  MoreHorizontal,
   Plus,
+  RotateCcw,
   ServerCog,
   ShieldCheck,
+  ShieldOff,
   Smartphone,
+  UserCheck,
+  UserX,
   UsersRound,
-  Wifi,
-  X
+  Wifi
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import {
   createHmsClient,
@@ -22,28 +27,54 @@ import {
   loadDevicesWithFallback
 } from "../api/hmsClient";
 import type {
-  AdminUserFormValues,
   AdminUserRecord,
   DataSource,
-  DeviceRecord
+  DeviceRecord,
+  StaffRole
 } from "../domain/types";
+import { OneTimeCredentialDialog, type OneTimeCredential } from "./OneTimeCredentialDialog";
+import {
+  UserAdminDialog,
+  type CustomerOption,
+  type UserAdminValues
+} from "./UserAdminDialog";
 import { WorkspaceState } from "./WorkspaceState";
+import { canManageRole } from "./roleAdmin";
 
 export type SystemModule = "users" | "devices";
 
 interface SystemWorkspaceProps {
   module: SystemModule;
   source: DataSource;
+  actorRoles: StaffRole[];
+  customerOptions: CustomerOption[];
 }
 
-const roles = ["HMS_ADMIN", "REVIEWER", "INSPECTOR", "ASSEMBLY", "CUSTOMER_USER"];
+const roles: StaffRole[] = [
+  "SUPER_ADMIN",
+  "HMS_ADMIN",
+  "REVIEWER",
+  "INSPECTOR",
+  "ASSEMBLY",
+  "CUSTOMER_USER"
+];
 
-export function SystemWorkspace({ module, source }: SystemWorkspaceProps) {
+export function SystemWorkspace({
+  module,
+  source,
+  actorRoles,
+  customerOptions
+}: SystemWorkspaceProps) {
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
   const [dataSource, setDataSource] = useState<DataSource>(source);
   const [error, setError] = useState<string | null>(null);
-  const [isUserFormOpen, setUserFormOpen] = useState(false);
+  const [userDialog, setUserDialog] = useState<{
+    mode: "create" | "edit";
+    user?: AdminUserRecord;
+  } | null>(null);
+  const [credential, setCredential] = useState<OneTimeCredential | null>(null);
+  const [managedUserId, setManagedUserId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -85,29 +116,105 @@ export function SystemWorkspace({ module, source }: SystemWorkspaceProps) {
 
   const roleRows = useMemo(() => roleSummary(users), [users]);
 
-  async function saveUser(values: AdminUserFormValues) {
+  async function saveUser(values: UserAdminValues) {
     setError(null);
     try {
-      const created =
-        dataSource === "api"
-          ? await createHmsClient().createAdminUser(values)
-          : localUser(values);
-      setUsers((current) => [created, ...current]);
-      setUserFormOpen(false);
+      if (userDialog?.mode === "edit" && userDialog.user) {
+        const updated =
+          dataSource === "api"
+            ? await createHmsClient().updateAdminUser(userDialog.user.id, {
+                email: values.email,
+                firstName: values.firstName || null,
+                lastName: values.lastName || null,
+                role: values.role,
+                customerId: values.customerId
+              })
+            : {
+                ...userDialog.user,
+                email: values.email,
+                firstName: values.firstName || null,
+                lastName: values.lastName || null,
+                displayName: displayNameFor(values),
+                role: values.role,
+                customerId: values.customerId,
+                updatedAt: new Date().toISOString()
+              };
+        replaceUser(updated);
+      } else {
+        const result =
+          dataSource === "api"
+            ? await createHmsClient().createAdminUser({
+                email: values.email,
+                firstName: values.firstName || null,
+                lastName: values.lastName || null,
+                role: values.role,
+                customerId: values.customerId
+              })
+            : localUser(values);
+        setUsers((current) => [result.user, ...current]);
+        setCredential({
+          title: "Temporary password",
+          label: "Password",
+          value: result.temporaryPassword,
+          note: "Give this password to the user securely. They must change it at first sign-in."
+        });
+      }
+      setUserDialog(null);
     } catch (saveError) {
       setError(errorMessage(saveError));
     }
   }
 
-  async function archiveUser(user: AdminUserRecord) {
+  function replaceUser(updated: AdminUserRecord) {
+    setUsers((current) =>
+      current.map((item) => (item.id === updated.id ? updated : item))
+    );
+  }
+
+  async function runUserAction(
+    user: AdminUserRecord,
+    action: "disable" | "enable" | "unlock" | "password" | "mfa"
+  ) {
     setError(null);
+    setManagedUserId(null);
+    const labels = {
+      disable: "disable this account",
+      enable: "enable this account",
+      unlock: "unlock this account",
+      password: "issue a new temporary password",
+      mfa: "reset MFA enrollment"
+    };
+    if (!window.confirm(`Confirm: ${labels[action]}?`)) {
+      return;
+    }
     try {
-      if (dataSource === "api") {
-        await createHmsClient().archiveAdminUser(user.id);
+      if (action === "password") {
+        const result =
+          dataSource === "api"
+            ? await createHmsClient().resetAdminUserPassword(user.id)
+            : { userId: user.id, temporaryPassword: mockTemporaryPassword() };
+        setCredential({
+          title: "Password reset",
+          label: "Temporary password",
+          value: result.temporaryPassword
+        });
+        replaceUser({ ...user, mustChangePassword: true });
+        return;
       }
-      setUsers((current) => current.filter((item) => item.id !== user.id));
-    } catch (archiveError) {
-      setError(errorMessage(archiveError));
+      const client = createHmsClient();
+      const updated =
+        dataSource === "api"
+          ? action === "disable"
+            ? await client.disableAdminUser(user.id)
+            : action === "enable"
+              ? await client.enableAdminUser(user.id)
+              : action === "unlock"
+                ? await client.unlockAdminUser(user.id)
+                : await client.resetAdminUserMfa(user.id)
+          : localLifecycleUpdate(user, action);
+      replaceUser(updated);
+    } catch (actionError) {
+      setError(errorMessage(actionError));
     }
   }
 
@@ -243,12 +350,22 @@ export function SystemWorkspace({ module, source }: SystemWorkspaceProps) {
               <h2>User Directory</h2>
               <p>Persisted access records resolved by the HMS auth boundary.</p>
             </div>
-            <button className="primary-button" type="button" onClick={() => setUserFormOpen(true)}>
+            <button className="primary-button" type="button" onClick={() => setUserDialog({ mode: "create" })}>
               <Plus aria-hidden="true" size={15} />
               Add User
             </button>
           </div>
-          <UserTable users={users} onArchive={archiveUser} />
+          <UserTable
+            actorRoles={actorRoles}
+            managedUserId={managedUserId}
+            onEdit={(user) => {
+              setManagedUserId(null);
+              setUserDialog({ mode: "edit", user });
+            }}
+            onManage={setManagedUserId}
+            onUserAction={runUserAction}
+            users={users}
+          />
         </section>
 
         <section className="data-panel">
@@ -270,10 +387,24 @@ export function SystemWorkspace({ module, source }: SystemWorkspaceProps) {
           </div>
         </section>
       </div>
-      <UserForm
-        open={isUserFormOpen}
-        onClose={() => setUserFormOpen(false)}
+      <UserAdminDialog
+        actorRoles={actorRoles}
+        customers={customerOptions}
+        initial={userDialog?.user ? {
+          email: userDialog.user.email,
+          firstName: userDialog.user.firstName ?? "",
+          lastName: userDialog.user.lastName ?? "",
+          role: userDialog.user.role as StaffRole,
+          customerId: userDialog.user.customerId
+        } : undefined}
+        mode={userDialog?.mode ?? "create"}
+        open={userDialog !== null}
+        onClose={() => setUserDialog(null)}
         onSubmit={saveUser}
+      />
+      <OneTimeCredentialDialog
+        credential={credential}
+        onClose={() => setCredential(null)}
       />
     </section>
   );
@@ -315,11 +446,22 @@ function MetricGrid({
 }
 
 function UserTable({
+  actorRoles,
+  managedUserId,
+  onEdit,
+  onManage,
+  onUserAction,
   users,
-  onArchive
 }: {
+  actorRoles: StaffRole[];
+  managedUserId: string | null;
+  onEdit: (user: AdminUserRecord) => void;
+  onManage: (id: string | null) => void;
+  onUserAction: (
+    user: AdminUserRecord,
+    action: "disable" | "enable" | "unlock" | "password" | "mfa"
+  ) => void;
   users: AdminUserRecord[];
-  onArchive: (user: AdminUserRecord) => void;
 }) {
   return (
     <section className="operations-table-panel">
@@ -331,7 +473,9 @@ function UserTable({
               <th>Email</th>
               <th>Role</th>
               <th>Scope</th>
-              <th>Updated</th>
+              <th>Status</th>
+              <th>MFA</th>
+              <th>Last login</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -345,11 +489,49 @@ function UserTable({
                   <small>{formatRole(user.role)}</small>
                 </td>
                 <td>{user.customerId ?? "All customers"}</td>
-                <td>{formatDateTime(user.updatedAt)}</td>
+                <td><span className={`user-status status-${user.accountStatus.toLowerCase()}`}>{user.accountStatus}</span></td>
+                <td>{user.mfaEnabled ? "Enabled" : "MFA setup required"}</td>
+                <td>{user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "Never"}</td>
                 <td>
-                  <button type="button" onClick={() => onArchive(user)}>
-                    Archive user {user.email}
-                  </button>
+                  {canManageRole(actorRoles, user.role as StaffRole) ? (
+                    <div className="user-actions">
+                      <button
+                        aria-label={`Manage ${user.email}`}
+                        className="icon-button light"
+                        type="button"
+                        onClick={() => onManage(managedUserId === user.id ? null : user.id)}
+                      >
+                        <MoreHorizontal aria-hidden="true" size={17} />
+                      </button>
+                      {managedUserId === user.id ? (
+                        <div className="user-action-menu" role="menu">
+                          <button type="button" role="menuitem" onClick={() => onEdit(user)}>
+                            <Edit3 aria-hidden="true" size={15} /> Edit user
+                          </button>
+                          {user.accountStatus === "DISABLED" ? (
+                            <button type="button" role="menuitem" onClick={() => onUserAction(user, "enable")}>
+                              <UserCheck aria-hidden="true" size={15} /> Enable account
+                            </button>
+                          ) : (
+                            <button type="button" role="menuitem" onClick={() => onUserAction(user, "disable")}>
+                              <UserX aria-hidden="true" size={15} /> Disable account
+                            </button>
+                          )}
+                          {user.accountStatus === "LOCKED" || user.lockedUntil ? (
+                            <button type="button" role="menuitem" onClick={() => onUserAction(user, "unlock")}>
+                              <LockKeyhole aria-hidden="true" size={15} /> Unlock account
+                            </button>
+                          ) : null}
+                          <button type="button" role="menuitem" onClick={() => onUserAction(user, "password")}>
+                            <RotateCcw aria-hidden="true" size={15} /> Reset password
+                          </button>
+                          <button type="button" role="menuitem" onClick={() => onUserAction(user, "mfa")}>
+                            <ShieldOff aria-hidden="true" size={15} /> Reset MFA
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : <span className="muted-copy">Protected</span>}
                 </td>
               </tr>
             ))}
@@ -405,119 +587,6 @@ function DeviceTable({
   );
 }
 
-function UserForm({
-  open,
-  onClose,
-  onSubmit
-}: {
-  open: boolean;
-  onClose: () => void;
-  onSubmit: (values: AdminUserFormValues) => Promise<void>;
-}) {
-  const [oidcSubject, setOidcSubject] = useState("");
-  const [email, setEmail] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [role, setRole] = useState("INSPECTOR");
-  const [isSubmitting, setSubmitting] = useState(false);
-
-  if (!open) {
-    return null;
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting(true);
-    await onSubmit({
-      oidcSubject,
-      email,
-      firstName: firstName.trim() || null,
-      lastName: lastName.trim() || null,
-      role,
-      customerId: null
-    });
-    setOidcSubject("");
-    setEmail("");
-    setFirstName("");
-    setLastName("");
-    setRole("INSPECTOR");
-    setSubmitting(false);
-  }
-
-  return (
-    <div className="drawer-backdrop">
-      <form className="customer-drawer" onSubmit={handleSubmit}>
-        <div className="drawer-header">
-          <div>
-            <h2>Add User</h2>
-            <p>Create a persisted admin user for local role-bound testing.</p>
-          </div>
-          <button className="icon-button light" type="button" aria-label="Close form" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-        <label>
-          <span>OIDC subject</span>
-          <input
-            aria-label="OIDC subject"
-            required
-            value={oidcSubject}
-            onChange={(event) => setOidcSubject(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>Email</span>
-          <input
-            aria-label="Email"
-            required
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>First name</span>
-          <input
-            aria-label="First name"
-            value={firstName}
-            onChange={(event) => setFirstName(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>Last name</span>
-          <input
-            aria-label="Last name"
-            value={lastName}
-            onChange={(event) => setLastName(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>Role</span>
-          <select
-            aria-label="Role"
-            value={role}
-            onChange={(event) => setRole(event.target.value)}
-          >
-            {roles.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="drawer-actions">
-          <button className="secondary-button" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Saving..." : "Save user"}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
 function roleSummary(users: AdminUserRecord[]) {
   return roles.map((role) => ({
     role,
@@ -536,20 +605,54 @@ function roleSummary(users: AdminUserRecord[]) {
   }));
 }
 
-function localUser(values: AdminUserFormValues): AdminUserRecord {
+function localUser(values: UserAdminValues): {
+  user: AdminUserRecord;
+  temporaryPassword: string;
+} {
   const now = new Date().toISOString();
   return {
-    id: `local-user-${Date.now()}`,
-    oidcSubject: values.oidcSubject,
-    email: values.email,
-    firstName: values.firstName,
-    lastName: values.lastName,
-    displayName: [values.firstName, values.lastName].filter(Boolean).join(" ") || values.email,
-    role: values.role,
-    customerId: values.customerId,
-    createdAt: now,
-    updatedAt: now
+    user: {
+      id: `local-user-${Date.now()}`,
+      oidcSubject: `local:${Date.now()}`,
+      email: values.email,
+      firstName: values.firstName || null,
+      lastName: values.lastName || null,
+      displayName: displayNameFor(values),
+      role: values.role,
+      customerId: values.customerId,
+      accountStatus: "ACTIVE",
+      mustChangePassword: true,
+      mfaEnabled: false,
+      lockedUntil: null,
+      lastLoginAt: null,
+      createdAt: now,
+      updatedAt: now
+    },
+    temporaryPassword: mockTemporaryPassword()
   };
+}
+
+function displayNameFor(values: UserAdminValues): string {
+  return [values.firstName, values.lastName].filter(Boolean).join(" ") || values.email;
+}
+
+function mockTemporaryPassword(): string {
+  const bytes = new Uint32Array(3);
+  crypto.getRandomValues(bytes);
+  return `Demo-${Array.from(bytes, (value) => value.toString(36)).join("-")}`;
+}
+
+function localLifecycleUpdate(
+  user: AdminUserRecord,
+  action: "disable" | "enable" | "unlock" | "mfa"
+): AdminUserRecord {
+  if (action === "disable") {
+    return { ...user, accountStatus: "DISABLED" };
+  }
+  if (action === "enable" || action === "unlock") {
+    return { ...user, accountStatus: "ACTIVE", lockedUntil: null };
+  }
+  return { ...user, mfaEnabled: false };
 }
 
 function syncHealth(devices: DeviceRecord[]): number {

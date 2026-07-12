@@ -74,6 +74,18 @@ locals {
       name      = "AUTH_BEARER_HMAC_SECRET"
       valueFrom = "${local.app_secret_arn}:AUTH_BEARER_HMAC_SECRET::"
     },
+    {
+      name      = "AUTH_MFA_ENCRYPTION_KEY"
+      valueFrom = "${local.app_secret_arn}:AUTH_MFA_ENCRYPTION_KEY::"
+    },
+    {
+      name      = "AUTH_MFA_ENCRYPTION_KEYS"
+      valueFrom = "${local.app_secret_arn}:AUTH_MFA_ENCRYPTION_KEYS::"
+    },
+    {
+      name      = "AUTH_RECOVERY_CODE_PEPPER"
+      valueFrom = "${local.app_secret_arn}:AUTH_RECOVERY_CODE_PEPPER::"
+    },
   ], local.notification_secret_environment)
 
   backend_environment = [
@@ -120,6 +132,22 @@ locals {
     {
       name  = "AUTH_DEV_ALLOW_ROLE_FALLBACK"
       value = "false"
+    },
+    {
+      name  = "AUTH_BROWSER_LOGIN_ENABLED"
+      value = "true"
+    },
+    {
+      name  = "AUTH_BROWSER_ALLOWED_ORIGINS"
+      value = jsonencode(["https://${aws_cloudfront_distribution.staff.domain_name}"])
+    },
+    {
+      name  = "AUTH_BROWSER_COOKIE_SECURE"
+      value = "true"
+    },
+    {
+      name  = "AUTH_MFA_KEY_VERSION"
+      value = tostring(var.auth_mfa_key_version)
     },
     {
       name  = "NOTIFICATION_CHANNEL_MODE"
@@ -322,6 +350,16 @@ resource "random_password" "auth_hmac" {
   special = false
 }
 
+resource "random_password" "auth_mfa" {
+  length  = 43
+  special = false
+}
+
+resource "random_password" "auth_recovery_pepper" {
+  length  = 48
+  special = false
+}
+
 resource "aws_db_subnet_group" "this" {
   name       = "${local.name}-db"
   subnet_ids = [for subnet in aws_subnet.private : subnet.id]
@@ -448,8 +486,11 @@ resource "aws_secretsmanager_secret" "app" {
 resource "aws_secretsmanager_secret_version" "app" {
   secret_id = aws_secretsmanager_secret.app.id
   secret_string = jsonencode({
-    DATABASE_URL            = "postgresql+asyncpg://${var.db_username}:${urlencode(random_password.db.result)}@${aws_db_instance.postgres.address}:5432/${var.db_name}"
-    AUTH_BEARER_HMAC_SECRET = random_password.auth_hmac.result
+    DATABASE_URL              = "postgresql+asyncpg://${var.db_username}:${urlencode(random_password.db.result)}@${aws_db_instance.postgres.address}:5432/${var.db_name}"
+    AUTH_BEARER_HMAC_SECRET   = random_password.auth_hmac.result
+    AUTH_MFA_ENCRYPTION_KEY   = random_password.auth_mfa.result
+    AUTH_MFA_ENCRYPTION_KEYS  = jsonencode({ (tostring(var.auth_mfa_key_version)) = random_password.auth_mfa.result })
+    AUTH_RECOVERY_CODE_PEPPER = random_password.auth_recovery_pepper.result
   })
 }
 
@@ -820,7 +861,7 @@ resource "aws_ecs_task_definition" "migrate" {
       command = [
         "sh",
         "-c",
-        "alembic upgrade head && python -m hms_backend.app.tooling.local_seed",
+        "alembic upgrade head && python -m hms_backend.app.tooling.local_seed && python -m hms_backend.app.tooling.local_seed --auth-test-accounts",
       ]
       environment = local.backend_environment
       secrets     = local.backend_secret_environment
@@ -1122,7 +1163,7 @@ resource "aws_cloudfront_distribution" "staff" {
 
     forwarded_values {
       query_string = true
-      headers      = ["Authorization", "Content-Type", "If-Match", "X-HMS-Roles", "X-HMS-User-Id"]
+      headers      = ["Authorization", "Content-Type", "If-Match", "Origin"]
       cookies {
         forward = "all"
       }
