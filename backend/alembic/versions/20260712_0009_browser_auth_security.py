@@ -77,14 +77,19 @@ def upgrade() -> None:
         batch_op.add_column(
             sa.Column("last_login_at", sa.DateTime(timezone=True), nullable=True)
         )
-        batch_op.create_index("ix_users_email", ["email"], unique=False)
-
     with op.batch_alter_table("users") as batch_op:
         batch_op.alter_column("account_status", server_default=None)
         batch_op.alter_column("must_change_password", server_default=None)
         batch_op.alter_column("mfa_enabled", server_default=None)
         batch_op.alter_column("failed_password_attempts", server_default=None)
         batch_op.alter_column("failed_mfa_attempts", server_default=None)
+
+    op.create_index(
+        "ix_users_email_lower",
+        "users",
+        [sa.text("lower(email)")],
+        unique=False,
+    )
 
     op.create_table(
         "browser_auth_challenges",
@@ -98,11 +103,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("token_hash"),
-    )
-    op.create_index(
-        "ix_browser_auth_challenges_token_hash",
-        "browser_auth_challenges",
-        ["token_hash"],
     )
     op.create_index(
         "ix_browser_auth_challenges_user_id",
@@ -132,11 +132,6 @@ def upgrade() -> None:
         "ix_browser_refresh_sessions_family_id",
         "browser_refresh_sessions",
         ["family_id"],
-    )
-    op.create_index(
-        "ix_browser_refresh_sessions_token_hash",
-        "browser_refresh_sessions",
-        ["token_hash"],
     )
     op.create_index(
         "ix_browser_refresh_sessions_user_revoked",
@@ -170,10 +165,6 @@ def downgrade() -> None:
         table_name="browser_refresh_sessions",
     )
     op.drop_index(
-        "ix_browser_refresh_sessions_token_hash",
-        table_name="browser_refresh_sessions",
-    )
-    op.drop_index(
         "ix_browser_refresh_sessions_family_id",
         table_name="browser_refresh_sessions",
     )
@@ -182,14 +173,10 @@ def downgrade() -> None:
     op.drop_index(
         "ix_browser_auth_challenges_user_id", table_name="browser_auth_challenges"
     )
-    op.drop_index(
-        "ix_browser_auth_challenges_token_hash",
-        table_name="browser_auth_challenges",
-    )
     op.drop_table("browser_auth_challenges")
 
+    op.drop_index("ix_users_email_lower", table_name="users")
     with op.batch_alter_table("users") as batch_op:
-        batch_op.drop_index("ix_users_email")
         batch_op.drop_column("last_login_at")
         batch_op.drop_column("locked_until")
         batch_op.drop_column("failed_mfa_attempts")

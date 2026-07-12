@@ -6,6 +6,7 @@ import pytest_asyncio
 from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.schema import UniqueConstraint
 
 from hms_backend.app.api.schemas import UserRead
 from hms_backend.app.models.base import Base
@@ -224,3 +225,38 @@ def test_user_read_exposes_security_state_without_secret_material() -> None:
         "failed_password_attempts",
         "failed_mfa_attempts",
     }
+
+
+def test_token_hashes_use_one_unique_constraint_without_redundant_indexes() -> None:
+    for model in (BrowserAuthChallenge, BrowserRefreshSession):
+        token_indexes = [
+            index
+            for index in model.__table__.indexes
+            if "token_hash" in {column.name for column in index.columns}
+        ]
+        token_constraints = [
+            constraint
+            for constraint in model.__table__.constraints
+            if isinstance(constraint, UniqueConstraint)
+            and "token_hash" in {column.name for column in constraint.columns}
+        ]
+
+        assert token_indexes == []
+        assert len(token_constraints) == 1
+
+
+def test_user_email_keeps_unique_constraint_and_lowercase_lookup_index() -> None:
+    email_constraints = [
+        constraint
+        for constraint in User.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+        and {column.name for column in constraint.columns} == {"email"}
+    ]
+    email_indexes = {
+        index.name: index.unique
+        for index in User.__table__.indexes
+        if "email" in {column.name for column in index.columns}
+    }
+
+    assert len(email_constraints) == 1
+    assert email_indexes == {"ix_users_email_lower": False}

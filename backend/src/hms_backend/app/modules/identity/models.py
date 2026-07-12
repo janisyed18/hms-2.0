@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
@@ -35,9 +36,7 @@ class User(SyncableMixin, Base):
     __tablename__ = "users"
 
     oidc_subject: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
-    email: Mapped[str] = mapped_column(
-        String(320), nullable=False, unique=True, index=True
-    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
     # Argon2 password hash for local (bearer) login; null for OIDC-only users.
     # Never exposed in any API response, grid or form.
     password_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -94,15 +93,16 @@ class User(SyncableMixin, Base):
     )
 
 
+Index("ix_users_email_lower", func.lower(User.email))
+
+
 class BrowserAuthChallenge(Base):
     __tablename__ = "browser_auth_challenges"
 
     id: Mapped[str] = mapped_column(
         String(36), primary_key=True, default=lambda: str(uuid7())
     )
-    token_hash: Mapped[str] = mapped_column(
-        String(64), nullable=False, unique=True, index=True
-    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id"), nullable=False, index=True
     )
@@ -133,9 +133,7 @@ class BrowserRefreshSession(Base):
         String(36), ForeignKey("users.id"), nullable=False
     )
     family_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    token_hash: Mapped[str] = mapped_column(
-        String(64), nullable=False, unique=True, index=True
-    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
