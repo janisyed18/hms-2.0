@@ -71,15 +71,11 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
 
-      - name: Apply AWS dev infrastructure
+      - name: Validate AWS dev infrastructure
         working-directory: infra/terraform/envs/dev
         run: |
-          terraform init -input=false
+          terraform init -backend=false -input=false
           terraform validate
-          terraform apply \
-            -auto-approve \
-            -input=false \
-            -var="aws_profile="
 
       - name: Build ECS network configuration
         env:
