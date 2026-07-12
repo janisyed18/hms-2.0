@@ -1,9 +1,10 @@
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import event
+from sqlalchemy import Table, event, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.schema import UniqueConstraint
@@ -38,7 +39,9 @@ async def session() -> AsyncGenerator[AsyncSession]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
 
     @event.listens_for(engine.sync_engine, "connect")
-    def _enable_foreign_keys(dbapi_connection, _connection_record) -> None:
+    def _enable_foreign_keys(
+        dbapi_connection: Any, _connection_record: Any
+    ) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
@@ -229,14 +232,15 @@ def test_user_read_exposes_security_state_without_secret_material() -> None:
 
 def test_token_hashes_use_one_unique_constraint_without_redundant_indexes() -> None:
     for model in (BrowserAuthChallenge, BrowserRefreshSession):
+        table = cast(Table, model.__table__)
         token_indexes = [
             index
-            for index in model.__table__.indexes
+            for index in table.indexes
             if "token_hash" in {column.name for column in index.columns}
         ]
         token_constraints = [
             constraint
-            for constraint in model.__table__.constraints
+            for constraint in table.constraints
             if isinstance(constraint, UniqueConstraint)
             and "token_hash" in {column.name for column in constraint.columns}
         ]
@@ -246,17 +250,101 @@ def test_token_hashes_use_one_unique_constraint_without_redundant_indexes() -> N
 
 
 def test_user_email_keeps_unique_constraint_and_lowercase_lookup_index() -> None:
+    table = cast(Table, User.__table__)
     email_constraints = [
         constraint
-        for constraint in User.__table__.constraints
+        for constraint in table.constraints
         if isinstance(constraint, UniqueConstraint)
         and {column.name for column in constraint.columns} == {"email"}
     ]
     email_indexes = {
         index.name: index.unique
-        for index in User.__table__.indexes
+        for index in table.indexes
         if "email" in {column.name for column in index.columns}
     }
 
     assert len(email_constraints) == 1
-    assert email_indexes == {"ix_users_email_lower": False}
+    assert email_indexes == {"ix_users_email_lower": True}
+
+
+@pytest.mark.asyncio
+async def test_email_is_normalised_and_case_insensitively_unique(
+    session: AsyncSession,
+) -> None:
+    user = User(
+        oidc_subject="mixed",
+        email="  Mixed.Case@Example.COM ",
+        role="HMS_ADMIN",
+    )
+    session.add(user)
+    await session.flush()
+    # Stored lowercased and trimmed by the model validator.
+    assert user.email == "mixed.case@example.com"
+
+    # A second address differing only by case collides case-insensitively.
+    session.add(
+        User(oidc_subject="dup", email="MIXED.CASE@example.com", role="HMS_ADMIN")
+    )
+    with pytest.raises(IntegrityError):
+        await session.flush()
+
+
+@pytest.mark.asyncio
+async def test_deleting_user_cascades_security_records(
+    session: AsyncSession,
+) -> None:
+    user = await _create_user(session)
+    now = datetime.now(UTC)
+    session.add_all(
+        [
+            BrowserAuthChallenge(
+                token_hash="cascade-challenge",
+                user_id=user.id,
+                stage=BrowserAuthStage.MFA_REQUIRED.value,
+                expires_at=now + timedelta(minutes=10),
+            ),
+            BrowserRefreshSession(
+                user_id=user.id,
+                family_id="family-cascade",
+                token_hash="cascade-refresh",
+                expires_at=now + timedelta(days=30),
+                idle_expires_at=now + timedelta(days=7),
+            ),
+            MfaRecoveryCode(user_id=user.id, code_digest="cascade-digest"),
+        ]
+    )
+    await session.flush()
+
+    await session.delete(user)
+    await session.flush()
+
+    for model in (BrowserAuthChallenge, BrowserRefreshSession, MfaRecoveryCode):
+        remaining = await session.scalar(
+            select(func.count()).select_from(model)
+        )
+        assert remaining == 0, model.__tablename__
+
+
+@pytest.mark.asyncio
+async def test_refresh_session_and_recovery_code_require_existing_user(
+    session: AsyncSession,
+) -> None:
+    now = datetime.now(UTC)
+    session.add(
+        BrowserRefreshSession(
+            user_id="missing-user",
+            family_id="family-orphan",
+            token_hash="orphan-refresh",
+            expires_at=now + timedelta(days=30),
+            idle_expires_at=now + timedelta(days=7),
+        )
+    )
+    with pytest.raises(IntegrityError):
+        await session.flush()
+    await session.rollback()
+
+    session.add(
+        MfaRecoveryCode(user_id="missing-user", code_digest="orphan-digest")
+    )
+    with pytest.raises(IntegrityError):
+        await session.flush()

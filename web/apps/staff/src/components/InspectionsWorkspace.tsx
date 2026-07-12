@@ -48,7 +48,13 @@ function countByStatus(inspections: InspectionRecord[], status: string) {
   return inspections.filter((inspection) => inspection.status === status).length;
 }
 
-export function InspectionsWorkspace() {
+export function InspectionsWorkspace({
+  canApprove,
+  canWrite
+}: {
+  canApprove: boolean;
+  canWrite: boolean;
+}) {
   const workspace = useInspectionsWorkspace();
   const draftCount = countByStatus(workspace.inspections, "DRAFT");
   const submittedCount = countByStatus(workspace.inspections, "SUBMITTED");
@@ -152,7 +158,7 @@ export function InspectionsWorkspace() {
       <div className="inspection-layout">
         <div className="inspection-table-wrap">
           <ModuleTable
-            actionLabel="Add Inspection"
+            actionLabel={canWrite ? "Add Inspection" : undefined}
             columns={columns}
             countLabel={`${workspace.visibleInspections.length} inspections`}
             emptyLabel="No inspections match the current filters."
@@ -202,7 +208,7 @@ export function InspectionsWorkspace() {
             }
             getRowKey={(inspection) => inspection.id}
             items={workspace.visibleInspections}
-            onAction={workspace.openCreate}
+            onAction={canWrite ? workspace.openCreate : undefined}
             onQueryChange={workspace.setQuery}
             query={workspace.query}
             searchLabel="Search inspections"
@@ -212,6 +218,8 @@ export function InspectionsWorkspace() {
           />
         </div>
         <InspectionDetail
+          canApprove={canApprove}
+          canWrite={canWrite}
           inspection={workspace.selectedInspection}
           onApprove={workspace.approveInspection}
           onClose={workspace.closeDetail}
@@ -220,12 +228,14 @@ export function InspectionsWorkspace() {
         />
       </div>
 
-      <InspectionForm
-        assetOptions={workspace.assetOptions}
-        open={workspace.isFormOpen}
-        onClose={() => workspace.setFormOpen(false)}
-        onSubmit={workspace.saveInspection}
-      />
+      {canWrite ? (
+        <InspectionForm
+          assetOptions={workspace.assetOptions}
+          open={workspace.isFormOpen}
+          onClose={() => workspace.setFormOpen(false)}
+          onSubmit={workspace.saveInspection}
+        />
+      ) : null}
     </section>
   );
 }

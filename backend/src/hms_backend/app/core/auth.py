@@ -59,6 +59,7 @@ class BearerClaims:
     roles: tuple[str, ...]
     customer_ids: tuple[str, ...]
     purpose: str | None = None  # e.g. "pw_reset" for single-use links
+    auth_time: int | None = None  # unix seconds of credential presentation
 
 
 def decode_hs256_bearer_token(
@@ -103,6 +104,7 @@ def decode_hs256_bearer_token(
         raise TokenValidationError("Invalid bearer token")
 
     purpose = payload.get("purpose")
+    auth_time = payload.get("auth_time")
     return BearerClaims(
         subject=subject.strip(),
         roles=_string_sequence(payload.get("hms_roles", payload.get("roles", ()))),
@@ -110,6 +112,7 @@ def decode_hs256_bearer_token(
             payload.get("hms_customer_ids", payload.get("customer_ids", ()))
         ),
         purpose=purpose if isinstance(purpose, str) else None,
+        auth_time=auth_time if isinstance(auth_time, int) else None,
     )
 
 

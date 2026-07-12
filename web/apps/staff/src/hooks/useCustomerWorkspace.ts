@@ -22,20 +22,32 @@ export function useCustomerWorkspace() {
   const [activeTab, setActiveTab] = useState("Overview");
   const [isFormOpen, setFormOpen] = useState(false);
   const [isLoading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
-    loadCustomersWithFallback().then((result) => {
-      if (!active) {
-        return;
-      }
-      setCustomers(result.items);
-      setTotalCount(result.total);
-      setSource(result.source);
-      setSelectedId(result.items[0]?.id ?? null);
-      setLoading(false);
-    });
+    setError(null);
+    void loadCustomersWithFallback()
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+        setCustomers(result.items);
+        setTotalCount(result.total);
+        setSource(result.source);
+        setSelectedId(result.items[0]?.id ?? null);
+      })
+      .catch(() => {
+        if (active) {
+          setError("Unable to load customer records from the HMS API.");
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
+        }
+      });
     return () => {
       active = false;
     };
@@ -94,6 +106,7 @@ export function useCustomerWorkspace() {
     activeTab,
     createCustomer,
     customers,
+    error,
     isFormOpen,
     isLoading,
     query,

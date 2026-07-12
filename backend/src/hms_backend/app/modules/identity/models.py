@@ -13,7 +13,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, validates
 from uuid6 import uuid7
 
 from hms_backend.app.core.rbac import Role
@@ -92,8 +92,18 @@ class User(SyncableMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
+    @validates("email")
+    def _normalise_email(self, _key: str, value: str | None) -> str | None:
+        """Store emails lowercased so login (which matches on ``lower(email)``)
+        and the unique ``ix_users_email_lower`` index treat addresses
+        case-insensitively."""
+        return value.strip().lower() if value is not None else value
 
-Index("ix_users_email_lower", func.lower(User.email))
+
+# Unique on ``lower(email)`` so addresses are unique case-insensitively, matching
+# the case-insensitive login lookup. Backs the normalisation in ``_normalise_email``
+# with a database-level guarantee even for writes that bypass the ORM.
+Index("ix_users_email_lower", func.lower(User.email), unique=True)
 
 
 class BrowserAuthChallenge(Base):
@@ -104,7 +114,10 @@ class BrowserAuthChallenge(Base):
     )
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=False, index=True
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     stage: Mapped[str] = mapped_column(String(40), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(
@@ -130,7 +143,7 @@ class BrowserRefreshSession(Base):
         String(36), primary_key=True, default=lambda: str(uuid7())
     )
     user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=False
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     family_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
@@ -147,7 +160,9 @@ class BrowserRefreshSession(Base):
         DateTime(timezone=True), nullable=True
     )
     replaced_by_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("browser_refresh_sessions.id"), nullable=True
+        String(36),
+        ForeignKey("browser_refresh_sessions.id", ondelete="SET NULL"),
+        nullable=True,
     )
     user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
@@ -165,7 +180,10 @@ class MfaRecoveryCode(Base):
         String(36), primary_key=True, default=lambda: str(uuid7())
     )
     user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=False, index=True
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     code_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(

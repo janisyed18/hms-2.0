@@ -44,7 +44,7 @@ function expiringSoonCount(certificates: CertificateRecord[]) {
   }).length;
 }
 
-export function CertificatesWorkspace() {
+export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
   const workspace = useCertificatesWorkspace();
   const issuedCount = countByStatus(workspace.certificates, "ISSUED");
   const revokedCount = countByStatus(workspace.certificates, "REVOKED");
@@ -148,7 +148,7 @@ export function CertificatesWorkspace() {
       <div className="inspection-layout">
         <div className="inspection-table-wrap">
           <ModuleTable
-            actionLabel="Issue Certificate"
+            actionLabel={canManage ? "Issue Certificate" : undefined}
             columns={columns}
             countLabel={`${workspace.visibleCertificates.length} certificates`}
             emptyLabel="No certificates match the current filters."
@@ -189,7 +189,7 @@ export function CertificatesWorkspace() {
             }
             getRowKey={(certificate) => certificate.id}
             items={workspace.visibleCertificates}
-            onAction={workspace.openCreate}
+            onAction={canManage ? workspace.openCreate : undefined}
             onQueryChange={workspace.setQuery}
             query={workspace.query}
             searchLabel="Search certificates"
@@ -199,6 +199,7 @@ export function CertificatesWorkspace() {
           />
         </div>
         <CertificateDetail
+          canManage={canManage}
           certificate={workspace.selectedCertificate}
           onClose={workspace.closeDetail}
           onRevoke={workspace.revokeCertificate}
@@ -206,12 +207,14 @@ export function CertificatesWorkspace() {
         />
       </div>
 
-      <CertificateForm
-        inspectionOptions={workspace.eligibleInspections}
-        open={workspace.isFormOpen}
-        onClose={() => workspace.setFormOpen(false)}
-        onSubmit={workspace.issueCertificate}
-      />
+      {canManage ? (
+        <CertificateForm
+          inspectionOptions={workspace.eligibleInspections}
+          open={workspace.isFormOpen}
+          onClose={() => workspace.setFormOpen(false)}
+          onSubmit={workspace.issueCertificate}
+        />
+      ) : null}
     </section>
   );
 }

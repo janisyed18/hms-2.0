@@ -88,7 +88,7 @@ def upgrade() -> None:
         "ix_users_email_lower",
         "users",
         [sa.text("lower(email)")],
-        unique=False,
+        unique=True,
     )
 
     op.create_table(
@@ -100,7 +100,7 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("attempt_count", sa.Integer(), nullable=False),
         sa.Column("consumed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("token_hash"),
     )
@@ -123,8 +123,12 @@ def upgrade() -> None:
         sa.Column("replaced_by_id", sa.String(length=36), nullable=True),
         sa.Column("user_agent", sa.String(length=500), nullable=True),
         sa.Column("ip_address", sa.String(length=45), nullable=True),
-        sa.ForeignKeyConstraint(["replaced_by_id"], ["browser_refresh_sessions.id"]),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
+        sa.ForeignKeyConstraint(
+            ["replaced_by_id"],
+            ["browser_refresh_sessions.id"],
+            ondelete="SET NULL",
+        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("token_hash"),
     )
@@ -145,7 +149,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.String(length=36), nullable=False),
         sa.Column("code_digest", sa.String(length=64), nullable=False),
         sa.Column("consumed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"]),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "user_id", "code_digest", name="uq_mfa_recovery_codes_user_digest"

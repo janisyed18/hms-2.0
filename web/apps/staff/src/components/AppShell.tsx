@@ -54,6 +54,7 @@ interface AppShellProps {
   canCreateAsset: boolean;
   children: ReactNode;
   description: string;
+  onLogout?: () => void;
   onModuleChange: (module: AppModule) => void;
   session: StaffSession;
   source: "api" | "mock";
@@ -138,6 +139,7 @@ export function AppShell({
   canCreateAsset,
   children,
   description,
+  onLogout,
   onModuleChange,
   session,
   source,
@@ -145,6 +147,11 @@ export function AppShell({
   visibleModules
 }: AppShellProps) {
   const [openMenu, setOpenMenu] = useState<TopbarMenu | null>(null);
+
+  function handleLogout() {
+    setOpenMenu(null);
+    onLogout?.();
+  }
   const [globalQuery, setGlobalQuery] = useState("");
   const visibleModuleSet = new Set(visibleModules);
   const visibleNavGroups = navGroups
@@ -231,7 +238,14 @@ export function AppShell({
             <strong>{session.displayName}</strong>
             <span>{session.roles.join(", ")}</span>
           </div>
-          <LogOut aria-hidden="true" size={17} />
+          <button
+            aria-label="Sign out"
+            className="sidebar-logout"
+            onClick={handleLogout}
+            type="button"
+          >
+            <LogOut aria-hidden="true" size={17} />
+          </button>
         </div>
       </aside>
 
@@ -331,6 +345,16 @@ export function AppShell({
                 </button>
               </div>
               <p>{popoverBody(openMenu, source, session)}</p>
+              {openMenu === "user" && onLogout ? (
+                <button
+                  className="secondary-button popover-signout"
+                  onClick={handleLogout}
+                  type="button"
+                >
+                  <LogOut aria-hidden="true" size={15} />
+                  Sign out
+                </button>
+              ) : null}
             </div>
           ) : null}
         </header>

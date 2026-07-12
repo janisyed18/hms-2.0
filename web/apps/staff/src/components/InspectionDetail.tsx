@@ -8,6 +8,8 @@ import type {
 } from "../domain/types";
 
 interface InspectionDetailProps {
+  canApprove: boolean;
+  canWrite: boolean;
   inspection: InspectionRecord | null;
   onApprove: () => Promise<void>;
   onClose: () => void;
@@ -56,6 +58,8 @@ function measurementsFromNote(note: string): Record<string, unknown> | null {
 }
 
 export function InspectionDetail({
+  canApprove,
+  canWrite,
   inspection,
   onApprove,
   onClose,
@@ -156,7 +160,7 @@ export function InspectionDetail({
           <span>Result</span>
           <select
             aria-label="Detail inspection result"
-            disabled={inspection.status !== "DRAFT"}
+            disabled={!canWrite || inspection.status !== "DRAFT"}
             value={result}
             onChange={(event) => setResult(event.target.value)}
           >
@@ -169,7 +173,7 @@ export function InspectionDetail({
           <span>Applied pressure kPa</span>
           <input
             aria-label="Detail applied pressure kPa"
-            disabled={inspection.status !== "DRAFT"}
+            disabled={!canWrite || inspection.status !== "DRAFT"}
             inputMode="numeric"
             min="0"
             type="number"
@@ -181,7 +185,7 @@ export function InspectionDetail({
           <span>Hold time seconds</span>
           <input
             aria-label="Detail hold time seconds"
-            disabled={inspection.status !== "DRAFT"}
+            disabled={!canWrite || inspection.status !== "DRAFT"}
             inputMode="numeric"
             min="0"
             type="number"
@@ -193,7 +197,7 @@ export function InspectionDetail({
           <input
             aria-label="Detail pressure test passed"
             checked={passed}
-            disabled={inspection.status !== "DRAFT"}
+            disabled={!canWrite || inspection.status !== "DRAFT"}
             type="checkbox"
             onChange={(event) => setPassed(event.target.checked)}
           />
@@ -203,14 +207,14 @@ export function InspectionDetail({
           <span>Measurement notes</span>
           <input
             aria-label="Detail measurement notes"
-            disabled={inspection.status !== "DRAFT"}
+            disabled={!canWrite || inspection.status !== "DRAFT"}
             value={measurementNote}
             onChange={(event) => setMeasurementNote(event.target.value)}
           />
         </label>
 
         <div className="inspection-action-row">
-          {inspection.status === "DRAFT" ? (
+          {canWrite && inspection.status === "DRAFT" ? (
             <>
               <button className="secondary-button" disabled={isSaving} type="submit">
                 <Save aria-hidden="true" size={16} />
@@ -226,7 +230,7 @@ export function InspectionDetail({
               </button>
             </>
           ) : null}
-          {inspection.status === "SUBMITTED" ? (
+          {canApprove && inspection.status === "SUBMITTED" ? (
             <button
               className="primary-button"
               onClick={onApprove}

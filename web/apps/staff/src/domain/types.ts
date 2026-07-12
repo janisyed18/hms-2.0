@@ -297,18 +297,33 @@ export interface AdminUserRecord {
   displayName: string;
   role: string;
   customerId: string | null;
+  accountStatus: "ACTIVE" | "LOCKED" | "DISABLED";
+  mustChangePassword: boolean;
+  mfaEnabled: boolean;
+  lockedUntil: string | null;
+  lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
   etag?: string | null;
 }
 
 export interface AdminUserFormValues {
-  oidcSubject: string;
+  oidcSubject?: string;
   email: string;
   firstName: string | null;
   lastName: string | null;
   role: string;
   customerId: string | null;
+}
+
+export interface AdminUserCreateResult {
+  user: AdminUserRecord;
+  temporaryPassword: string;
+}
+
+export interface TemporaryPasswordResult {
+  userId: string;
+  temporaryPassword: string;
 }
 
 export interface AdminUserUpdateValues {

@@ -100,13 +100,41 @@ docker compose up --build            # backend stack
 docker compose --profile frontend up --build   # also build & serve the staff UI
 ```
 
-On startup a one-shot `migrate` service applies migrations and seeds synthetic
-demo data, then the API, worker, and beat come up. Then:
+On startup a one-shot `migrate` service applies migrations, seeds synthetic
+demo data, and creates one development login for each of the six HMS roles.
+Temporary passwords are printed once in the `migrate` service output; each
+account must change its password and enroll an authenticator on first sign-in.
+Then:
 
 - API + docs: http://localhost:8000/api/v1/docs
 - Readiness (DB + Redis): http://localhost:8000/health/ready
 - Staff UI (frontend profile): http://localhost:8080
 - Postgres: `localhost:5432` (`hms`/`hms`), Redis: `localhost:6379`
+
+View first-run credentials without writing them to a file:
+
+```bash
+docker compose logs migrate
+```
+
+To rotate all local temporary passwords for another acceptance run:
+
+```bash
+docker compose run --rm migrate sh -c \
+  'alembic upgrade head && python -m hms_backend.app.tooling.local_seed --auth-test-accounts --reset-existing'
+```
+
+Run the six-role browser acceptance suite against the running Docker stack:
+
+```bash
+cd web/apps/staff
+npx playwright install chromium   # first run only
+npm run test:e2e
+```
+
+The Playwright setup rotates the synthetic accounts in memory before the run.
+It does not write passwords, authenticator secrets, recovery codes, traces, or
+screenshots to test artifacts.
 
 Smoke-test the certificate + Celery + Redis path end to end:
 
@@ -176,8 +204,31 @@ npm run dev -- --host 127.0.0.1
 ```
 
 Open `http://127.0.0.1:5173/`. Vite proxies `/api` and `/health` to
-`HMS_API_TARGET`; if the backend is unavailable the staff UI falls back to mock
-data for local development.
+`HMS_API_TARGET`. Once a user is authenticated, API errors are displayed and
+never replaced with mock identity or record data.
+
+### Browser-auth secrets
+
+Generate independent values for any shared or deployed environment:
+
+```bash
+openssl rand -base64 48                 # AUTH_BEARER_HMAC_SECRET
+openssl rand -base64 32                 # AUTH_MFA_ENCRYPTION_KEY
+openssl rand -base64 48                 # AUTH_RECOVERY_CODE_PEPPER
+```
+
+Store deployed values in the platform secret manager, not GitHub variables,
+Terraform state, image layers, or `.env` files. Set
+`AUTH_BROWSER_ALLOWED_ORIGINS` to the exact staff-console HTTPS origin and keep
+`AUTH_BROWSER_COOKIE_SECURE=true` outside local development.
+
+The MFA encryption key is versioned by `AUTH_MFA_KEY_VERSION`. During rotation,
+retain the previous key until all enrolled TOTP secrets have been rewrapped with
+the new version or those users have reset MFA. Deleting the previous key first
+permanently prevents verification of still-encrypted enrollments. Rotating the
+bearer signing secret invalidates active access tokens; rotating the recovery
+pepper invalidates all unused recovery codes and therefore requires issuing new
+codes through the approved reset workflow.
 
 ## Inspector App Setup
 

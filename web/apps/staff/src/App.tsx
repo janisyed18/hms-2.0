@@ -16,12 +16,14 @@ import {
 import { ProductsWorkspace } from "./components/ProductsWorkspace";
 import { ReferenceWorkspace } from "./components/ReferenceWorkspace";
 import { RetestScheduleWorkspace } from "./components/RetestScheduleWorkspace";
+import { WorkspaceState } from "./components/WorkspaceState";
 import {
   SystemWorkspace,
   type SystemModule
 } from "./components/SystemWorkspace";
-import { loadAuthSessionWithFallback } from "./api/hmsClient";
-import { mockStaffSession } from "./data/mockAdmin";
+import { AuthFlow } from "./auth/AuthFlow";
+import { AuthProvider, useAuth } from "./auth/AuthProvider";
+import type { BrowserAuthClient } from "./auth/authClient";
 import type { StaffPermission, StaffRole, StaffSession } from "./domain/types";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import "./styles.css";
@@ -114,24 +116,41 @@ const rolePermissions: Record<StaffRole, StaffPermission[]> = {
   CUSTOMER_USER: ["customer:read", "asset:read"]
 };
 
-const modulePermissions: Record<AppModule, StaffPermission[]> = {
-  dashboard: [],
-  analytics: ["audit:read"],
-  customers: ["customer:read"],
-  assets: ["asset:read"],
-  products: ["reference:admin"],
-  reference: ["reference:admin"],
-  inspections: ["inspection:write", "certificate:approve"],
-  certificates: ["certificate:approve"],
-  retest: ["asset:read"],
-  sync: ["inspection:write"],
-  audit: ["audit:read"],
-  users: ["user:admin"],
-  devices: ["device:admin"]
+const allModules: AppModule[] = [
+  "dashboard",
+  "analytics",
+  "customers",
+  "assets",
+  "products",
+  "reference",
+  "inspections",
+  "certificates",
+  "retest",
+  "sync",
+  "audit",
+  "users",
+  "devices"
+];
+
+const roleModules: Record<StaffRole, AppModule[]> = {
+  SUPER_ADMIN: allModules,
+  HMS_ADMIN: allModules.filter((module) => module !== "sync"),
+  INSPECTOR: ["dashboard", "customers", "assets", "inspections", "retest", "sync"],
+  ASSEMBLY: ["dashboard", "customers", "assets", "retest"],
+  REVIEWER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest"],
+  CUSTOMER_USER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest"]
 };
 
 interface AppProps {
+  // Explicit test/story seam: providing a session bypasses auth gating.
   initialSession?: StaffSession;
+  // Test seam for injecting a fake browser-auth client.
+  authClient?: BrowserAuthClient;
+}
+
+interface HmsAppProps {
+  session: StaffSession;
+  onLogout?: () => void;
 }
 
 function isOperationalModule(module: AppModule): module is OperationalModule {
@@ -142,14 +161,32 @@ function isSystemModule(module: AppModule): module is SystemModule {
   return module === "users" || module === "devices";
 }
 
-export default function App(props: AppProps = {}) {
-  return <HmsApp {...props} />;
+export default function App({ initialSession, authClient }: AppProps = {}) {
+  if (initialSession) {
+    return <HmsApp session={initialSession} />;
+  }
+  return (
+    <AuthProvider client={authClient}>
+      <AuthGate />
+    </AuthProvider>
+  );
 }
 
-export function HmsApp({ initialSession }: AppProps = {}) {
+function AuthGate() {
+  const { state, logout } = useAuth();
+  return (
+    <AuthFlow>
+      {state.status === "authenticated" ? (
+        <HmsApp session={state.session} onLogout={() => void logout()} />
+      ) : null}
+    </AuthFlow>
+  );
+}
+
+export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
   const [activeModule, setActiveModule] = useState<AppModule>("dashboard");
   const [session, setSession] = useState<StaffSession>(
-    normaliseSession(initialSession ?? mockStaffSession)
+    normaliseSession(providedSession)
   );
   const workspace = useCustomerWorkspace();
   const visibleModules = useMemo(() => modulesForSession(session), [session]);
@@ -160,19 +197,8 @@ export function HmsApp({ initialSession }: AppProps = {}) {
   const canCreateAsset = hasPermission(session, "asset:write");
 
   useEffect(() => {
-    if (initialSession) {
-      return;
-    }
-    let cancelled = false;
-    void loadAuthSessionWithFallback().then((loadedSession) => {
-      if (!cancelled) {
-        setSession(normaliseSession(loadedSession));
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [initialSession]);
+    setSession(normaliseSession(providedSession));
+  }, [providedSession]);
 
   useEffect(() => {
     if (!visibleModules.includes(activeModule)) {
@@ -191,6 +217,7 @@ export function HmsApp({ initialSession }: AppProps = {}) {
       activeModule={renderedActiveModule}
       canCreateAsset={canCreateAsset}
       description={activeCopy.description}
+      onLogout={onLogout}
       onModuleChange={handleModuleChange}
       session={session}
       source={workspace.source}
@@ -210,26 +237,41 @@ export function HmsApp({ initialSession }: AppProps = {}) {
         <>
           <main className="customer-page">
             <div className="customer-main">
-              <CustomerTable
-                customers={workspace.visibleCustomers}
-                totalCount={workspace.totalCount}
-                selectedId={workspace.selectedCustomer?.id ?? null}
-                query={workspace.query}
-                riskFilter={workspace.riskFilter}
-                statusFilter={workspace.statusFilter}
-                onQueryChange={workspace.setQuery}
-                onRiskFilterChange={workspace.setRiskFilter}
-                onStatusFilterChange={workspace.setStatusFilter}
-                onSelectCustomer={workspace.setSelectedId}
-                onAddCustomer={() => workspace.setFormOpen(true)}
-              />
-              <ActivityFeed items={workspace.selectedCustomer?.metrics.activity ?? []} />
+              {workspace.isLoading ? (
+                <WorkspaceState title="Loading customers" tone="loading">
+                  Retrieving the customer register.
+                </WorkspaceState>
+              ) : workspace.error ? (
+                <WorkspaceState title="Customer data unavailable" tone="error">
+                  {workspace.error}
+                </WorkspaceState>
+              ) : (
+                <>
+                  <CustomerTable
+                    canWrite={hasPermission(session, "customer:write")}
+                    customers={workspace.visibleCustomers}
+                    totalCount={workspace.totalCount}
+                    selectedId={workspace.selectedCustomer?.id ?? null}
+                    query={workspace.query}
+                    riskFilter={workspace.riskFilter}
+                    statusFilter={workspace.statusFilter}
+                    onQueryChange={workspace.setQuery}
+                    onRiskFilterChange={workspace.setRiskFilter}
+                    onStatusFilterChange={workspace.setStatusFilter}
+                    onSelectCustomer={workspace.setSelectedId}
+                    onAddCustomer={() => workspace.setFormOpen(true)}
+                  />
+                  <ActivityFeed items={workspace.selectedCustomer?.metrics.activity ?? []} />
+                </>
+              )}
             </div>
-            <CustomerDetail
-              customer={workspace.selectedCustomer}
-              activeTab={workspace.activeTab}
-              onTabChange={workspace.setActiveTab}
-            />
+            {!workspace.isLoading && !workspace.error ? (
+              <CustomerDetail
+                customer={workspace.selectedCustomer}
+                activeTab={workspace.activeTab}
+                onTabChange={workspace.setActiveTab}
+              />
+            ) : null}
           </main>
           <CustomerForm
             open={workspace.isFormOpen}
@@ -240,17 +282,40 @@ export function HmsApp({ initialSession }: AppProps = {}) {
       ) : (
         <main className="record-page">
           <div className="record-main">
-            {renderedActiveModule === "assets" ? <AssetsWorkspace /> : null}
+            {renderedActiveModule === "assets" ? (
+              <AssetsWorkspace canWrite={hasPermission(session, "asset:write")} />
+            ) : null}
             {renderedActiveModule === "analytics" ? (
               <AnalyticsWorkspace source={workspace.source} />
             ) : null}
             {renderedActiveModule === "products" ? <ProductsWorkspace /> : null}
             {renderedActiveModule === "reference" ? <ReferenceWorkspace /> : null}
-            {renderedActiveModule === "inspections" ? <InspectionsWorkspace /> : null}
-            {renderedActiveModule === "certificates" ? <CertificatesWorkspace /> : null}
-            {renderedActiveModule === "retest" ? <RetestScheduleWorkspace /> : null}
+            {renderedActiveModule === "inspections" ? (
+              <InspectionsWorkspace
+                canApprove={hasPermission(session, "certificate:approve")}
+                canWrite={hasPermission(session, "inspection:write")}
+              />
+            ) : null}
+            {renderedActiveModule === "certificates" ? (
+              <CertificatesWorkspace
+                canManage={hasPermission(session, "certificate:approve")}
+              />
+            ) : null}
+            {renderedActiveModule === "retest" ? (
+              <RetestScheduleWorkspace
+                canWrite={hasPermission(session, "asset:write")}
+              />
+            ) : null}
             {isSystemModule(renderedActiveModule) ? (
-              <SystemWorkspace module={renderedActiveModule} source={workspace.source} />
+              <SystemWorkspace
+                actorRoles={session.roles}
+                customerOptions={workspace.customers.map((customer) => ({
+                  id: customer.id,
+                  name: customer.name
+                }))}
+                module={renderedActiveModule}
+                source={workspace.source}
+              />
             ) : null}
           </div>
         </main>
@@ -276,12 +341,10 @@ function hasPermission(session: StaffSession, permission: StaffPermission): bool
   );
 }
 
-function modulesForSession(session: StaffSession): AppModule[] {
-  return (Object.keys(modulePermissions) as AppModule[]).filter((module) => {
-    const required = modulePermissions[module];
-    return (
-      required.length === 0 ||
-      required.some((permission) => hasPermission(session, permission))
-    );
+export function modulesForSession(session: StaffSession): AppModule[] {
+  const visible = new Set<AppModule>();
+  session.roles.forEach((role) => {
+    roleModules[role].forEach((module) => visible.add(module));
   });
+  return allModules.filter((module) => visible.has(module));
 }

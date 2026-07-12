@@ -9,7 +9,7 @@ export interface ModuleColumn<TItem> {
 }
 
 interface ModuleTableProps<TItem> {
-  actionLabel: string;
+  actionLabel?: string;
   columns: ModuleColumn<TItem>[];
   countLabel: string;
   emptyLabel: string;
@@ -18,7 +18,7 @@ interface ModuleTableProps<TItem> {
   activeFilterCount?: number;
   getRowKey: (item: TItem) => string;
   items: TItem[];
-  onAction: () => void;
+  onAction?: () => void;
   onRowClick?: (item: TItem) => void;
   onQueryChange: (value: string) => void;
   query: string;
@@ -112,10 +112,12 @@ export function ModuleTable<TItem>({
       <div className="table-actions">
         <span>{countLabel}</span>
         <div>
-          <button className="primary-button" type="button" onClick={onAction}>
-            <Plus aria-hidden="true" size={17} />
-            {actionLabel}
-          </button>
+          {actionLabel && onAction ? (
+            <button className="primary-button" type="button" onClick={onAction}>
+              <Plus aria-hidden="true" size={17} />
+              {actionLabel}
+            </button>
+          ) : null}
           <button
             className="icon-button light"
             aria-label={`Download ${tableLabel}`}

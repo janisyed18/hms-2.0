@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { CertificateRecord } from "../domain/types";
 
 interface CertificateDetailProps {
+  canManage: boolean;
   certificate: CertificateRecord | null;
   onClose: () => void;
   onRevoke: () => Promise<void>;
@@ -21,6 +22,7 @@ function statusClass(status: string) {
 }
 
 export function CertificateDetail({
+  canManage,
   certificate,
   onClose,
   onRevoke,
@@ -115,7 +117,7 @@ export function CertificateDetail({
         </div>
       </div>
 
-      {certificate.status === "ISSUED" ? (
+      {canManage && certificate.status === "ISSUED" ? (
         <div className="certificate-actions" aria-label="Certificate lifecycle actions">
           <div className="certificate-action-band">
             <FileCheck2 aria-hidden="true" size={18} />

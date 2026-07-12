@@ -35,6 +35,11 @@ export const mockAdminUsers: AdminUserRecord[] = [
     displayName: "James Mitchell",
     role: "HMS_ADMIN",
     customerId: null,
+    accountStatus: "ACTIVE",
+    mustChangePassword: false,
+    mfaEnabled: true,
+    lockedUntil: null,
+    lastLoginAt: "2026-07-07T02:00:00Z",
     createdAt: "2026-07-01T00:00:00Z",
     updatedAt: "2026-07-07T00:00:00Z"
   },
@@ -47,6 +52,11 @@ export const mockAdminUsers: AdminUserRecord[] = [
     displayName: "Ivy Inspector",
     role: "INSPECTOR",
     customerId: null,
+    accountStatus: "ACTIVE",
+    mustChangePassword: false,
+    mfaEnabled: true,
+    lockedUntil: null,
+    lastLoginAt: "2026-07-06T18:00:00Z",
     createdAt: "2026-07-01T00:00:00Z",
     updatedAt: "2026-07-06T00:00:00Z"
   },
@@ -59,6 +69,11 @@ export const mockAdminUsers: AdminUserRecord[] = [
     displayName: "Riley Reviewer",
     role: "REVIEWER",
     customerId: null,
+    accountStatus: "LOCKED",
+    mustChangePassword: false,
+    mfaEnabled: true,
+    lockedUntil: "2026-07-12T04:00:00Z",
+    lastLoginAt: "2026-07-05T10:00:00Z",
     createdAt: "2026-07-01T00:00:00Z",
     updatedAt: "2026-07-05T00:00:00Z"
   }
