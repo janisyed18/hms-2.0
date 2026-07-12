@@ -510,6 +510,11 @@ class UserRead(BaseModel):
     last_name: str | None
     role: str
     customer_id: str | None
+    account_status: str = "ACTIVE"
+    must_change_password: bool = False
+    mfa_enabled: bool = False
+    locked_until: datetime | None = None
+    last_login_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
