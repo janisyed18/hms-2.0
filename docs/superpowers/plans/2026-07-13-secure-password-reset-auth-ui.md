@@ -2,532 +2,518 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Deliver a premium BAT Operations authentication gateway and a secure, one-time, email-based forgotten-password flow that preserves MFA and revokes existing sessions.
+**Goal:** Deliver a secure, one-time email password-reset flow and a premium, responsive BAT HMS sign-in experience with Motion-based transitions, AWS SES delivery, and complete automated/browser verification.
 
-**Architecture:** Add focused password-reset persistence and a `PasswordResetService` beside the existing browser-auth state machine. Reset secrets are hashed for confirmation and encrypted only inside a short-lived SES delivery envelope, keeping the permanent notification log secret-free. Extend the existing React auth provider/client with public recovery states and render all auth steps inside one responsive Motion-powered gateway shell.
+**Architecture:** Add a persisted password-reset record containing only a token digest, plus a separate encrypted short-lived delivery envelope so the permanent notification log never stores a reset URL. The browser-auth API exposes generic reset-request and reset-confirm endpoints; the existing `AuthProvider` owns public recovery states and returns successful users to the current password-plus-MFA flow. Terraform supplies the staff CloudFront URL and a versioned delivery encryption key to ECS through Secrets Manager.
 
-**Tech Stack:** Python 3.12, FastAPI, SQLAlchemy 2 async, Alembic, PostgreSQL/SQLite tests, Redis rate limiting, Celery, AWS SES v2, cryptography AES-GCM, React 19, TypeScript, Vite, Motion, Lucide, Vitest, Testing Library, Playwright, Terraform, ECS Fargate, CloudFront.
-
----
-
-## File Structure
-
-### Backend
-
-- Create `backend/src/hms_backend/app/core/secret_envelope.py`: versioned AES-256-GCM helper for short-lived security delivery content.
-- Create `backend/src/hms_backend/app/modules/identity/password_reset.py`: reset request/confirmation and secure delivery service.
-- Modify `backend/src/hms_backend/app/modules/identity/models.py`: reset token and encrypted delivery models.
-- Create `backend/src/hms_backend/app/modules/identity/tasks.py`: Celery entry point for pending reset email delivery.
-- Modify `backend/src/hms_backend/app/api/browser_auth.py`: public reset request and confirmation endpoints.
-- Modify `backend/src/hms_backend/app/core/config.py`: reset TTL, staff URL, keyring, and retry configuration.
-- Modify `backend/src/hms_backend/app/core/celery_app.py`: register and schedule reset delivery.
-- Modify `backend/src/hms_backend/app/modules/notifications/templates.py`: explicit 15-minute reset wording.
-- Create `backend/alembic/versions/20260713_0010_password_reset.py`: reset persistence migration.
-- Create `backend/tests/test_secret_envelope.py`: cryptographic round-trip and misuse cases.
-- Create `backend/tests/test_password_reset_service.py`: request, confirmation, audit, sync, and session tests.
-- Modify `backend/tests/test_browser_auth_api.py`: endpoint enumeration and error-contract tests.
-- Create `backend/tests/test_password_reset_delivery.py`: SES delivery, retry, and ciphertext scrubbing tests.
-- Modify `backend/tests/test_auth_production_config.py`: deployed configuration validation.
-
-### Staff Web
-
-- Modify `web/apps/staff/src/auth/authTypes.ts`: reset states and response types.
-- Modify `web/apps/staff/src/auth/authClient.ts`: reset request/confirmation methods.
-- Modify `web/apps/staff/src/auth/AuthProvider.tsx`: recovery state transitions and URL-token capture.
-- Modify `web/apps/staff/src/auth/AuthFlow.tsx`: sign-in, forgot, confirmation, reset, and success screens.
-- Modify `web/apps/staff/src/auth/authUi.tsx`: gateway shell, password field, motion tokens, and status primitives.
-- Modify `web/apps/staff/src/styles.css`: responsive Secure Operations Gateway styling.
-- Modify `web/apps/staff/src/__tests__/AuthFlow.test.tsx`: screen behavior and accessibility.
-- Modify `web/apps/staff/src/__tests__/AuthProvider.test.tsx`: provider reset state machine.
-- Create `web/apps/staff/src/__tests__/authClient.test.ts`: request contracts.
-- Modify `web/apps/staff/e2e/staff-auth.spec.ts`: browser reset flow and responsive assertions.
-
-### Runtime and AWS
-
-- Modify `docker-compose.yml`: local staff URL and reset keyring.
-- Modify `infra/terraform/envs/dev/main.tf`: generated reset encryption key, Secrets Manager wiring, staff CloudFront URL, and ECS environment.
-- Modify `infra/terraform/envs/dev/variables.tf`: active reset key version.
-- Modify `infra/terraform/envs/dev/terraform.tfvars.example`: documented defaults.
-- Modify `.github/workflows/deploy-aws-dev.yml`: preserve migration-first deployment and add reset smoke checks.
+**Tech Stack:** FastAPI, SQLAlchemy async, Alembic, PostgreSQL/SQLite tests, Argon2, AES-256-GCM, Celery, AWS SES, React/Vite, TypeScript, Vitest, Testing Library, Motion, Playwright, Terraform, `uv`.
 
 ---
 
-### Task 1: Versioned Security Envelope
+## File Map
+
+Create the following focused units:
+
+- `backend/src/hms_backend/app/core/password_reset_tokens.py` — secure token generation, digesting, and delivery-envelope encryption helpers.
+- `backend/src/hms_backend/app/modules/identity/password_reset.py` — reset service state transitions and session revocation.
+- `backend/src/hms_backend/app/modules/identity/models.py` — `PasswordResetToken` and `PasswordResetDelivery` ORM models.
+- `backend/alembic/versions/20260713_0010_password_reset.py` — schema migration.
+- `backend/tests/test_password_reset_tokens.py` — crypto helper tests.
+- `backend/tests/test_password_reset_service.py` — service security/invariant tests.
+- `backend/tests/test_browser_password_reset_api.py` — API contract and enumeration tests.
+- `backend/tests/test_password_reset_delivery.py` — delivery worker/template tests.
+- `web/apps/staff/src/auth/authTypes.ts` — public recovery state and response types.
+- `web/apps/staff/src/auth/authClient.ts` — typed reset-request/reset-confirm client methods.
+- `web/apps/staff/src/auth/AuthProvider.tsx` — public recovery transitions and URL token capture.
+- `web/apps/staff/src/auth/AuthFlow.tsx` — sign-in, forgot-password, reset-password, and success screens.
+- `web/apps/staff/src/auth/authUi.tsx` — shared password field and authentication gateway primitives.
+- `web/apps/staff/src/__tests__/AuthFlow.test.tsx` — UI behavior, accessibility, and reduced-motion coverage.
+- `web/apps/staff/src/__tests__/authClient.test.ts` — client endpoint contract.
+- `web/apps/staff/src/styles.css` — gateway, form, status, responsive, and focus styles.
+
+Modify these existing integration/configuration files:
+
+- `backend/src/hms_backend/app/api/browser_auth.py` — public reset endpoints.
+- `backend/src/hms_backend/app/core/config.py` — reset TTL, rate-limit, public staff URL, and delivery-key settings.
+- `backend/src/hms_backend/app/modules/notifications/tasks.py` — sensitive delivery task registration.
+- `backend/src/hms_backend/app/modules/notifications/templates.py` — secure reset email wording and link context.
+- `backend/src/hms_backend/app/modules/notifications/channels/registry.py` — reuse SES adapter for the security email.
+- `backend/src/hms_backend/app/core/celery_app.py` — delivery schedule/registration.
+- `backend/tests/conftest.py` or existing fixtures — reset-specific database settings.
+- `infra/terraform/envs/dev/main.tf` and its variables/secret wiring — staff URL and password-reset delivery key.
+- `.github/workflows/deploy-aws-dev.yml` — migration/worker deployment smoke checks if required by existing task definitions.
+
+---
+
+### Task 1: Add Password-Reset Crypto and Configuration
 
 **Files:**
-- Create: `backend/tests/test_secret_envelope.py`
-- Create: `backend/src/hms_backend/app/core/secret_envelope.py`
+- Create: `backend/src/hms_backend/app/core/password_reset_tokens.py`
 - Modify: `backend/src/hms_backend/app/core/config.py`
+- Test: `backend/tests/test_password_reset_tokens.py`
 
-- [ ] **Step 1: Write failing encryption tests**
+- [ ] **Step 1: Write failing crypto tests**
 
-```python
-def test_envelope_round_trip_binds_context(monkeypatch):
-    key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
-    monkeypatch.setattr(settings, "auth_password_reset_keys", {1: key})
-    monkeypatch.setattr(settings, "auth_password_reset_key_version", 1)
-    sealed = seal_secret("reset-secret", context="reset-1:user-1")
-    assert sealed.ciphertext != "reset-secret"
-    assert open_secret(sealed, context="reset-1:user-1") == "reset-secret"
-
-def test_envelope_rejects_wrong_context(monkeypatch):
-    key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
-    monkeypatch.setattr(settings, "auth_password_reset_keys", {1: key})
-    monkeypatch.setattr(settings, "auth_password_reset_key_version", 1)
-    sealed = seal_secret("reset-secret", context="reset-1:user-1")
-    with pytest.raises(InvalidTag):
-        open_secret(sealed, context="reset-2:user-1")
-```
-
-- [ ] **Step 2: Verify RED**
-
-Run: `cd backend && uv run pytest tests/test_secret_envelope.py -q`
-
-Expected: import failure because `secret_envelope` does not exist.
-
-- [ ] **Step 3: Implement the focused helper and settings**
-
-Add settings:
+Cover these exact behaviors:
 
 ```python
-auth_password_reset_ttl_seconds: int = 900
-auth_password_reset_key_version: int = 1
-auth_password_reset_keys: dict[int, str] = Field(default_factory=dict)
-auth_password_reset_delivery_max_attempts: int = 5
-auth_password_reset_delivery_retry_seconds: int = 60
-staff_web_public_url: str = "http://127.0.0.1:8080"
+def test_generated_token_has_digest_but_not_reversible_storage(): ...
+def test_delivery_envelope_round_trips_with_reset_record_aad(): ...
+def test_delivery_envelope_rejects_wrong_record_or_key(): ...
+def test_expired_delivery_envelope_is_not_decrypted_for_dispatch(): ...
 ```
 
-Implement `SealedSecret`, 12-byte random nonces, base64-url encoding, key-length validation, `seal_secret`, and `open_secret`. Bind AES-GCM associated data to `reset_id:user_id`.
+Use a deterministic test `Settings` with a 32-byte base64 key and assert that
+the plaintext token is not present in the persisted envelope value.
 
-- [ ] **Step 4: Verify GREEN**
+- [ ] **Step 2: Run the focused tests and confirm the expected failure**
 
-Run: `cd backend && uv run pytest tests/test_secret_envelope.py tests/test_auth_production_config.py -q`
+Run:
 
-Expected: all tests pass.
+```bash
+cd backend
+uv run pytest tests/test_password_reset_tokens.py -q
+```
+
+Expected: collection or assertion failure because the helper and settings do not
+exist yet.
+
+- [ ] **Step 3: Implement the minimal helpers**
+
+Implement:
+
+```python
+@dataclass(frozen=True)
+class PasswordResetSecret:
+    raw: str
+    digest: str
+
+def generate_password_reset_secret() -> PasswordResetSecret: ...
+def digest_password_reset_secret(raw: str) -> str: ...
+def encrypt_password_reset_delivery(raw: str, *, reset_id: str, user_id: str) -> EncryptedSecret: ...
+def decrypt_password_reset_delivery(value: EncryptedSecret, *, reset_id: str, user_id: str) -> str: ...
+```
+
+Use `secrets.token_urlsafe(32)`, SHA-256 for lookup, AES-256-GCM with a 12-byte
+random nonce, authenticated data containing both reset ID and user ID, and a
+versioned key ring parallel to the existing MFA key handling.
+
+Add settings for `auth_password_reset_ttl_seconds=900`, independent request
+limits, `auth_password_reset_encryption_key`, key map/version, and the staff
+web public URL. Deployed validation must require the key and URL when browser
+login is enabled outside local/test.
+
+- [ ] **Step 4: Run the crypto tests and lint**
+
+Run:
+
+```bash
+uv run pytest tests/test_password_reset_tokens.py -q
+uv run ruff check src/hms_backend/app/core/password_reset_tokens.py src/hms_backend/app/core/config.py tests/test_password_reset_tokens.py
+```
+
+Expected: all focused tests pass and Ruff is clean.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/src/hms_backend/app/core/config.py backend/src/hms_backend/app/core/secret_envelope.py backend/tests/test_secret_envelope.py backend/tests/test_auth_production_config.py
-git commit -m "feat(auth): add secure reset delivery envelope"
+git add backend/src/hms_backend/app/core/password_reset_tokens.py backend/src/hms_backend/app/core/config.py backend/tests/test_password_reset_tokens.py
+git commit -m "feat(auth): add password reset token cryptography"
 ```
 
-### Task 2: Password Reset Persistence
+### Task 2: Persist Reset Records and Migration
 
 **Files:**
 - Modify: `backend/src/hms_backend/app/modules/identity/models.py`
 - Create: `backend/alembic/versions/20260713_0010_password_reset.py`
-- Modify: `backend/tests/test_browser_auth_models.py`
-- Modify: `backend/tests/test_migration_browser_auth.py`
+- Test: `backend/tests/test_migration_password_reset.py`
+- Test: `backend/tests/test_browser_auth_models.py`
 
-- [ ] **Step 1: Write failing model and migration tests**
+- [ ] **Step 1: Write failing schema/model tests**
 
-Assert that metadata and migration create:
+Assert that the migration creates `password_reset_tokens` and
+`password_reset_deliveries` with token digest, user FK, expiry, consumption,
+delivery ciphertext/key version, attempt/status timestamps, and indexes. Assert
+there is no raw-token column.
 
-```python
-expected_tables = {"password_reset_tokens", "password_reset_deliveries"}
-assert expected_tables <= set(Base.metadata.tables)
+- [ ] **Step 2: Run the migration test and confirm it fails**
+
+```bash
+cd backend
+uv run pytest tests/test_migration_password_reset.py -q
 ```
 
-Assert token digests are unique, reset rows reference users with cascade delete,
-and deliveries reference reset rows one-to-one.
+Expected: the new tables/columns are absent.
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 3: Add the ORM models and linear Alembic migration**
 
-Run: `cd backend && uv run pytest tests/test_browser_auth_models.py tests/test_migration_browser_auth.py -q`
+Use `SyncableMixin` only for the durable security record if it is already the
+project convention; do not expose credential material to sync payloads. Add
+foreign keys to `users`, indexes on `(user_id, consumed_at, expires_at)` and
+`(status, scheduled_for)`, and a one-to-one delivery FK to the reset record.
 
-Expected: missing table assertions fail.
+The migration must have `down_revision = "20260712_0009"`, create the two tables,
+and downgrade by dropping delivery before token rows.
 
-- [ ] **Step 3: Add models and migration**
+- [ ] **Step 4: Run migration and model tests**
 
-Create `PasswordResetToken` with `id`, `token_hash`, `user_id`, `expires_at`,
-`consumed_at`, `superseded_at`, `requested_ip`, `requested_user_agent`, and
-`created_at`. Create `PasswordResetDelivery` with `reset_id`, `recipient_email`,
-`ciphertext`, `key_version`, `status`, `attempts`, `scheduled_for`, `sent_at`,
-`failed_at`, `provider_message_id`, `error`, and `created_at`.
+```bash
+uv run pytest tests/test_migration_password_reset.py tests/test_browser_auth_models.py -q
+uv run alembic upgrade head
+uv run alembic check
+```
 
-Migration revision is `20260713_0010`, down revision `20260712_0009`, with
-indexes for active token lookup and pending delivery scheduling.
-
-- [ ] **Step 4: Verify GREEN**
-
-Run: `cd backend && uv run pytest tests/test_browser_auth_models.py tests/test_migration_browser_auth.py -q`
-
-Expected: all tests pass.
+Expected: migration chain is linear and all schema assertions pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/src/hms_backend/app/modules/identity/models.py backend/alembic/versions/20260713_0010_password_reset.py backend/tests/test_browser_auth_models.py backend/tests/test_migration_browser_auth.py
-git commit -m "feat(auth): persist one-time password resets"
+git add backend/src/hms_backend/app/modules/identity/models.py backend/alembic/versions/20260713_0010_password_reset.py backend/tests/test_migration_password_reset.py backend/tests/test_browser_auth_models.py
+git commit -m "feat(auth): persist one-time password reset records"
 ```
 
-### Task 3: Password Reset Domain Service
+### Task 3: Implement Reset Service and Browser API
 
 **Files:**
 - Create: `backend/src/hms_backend/app/modules/identity/password_reset.py`
-- Create: `backend/tests/test_password_reset_service.py`
+- Modify: `backend/src/hms_backend/app/api/browser_auth.py`
+- Modify: `backend/src/hms_backend/app/modules/identity/browser_auth.py`
+- Test: `backend/tests/test_password_reset_service.py`
+- Test: `backend/tests/test_browser_password_reset_api.py`
 
-- [ ] **Step 1: Write failing request tests**
+- [ ] **Step 1: Write failing service tests**
 
-Cover eligible, unknown, deleted, and disabled users. For an eligible user assert:
+Cover:
 
 ```python
-issued = await service.request_reset(session, email=EMAIL, ip="203.0.113.4", user_agent="pytest")
-assert issued is True
-token = await session.scalar(select(PasswordResetToken))
-delivery = await session.scalar(select(PasswordResetDelivery))
-assert token.token_hash not in delivery.ciphertext
-assert delivery.recipient_email == EMAIL
+async def test_request_is_generic_for_unknown_deleted_and_disabled_users(): ...
+async def test_request_supersedes_previous_active_token(): ...
+async def test_confirm_rejects_expired_used_malformed_and_superseded_tokens(): ...
+async def test_confirm_changes_password_revokes_sessions_and_records_audit(): ...
+async def test_confirm_preserves_mfa_and_does_not_issue_a_session(): ...
+async def test_request_rate_limits_account_and_ip_dimensions(): ...
 ```
 
-Issue twice and assert the earlier token has `superseded_at` set.
+Use real async SQLite/PostgreSQL test fixtures and inspect the database rows,
+audit chain, refresh sessions, and unchanged MFA columns. Never assert on raw
+token logs or return values beyond the test’s in-memory variable.
 
-- [ ] **Step 2: Verify request tests fail**
-
-Run: `cd backend && uv run pytest tests/test_password_reset_service.py -q`
-
-Expected: import failure because `PasswordResetService` does not exist.
-
-- [ ] **Step 3: Implement reset issuance**
-
-Use `generate_opaque_token`, `digest_opaque_token`, `seal_secret`, normalized
-email lookup, a 15-minute aware expiry, and one transaction-owned service method.
-Return only a boolean for internal testability; the API must ignore it.
-
-- [ ] **Step 4: Verify request tests pass**
-
-Run the focused service tests and expect PASS.
-
-- [ ] **Step 5: Write failing confirmation tests**
-
-Cover valid, malformed, expired, consumed, and superseded tokens; weak password;
-session revocation; lockout clearing; MFA preservation; audit event; and
-`SyncChange`. Verify the audit payload does not contain `password_hash`, token,
-or ciphertext.
-
-- [ ] **Step 6: Verify confirmation tests fail**
-
-Run the focused test module. Expected: `confirm_reset` is missing.
-
-- [ ] **Step 7: Implement atomic confirmation**
-
-Lock the matching reset row, validate the centralized password policy, update the
-Argon2 hash and safe account fields, revoke browser sessions, consume/supersede
-tokens, scrub pending delivery ciphertext, add a content-free `SyncChange`, and
-append a redacted `auth.password.reset` audit event.
-
-- [ ] **Step 8: Verify GREEN**
-
-Run: `cd backend && uv run pytest tests/test_password_reset_service.py tests/test_browser_auth_service.py -q`
-
-Expected: all tests pass.
-
-- [ ] **Step 9: Commit**
+- [ ] **Step 2: Run tests and confirm failure**
 
 ```bash
-git add backend/src/hms_backend/app/modules/identity/password_reset.py backend/tests/test_password_reset_service.py
-git commit -m "feat(auth): implement one-time password recovery"
+cd backend
+uv run pytest tests/test_password_reset_service.py tests/test_browser_password_reset_api.py -q
 ```
 
-### Task 4: Browser Reset API and Rate Limiting
+Expected: import/endpoint failures because the service and routes are absent.
 
-**Files:**
-- Modify: `backend/src/hms_backend/app/api/browser_auth.py`
-- Modify: `backend/tests/test_browser_auth_api.py`
+- [ ] **Step 3: Implement request and confirmation transitions**
 
-- [ ] **Step 1: Write failing API tests**
+The request service must normalize the email, do dummy password/crypto work for
+unknown users, invalidate active records, insert a digest record and encrypted
+delivery envelope in one transaction, and return the generic response.
 
-Test that `POST /api/v1/auth/browser/password/reset-request` returns the same 200
-body for known and unknown email addresses, and that
-`POST /api/v1/auth/browser/password/reset-confirm` returns 400 with the same
-message for invalid token variants. Test independent account-fingerprint and IP
-rate-limit keys and `Retry-After` on 429.
+The confirmation service must perform one atomic transaction with a row lock,
+verify expiry and digest, validate the centralized password policy, update the
+Argon2 password and password timestamp, clear temporary lockout fields, revoke
+browser refresh sessions, consume the token, append `auth.password.reset`, and
+create the user `SyncChange`. Disabled accounts remain disabled.
 
-- [ ] **Step 2: Verify RED**
-
-Run: `cd backend && uv run pytest tests/test_browser_auth_api.py -q`
-
-Expected: 404 for both new routes.
-
-- [ ] **Step 3: Add request schemas and endpoints**
+Add:
 
 ```python
-class BrowserPasswordResetRequest(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
-
-class BrowserPasswordResetConfirmRequest(BaseModel):
-    token: str = Field(min_length=32, max_length=512)
-    new_password: str
+class PasswordResetService:
+    async def request(self, session, *, email: str, ip: str | None, user_agent: str | None) -> None: ...
+    async def confirm(self, session, *, token: str) -> None: ...
 ```
 
-Use a dedicated `LoginRateLimiter` namespace for reset requests. Always commit and
-return `{"message": "If an eligible account exists, a reset link has been sent."}`.
-Map all token failures to `Invalid or expired reset link.` and safe password
-policy failures to their actionable message.
+Expose `POST /api/v1/auth/browser/password/reset-request` and
+`POST /api/v1/auth/browser/password/reset-confirm`. Request always returns
+`202` with the same message. Confirmation returns a generic `400` for all
+invalid token states and a success message otherwise.
 
-- [ ] **Step 4: Verify GREEN**
+- [ ] **Step 4: Run the service/API tests and full backend auth tests**
 
-Run the API and service test modules. Expected: all tests pass.
+```bash
+uv run pytest tests/test_password_reset_service.py tests/test_browser_password_reset_api.py tests/test_browser_auth_service.py tests/test_browser_auth_api.py -q
+```
+
+Expected: all reset and existing browser-auth tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/src/hms_backend/app/api/browser_auth.py backend/tests/test_browser_auth_api.py
-git commit -m "feat(auth): expose secure browser password reset"
+git add backend/src/hms_backend/app/modules/identity/password_reset.py backend/src/hms_backend/app/api/browser_auth.py backend/src/hms_backend/app/modules/identity/browser_auth.py backend/tests/test_password_reset_service.py backend/tests/test_browser_password_reset_api.py
+git commit -m "feat(auth): add one-time password reset API"
 ```
 
-### Task 5: Secure SES Reset Delivery
+### Task 4: Add Sensitive SES Delivery Worker
 
 **Files:**
-- Create: `backend/src/hms_backend/app/modules/identity/tasks.py`
-- Modify: `backend/src/hms_backend/app/modules/identity/password_reset.py`
+- Create: `backend/src/hms_backend/app/modules/notifications/password_reset_delivery.py`
+- Modify: `backend/src/hms_backend/app/modules/notifications/tasks.py`
 - Modify: `backend/src/hms_backend/app/modules/notifications/templates.py`
 - Modify: `backend/src/hms_backend/app/core/celery_app.py`
-- Create: `backend/tests/test_password_reset_delivery.py`
+- Test: `backend/tests/test_password_reset_delivery.py`
 
 - [ ] **Step 1: Write failing delivery tests**
 
-Use a fake SES adapter. Assert pending delivery decrypts only in memory, renders a
-URL under `staff_web_public_url`, sends exactly once, stores the provider message
-ID, and sets `ciphertext` to `None`. Assert retry scheduling on transient failure
-and scrubbing on final failure or token expiry.
+Test that the worker selects pending envelopes, decrypts only in memory, builds
+the CloudFront reset URL, calls the existing SES adapter, persists only status,
+attempt count, provider ID, and redacted errors, scrubs ciphertext on success or
+final failure, and ignores expired/consumed rows. Assert the permanent
+`Notification` and `OutboxEvent` tables never receive reset content.
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 2: Run the tests and confirm failure**
 
-Run: `cd backend && uv run pytest tests/test_password_reset_delivery.py -q`
+```bash
+cd backend
+uv run pytest tests/test_password_reset_delivery.py -q
+```
 
-Expected: delivery function import failure.
+Expected: worker/module import failure.
 
-- [ ] **Step 3: Implement delivery and Celery task**
+- [ ] **Step 3: Implement the worker and schedule**
 
-Add `deliver_pending_password_resets(session_factory, adapter, settings, limit)`
-and a Celery task named `identity.deliver_password_resets`. Schedule it every 30
-seconds. Reuse `render(NotificationCategory.PASSWORD_RESET, EMAIL, context)` and
-`AwsSesEmailAdapter`; never create `Notification` or `OutboxEvent` rows.
+Add a `password_reset_delivery_task` using the existing async task engine and
+SES channel adapter. Reuse the `PASSWORD_RESET` subject/body template, passing a
+single generated link only to the transient `OutgoingMessage`. Use bounded
+attempts and a short retry delay; after the final failure clear the ciphertext
+and keep a redacted provider error. Add a periodic schedule in `celery_app.py`
+at the same operational cadence as notification dispatch.
 
-- [ ] **Step 4: Verify GREEN**
+- [ ] **Step 4: Run delivery and notification regression tests**
 
-Run: `cd backend && uv run pytest tests/test_password_reset_delivery.py tests/test_notification_channels.py tests/test_notification_policy.py -q`
+```bash
+uv run pytest tests/test_password_reset_delivery.py tests/test_notification_channels.py tests/test_notifications_engine.py -q
+uv run ruff check src/hms_backend/app/modules/notifications/password_reset_delivery.py src/hms_backend/app/modules/notifications/tasks.py src/hms_backend/app/modules/notifications/templates.py
+```
 
-Expected: all tests pass.
+Expected: all tests pass and no raw-token assertion is violated.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/src/hms_backend/app/modules/identity/tasks.py backend/src/hms_backend/app/modules/identity/password_reset.py backend/src/hms_backend/app/modules/notifications/templates.py backend/src/hms_backend/app/core/celery_app.py backend/tests/test_password_reset_delivery.py
-git commit -m "feat(auth): deliver reset links securely through SES"
+git add backend/src/hms_backend/app/modules/notifications/password_reset_delivery.py backend/src/hms_backend/app/modules/notifications/tasks.py backend/src/hms_backend/app/modules/notifications/templates.py backend/src/hms_backend/app/core/celery_app.py backend/tests/test_password_reset_delivery.py
+git commit -m "feat(auth): deliver reset links through secure SES worker"
 ```
 
-### Task 6: Frontend Reset Client and State Machine
+### Task 5: Wire the Staff Auth Client and Provider
 
 **Files:**
 - Modify: `web/apps/staff/src/auth/authTypes.ts`
 - Modify: `web/apps/staff/src/auth/authClient.ts`
 - Modify: `web/apps/staff/src/auth/AuthProvider.tsx`
-- Create: `web/apps/staff/src/__tests__/authClient.test.ts`
-- Modify: `web/apps/staff/src/__tests__/AuthProvider.test.tsx`
+- Create: `web/apps/staff/src/auth/passwordReset.ts`
+- Test: `web/apps/staff/src/__tests__/authClient.test.ts`
+- Test: `web/apps/staff/src/__tests__/AuthProvider.test.tsx`
 
-- [ ] **Step 1: Write failing client and provider tests**
+- [ ] **Step 1: Write failing client/provider tests**
 
-Assert exact JSON contracts, then drive provider states:
+Cover exact request paths, JSON bodies, generic confirmation state, reset token
+capture from `window.location`, removal of the token from browser history via
+`history.replaceState`, successful confirmation returning to signed-out, and
+network error recovery.
 
-```typescript
-"signed-out" -> "reset-request" -> "reset-email-sent"
-"reset-password" -> "reset-complete" -> "signed-out"
-```
-
-Initialize at `/reset-password?token=abc`, assert the token is held only in
-memory, and assert `history.replaceState` removes it from the visible URL.
-
-- [ ] **Step 2: Verify RED**
-
-Run: `cd web/apps/staff && npm test -- --run src/__tests__/authClient.test.ts src/__tests__/AuthProvider.test.tsx`
-
-Expected: missing methods and state types.
-
-- [ ] **Step 3: Implement typed client and provider transitions**
-
-Add `requestPasswordReset`, `confirmPasswordReset`, `openResetRequest`,
-`returnToSignIn`, and `resetPassword`. Keep access tokens in the existing ref and
-never put reset tokens in React-rendered text, local storage, session storage, or
-logging.
-
-- [ ] **Step 4: Verify GREEN**
-
-Run the focused tests and `npm run build`. Expected: tests and TypeScript pass.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 2: Run focused frontend tests and confirm failure**
 
 ```bash
-git add web/apps/staff/src/auth/authTypes.ts web/apps/staff/src/auth/authClient.ts web/apps/staff/src/auth/AuthProvider.tsx web/apps/staff/src/__tests__/authClient.test.ts web/apps/staff/src/__tests__/AuthProvider.test.tsx
-git commit -m "feat(staff): add password recovery state machine"
+cd web/apps/staff
+npm test -- --run src/__tests__/authClient.test.ts src/__tests__/AuthProvider.test.tsx
 ```
 
-### Task 7: Secure Operations Gateway UI
+Expected: missing methods/states and failing assertions.
+
+- [ ] **Step 3: Add typed recovery contracts**
+
+Add `password-reset-request`, `password-reset`, `password-reset-sent`, and
+`password-reset-complete` states plus typed `requestPasswordReset(email)` and
+`confirmPasswordReset(token, newPassword)` context methods. Keep token in a ref
+or local component state only; never localStorage, analytics, or React state
+that outlives the public flow.
+
+- [ ] **Step 4: Implement typed HTTP methods and provider transitions**
+
+Add `POST /api/v1/auth/browser/password/reset-request` and
+`POST /api/v1/auth/browser/password/reset-confirm` methods. Capture the query
+token once at the auth boundary, immediately replace the URL with
+`/reset-password`, and preserve the token in memory for the reset form.
+
+- [ ] **Step 5: Run the focused tests and commit**
+
+```bash
+npm test -- --run src/__tests__/authClient.test.ts src/__tests__/AuthProvider.test.tsx
+git add web/apps/staff/src/auth/authTypes.ts web/apps/staff/src/auth/authClient.ts web/apps/staff/src/auth/AuthProvider.tsx web/apps/staff/src/auth/passwordReset.ts web/apps/staff/src/__tests__/authClient.test.ts web/apps/staff/src/__tests__/AuthProvider.test.tsx
+git commit -m "feat(staff): wire password reset auth states"
+```
+
+Expected: focused tests pass.
+
+### Task 6: Build the Secure Operations Gateway UI
 
 **Files:**
-- Modify: `web/apps/staff/src/auth/authUi.tsx`
 - Modify: `web/apps/staff/src/auth/AuthFlow.tsx`
+- Modify: `web/apps/staff/src/auth/authUi.tsx`
 - Modify: `web/apps/staff/src/styles.css`
-- Modify: `web/apps/staff/src/__tests__/AuthFlow.test.tsx`
+- Test: `web/apps/staff/src/__tests__/AuthFlow.test.tsx`
 
-- [ ] **Step 1: Write failing UI behavior tests**
+- [ ] **Step 1: Write failing UI tests**
 
-Assert password visibility controls, accessible names, correct autocomplete,
-Forgot Password navigation, generic sent confirmation, reset mismatch and policy
-errors, pending labels, invalid-link recovery, successful return to sign-in, and
-one visible primary action per screen.
+Add tests for the selected Option A layout, visible labels, show/hide controls,
+forgot-password navigation, generic confirmation, reset validation, loading,
+success, invalid-link recovery, `aria-live` error/status regions, keyboard
+activation, and a mobile class/markup that avoids horizontal overflow.
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 2: Run UI tests and confirm failure**
 
-Run: `cd web/apps/staff && npm test -- --run src/__tests__/AuthFlow.test.tsx`
+```bash
+cd web/apps/staff
+npm test -- --run src/__tests__/AuthFlow.test.tsx
+```
 
-Expected: missing links, screens, and accessible controls.
+Expected: missing recovery screens and controls.
 
-- [ ] **Step 3: Build reusable auth primitives**
+- [ ] **Step 3: Implement reusable form primitives and screens**
 
-Create a password field with Lucide `Eye`/`EyeOff`, form status with `AlertCircle`
-or `CheckCircle2`, centralized Motion tokens, and the responsive gateway shell.
-Use `AnimatePresence`, `m`, and `useReducedMotion`; animations use opacity and at
-most 8 px translation for 160-240 ms.
+Add a shared `PasswordField` with accessible toggle labels, a `SecurityGateway`
+shell for the navy trust panel/white form panel, and focused screen components
+for sign-in, request, reset, and complete states. Keep one primary action per
+screen. Use `inputMode`, `type`, `name`, `autoComplete`, and direct field errors.
 
-- [ ] **Step 4: Implement all approved screens and styling**
+- [ ] **Step 4: Add Motion transitions and responsive styles**
 
-Desktop uses the navy trust panel plus form panel. At 767 px and below, collapse
-the trust content into the form header. Preserve 44 px controls, 16 px mobile
-inputs, visible focus, AA contrast, a 4/8 px spacing scale, and no horizontal
-overflow.
+Use `motion/react` `AnimatePresence`, `m`, and `useReducedMotion` with centralized
+tokens: 0.16 s fast, 0.22 s normal, and an 8 px vertical offset. Animate only
+opacity/transform. Add `@media (prefers-reduced-motion: reduce)` handling and
+responsive breakpoints for 375, 768, 1024, and 1440 widths. Preserve visible
+focus rings, 44 px controls, contrast, and no horizontal scroll.
 
-- [ ] **Step 5: Verify GREEN**
+- [ ] **Step 5: Run frontend quality checks**
 
-Run: `cd web/apps/staff && npm test -- --run src/__tests__/AuthFlow.test.tsx && npm run build`
+```bash
+npm test -- --run src/__tests__/AuthFlow.test.tsx
+npm run build
+```
 
-Expected: focused tests and production build pass.
+Expected: all UI tests pass and Vite produces a production build without type
+errors. Existing bundle-size warnings may remain if already present.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add web/apps/staff/src/auth/authUi.tsx web/apps/staff/src/auth/AuthFlow.tsx web/apps/staff/src/styles.css web/apps/staff/src/__tests__/AuthFlow.test.tsx
-git commit -m "style(staff): deliver secure operations auth gateway"
+git add web/apps/staff/src/auth/AuthFlow.tsx web/apps/staff/src/auth/authUi.tsx web/apps/staff/src/styles.css web/apps/staff/src/__tests__/AuthFlow.test.tsx
+git commit -m "feat(staff): redesign authentication and password recovery"
 ```
 
-### Task 8: Local and AWS Runtime Configuration
+### Task 7: Wire AWS Dev Configuration and Deployment Checks
 
 **Files:**
-- Modify: `backend/tests/test_auth_production_config.py`
-- Modify: `docker-compose.yml`
 - Modify: `infra/terraform/envs/dev/main.tf`
-- Modify: `infra/terraform/envs/dev/variables.tf`
-- Modify: `infra/terraform/envs/dev/terraform.tfvars.example`
+- Modify: `infra/terraform/envs/dev/variables.tf` or existing variables file
+- Modify: `infra/terraform/envs/dev/outputs.tf` if needed
+- Modify: `.github/workflows/deploy-aws-dev.yml`
+- Test: existing Terraform validation and deployment smoke checks
 
-- [ ] **Step 1: Write failing production-config tests**
+- [ ] **Step 1: Add configuration validation tests/plan assertions**
 
-Assert deployed browser auth rejects a missing reset keyring or staff URL and
-accepts valid 32-byte active key material.
+Assert the ECS API/worker/beat task definitions receive the CloudFront staff
+URL, password-reset TTL, and Secrets Manager-backed encryption key; assert the
+key is not written as a plaintext Terraform variable or checked-in `.env`.
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 2: Update Terraform and workflow**
 
-Run: `cd backend && uv run pytest tests/test_auth_production_config.py -q`
+Use the existing AWS dev secret patterns and task-definition environment wiring.
+Add a password-reset encryption secret, preserve the deployed SES region/from
+settings, and ensure worker/beat tasks include the new delivery task. Keep
+`AUTH_BROWSER_ALLOWED_ORIGINS` aligned with the staff CloudFront origin.
 
-Expected: current validator does not report reset configuration.
-
-- [ ] **Step 3: Wire local and Terraform configuration**
-
-Generate a 32-byte reset key, store active and versioned values in the existing
-app secret, expose them to all backend ECS tasks, and set
-`STAFF_WEB_PUBLIC_URL=https://${aws_cloudfront_distribution.staff.domain_name}`.
-Add equivalent development values to Compose without committing a real secret.
-
-- [ ] **Step 4: Validate configuration**
-
-Run:
+- [ ] **Step 3: Run infrastructure checks**
 
 ```bash
-cd infra/terraform/envs/dev
-terraform fmt -check -recursive
-terraform init -backend=false
-terraform validate
-cd ../../../..
-docker compose config --quiet
+terraform -chdir=infra/terraform/envs/dev fmt -check
+terraform -chdir=infra/terraform/envs/dev validate
 ```
 
-Expected: all commands succeed without exposing secret values.
+When AWS SSO is valid, run `terraform plan` and inspect it for only the intended
+secret/task/migration changes. Do not apply production or legacy HMS changes.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add backend/src/hms_backend/app/core/config.py backend/tests/test_auth_production_config.py docker-compose.yml infra/terraform/envs/dev/main.tf infra/terraform/envs/dev/variables.tf infra/terraform/envs/dev/terraform.tfvars.example
-git commit -m "chore(auth): configure password recovery runtime"
+git add infra/terraform/envs/dev .github/workflows/deploy-aws-dev.yml
+git commit -m "feat(deploy): configure secure password reset delivery"
 ```
 
-### Task 9: Regression, Browser Verification, Deployment
+### Task 8: Full Verification, Commit, Push, and AWS Smoke Test
 
 **Files:**
-- Modify: `web/apps/staff/e2e/staff-auth.spec.ts`
-- Modify: `.github/workflows/deploy-aws-dev.yml`
+- No new production files; update documentation only if runbook steps change.
 
-- [ ] **Step 1: Add Playwright coverage**
-
-Cover sign-in gateway rendering, forgot-password confirmation, invalid reset-link
-recovery, password visibility, tab order, 375/768/1024/1440 layouts, and reduced
-motion. Use synthetic accounts and intercept email delivery in local e2e; never
-alter legacy production data.
-
-- [ ] **Step 2: Run focused e2e verification**
-
-Run: `cd web/apps/staff && npm run test:e2e -- staff-auth.spec.ts`
-
-Expected: all authentication e2e tests pass. Any failure must be reproduced in
-the focused Vitest or backend test for the owning component before changing
-production code.
-
-- [ ] **Step 3: Run full verification**
+- [ ] **Step 1: Run the backend regression suite**
 
 ```bash
 cd backend
-uv run ruff check .
-uv run mypy src
 uv run pytest -q
-cd ../web/apps/staff
+uv run ruff check src tests
+uv run alembic check
+```
+
+Expected: all backend tests pass, Ruff is clean, and Alembic reports no pending
+model drift.
+
+- [ ] **Step 2: Run the full staff suite and build**
+
+```bash
+cd web/apps/staff
 npm test -- --run
 npm run build
 ```
 
-Expected: all checks pass; only the already-known Vite bundle-size advisory may
-remain.
+Expected: all staff tests pass and production build succeeds.
 
-- [ ] **Step 4: Add deployment smoke checks**
+- [ ] **Step 3: Run browser verification locally**
 
-After ECS stabilization and CloudFront invalidation, verify the staff index,
-generic reset-request response, and invalid-token response without issuing a
-real reset. Keep the real SES link test as a manual dev-environment check against
-a dedicated test account.
+Use the browser control skill against the local staff app and verify sign-in,
+forgot-password, generic confirmation, reset URL state, invalid-link recovery,
+password visibility, keyboard focus, reduced motion, and 375/768/1024/1440
+layouts. Do not submit a real password or mutate live production data.
 
-- [ ] **Step 5: Commit, push, and deploy**
+- [ ] **Step 4: Push the implementation branch**
 
 ```bash
-git add web/apps/staff/e2e/staff-auth.spec.ts .github/workflows/deploy-aws-dev.yml
-git commit -m "test(auth): verify password recovery end to end"
+git status --short --branch
 git push origin codex/aws-dev-deployment-foundation
-gh workflow run deploy-aws-dev.yml --ref codex/aws-dev-deployment-foundation
 ```
 
-- [ ] **Step 6: Verify AWS**
+Expected: clean working tree and successful push.
 
-Confirm migration `20260713_0010`, healthy API/worker/beat ECS services, successful
-staff S3 sync and CloudFront invalidation, no secret values in logs, responsive
-gateway rendering, generic request behavior, one-time reset completion, session
-revocation, and MFA-required sign-in using only the dedicated AWS dev account.
+- [ ] **Step 5: Deploy AWS dev through GitHub Actions**
+
+Run the existing deployment workflow with the branch/commit after AWS SSO and
+required SES/Secrets Manager configuration are confirmed. Verify migration,
+ECS service rollout, worker task availability, S3 staff assets, and CloudFront
+invalidation.
+
+- [ ] **Step 6: Run the deployed smoke test**
+
+Verify that the staff CloudFront URL renders the new gateway, forgot-password
+request returns the generic message, the delivery worker sends only to the
+dedicated development mailbox, the link opens the reset route, the reset works
+once, the second use fails generically, and the user must complete MFA on the
+next login. Record only status and non-sensitive IDs; never print the reset URL,
+token, password, or secret.
 
 ---
 
 ## Plan Self-Review
 
-- Every approved design requirement maps to a task.
-- The reset token is never persisted in plaintext or in permanent notifications.
-- Backend policy remains authoritative; frontend strength is guidance only.
-- Existing password, MFA, refresh, and logout flows receive regression coverage.
-- Production configuration fails fast when reset encryption is incomplete.
-- Deployment applies the migration before the new API and worker code stabilize.
+- Spec coverage: security invariants are covered in Tasks 1–4; UI and motion in
+  Tasks 5–6; deployment and AWS delivery in Tasks 7–8; regression and browser
+  verification in Task 8.
+- No raw reset token is written to the permanent notification log; Task 4 tests
+  this explicitly.
+- The `PasswordResetSecret`, `PasswordResetService`, provider methods, and API
+  route names are consistent across tasks.
+- The plan contains no production-data scraping, no hard deletion, and no
+  instruction to print credentials.
+- No placeholders or unspecified implementation gaps remain.
