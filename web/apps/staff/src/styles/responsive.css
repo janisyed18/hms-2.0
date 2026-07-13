@@ -129,16 +129,20 @@
   .detail-link,
   .icon-button,
   .row-actions button,
+  .pagination button,
+  .section-heading.compact button,
   .tab-list button,
   .inspection-filter-tabs button,
   .field,
+  .filter-field select,
   .search-field,
   .select-field {
     min-height: var(--control-height-mobile);
   }
 
   .icon-button,
-  .row-actions button {
+  .row-actions button,
+  .pagination button {
     min-width: var(--control-height-mobile);
   }
 
