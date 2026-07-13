@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     auth_access_token_ttl_seconds: int = 3600
     auth_password_login_enabled: bool = True
     auth_password_reset_ttl_seconds: int = 900
+    auth_password_reset_key_version: int = 1
+    auth_password_reset_keys: dict[int, str] = Field(default_factory=dict)
+    auth_password_reset_delivery_max_attempts: int = 5
+    auth_password_reset_delivery_retry_seconds: int = 60
+    staff_web_public_url: str = "http://127.0.0.1:8080"
 
     # External OIDC provider (oidc mode). JWKS is discovered from the issuer's
     # ``/.well-known/openid-configuration`` unless a JWKS URL is given directly.
