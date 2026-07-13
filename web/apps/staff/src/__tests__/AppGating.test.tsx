@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { BrowserAuthClient } from "../auth/authClient";
 import { BrowserAuthError } from "../auth/authTypes";
+import { MotionProvider } from "../motion/MotionProvider";
 
 const ME = {
   user_id: "u-1",
@@ -36,6 +37,30 @@ afterEach(() => {
 });
 
 describe("App auth gating", () => {
+  it("renders authentication with reduced motion enabled", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockImplementation((query: string) => ({
+        matches: query.includes("prefers-reduced-motion"),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn()
+      }))
+    );
+
+    render(
+      <MotionProvider>
+        <App authClient={fakeClient()} />
+      </MotionProvider>
+    );
+
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+  });
+
   it("shows only the sign-in screen when unauthenticated (no app shell)", async () => {
     render(<App authClient={fakeClient()} />);
     expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
