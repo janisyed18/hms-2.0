@@ -109,6 +109,20 @@
 }
 
 @media (max-width: 820px) {
+  button,
+  [role="button"] {
+    min-width: var(--control-height-mobile);
+  }
+
+  button,
+  [role="button"],
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea,
+  .checkbox-field {
+    min-height: var(--control-height-mobile);
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
   }
@@ -240,6 +254,12 @@
 
   .topbar-popover {
     right: var(--space-2);
+  }
+
+  .topbar-popover .popover-close {
+    width: var(--control-height-mobile);
+    height: var(--control-height-mobile);
+    min-height: var(--control-height-mobile);
   }
 
   .app-shell.is-drawer-ready .sidebar {
