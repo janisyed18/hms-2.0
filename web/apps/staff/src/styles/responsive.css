@@ -123,6 +123,25 @@
     min-height: var(--control-height-mobile);
   }
 
+  .primary-button,
+  .secondary-button,
+  .danger-button,
+  .detail-link,
+  .icon-button,
+  .row-actions button,
+  .tab-list button,
+  .inspection-filter-tabs button,
+  .field,
+  .search-field,
+  .select-field {
+    min-height: var(--control-height-mobile);
+  }
+
+  .icon-button,
+  .row-actions button {
+    min-width: var(--control-height-mobile);
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
   }
