@@ -489,7 +489,7 @@ describe("App", () => {
     expect(screen.getByText("Overdue Retests")).toBeVisible();
     expect(screen.getByText("Fleet Health")).toBeVisible();
     expect(screen.getByText("Due This Week")).toBeVisible();
-    expect(screen.getByText("Awaiting Review")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Awaiting Review" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Customers" }));
 
     expect(await screen.findByRole("heading", { name: "Customer Management" })).toBeVisible();
@@ -500,6 +500,25 @@ describe("App", () => {
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
       "North Sea Drilling Ltd."
     );
+  });
+
+  it("keeps the command centre hierarchy and dashboard order explicit", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    render(<App initialSession={adminSession} />);
+
+    const dashboard = await screen.findByRole("region", { name: "Dashboard workspace" });
+    expect(
+      within(dashboard)
+        .getAllByRole("heading", { level: 2 })
+        .map((heading) => heading.textContent)
+    ).toEqual(["Overdue Retests", "Awaiting Review", "Fleet Health", "Due This Week"]);
+
+    expect(
+      [...within(dashboard).getByLabelText("Operational highlights").querySelectorAll(".kpi-card > span")]
+        .map((label) => label.textContent)
+    ).toEqual(["Total Assets", "In Service", "Overdue", "Awaiting Review"]);
+    expect(within(dashboard).queryByText("Pending Review")).not.toBeInTheDocument();
   });
 
   it("hides admin-only navigation for inspector sessions", async () => {

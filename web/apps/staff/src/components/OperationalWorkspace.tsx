@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
 
 import { HmsApiError, loadAuditEventsWithFallback } from "../api/hmsClient";
 import type { AuditEventRecord, DataSource } from "../domain/types";
+import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { WorkspaceState } from "./WorkspaceState";
 
 export type OperationalModule = "dashboard" | "sync" | "audit";
@@ -138,35 +139,45 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
           {source === "api" ? "Backend" : "Mock data"}
         </span>
       </div>
-      <div className="kpi-grid" aria-label="Operational highlights">
-        <MetricCard
-          icon={<Activity aria-hidden="true" size={18} />}
-          label="Total Assets"
-          value="1,247"
-          helper="Across 34 customers"
-          tone="blue"
-        />
-        <MetricCard
-          icon={<CheckCircle2 aria-hidden="true" size={18} />}
-          label="In Service"
-          value="1,089"
-          helper="87.3% fleet health"
-          tone="green"
-        />
-        <MetricCard
-          icon={<AlertTriangle aria-hidden="true" size={18} />}
-          label="Overdue"
-          value="23"
-          helper="Requires immediate action"
-          tone="red"
-        />
-        <MetricCard
-          icon={<Hourglass aria-hidden="true" size={18} />}
-          label="Pending Review"
-          value="8"
-          helper="3 critical, 5 standard"
-          tone="amber"
-        />
+      <div className="kpi-grid" aria-label="Operational highlights" role="group">
+        <StaggerGroup className="kpi-grid-motion">
+          <StaggerItem>
+            <MetricCard
+              icon={<Activity aria-hidden="true" size={18} />}
+              label="Total Assets"
+              value="1,247"
+              helper="Across 34 customers"
+              tone="blue"
+            />
+          </StaggerItem>
+          <StaggerItem>
+            <MetricCard
+              icon={<CheckCircle2 aria-hidden="true" size={18} />}
+              label="In Service"
+              value="1,089"
+              helper="87.3% fleet health"
+              tone="green"
+            />
+          </StaggerItem>
+          <StaggerItem>
+            <MetricCard
+              icon={<AlertTriangle aria-hidden="true" size={18} />}
+              label="Overdue"
+              value="23"
+              helper="Requires immediate action"
+              tone="red"
+            />
+          </StaggerItem>
+          <StaggerItem>
+            <MetricCard
+              icon={<Hourglass aria-hidden="true" size={18} />}
+              label="Awaiting Review"
+              value="8"
+              helper="3 critical, 5 standard"
+              tone="amber"
+            />
+          </StaggerItem>
+        </StaggerGroup>
       </div>
 
       <div className="dashboard-layout">
