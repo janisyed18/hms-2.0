@@ -22,6 +22,9 @@ from sqlalchemy.ext.asyncio import (
 
 from hms_backend.app.core.celery_app import celery_app
 from hms_backend.app.core.config import settings
+from hms_backend.app.modules.notifications.password_reset_delivery import (
+    dispatch_password_reset_deliveries,
+)
 from hms_backend.app.modules.notifications.service import (
     dispatch_pending,
     relay_outbox,
@@ -48,6 +51,11 @@ def relay_outbox_task() -> dict[str, Any]:
 @celery_app.task(name="notifications.dispatch")  # type: ignore[untyped-decorator]
 def dispatch_notifications_task() -> dict[str, Any]:
     return asyncio.run(_run(dispatch_pending))
+
+
+@celery_app.task(name="notifications.password_reset_delivery")  # type: ignore[untyped-decorator]
+def password_reset_delivery_task() -> dict[str, Any]:
+    return asyncio.run(_run(dispatch_password_reset_deliveries))
 
 
 @celery_app.task(  # type: ignore[untyped-decorator]

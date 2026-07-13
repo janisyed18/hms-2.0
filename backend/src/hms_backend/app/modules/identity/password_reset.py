@@ -113,6 +113,7 @@ class PasswordResetService:
                 recipient_email=user.email,
                 ciphertext=envelope.ciphertext,
                 key_version=envelope.key_version,
+                scheduled_for=now,
             )
         )
         await append_audit_event(

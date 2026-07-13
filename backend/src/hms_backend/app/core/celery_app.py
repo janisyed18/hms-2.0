@@ -49,6 +49,12 @@ celery_app.conf.update(
             "task": "notifications.dispatch",
             "schedule": 30.0,
         },
+        # Deliver short-lived password reset envelopes without materialising
+        # links in the permanent notification log.
+        "notifications-password-reset-delivery": {
+            "task": "notifications.password_reset_delivery",
+            "schedule": 30.0,
+        },
         # Daily retest reminder + overdue escalation scheduler (07:00 UTC).
         "notifications-schedule-retests": {
             "task": "notifications.schedule_retests",
