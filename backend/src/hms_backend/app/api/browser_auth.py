@@ -30,6 +30,12 @@ from hms_backend.app.modules.identity.browser_auth import (
     RateLimitedError,
 )
 from hms_backend.app.modules.identity.models import User
+from hms_backend.app.modules.identity.password_reset import (
+    GENERIC_RESET_MESSAGE,
+    INVALID_RESET_ERROR,
+    PasswordResetError,
+    PasswordResetService,
+)
 
 router = APIRouter(prefix="/auth/browser", tags=["auth-browser"])
 
@@ -65,6 +71,19 @@ class BrowserChallengeRequest(BaseModel):
 class BrowserCodeRequest(BaseModel):
     challenge: str
     code: str
+
+
+class BrowserPasswordResetRequest(BaseModel):
+    email: str
+
+
+class BrowserPasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+
+class BrowserMessageResponse(BaseModel):
+    message: str
 
 
 # --- responses ------------------------------------------------------------------
@@ -221,6 +240,58 @@ async def browser_login(
         challenge=challenge.raw,
         expires_in=challenge.expires_in,
     )
+
+
+@router.post(
+    "/password/reset-request",
+    response_model=BrowserMessageResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def browser_password_reset_request(
+    payload: BrowserPasswordResetRequest,
+    request: Request,
+    session: SessionDep,
+) -> BrowserMessageResponse:
+    """Request a reset link without revealing whether the account exists."""
+    _, ip = _client_meta(request)
+    await PasswordResetService().request(
+        session,
+        email=payload.email,
+        ip=ip,
+        user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
+    return BrowserMessageResponse(message=GENERIC_RESET_MESSAGE)
+
+
+@router.post(
+    "/password/reset-confirm",
+    response_model=BrowserMessageResponse,
+)
+async def browser_password_reset_confirm(
+    payload: BrowserPasswordResetConfirm,
+    session: SessionDep,
+) -> BrowserMessageResponse:
+    try:
+        await PasswordResetService().confirm(
+            session,
+            token=payload.token,
+            new_password=payload.new_password,
+        )
+    except PasswordResetError as exc:
+        await session.rollback()
+        detail = str(exc)
+        if detail == INVALID_RESET_ERROR:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=INVALID_RESET_ERROR,
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        ) from exc
+    await session.commit()
+    return BrowserMessageResponse(message="Password reset. You can now sign in.")
 
 
 @router.post("/password", response_model=BrowserChallengeResponse)
