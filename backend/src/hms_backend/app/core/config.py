@@ -157,6 +157,15 @@ class Settings(BaseSettings):
     auth_browser_cookie_secure: bool = True
     # Exact origins allowed to call refresh/logout (CSRF hardening).
     auth_browser_allowed_origins: list[str] = Field(default_factory=list)
+    # Public staff-web origin used only for password-reset links. Keep this
+    # separate from the API base URL so recovery links always land in the SPA.
+    auth_browser_staff_public_url: str = ""
+    auth_password_reset_encryption_key: str = ""
+    auth_password_reset_encryption_keys: dict[int, str] = Field(default_factory=dict)
+    auth_password_reset_key_version: int = 1
+    auth_password_reset_ttl_seconds: int = 900
+    auth_password_reset_rate_limit_max_attempts: int = 3
+    auth_password_reset_rate_limit_window_seconds: int = 900
     # Recent-auth window (seconds) required for privileged admin actions.
     auth_browser_reauth_max_age_seconds: int = 300
     # Max verification attempts against a single challenge before it is rejected.
@@ -203,6 +212,28 @@ class Settings(BaseSettings):
             errors.append("AUTH_RECOVERY_CODE_PEPPER is required")
         if not self.auth_browser_allowed_origins:
             errors.append("AUTH_BROWSER_ALLOWED_ORIGINS must list the staff origin")
+        if not self.auth_browser_staff_public_url:
+            errors.append("AUTH_BROWSER_STAFF_PUBLIC_URL is required")
+        if (
+            not self.auth_password_reset_encryption_key
+            and self.auth_password_reset_key_version
+            not in self.auth_password_reset_encryption_keys
+        ):
+            errors.append("AUTH_PASSWORD_RESET_ENCRYPTION_KEY is required")
+        elif not all(
+            _decodes_to_32_bytes(value)
+            for value in [
+                *self.auth_password_reset_encryption_keys.values(),
+                *(
+                    [self.auth_password_reset_encryption_key]
+                    if self.auth_password_reset_encryption_key
+                    else []
+                ),
+            ]
+        ):
+            errors.append(
+                "AUTH_PASSWORD_RESET_ENCRYPTION_KEY values must decode to 32 bytes"
+            )
         if not self.auth_browser_cookie_secure:
             errors.append("AUTH_BROWSER_COOKIE_SECURE must be true when deployed")
         return errors
