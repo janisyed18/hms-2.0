@@ -106,24 +106,34 @@ describe("Command Centre motion primitives", () => {
     );
   });
 
-  it("does not wrap an interactive child in another button", () => {
-    render(
-      <Pressable>
-        <button type="button">Save</button>
-      </Pressable>
-    );
+  it("rejects button content before producing nested interactive output", () => {
+    const container = document.createElement("div");
 
-    expect(screen.getAllByRole("button", { name: "Save" })).toHaveLength(1);
+    expect(() =>
+      render(<Pressable><button type="button">Save</button></Pressable>, { container })
+    ).toThrow(/only accepts non-interactive native content/i);
+    expect(container.querySelectorAll("button")).toHaveLength(0);
   });
 
-  it("does not wrap a link in a button", () => {
-    render(
-      <Pressable>
-        <a href="/assets">Open assets</a>
-      </Pressable>
-    );
+  it("rejects link content before producing nested interactive output", () => {
+    const container = document.createElement("div");
 
-    expect(screen.getByRole("link", { name: "Open assets" })).toBeVisible();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(() =>
+      render(<Pressable><a href="/assets">Open assets</a></Pressable>, { container })
+    ).toThrow(/only accepts non-interactive native content/i);
+    expect(container.querySelectorAll("button, a")).toHaveLength(0);
+  });
+
+  it("rejects a custom component before it can produce a nested button", () => {
+    function CustomButton() {
+      return <button type="button">Custom action</button>;
+    }
+
+    const container = document.createElement("div");
+
+    expect(() =>
+      render(<Pressable><CustomButton /></Pressable>, { container })
+    ).toThrow(/only accepts non-interactive native content/i);
+    expect(container.querySelectorAll("button")).toHaveLength(0);
   });
 });

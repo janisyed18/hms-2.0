@@ -1,8 +1,7 @@
 import {
   Children,
+  Fragment,
   isValidElement,
-  type ReactElement,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode
 } from "react";
 import {
@@ -25,6 +24,79 @@ type PressableProps = Omit<HTMLMotionProps<"button">, "children"> & {
 
 const instantTransition = { duration: 0 } as const;
 const staggerDelay = 0.06;
+const interactiveTags = new Set([
+  "a",
+  "audio",
+  "button",
+  "details",
+  "embed",
+  "iframe",
+  "input",
+  "object",
+  "select",
+  "summary",
+  "textarea",
+  "video"
+]);
+const interactiveRoles = new Set([
+  "button",
+  "checkbox",
+  "combobox",
+  "link",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "option",
+  "radio",
+  "slider",
+  "spinbutton",
+  "switch",
+  "tab",
+  "textbox"
+]);
+const pressableContentError =
+  "Pressable only accepts non-interactive native content; custom components and interactive descendants are unsupported.";
+
+type NativeContentProps = {
+  children?: ReactNode;
+  contentEditable?: boolean | "inherit" | "plaintext-only" | "true" | "false";
+  onClick?: unknown;
+  onKeyDown?: unknown;
+  onKeyUp?: unknown;
+  onPointerDown?: unknown;
+  role?: string;
+  tabIndex?: number;
+};
+
+function assertNonInteractiveNativeContent(children: ReactNode): void {
+  Children.forEach(children, (child) => {
+    if (!isValidElement(child)) return;
+
+    const props = child.props as NativeContentProps;
+    if (child.type === Fragment) {
+      assertNonInteractiveNativeContent(props.children);
+      return;
+    }
+
+    if (typeof child.type !== "string") throw new Error(pressableContentError);
+
+    const hasInteractiveProps =
+      props.contentEditable === true ||
+      props.contentEditable === "true" ||
+      (typeof props.tabIndex === "number" && props.tabIndex >= 0) ||
+      (typeof props.role === "string" && interactiveRoles.has(props.role)) ||
+      props.onClick !== undefined ||
+      props.onKeyDown !== undefined ||
+      props.onKeyUp !== undefined ||
+      props.onPointerDown !== undefined;
+
+    if (interactiveTags.has(child.type) || hasInteractiveProps) {
+      throw new Error(pressableContentError);
+    }
+
+    assertNonInteractiveNativeContent(props.children);
+  });
+}
 
 function enterTransition(reducedMotion: boolean | null) {
   return reducedMotion
@@ -145,63 +217,7 @@ export function Pressable({
   ...props
 }: PressableProps) {
   const reducedMotion = useReducedMotion();
-  const onlyChild = Children.count(children) === 1 && isValidElement(children)
-    ? children as ReactElement
-    : null;
-
-  if (onlyChild?.type === "button") {
-    const button = onlyChild as ReactElement<HTMLMotionProps<"button">>;
-    const {
-      children: buttonChildren,
-      className: childClassName,
-      onClick: childOnClick,
-      type: childType,
-      ...childProps
-    } = button.props;
-
-    return (
-      <m.button
-        {...childProps}
-        {...props}
-        className={[childClassName, className].filter(Boolean).join(" ") || undefined}
-        onClick={onClick ?? childOnClick}
-        type={childType ?? type}
-        whileTap={reducedMotion ? undefined : { scale: 0.98 }}
-        transition={motionTokens.spring.snappy}
-      >
-        {buttonChildren}
-      </m.button>
-    );
-  }
-
-  if (onlyChild?.type === "a") {
-    const link = onlyChild as ReactElement<HTMLMotionProps<"a">>;
-    const {
-      children: linkChildren,
-      className: childClassName,
-      onClick: childOnClick,
-      ...linkProps
-    } = link.props;
-
-    const handleClick = (event: ReactMouseEvent<HTMLAnchorElement>) => {
-      childOnClick?.(event);
-      if (!event.defaultPrevented) {
-        onClick?.(event as unknown as ReactMouseEvent<HTMLButtonElement>);
-      }
-    };
-
-    return (
-      <m.a
-        {...linkProps}
-        className={[childClassName, className].filter(Boolean).join(" ") || undefined}
-        onClick={handleClick}
-        whileTap={reducedMotion ? undefined : { scale: 0.98 }}
-        transition={motionTokens.spring.snappy}
-      >
-        {linkChildren}
-      </m.a>
-    );
-  }
+  assertNonInteractiveNativeContent(children);
 
   return (
     <m.button
