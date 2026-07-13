@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { useReducedMotion } from "motion/react";
-import type { ReactNode } from "react";
+import { forwardRef, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MotionProvider } from "../motion/MotionProvider";
@@ -114,18 +114,40 @@ describe("Command Centre motion primitives", () => {
     expect(item?.style.transform).toBe("");
   });
 
-  it("renders a custom icon as content of one native button", () => {
-    function StatusIcon() {
-      return <svg aria-hidden="true" data-testid="status-icon"><circle cx="8" cy="8" r="4" /></svg>;
-    }
+  it("renders an explicitly decorative forwardRef icon inside one native button", () => {
+    const SaveIcon = forwardRef<SVGSVGElement, ComponentPropsWithoutRef<"svg">>(
+      function SaveIcon(props, ref) {
+        return (
+          <svg {...props} ref={ref} data-testid="save-icon">
+            <path d="M3 3h10v10H3z" />
+          </svg>
+        );
+      }
+    );
 
     render(
-      <Pressable aria-label="Save changes"><StatusIcon /></Pressable>,
+      <Pressable aria-label="Save changes"><SaveIcon aria-hidden="true" /></Pressable>,
       { wrapper: MotionTestRoot }
     );
 
     expect(screen.getAllByRole("button", { name: "Save changes" })).toHaveLength(1);
-    expect(screen.getByTestId("status-icon")).toBeInTheDocument();
+    expect(screen.getByTestId("save-icon")).toBeInTheDocument();
+  });
+
+  it("rejects an unmarked custom component before it can render a nested button", () => {
+    function CustomButton() {
+      return <button type="button">Custom action</button>;
+    }
+
+    const container = document.createElement("div");
+
+    expect(() =>
+      render(<Pressable><CustomButton /></Pressable>, {
+        container,
+        wrapper: MotionTestRoot
+      })
+    ).toThrow(/custom content must be decorative/i);
+    expect(container.querySelectorAll("button")).toHaveLength(0);
   });
 
   it("rejects an actual native interactive descendant", () => {

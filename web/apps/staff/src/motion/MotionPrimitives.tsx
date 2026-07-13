@@ -19,7 +19,7 @@ type MotionChildrenProps = {
 };
 
 export type PressableProps = Omit<HTMLMotionProps<"button">, "children"> & {
-  /** Presentational content only. Custom components must not render interactive controls. */
+  /** Custom children must be childless and explicitly marked `aria-hidden`. */
   children: ReactNode;
 };
 
@@ -57,8 +57,11 @@ const interactiveRoles = new Set([
 ]);
 const pressableContentError =
   "Pressable only accepts non-interactive content; nested native controls are unsupported.";
+const customPressableContentError =
+  "Pressable custom content must be decorative: set aria-hidden=true and do not pass children.";
 
 type NativeContentProps = {
+  "aria-hidden"?: boolean | "true" | "false";
   children?: ReactNode;
   contentEditable?: boolean | "inherit" | "plaintext-only" | "true" | "false";
   onClick?: unknown;
@@ -79,8 +82,6 @@ function assertNonInteractiveNativeContent(children: ReactNode): void {
       return;
     }
 
-    if (typeof child.type !== "string") return;
-
     const hasInteractiveProps =
       props.contentEditable === true ||
       props.contentEditable === "true" ||
@@ -90,6 +91,15 @@ function assertNonInteractiveNativeContent(children: ReactNode): void {
       props.onKeyDown !== undefined ||
       props.onKeyUp !== undefined ||
       props.onPointerDown !== undefined;
+
+    if (typeof child.type !== "string") {
+      const isDecorative =
+        props["aria-hidden"] === true || props["aria-hidden"] === "true";
+      if (!isDecorative || props.children != null || hasInteractiveProps) {
+        throw new Error(customPressableContentError);
+      }
+      return;
+    }
 
     if (interactiveTags.has(child.type) || hasInteractiveProps) {
       throw new Error(pressableContentError);
