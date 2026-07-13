@@ -55,10 +55,13 @@ describe("Command Centre shell", () => {
     renderShell();
 
     await user.click(screen.getByRole("button", { name: "Open navigation menu" }));
-    expect(screen.getByRole("dialog", { name: "Navigation menu" })).toBeVisible();
+    const drawer = screen.getByRole("dialog", { name: "Navigation menu" });
+    expect(drawer).toBeVisible();
+    expect(within(drawer).getByRole("textbox", { name: "Search assets and customers" })).toHaveFocus();
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Navigation menu" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open navigation menu" })).toHaveFocus();
 
     await user.click(screen.getByRole("button", { name: "Open navigation menu" }));
     await user.click(screen.getByRole("button", { name: "Close navigation menu" }));

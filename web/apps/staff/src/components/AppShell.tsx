@@ -24,7 +24,7 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { StaffSession } from "../domain/types";
 import { motionTokens } from "../motion/motionTokens";
 
@@ -264,6 +264,8 @@ export function AppShell({
 }: AppShellProps) {
   const [openMenu, setOpenMenu] = useState<TopbarMenu | null>(null);
   const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
+  const mobileDrawerRef = useRef<HTMLElement>(null);
+  const mobileToggleRef = useRef<HTMLButtonElement>(null);
   const reducedMotion = useReducedMotion();
 
   function handleLogout() {
@@ -284,14 +286,37 @@ export function AppShell({
   useEffect(() => {
     if (!isMobileNavigationOpen) return;
 
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const focusableSelector =
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+    const focusable = Array.from(
+      mobileDrawerRef.current?.querySelectorAll<HTMLElement>(focusableSelector) ?? []
+    );
+    focusable[0]?.focus();
+
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setIsMobileNavigationOpen(false);
+        return;
+      }
+      if (event.key === "Tab" && focusable.length > 0) {
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     }
 
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      (previouslyFocused ?? mobileToggleRef.current)?.focus();
+    };
   }, [isMobileNavigationOpen]);
 
   function handleModuleChange(module: AppModule) {
@@ -359,6 +384,7 @@ export function AppShell({
               initial={{ x: reducedMotion ? 0 : "-100%" }}
               animate={{ x: 0 }}
               role="dialog"
+              ref={mobileDrawerRef}
               transition={drawerTransition}
             >
               <SidebarNavigation {...sidebarNavigationProps} idSuffix="mobile" />
@@ -378,6 +404,7 @@ export function AppShell({
               aria-expanded={isMobileNavigationOpen}
               aria-label="Open navigation menu"
               className="icon-button mobile-nav-toggle"
+              ref={mobileToggleRef}
               onClick={() => setIsMobileNavigationOpen(true)}
               type="button"
             >
