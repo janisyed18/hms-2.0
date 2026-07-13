@@ -329,9 +329,15 @@ button:active:not(:disabled) {
 }
 
 .danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--danger);
   background: var(--danger);
   color: var(--color-white);
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 760;
 }
 
 .field,

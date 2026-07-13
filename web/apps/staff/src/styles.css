@@ -1747,21 +1747,6 @@ tbody tr.is-selected {
   align-items: center;
 }
 
-.danger-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 38px;
-  border: 1px solid rgba(239, 68, 68, 0.2);
-  border-radius: 10px;
-  background: var(--danger);
-  color: #ffffff;
-  padding: 0 14px;
-  font-size: 12px;
-  font-weight: 760;
-  box-shadow: 0 10px 22px rgba(239, 68, 68, 0.18);
-}
-
 .operations-table-panel {
   overflow: hidden;
 }
