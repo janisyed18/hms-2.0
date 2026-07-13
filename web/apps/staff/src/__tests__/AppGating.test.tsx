@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useReducedMotionConfig } from "motion/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
@@ -31,6 +32,10 @@ function fakeClient(overrides: Partial<BrowserAuthClient> = {}): BrowserAuthClie
   } as unknown as BrowserAuthClient;
 }
 
+function ReducedMotionProbe() {
+  return <output aria-label="Reduced motion">{String(useReducedMotionConfig())}</output>;
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -38,6 +43,7 @@ afterEach(() => {
 
 describe("App auth gating", () => {
   it("renders authentication with reduced motion enabled", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.stubGlobal(
       "matchMedia",
       vi.fn().mockImplementation((query: string) => ({
@@ -54,11 +60,14 @@ describe("App auth gating", () => {
 
     render(
       <MotionProvider>
+        <ReducedMotionProbe />
         <App authClient={fakeClient()} />
       </MotionProvider>
     );
 
     expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    expect(screen.getByRole("status", { name: "Reduced motion" })).toHaveTextContent("true");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Reduced Motion enabled"));
   });
 
   it("shows only the sign-in screen when unauthenticated (no app shell)", async () => {
