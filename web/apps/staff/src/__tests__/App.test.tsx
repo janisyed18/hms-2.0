@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
+import { ModuleTable } from "../components/ModuleTable";
+import { WorkspaceState } from "../components/WorkspaceState";
 import type { StaffSession } from "../domain/types";
 
 const apiCustomer = {
@@ -466,6 +468,63 @@ function routeFetch() {
 }
 
 describe("App", () => {
+  it("announces workspace states and keeps generic rows keyboard-actionable", async () => {
+    const onRowSelect = vi.fn();
+    const onOverflow = vi.fn();
+    const user = userEvent.setup();
+
+    const { rerender } = render(
+      <WorkspaceState title="Loading records" tone="loading">
+        Fetching the current records.
+      </WorkspaceState>
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Loading records");
+
+    rerender(
+      <WorkspaceState title="Records unavailable" tone="error">
+        The records could not be loaded.
+      </WorkspaceState>
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Records unavailable");
+
+    rerender(
+      <ModuleTable
+        columns={[
+          { header: "Name", render: (item: { id: string; name: string }) => item.name },
+          {
+            header: "Actions",
+            render: () => (
+              <button aria-label="More record actions" onClick={onOverflow} type="button">
+                More
+              </button>
+            )
+          }
+        ]}
+        countLabel="1 record"
+        emptyLabel="No records"
+        exportRows={(item) => [item.name, ""]}
+        getRowKey={(item) => item.id}
+        items={[{ id: "record-1", name: "Record one" }]}
+        onQueryChange={() => undefined}
+        onRowSelect={onRowSelect}
+        query=""
+        searchLabel="Search records"
+        searchPlaceholder="Search records"
+        source="mock"
+        tableLabel="Test records"
+      />
+    );
+
+    const row = screen.getByRole("row", { name: /Record one More/i });
+    await user.click(screen.getByRole("button", { name: "More record actions" }));
+    expect(onOverflow).toHaveBeenCalledTimes(1);
+    expect(onRowSelect).not.toHaveBeenCalled();
+
+    row.focus();
+    await user.keyboard("{Enter}");
+    expect(onRowSelect).toHaveBeenCalledWith({ id: "record-1", name: "Record one" });
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

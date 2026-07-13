@@ -1,6 +1,8 @@
 import { AlertCircle, CheckCircle2, Inbox, Loader2 } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { PresencePanel } from "../motion/MotionPrimitives";
+
 interface WorkspaceStateProps {
   action?: ReactNode;
   children: ReactNode;
@@ -23,14 +25,21 @@ export function WorkspaceState({
 }: WorkspaceStateProps) {
   const Icon = icons[tone];
   return (
-    <section className={`workspace-state state-${tone}`} aria-live="polite">
-      <Icon aria-hidden="true" className={tone === "loading" ? "is-spinning" : ""} size={22} />
-      <div>
-        <strong>{title}</strong>
-        <p>{children}</p>
-      </div>
-      {action ? <div className="workspace-state-action">{action}</div> : null}
-    </section>
+    <PresencePanel presenceKey={tone}>
+      <section
+        aria-atomic="true"
+        aria-live={tone === "error" ? "assertive" : "polite"}
+        className={`workspace-state state-${tone}`}
+        role={tone === "error" ? "alert" : "status"}
+      >
+        <Icon aria-hidden="true" className={tone === "loading" ? "is-spinning" : ""} size={22} />
+        <div>
+          <strong>{title}</strong>
+          <p>{children}</p>
+        </div>
+        {action ? <div className="workspace-state-action">{action}</div> : null}
+      </section>
+    </PresencePanel>
   );
 }
 

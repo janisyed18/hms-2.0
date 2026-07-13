@@ -374,3 +374,74 @@ button:active:not(:disabled) {
 .loading-shimmer {
   background: var(--color-neutral-100);
 }
+
+/* Shared record and administration surface contracts. */
+.workspace-state {
+  align-items: center;
+  min-height: 104px;
+  padding: var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel-subtle);
+}
+
+.workspace-state[role="alert"] {
+  border-style: solid;
+}
+
+.workspace-state-action {
+  margin-left: auto;
+}
+
+.module-table tr.is-clickable {
+  cursor: pointer;
+}
+
+.module-table tr.is-clickable:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.module-table tr.is-selected,
+.module-table tr[aria-selected="true"] {
+  background: #eaf1fc;
+}
+
+.module-table th:last-child,
+.module-table td:last-child {
+  width: 1%;
+  min-width: 124px;
+  white-space: nowrap;
+}
+
+.status-pill,
+.mini-status,
+.user-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  white-space: nowrap;
+}
+
+.modal-backdrop[role="dialog"] {
+  isolation: isolate;
+}
+
+.modal-card .modal-header .icon-button {
+  flex: 0 0 auto;
+}
+
+.user-actions {
+  min-width: var(--control-height);
+}
+
+.user-action-menu {
+  z-index: 2;
+}
+
+.auth-flow {
+  min-width: 0;
+}

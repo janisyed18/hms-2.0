@@ -211,9 +211,7 @@ export function PresencePanel({
       <m.div
         key={presenceKey}
         className={className}
-        initial={reducedMotion
-          ? { opacity: 0 }
-          : { opacity: 0, y: motionTokens.distance.overlay }}
+        initial={false}
         animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
         exit={reducedMotion
           ? { opacity: 0, transition: exitTransition(reducedMotion) }

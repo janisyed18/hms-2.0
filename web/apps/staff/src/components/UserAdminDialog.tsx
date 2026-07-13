@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { X } from "lucide-react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
 
 import type { StaffRole } from "../domain/types";
 import { ROLE_LABELS, manageableRoles, requiresCustomer } from "./roleAdmin";
@@ -42,6 +43,8 @@ export function UserAdminDialog({
   const [lastName, setLastName] = useState("");
   const [role, setRole] = useState<StaffRole>(roleOptions[0] ?? "INSPECTOR");
   const [customerId, setCustomerId] = useState<string>("");
+  const emailRef = useRef<HTMLInputElement>(null);
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     if (open) {
@@ -55,9 +58,11 @@ export function UserAdminDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  if (!open) {
-    return null;
-  }
+  useEffect(() => {
+    if (open) {
+      emailRef.current?.focus();
+    }
+  }, [open]);
 
   const needsCustomer = requiresCustomer(role);
   const customerInvalid = needsCustomer && !customerId;
@@ -78,10 +83,33 @@ export function UserAdminDialog({
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-label={
-      mode === "create" ? "Add user" : "Edit user"
-    }>
-      <form className="modal-card" onSubmit={submit}>
+    <AnimatePresence initial={false}>
+      {open ? (
+        <m.div
+          animate={{ opacity: 1 }}
+          aria-label={mode === "create" ? "Add user" : "Edit user"}
+          aria-modal="true"
+          className="modal-backdrop"
+          exit={{ opacity: 0 }}
+          initial={{ opacity: 0 }}
+          key="user-admin-dialog"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onClose();
+            }
+          }}
+          role="dialog"
+          transition={{ duration: reducedMotion ? 0 : 0.16 }}
+        >
+          <m.form
+            animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+            className="modal-card"
+            exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
+            initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
+            onSubmit={submit}
+            transition={{ duration: reducedMotion ? 0 : 0.16 }}
+          >
         <div className="modal-header">
           <h2>{mode === "create" ? "Add user" : "Edit user"}</h2>
           <button
@@ -97,6 +125,7 @@ export function UserAdminDialog({
         <label className="auth-field">
           <span>Email</span>
           <input
+            ref={emailRef}
             type="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
@@ -165,7 +194,9 @@ export function UserAdminDialog({
             {mode === "create" ? "Create user" : "Save changes"}
           </button>
         </div>
-      </form>
-    </div>
+          </m.form>
+        </m.div>
+      ) : null}
+    </AnimatePresence>
   );
 }

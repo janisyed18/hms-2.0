@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, ShieldAlert, X } from "lucide-react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
 
 export interface OneTimeCredential {
   title: string;
@@ -23,9 +24,15 @@ export function OneTimeCredentialDialog({
   onClose
 }: OneTimeCredentialDialogProps) {
   const [copied, setCopied] = useState(false);
-  if (!credential) {
-    return null;
-  }
+  const doneRef = useRef<HTMLButtonElement>(null);
+  const reducedMotion = useReducedMotion();
+
+  useEffect(() => {
+    if (credential) {
+      setCopied(false);
+      doneRef.current?.focus();
+    }
+  }, [credential]);
 
   function copy() {
     if (credential && navigator.clipboard) {
@@ -35,8 +42,32 @@ export function OneTimeCredentialDialog({
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-label={credential.title}>
-      <div className="modal-card one-time-credential">
+    <AnimatePresence initial={false}>
+      {credential ? (
+        <m.div
+          animate={{ opacity: 1 }}
+          aria-label={credential.title}
+          aria-modal="true"
+          className="modal-backdrop"
+          exit={{ opacity: 0 }}
+          initial={{ opacity: 0 }}
+          key={credential.value}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onClose();
+            }
+          }}
+          role="dialog"
+          transition={{ duration: reducedMotion ? 0 : 0.16 }}
+        >
+          <m.div
+            animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+            className="modal-card one-time-credential"
+            exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
+            initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
+            transition={{ duration: reducedMotion ? 0 : 0.16 }}
+          >
         <div className="modal-header">
           <h2>
             <ShieldAlert aria-hidden="true" size={18} /> {credential.title}
@@ -62,10 +93,12 @@ export function OneTimeCredentialDialog({
             {copied ? "Copied" : "Copy"}
           </button>
         </div>
-        <button className="primary-button" onClick={onClose} type="button">
+        <button className="primary-button" onClick={onClose} ref={doneRef} type="button">
           Done
         </button>
-      </div>
-    </div>
+          </m.div>
+        </m.div>
+      ) : null}
+    </AnimatePresence>
   );
 }

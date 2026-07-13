@@ -48,6 +48,26 @@ describe("role management matrix", () => {
 });
 
 describe("UserAdminDialog", () => {
+  it("focuses the first field and closes with Escape", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <UserAdminDialog
+        open
+        mode="create"
+        actorRoles={["HMS_ADMIN"]}
+        customers={customers}
+        onClose={onClose}
+        onSubmit={vi.fn()}
+      />
+    );
+
+    expect(screen.getByLabelText("Email")).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("offers Super Admin as a role option to a Super Admin actor", () => {
     render(
       <UserAdminDialog
@@ -126,6 +146,26 @@ describe("UserAdminDialog", () => {
 });
 
 describe("OneTimeCredentialDialog", () => {
+  it("focuses its return action and closes with Escape", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <OneTimeCredentialDialog
+        credential={{
+          title: "Temporary password",
+          label: "Password",
+          value: "Abc-123-Def-456"
+        }}
+        onClose={onClose}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: "Done" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("shows the secret once and closes without leaving it reopenable", () => {
     const onClose = vi.fn();
     const { rerender } = render(

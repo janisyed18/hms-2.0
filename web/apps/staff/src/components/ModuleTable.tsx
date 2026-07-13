@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import { WorkspaceState } from "./WorkspaceState";
+import { PresencePanel } from "../motion/MotionPrimitives";
 
 export interface ModuleColumn<TItem> {
   header: string;
@@ -133,15 +134,17 @@ export function ModuleTable<TItem>({
       </div>
 
       {filtersOpen ? (
-        <div className="filter-panel" aria-label={`${tableLabel} filters`}>
-          <div className="filter-summary" role="status" aria-label={`${tableLabel} filter summary`}>
-            <strong>Active view</strong>
-            <span>Source: {source === "api" ? "Backend" : "Mock data"}</span>
-            <span>Search: {query.trim() || "All records"}</span>
-            <span>{activeFilterCount} active filters</span>
+        <PresencePanel presenceKey="filters">
+          <div className="filter-panel" aria-label={`${tableLabel} filters`}>
+            <div className="filter-summary" role="status" aria-label={`${tableLabel} filter summary`}>
+              <strong>Active view</strong>
+              <span>Source: {source === "api" ? "Backend" : "Mock data"}</span>
+              <span>Search: {query.trim() || "All records"}</span>
+              <span>{activeFilterCount} active filters</span>
+            </div>
+            {filterControls ? <div className="filter-grid">{filterControls}</div> : null}
           </div>
-          {filterControls ? <div className="filter-grid">{filterControls}</div> : null}
-        </div>
+        </PresencePanel>
       ) : null}
 
       <div className="table-actions">

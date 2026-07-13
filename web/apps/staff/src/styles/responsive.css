@@ -114,6 +114,21 @@
     min-width: var(--control-height-mobile);
   }
 
+  .module-table th:last-child,
+  .module-table td:last-child {
+    min-width: var(--control-height-mobile);
+  }
+
+  .workspace-state {
+    align-items: flex-start;
+    min-height: 0;
+  }
+
+  .workspace-state-action {
+    width: 100%;
+    margin-left: 0;
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
   }

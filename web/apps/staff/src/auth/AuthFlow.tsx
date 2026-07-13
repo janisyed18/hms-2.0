@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { QRCodeSVG } from "qrcode.react";
 
 import { useAuth } from "./AuthProvider";
@@ -320,19 +321,25 @@ function RecoveryCodesScreen({ codes }: { codes: string[] }) {
 
 export function AuthFlow({ children }: { children?: ReactNode }) {
   const { state } = useAuth();
+  const reducedMotion = useReducedMotion();
+  let screen: ReactNode;
+
   switch (state.status) {
     case "loading":
-      return (
+      screen = (
         <AuthLayout title="Loading…" subtitle="Restoring your session.">
           <div className="auth-loading" aria-label="Loading" />
         </AuthLayout>
       );
+      break;
     case "authenticated":
-      return <>{children}</>;
+      screen = children;
+      break;
     case "password-change":
-      return <PasswordChangeScreen message={messageOf(state)} />;
+      screen = <PasswordChangeScreen message={messageOf(state)} />;
+      break;
     case "mfa-enrollment":
-      return (
+      screen = (
         <MfaEnrollmentScreen
           challenge={state.challenge}
           otpauthUri={state.otpauthUri}
@@ -340,14 +347,34 @@ export function AuthFlow({ children }: { children?: ReactNode }) {
           message={messageOf(state)}
         />
       );
+      break;
     case "mfa-challenge":
-      return <MfaChallengeScreen message={messageOf(state)} />;
+      screen = <MfaChallengeScreen message={messageOf(state)} />;
+      break;
     case "recovery-codes":
-      return <RecoveryCodesScreen codes={state.recoveryCodes} />;
+      screen = <RecoveryCodesScreen codes={state.recoveryCodes} />;
+      break;
     case "expired":
-      return <LoginScreen message={state.message} />;
+      screen = <LoginScreen message={state.message} />;
+      break;
     case "signed-out":
     default:
-      return <LoginScreen message={messageOf(state)} />;
+      screen = <LoginScreen message={messageOf(state)} />;
   }
+
+  return (
+    <AnimatePresence initial={false} mode="wait">
+      <m.div
+        animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+        className="auth-flow"
+        data-state={state.status}
+        exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
+        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
+        key={state.status}
+        transition={{ duration: reducedMotion ? 0 : 0.16 }}
+      >
+        {screen}
+      </m.div>
+    </AnimatePresence>
+  );
 }

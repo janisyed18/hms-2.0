@@ -65,13 +65,15 @@ describe("App auth gating", () => {
       </MotionProvider>
     );
 
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Sign in" })).toBeVisible()
+    );
     expect(screen.getByRole("status", { name: "Reduced motion" })).toHaveTextContent("true");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("Reduced Motion enabled"));
   });
 
   it("shows only the sign-in screen when unauthenticated (no app shell)", async () => {
-    render(<App authClient={fakeClient()} />);
+    render(<MotionProvider><App authClient={fakeClient()} /></MotionProvider>);
     expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
     // The workspace nav is not rendered for an unauthenticated user.
     expect(screen.queryByText("Asset Register")).toBeNull();
@@ -87,11 +89,13 @@ describe("App auth gating", () => {
         expires_in: 900
       })
     });
-    render(<App authClient={client} />);
+    render(<MotionProvider><App authClient={client} /></MotionProvider>);
     // The authenticated shell shows the resolved session's display name.
     expect(await screen.findAllByText("Sam Admin")).not.toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "Customers" }));
-    expect(await screen.findByText("Customer data unavailable")).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByText("Customer data unavailable")).toBeVisible()
+    );
   });
 
   it("signs out from the sidebar control back to the login screen", async () => {
@@ -104,7 +108,7 @@ describe("App auth gating", () => {
         expires_in: 900
       })
     });
-    render(<App authClient={client} />);
+    render(<MotionProvider><App authClient={client} /></MotionProvider>);
     await screen.findAllByText("Sam Admin");
 
     fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
