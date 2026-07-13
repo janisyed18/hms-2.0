@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import { Save } from "lucide-react";
 import { useReducedMotion } from "motion/react";
-import { forwardRef, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MotionProvider } from "../motion/MotionProvider";
@@ -114,39 +115,31 @@ describe("Command Centre motion primitives", () => {
     expect(item?.style.transform).toBe("");
   });
 
-  it("renders an explicitly decorative forwardRef icon inside one native button", () => {
-    const SaveIcon = forwardRef<SVGSVGElement, ComponentPropsWithoutRef<"svg">>(
-      function SaveIcon(props, ref) {
-        return (
-          <svg {...props} ref={ref} data-testid="save-icon">
-            <path d="M3 3h10v10H3z" />
-          </svg>
-        );
-      }
-    );
-
+  it("renders the icon prop as decorative content inside one native button", () => {
     render(
-      <Pressable aria-label="Save changes"><SaveIcon aria-hidden="true" /></Pressable>,
+      <Pressable aria-label="Save changes" icon={Save}>Save changes</Pressable>,
       { wrapper: MotionTestRoot }
     );
 
+    const button = screen.getByRole("button", { name: "Save changes" });
     expect(screen.getAllByRole("button", { name: "Save changes" })).toHaveLength(1);
-    expect(screen.getByTestId("save-icon")).toBeInTheDocument();
+    expect(button.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   });
 
-  it("rejects an unmarked custom component before it can render a nested button", () => {
-    function CustomButton() {
+  it("rejects CustomButton even when it is marked aria-hidden", () => {
+    function CustomButton(_props: { "aria-hidden"?: boolean | "true" }) {
       return <button type="button">Custom action</button>;
     }
 
     const container = document.createElement("div");
+    const unsafeChild = <CustomButton aria-hidden="true" /> as unknown as string;
 
     expect(() =>
-      render(<Pressable><CustomButton /></Pressable>, {
+      render(<Pressable>{unsafeChild}</Pressable>, {
         container,
         wrapper: MotionTestRoot
       })
-    ).toThrow(/custom content must be decorative/i);
+    ).toThrow(/custom component children are unsupported/i);
     expect(container.querySelectorAll("button")).toHaveLength(0);
   });
 

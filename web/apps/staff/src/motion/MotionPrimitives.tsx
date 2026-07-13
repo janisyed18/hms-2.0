@@ -1,7 +1,10 @@
+import type { LucideIcon } from "lucide-react";
 import {
   Children,
   Fragment,
   isValidElement,
+  type JSX,
+  type ReactElement,
   type ReactNode
 } from "react";
 import {
@@ -18,9 +21,18 @@ type MotionChildrenProps = {
   className?: string;
 };
 
+export type PressableContent =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | ReactElement<NativeContentProps, keyof JSX.IntrinsicElements | typeof Fragment>
+  | readonly PressableContent[];
+
 export type PressableProps = Omit<HTMLMotionProps<"button">, "children"> & {
-  /** Custom children must be childless and explicitly marked `aria-hidden`. */
-  children: ReactNode;
+  children?: PressableContent;
+  icon?: LucideIcon;
 };
 
 const instantTransition = { duration: 0 } as const;
@@ -58,11 +70,10 @@ const interactiveRoles = new Set([
 const pressableContentError =
   "Pressable only accepts non-interactive content; nested native controls are unsupported.";
 const customPressableContentError =
-  "Pressable custom content must be decorative: set aria-hidden=true and do not pass children.";
+  "Pressable custom component children are unsupported; use the icon prop for Lucide icons.";
 
 type NativeContentProps = {
-  "aria-hidden"?: boolean | "true" | "false";
-  children?: ReactNode;
+  children?: PressableContent;
   contentEditable?: boolean | "inherit" | "plaintext-only" | "true" | "false";
   onClick?: unknown;
   onKeyDown?: unknown;
@@ -93,12 +104,7 @@ function assertNonInteractiveNativeContent(children: ReactNode): void {
       props.onPointerDown !== undefined;
 
     if (typeof child.type !== "string") {
-      const isDecorative =
-        props["aria-hidden"] === true || props["aria-hidden"] === "true";
-      if (!isDecorative || props.children != null || hasInteractiveProps) {
-        throw new Error(customPressableContentError);
-      }
-      return;
+      throw new Error(customPressableContentError);
     }
 
     if (interactiveTags.has(child.type) || hasInteractiveProps) {
@@ -227,6 +233,7 @@ export function PresencePanel({
 export function Pressable({
   children,
   className,
+  icon: Icon,
   onClick,
   type = "button",
   ...props
@@ -243,6 +250,7 @@ export function Pressable({
       whileTap={reducedMotion ? undefined : { scale: 0.98 }}
       transition={motionTokens.spring.snappy}
     >
+      {Icon ? <Icon aria-hidden="true" /> : null}
       {children}
     </m.button>
   );
