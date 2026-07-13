@@ -18,7 +18,8 @@ type MotionChildrenProps = {
   className?: string;
 };
 
-type PressableProps = Omit<HTMLMotionProps<"button">, "children"> & {
+export type PressableProps = Omit<HTMLMotionProps<"button">, "children"> & {
+  /** Presentational content only. Custom components must not render interactive controls. */
   children: ReactNode;
 };
 
@@ -55,7 +56,7 @@ const interactiveRoles = new Set([
   "textbox"
 ]);
 const pressableContentError =
-  "Pressable only accepts non-interactive native content; custom components and interactive descendants are unsupported.";
+  "Pressable only accepts non-interactive content; nested native controls are unsupported.";
 
 type NativeContentProps = {
   children?: ReactNode;
@@ -78,7 +79,7 @@ function assertNonInteractiveNativeContent(children: ReactNode): void {
       return;
     }
 
-    if (typeof child.type !== "string") throw new Error(pressableContentError);
+    if (typeof child.type !== "string") return;
 
     const hasInteractiveProps =
       props.contentEditable === true ||
@@ -118,22 +119,26 @@ export function PageMotion({
   const reducedMotion = useReducedMotion();
 
   return (
-    <m.section
-      key={motionKey}
-      className={className}
-      initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: motionTokens.distance.page }}
-      animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
-      exit={reducedMotion
-        ? { opacity: 0, transition: exitTransition(reducedMotion) }
-        : {
-            opacity: 0,
-            y: -motionTokens.distance.page,
-            transition: exitTransition(reducedMotion)
-          }}
-      transition={enterTransition(reducedMotion)}
-    >
-      {children}
-    </m.section>
+    <AnimatePresence mode="wait" initial={false}>
+      <m.section
+        key={motionKey ?? "page"}
+        className={className}
+        initial={reducedMotion
+          ? { opacity: 0 }
+          : { opacity: 0, y: motionTokens.distance.page }}
+        animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+        exit={reducedMotion
+          ? { opacity: 0, transition: exitTransition(reducedMotion) }
+          : {
+              opacity: 0,
+              y: -motionTokens.distance.page,
+              transition: exitTransition(reducedMotion)
+            }}
+        transition={enterTransition(reducedMotion)}
+      >
+        {children}
+      </m.section>
+    </AnimatePresence>
   );
 }
 
