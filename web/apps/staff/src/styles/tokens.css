@@ -1,0 +1,101 @@
+:root {
+  --color-navy-950: #081426;
+  --color-navy-900: #0d1b2f;
+  --color-navy-800: #16263d;
+  --color-navy-700: #24364f;
+  --color-cobalt-700: #174ea6;
+  --color-cobalt-600: #1f5fbf;
+  --color-cobalt-500: #2f6fda;
+  --color-neutral-950: #111827;
+  --color-neutral-800: #263449;
+  --color-neutral-700: #43516a;
+  --color-neutral-600: #5f6f86;
+  --color-neutral-500: #74839a;
+  --color-neutral-300: #cbd5e1;
+  --color-neutral-200: #dce4ee;
+  --color-neutral-100: #edf2f7;
+  --color-neutral-50: #f6f8fb;
+  --color-white: #ffffff;
+  --color-success: #087a55;
+  --color-success-soft: #def4ea;
+  --color-warning: #9a5a08;
+  --color-warning-soft: #fff0c7;
+  --color-danger: #b42318;
+  --color-danger-soft: #fee4e2;
+
+  --bg: var(--color-white);
+  --workspace: var(--color-neutral-50);
+  --panel: var(--color-white);
+  --panel-subtle: #f9fafc;
+  --ink: var(--color-neutral-950);
+  --muted: var(--color-neutral-600);
+  --soft: var(--color-neutral-500);
+  --border: var(--color-neutral-200);
+  --border-strong: var(--color-neutral-300);
+  --nav: var(--color-navy-900);
+  --nav-2: var(--color-navy-800);
+  --accent: var(--color-cobalt-600);
+  --accent-2: var(--color-cobalt-500);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --danger: var(--color-danger);
+
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --space-5: 40px;
+  --space-6: 48px;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --shadow-soft: 0 4px 12px rgb(15 23 42 / 6%);
+  --shadow: 0 12px 28px rgb(15 23 42 / 10%);
+  --focus: 0 0 0 3px rgb(47 111 218 / 22%);
+
+  --sidebar-width: 224px;
+  --sidebar-compact-width: 72px;
+  --topbar-height: 64px;
+  --toolbar-height: 56px;
+  --control-height: 40px;
+  --control-height-mobile: 44px;
+  --icon-control-size: 40px;
+
+  color: var(--ink);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  letter-spacing: 0;
+}
+
+html {
+  background: var(--workspace);
+  color: var(--ink);
+}
+
+body {
+  background: var(--workspace);
+}
+
+button,
+input,
+select,
+textarea {
+  letter-spacing: 0;
+}
+
+.kpi-card > strong,
+.customer-metrics strong,
+.inspection-metrics strong,
+.summary-grid strong,
+.mini-grid strong,
+.console-table,
+.module-table,
+.nav-badge,
+.source-api,
+.source-mock,
+.asset-code,
+time {
+  font-variant-numeric: tabular-nums;
+}

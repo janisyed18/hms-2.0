@@ -26,7 +26,6 @@ import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import type { BrowserAuthClient } from "./auth/authClient";
 import type { StaffPermission, StaffRole, StaffSession } from "./domain/types";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
-import "./styles.css";
 
 const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   dashboard: {
