@@ -66,7 +66,7 @@ describe("App auth gating", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Sign in" })).toBeVisible()
+      expect(screen.getByRole("heading", { name: "Welcome back" })).toBeVisible()
     );
     expect(screen.getByRole("status", { name: "Reduced motion" })).toHaveTextContent("true");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("Reduced Motion enabled"));

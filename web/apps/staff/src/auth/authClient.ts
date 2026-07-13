@@ -3,6 +3,7 @@ import {
   type BrowserAuthenticatedResponse,
   type BrowserChallengeResponse,
   type BrowserEnrollmentResponse,
+  type BrowserMessageResponse,
   type BrowserMeResponse,
   type BrowserRecoveryCodesResponse
 } from "./authTypes";
@@ -55,6 +56,18 @@ export function createBrowserAuthClient(options: BrowserAuthClientOptions = {}) 
   return {
     login(email: string, password: string): Promise<BrowserChallengeResponse> {
       return post("/login", { email, password });
+    },
+    requestPasswordReset(email: string): Promise<BrowserMessageResponse> {
+      return post("/password/reset-request", { email });
+    },
+    confirmPasswordReset(
+      token: string,
+      newPassword: string
+    ): Promise<BrowserMessageResponse> {
+      return post("/password/reset-confirm", {
+        token,
+        new_password: newPassword
+      });
     },
     changePassword(
       challenge: string,

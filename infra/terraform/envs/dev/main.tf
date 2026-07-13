@@ -86,6 +86,10 @@ locals {
       name      = "AUTH_RECOVERY_CODE_PEPPER"
       valueFrom = "${local.app_secret_arn}:AUTH_RECOVERY_CODE_PEPPER::"
     },
+    {
+      name      = "AUTH_PASSWORD_RESET_ENCRYPTION_KEY"
+      valueFrom = "${local.app_secret_arn}:AUTH_PASSWORD_RESET_ENCRYPTION_KEY::"
+    },
   ], local.notification_secret_environment)
 
   backend_environment = [
@@ -140,6 +144,10 @@ locals {
     {
       name  = "AUTH_BROWSER_ALLOWED_ORIGINS"
       value = jsonencode(["https://${aws_cloudfront_distribution.staff.domain_name}"])
+    },
+    {
+      name  = "AUTH_BROWSER_STAFF_PUBLIC_URL"
+      value = "https://${aws_cloudfront_distribution.staff.domain_name}"
     },
     {
       name  = "AUTH_BROWSER_COOKIE_SECURE"
@@ -360,6 +368,11 @@ resource "random_password" "auth_recovery_pepper" {
   special = false
 }
 
+resource "random_password" "auth_password_reset" {
+  length  = 43
+  special = false
+}
+
 resource "aws_db_subnet_group" "this" {
   name       = "${local.name}-db"
   subnet_ids = [for subnet in aws_subnet.private : subnet.id]
@@ -486,11 +499,12 @@ resource "aws_secretsmanager_secret" "app" {
 resource "aws_secretsmanager_secret_version" "app" {
   secret_id = aws_secretsmanager_secret.app.id
   secret_string = jsonencode({
-    DATABASE_URL              = "postgresql+asyncpg://${var.db_username}:${urlencode(random_password.db.result)}@${aws_db_instance.postgres.address}:5432/${var.db_name}"
-    AUTH_BEARER_HMAC_SECRET   = random_password.auth_hmac.result
-    AUTH_MFA_ENCRYPTION_KEY   = random_password.auth_mfa.result
-    AUTH_MFA_ENCRYPTION_KEYS  = jsonencode({ (tostring(var.auth_mfa_key_version)) = random_password.auth_mfa.result })
-    AUTH_RECOVERY_CODE_PEPPER = random_password.auth_recovery_pepper.result
+    DATABASE_URL                       = "postgresql+asyncpg://${var.db_username}:${urlencode(random_password.db.result)}@${aws_db_instance.postgres.address}:5432/${var.db_name}"
+    AUTH_BEARER_HMAC_SECRET            = random_password.auth_hmac.result
+    AUTH_MFA_ENCRYPTION_KEY            = random_password.auth_mfa.result
+    AUTH_MFA_ENCRYPTION_KEYS           = jsonencode({ (tostring(var.auth_mfa_key_version)) = random_password.auth_mfa.result })
+    AUTH_RECOVERY_CODE_PEPPER          = random_password.auth_recovery_pepper.result
+    AUTH_PASSWORD_RESET_ENCRYPTION_KEY = random_password.auth_password_reset.result
   })
 }
 

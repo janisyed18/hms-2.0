@@ -46,11 +46,19 @@ export interface BrowserMeResponse {
   customer_ids: string[];
 }
 
+export interface BrowserMessageResponse {
+  message: string;
+}
+
 // --- provider state machine -----------------------------------------------------
 
 export type AuthState =
   | { status: "loading" }
   | { status: "signed-out"; message?: string }
+  | { status: "forgot-password"; message?: string }
+  | { status: "password-reset-sent"; message?: string }
+  | { status: "password-reset"; token: string; message?: string }
+  | { status: "password-reset-complete"; message?: string }
   | { status: "password-change"; challenge: string; message?: string }
   | {
       status: "mfa-enrollment";
@@ -67,6 +75,10 @@ export type AuthState =
 export interface AuthContextValue {
   state: AuthState;
   login(email: string, password: string): Promise<void>;
+  showForgotPassword(): void;
+  showSignIn(): void;
+  requestPasswordReset(email: string): Promise<void>;
+  confirmPasswordReset(password: string): Promise<void>;
   changeRequiredPassword(password: string): Promise<void>;
   startMfaEnrollment(): Promise<void>;
   confirmMfa(code: string): Promise<void>;

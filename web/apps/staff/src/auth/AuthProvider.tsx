@@ -19,6 +19,7 @@ import {
   type BrowserChallengeResponse,
   type BrowserMeResponse
 } from "./authTypes";
+import { capturePasswordResetToken } from "./passwordReset";
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -64,6 +65,7 @@ export function AuthProvider({ client, children }: AuthProviderProps) {
   const stateRef = useRef<AuthState>(state);
   const tokenRef = useRef<string | null>(null);
   const refreshInFlight = useRef<Promise<string> | null>(null);
+  const initialAuthStarted = useRef(false);
 
   const apply = useCallback((next: AuthState) => {
     stateRef.current = next;
@@ -119,7 +121,20 @@ export function AuthProvider({ client, children }: AuthProviderProps) {
   );
 
   useEffect(() => {
+    // Strict Mode replays effects in development. Do not consume a reset link
+    // on the first pass and then fall back to signed-out on the replay.
+    if (initialAuthStarted.current) {
+      return;
+    }
+    initialAuthStarted.current = true;
     let active = true;
+    const resetToken = capturePasswordResetToken();
+    if (resetToken) {
+      apply({ status: "password-reset", token: resetToken });
+      return () => {
+        active = false;
+      };
+    }
     (async () => {
       try {
         const accessToken = await refreshAccessToken();
@@ -144,6 +159,49 @@ export function AuthProvider({ client, children }: AuthProviderProps) {
         apply(challengeState(await authClient.login(email, password)));
       } catch (error) {
         apply({ status: "signed-out", message: errorMessage(error) });
+      }
+    },
+    [authClient, apply]
+  );
+
+  const showForgotPassword = useCallback(() => {
+    apply({ status: "forgot-password" });
+  }, [apply]);
+
+  const showSignIn = useCallback(() => {
+    tokenRef.current = null;
+    apply({ status: "signed-out" });
+  }, [apply]);
+
+  const requestPasswordReset = useCallback(
+    async (email: string) => {
+      try {
+        const response = await authClient.requestPasswordReset(email);
+        apply({ status: "password-reset-sent", message: response.message });
+      } catch (error) {
+        apply({ status: "forgot-password", message: errorMessage(error) });
+      }
+    },
+    [authClient, apply]
+  );
+
+  const confirmPasswordReset = useCallback(
+    async (password: string) => {
+      const current = stateRef.current;
+      if (current.status !== "password-reset") {
+        return;
+      }
+      try {
+        const response = await authClient.confirmPasswordReset(
+          current.token,
+          password
+        );
+        apply({
+          status: "password-reset-complete",
+          message: response.message
+        });
+      } catch (error) {
+        apply({ ...current, message: errorMessage(error) });
       }
     },
     [authClient, apply]
@@ -254,6 +312,10 @@ export function AuthProvider({ client, children }: AuthProviderProps) {
     () => ({
       state,
       login,
+      showForgotPassword,
+      showSignIn,
+      requestPasswordReset,
+      confirmPasswordReset,
       changeRequiredPassword,
       startMfaEnrollment,
       confirmMfa,
@@ -266,6 +328,10 @@ export function AuthProvider({ client, children }: AuthProviderProps) {
     [
       state,
       login,
+      showForgotPassword,
+      showSignIn,
+      requestPasswordReset,
+      confirmPasswordReset,
       changeRequiredPassword,
       startMfaEnrollment,
       confirmMfa,

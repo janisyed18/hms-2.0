@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, LockKeyhole, ShieldCheck } from "lucide-react";
 import { ZxcvbnFactory } from "@zxcvbn-ts/core";
 import {
   adjacencyGraphs,
@@ -68,6 +68,58 @@ interface AuthLayoutProps {
   error?: string;
   children: ReactNode;
   footer?: ReactNode;
+  eyebrow?: string;
+  backAction?: () => void;
+  backLabel?: string;
+}
+
+interface PasswordFieldProps {
+  label: string;
+  name: string;
+  value: string;
+  onChange: (value: string) => void;
+  autoComplete: "current-password" | "new-password";
+  describedBy?: string;
+  required?: boolean;
+}
+
+export function PasswordField({
+  label,
+  name,
+  value,
+  onChange,
+  autoComplete,
+  describedBy,
+  required = true
+}: PasswordFieldProps) {
+  const [visible, setVisible] = useState(false);
+  const inputId = `auth-${name}`;
+
+  return (
+    <label className="auth-field" htmlFor={inputId}>
+      <span>{label}</span>
+      <span className="auth-password-control">
+        <input
+          id={inputId}
+          type={visible ? "text" : "password"}
+          name={name}
+          autoComplete={autoComplete}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          aria-describedby={describedBy}
+          required={required}
+        />
+        <button
+          type="button"
+          className="auth-password-toggle"
+          aria-label={visible ? "Hide password" : "Show password"}
+          onClick={() => setVisible((current) => !current)}
+        >
+          {visible ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
+        </button>
+      </span>
+    </label>
+  );
 }
 
 export function AuthLayout({
@@ -75,29 +127,63 @@ export function AuthLayout({
   subtitle,
   error,
   children,
-  footer
+  footer,
+  eyebrow = "Secure operations workspace",
+  backAction,
+  backLabel = "Back to sign in"
 }: AuthLayoutProps) {
   return (
     <div className="auth-shell">
-      <div className="auth-card" role="dialog" aria-label={title}>
-        <div className="auth-brand">
-          <span className="brand-shield">
-            <ShieldCheck aria-hidden="true" size={20} />
-          </span>
+      <div className="auth-gateway">
+        <aside className="auth-trust" aria-label="BAT HMS security information">
           <div>
-            <strong>BAT HMS</strong>
-            <span>v2.0</span>
+            <div className="auth-brand auth-brand-inverted">
+              <span className="brand-shield">
+                <ShieldCheck aria-hidden="true" size={20} />
+              </span>
+              <div>
+                <strong>BAT HMS</strong>
+                <span>v2.0</span>
+              </div>
+            </div>
+            <p className="auth-eyebrow">{eyebrow}</p>
+            <h2 className="auth-trust-title">Confidence in every inspection.</h2>
+            <p className="auth-trust-copy">
+              Manage equipment, inspections, certificates, and customer records from one controlled workspace.
+            </p>
           </div>
-        </div>
-        <h1 className="auth-title">{title}</h1>
-        {subtitle ? <p className="auth-subtitle">{subtitle}</p> : null}
-        {error ? (
-          <p className="auth-error" role="alert">
-            {error}
-          </p>
-        ) : null}
-        {children}
-        {footer ? <div className="auth-footer">{footer}</div> : null}
+          <div className="auth-trust-note">
+            <LockKeyhole aria-hidden="true" size={16} />
+            <span>Protected access for authorised HMS teams</span>
+          </div>
+        </aside>
+        <main className="auth-card">
+          {backAction ? (
+            <button type="button" className="auth-back" onClick={backAction}>
+              <span aria-hidden="true">←</span> {backLabel}
+            </button>
+          ) : null}
+          <div className="auth-mobile-brand auth-brand">
+            <span className="brand-shield">
+              <ShieldCheck aria-hidden="true" size={20} />
+            </span>
+            <div>
+              <strong>BAT HMS</strong>
+              <span>v2.0</span>
+            </div>
+          </div>
+          <div className="auth-heading">
+            <h1 className="auth-title">{title}</h1>
+            {subtitle ? <p className="auth-subtitle">{subtitle}</p> : null}
+          </div>
+          {error ? (
+            <p className="auth-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          {children}
+          {footer ? <div className="auth-footer">{footer}</div> : null}
+        </main>
       </div>
     </div>
   );

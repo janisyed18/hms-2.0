@@ -25,6 +25,8 @@ function fakeClient(overrides: Partial<BrowserAuthClient> = {}): BrowserAuthClie
     confirmMfa: vi.fn(),
     verifyMfa: vi.fn(),
     verifyRecovery: vi.fn(),
+    requestPasswordReset: vi.fn(),
+    confirmPasswordReset: vi.fn(),
     refresh: vi.fn().mockRejectedValue(new BrowserAuthError("No session", 401)),
     logout: vi.fn().mockResolvedValue(undefined),
     me: vi.fn().mockResolvedValue(ME),
@@ -43,7 +45,12 @@ function renderFlow(client: BrowserAuthClient) {
 }
 
 async function typeInto(label: RegExp, value: string) {
-  const input = screen.getByLabelText(label);
+  const input = screen
+    .getAllByLabelText(label)
+    .find((element) => element instanceof HTMLInputElement);
+  if (!input) {
+    throw new Error(`No input found for ${label}`);
+  }
   fireEvent.change(input, { target: { value } });
 }
 
@@ -59,6 +66,42 @@ describe("AuthFlow", () => {
     await typeInto(/email/i, "user@example.com");
     await typeInto(/password/i, "secret");
     expect(button).not.toBeDisabled();
+  });
+
+  it("opens the forgot-password screen and shows generic reset confirmation", async () => {
+    const client = fakeClient({
+      requestPasswordReset: vi.fn().mockResolvedValue({
+        message: "If that email exists, a password reset link has been sent."
+      })
+    });
+    renderFlow(client);
+    await screen.findByRole("button", { name: /sign in/i });
+    fireEvent.click(screen.getByRole("button", { name: /forgot password/i }));
+    expect(screen.getByRole("heading", { name: /reset your password/i })).toBeInTheDocument();
+    await typeInto(/email address/i, "user@example.com");
+    fireEvent.click(screen.getByRole("button", { name: /send reset link/i }));
+    expect(await screen.findByText(/if that email exists/i)).toBeInTheDocument();
+  });
+
+  it("supports password visibility and a reset link returning to sign-in", async () => {
+    window.history.pushState({}, "", "/reset-password?token=token-1");
+    const client = fakeClient({
+      confirmPasswordReset: vi.fn().mockResolvedValue({
+        message: "Password reset. You can now sign in."
+      })
+    });
+    renderFlow(client);
+    await screen.findByRole("heading", { name: /choose a new password/i });
+    const password = screen.getByLabelText(/new password/i);
+    expect(password).toHaveAttribute("type", "password");
+    fireEvent.click(screen.getAllByRole("button", { name: /show password/i })[0]);
+    expect(password).toHaveAttribute("type", "text");
+    await typeInto(/new password/i, "A-New-Reset-Passphrase-9!");
+    await typeInto(/confirm password/i, "A-New-Reset-Passphrase-9!");
+    fireEvent.click(screen.getByRole("button", { name: /reset password/i }));
+    expect(await screen.findByText(/password reset/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /return to sign in/i }));
+    expect(await screen.findByRole("button", { name: /sign in/i })).toBeInTheDocument();
   });
 
   it("surfaces a generic error on bad credentials and stays on sign-in", async () => {

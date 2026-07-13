@@ -4,7 +4,12 @@ import { QRCodeSVG } from "qrcode.react";
 
 import { useAuth } from "./AuthProvider";
 import type { AuthState } from "./authTypes";
-import { AuthLayout, estimatePasswordStrength, useAsyncAction } from "./authUi";
+import {
+  AuthLayout,
+  estimatePasswordStrength,
+  PasswordField,
+  useAsyncAction
+} from "./authUi";
 
 function messageOf(state: AuthState): string | undefined {
   return "message" in state ? state.message : undefined;
@@ -13,7 +18,7 @@ function messageOf(state: AuthState): string | undefined {
 // --- Sign in --------------------------------------------------------------------
 
 function LoginScreen({ message }: { message?: string }) {
-  const { login } = useAuth();
+  const { login, showForgotPassword } = useAuth();
   const { pending, run } = useAsyncAction();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,7 +29,12 @@ function LoginScreen({ message }: { message?: string }) {
   }
 
   return (
-    <AuthLayout title="Sign in" subtitle="BAT Engineering HMS" error={message}>
+    <AuthLayout
+      title="Welcome back"
+      subtitle="Sign in to continue to your operations workspace."
+      error={message}
+      eyebrow="Secure staff sign-in"
+    >
       <form className="auth-form" onSubmit={submit}>
         <label className="auth-field">
           <span>Email</span>
@@ -37,25 +47,194 @@ function LoginScreen({ message }: { message?: string }) {
             required
           />
         </label>
-        <label className="auth-field">
-          <span>Password</span>
-          <input
-            type="password"
-            name="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-          />
-        </label>
+        <PasswordField
+          label="Password"
+          name="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={setPassword}
+        />
+        <div className="auth-inline-row">
+          <span className="auth-hint">Use your authorised HMS account.</span>
+          <button type="button" className="auth-link" onClick={showForgotPassword}>
+            Forgot password?
+          </button>
+        </div>
         <button
           className="primary-button auth-submit"
           type="submit"
           disabled={pending || !email.trim() || !password}
         >
-          {pending ? "Signing in…" : "Sign in"}
+          {pending ? "Signing in…" : "Sign in securely"}
         </button>
       </form>
+    </AuthLayout>
+  );
+}
+
+// --- Password recovery ---------------------------------------------------------
+
+function ForgotPasswordScreen({ message }: { message?: string }) {
+  const { requestPasswordReset, showSignIn } = useAuth();
+  const { pending, run } = useAsyncAction();
+  const [email, setEmail] = useState("");
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    void run(() => requestPasswordReset(email));
+  }
+
+  return (
+    <AuthLayout
+      title="Reset your password"
+      subtitle="Enter your work email and we’ll send a secure, one-time reset link."
+      error={message}
+      backAction={showSignIn}
+    >
+      <form className="auth-form" onSubmit={submit}>
+        <label className="auth-field">
+          <span>Email address</span>
+          <input
+            type="email"
+            name="reset-email"
+            autoComplete="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            required
+          />
+        </label>
+        <p className="auth-info">
+          For your security, we show the same confirmation whether or not the account exists.
+        </p>
+        <button
+          className="primary-button auth-submit"
+          type="submit"
+          disabled={pending || !email.trim()}
+        >
+          {pending ? "Sending…" : "Send reset link"}
+        </button>
+      </form>
+    </AuthLayout>
+  );
+}
+
+function PasswordResetSentScreen({ message }: { message?: string }) {
+  const { showSignIn } = useAuth();
+
+  return (
+    <AuthLayout
+      title="Check your inbox"
+      subtitle="Follow the link in your email to choose a new password."
+      backAction={showSignIn}
+    >
+      <div className="auth-success" role="status">
+        <span className="auth-success-mark" aria-hidden="true">✓</span>
+        <div>
+          <strong>Reset link sent</strong>
+          <p>{message ?? "The link expires in 15 minutes and can only be used once."}</p>
+        </div>
+      </div>
+      <button type="button" className="primary-button auth-submit" onClick={showSignIn}>
+        Return to sign in
+      </button>
+    </AuthLayout>
+  );
+}
+
+function PasswordResetScreen({ message }: { message?: string }) {
+  const { confirmPasswordReset, showSignIn, showForgotPassword } = useAuth();
+  const { pending, run } = useAsyncAction();
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const strength = estimatePasswordStrength(password);
+  const mismatch = confirm.length > 0 && confirm !== password;
+  const linkInvalid = message === "Invalid or expired reset link.";
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (mismatch) {
+      return;
+    }
+    void run(() => confirmPasswordReset(password));
+  }
+
+  if (linkInvalid) {
+    return (
+      <AuthLayout
+        title="This link is no longer valid"
+        subtitle="Request a fresh password reset link to continue."
+        error={message}
+        backAction={showSignIn}
+      >
+        <button type="button" className="primary-button auth-submit" onClick={showForgotPassword}>
+          Request another link
+        </button>
+      </AuthLayout>
+    );
+  }
+
+  return (
+    <AuthLayout
+      title="Choose a new password"
+      subtitle="Create a strong password for your BAT HMS account."
+      error={message}
+      backAction={showSignIn}
+    >
+      <form className="auth-form" onSubmit={submit}>
+        <PasswordField
+          label="New password"
+          name="new-password"
+          autoComplete="new-password"
+          value={password}
+          onChange={setPassword}
+          describedBy="password-strength"
+        />
+        <div className={`auth-strength auth-strength-${strength.score}`} id="password-strength" aria-live="polite">
+          <span>Password strength</span>
+          <strong data-testid="reset-strength">{strength.label}</strong>
+        </div>
+        <PasswordField
+          label="Confirm password"
+          name="confirm-password"
+          autoComplete="new-password"
+          value={confirm}
+          onChange={setConfirm}
+        />
+        {mismatch ? (
+          <p className="auth-error" role="alert">
+            Passwords do not match.
+          </p>
+        ) : null}
+        <button
+          className="primary-button auth-submit"
+          type="submit"
+          disabled={pending || !password || mismatch}
+        >
+          {pending ? "Resetting…" : "Reset password"}
+        </button>
+      </form>
+    </AuthLayout>
+  );
+}
+
+function PasswordResetCompleteScreen({ message }: { message?: string }) {
+  const { showSignIn } = useAuth();
+
+  return (
+    <AuthLayout
+      title="Password updated"
+      subtitle="Your password has been changed and your active sessions were signed out."
+    >
+      <div className="auth-success" role="status">
+        <span className="auth-success-mark" aria-hidden="true">✓</span>
+        <div>
+          <strong>You’re ready to sign in</strong>
+          <p>{message ?? "Use your new password to access BAT HMS."}</p>
+        </div>
+      </div>
+      <button type="button" className="primary-button auth-submit" onClick={showSignIn}>
+        Return to sign in
+      </button>
     </AuthLayout>
   );
 }
@@ -85,31 +264,23 @@ function PasswordChangeScreen({ message }: { message?: string }) {
       error={message}
     >
       <form className="auth-form" onSubmit={submit}>
-        <label className="auth-field">
-          <span>New password</span>
-          <input
-            type="password"
-            name="new-password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-          />
-        </label>
+        <PasswordField
+          label="New password"
+          name="new-password"
+          autoComplete="new-password"
+          value={password}
+          onChange={setPassword}
+        />
         <div className="auth-strength" aria-live="polite">
           Strength: <strong data-testid="strength">{strength.label}</strong>
         </div>
-        <label className="auth-field">
-          <span>Confirm password</span>
-          <input
-            type="password"
-            name="confirm-password"
-            autoComplete="new-password"
-            value={confirm}
-            onChange={(event) => setConfirm(event.target.value)}
-            required
-          />
-        </label>
+        <PasswordField
+          label="Confirm password"
+          name="confirm-password"
+          autoComplete="new-password"
+          value={confirm}
+          onChange={setConfirm}
+        />
         {mismatch ? (
           <p className="auth-error" role="alert">
             Passwords do not match.
@@ -337,6 +508,18 @@ export function AuthFlow({ children }: { children?: ReactNode }) {
       break;
     case "password-change":
       screen = <PasswordChangeScreen message={messageOf(state)} />;
+      break;
+    case "forgot-password":
+      screen = <ForgotPasswordScreen message={messageOf(state)} />;
+      break;
+    case "password-reset-sent":
+      screen = <PasswordResetSentScreen message={messageOf(state)} />;
+      break;
+    case "password-reset":
+      screen = <PasswordResetScreen message={messageOf(state)} />;
+      break;
+    case "password-reset-complete":
+      screen = <PasswordResetCompleteScreen message={messageOf(state)} />;
       break;
     case "mfa-enrollment":
       screen = (
