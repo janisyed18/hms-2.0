@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -17,7 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column, validates
 from uuid6 import uuid7
 
 from hms_backend.app.core.rbac import Role
-from hms_backend.app.models.base import Base, SyncableMixin
+from hms_backend.app.models.base import Base, SyncableMixin, utc_now
 
 
 class AccountStatus(StrEnum):
@@ -55,13 +56,9 @@ class User(SyncableMixin, Base):
     )
     # Contact verification for notifications (spec §9). A normalised E.164 phone
     # and per-address verification flags gate email/SMS delivery.
-    email_verified: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
-    )
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     phone_e164: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    phone_verified: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
-    )
+    phone_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     account_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=AccountStatus.ACTIVE.value
     )
@@ -75,16 +72,12 @@ class User(SyncableMixin, Base):
     mfa_secret_ciphertext: Mapped[str | None] = mapped_column(
         String(1000), nullable=True
     )
-    mfa_secret_key_version: Mapped[int | None] = mapped_column(
-        Integer, nullable=True
-    )
+    mfa_secret_key_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mfa_last_accepted_step: Mapped[int | None] = mapped_column(Integer, nullable=True)
     failed_password_attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )
-    failed_mfa_attempts: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )
+    failed_mfa_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -188,4 +181,69 @@ class MfaRecoveryCode(Base):
     code_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid7())
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    requested_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    requested_user_agent: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class PasswordResetDelivery(Base):
+    __tablename__ = "password_reset_deliveries"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid7())
+    )
+    reset_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("password_reset_tokens.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    recipient_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    key_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="PENDING", index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    scheduled_for: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, index=True
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    provider_message_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
     )
