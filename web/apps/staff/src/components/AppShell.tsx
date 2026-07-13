@@ -11,6 +11,7 @@ import {
   HelpCircle,
   LayoutDashboard,
   LogOut,
+  Menu,
   Plus,
   RefreshCcw,
   Search,
@@ -22,8 +23,10 @@ import {
   X,
   type LucideIcon
 } from "lucide-react";
-import { useState, type FormEvent, type ReactNode } from "react";
+import { AnimatePresence, m, useReducedMotion } from "motion/react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { StaffSession } from "../domain/types";
+import { motionTokens } from "../motion/motionTokens";
 
 export type AppModule =
   | "dashboard"
@@ -138,6 +141,115 @@ function initialsFor(name: string): string {
   return initials || "HM";
 }
 
+interface SidebarNavigationProps {
+  activeModule: AppModule;
+  globalQuery: string;
+  idSuffix: string;
+  onGlobalQueryChange: (query: string) => void;
+  onModuleChange: (module: AppModule) => void;
+  onSearch: (event: FormEvent<HTMLFormElement>) => void;
+  onSignOut: () => void;
+  session: StaffSession;
+  visibleNavGroups: Array<{ label: string; items: NavItem[] }>;
+}
+
+function SidebarNavigation({
+  activeModule,
+  globalQuery,
+  idSuffix,
+  onGlobalQueryChange,
+  onModuleChange,
+  onSearch,
+  onSignOut,
+  session,
+  visibleNavGroups
+}: SidebarNavigationProps) {
+  const reducedMotion = useReducedMotion();
+  const activeIndicatorTransition = reducedMotion
+    ? { duration: 0 }
+    : motionTokens.spring.gentle;
+
+  return (
+    <>
+      <div className="brand">
+        <div className="brand-lockup">
+          <div className="brand-shield">
+            <ShieldCheck aria-hidden="true" size={19} />
+          </div>
+          <div>
+            <strong>BAT HMS</strong>
+            <span>v2.0</span>
+          </div>
+        </div>
+        <form className="sidebar-search" onSubmit={onSearch}>
+          <Search aria-hidden="true" size={16} />
+          <label className="sr-only" htmlFor={`sidebar-search-input-${idSuffix}`}>
+            Search assets and customers
+          </label>
+          <input
+            id={`sidebar-search-input-${idSuffix}`}
+            placeholder="Search assets, customers..."
+            value={globalQuery}
+            onChange={(event) => onGlobalQueryChange(event.target.value)}
+          />
+          <kbd>Cmd+K</kbd>
+        </form>
+      </div>
+      <nav aria-label="Primary navigation" className="nav-list">
+        {visibleNavGroups.map((group) => (
+          <div className="nav-group" key={group.label}>
+            <span className="nav-group-label">{group.label}</span>
+            {group.items.map((item) => {
+              const Icon = item.icon;
+              const isActive = item.module === activeModule;
+              return (
+                <button
+                  aria-current={isActive ? "page" : undefined}
+                  className={`nav-item${isActive ? " is-active" : ""}`}
+                  key={item.label}
+                  onClick={() => onModuleChange(item.module)}
+                  type="button"
+                >
+                  {isActive ? (
+                    <m.span
+                      aria-hidden="true"
+                      className="nav-active-indicator"
+                      layoutId={`active-navigation-${idSuffix}`}
+                      transition={activeIndicatorTransition}
+                    />
+                  ) : null}
+                  <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
+                  <span>{item.label}</span>
+                  {item.badge ? (
+                    <span aria-hidden="true" className="nav-badge">
+                      {item.badge}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+      <div className="sidebar-user">
+        <div className="avatar">{initialsFor(session.displayName)}</div>
+        <div>
+          <strong>{session.displayName}</strong>
+          <span>{session.roles.join(", ")}</span>
+        </div>
+        <button
+          aria-label="Sign out"
+          className="sidebar-logout"
+          onClick={onSignOut}
+          type="button"
+        >
+          <LogOut aria-hidden="true" size={17} />
+        </button>
+      </div>
+    </>
+  );
+}
+
 export function AppShell({
   activeModule,
   canCreateAsset,
@@ -151,9 +263,12 @@ export function AppShell({
   visibleModules
 }: AppShellProps) {
   const [openMenu, setOpenMenu] = useState<TopbarMenu | null>(null);
+  const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
+  const reducedMotion = useReducedMotion();
 
   function handleLogout() {
     setOpenMenu(null);
+    setIsMobileNavigationOpen(false);
     onLogout?.();
   }
   const [globalQuery, setGlobalQuery] = useState("");
@@ -166,6 +281,26 @@ export function AppShell({
     .filter((group) => group.items.length > 0);
   const visibleNavItems = visibleNavGroups.flatMap((group) => group.items);
 
+  useEffect(() => {
+    if (!isMobileNavigationOpen) return;
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsMobileNavigationOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isMobileNavigationOpen]);
+
+  function handleModuleChange(module: AppModule) {
+    onModuleChange(module);
+    setGlobalQuery("");
+    setOpenMenu(null);
+    setIsMobileNavigationOpen(false);
+  }
+
   function handleGlobalSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const normalized = globalQuery.trim().toLowerCase();
@@ -173,85 +308,64 @@ export function AppShell({
       item.label.toLowerCase().includes(normalized)
     );
     if (target && normalized) {
-      onModuleChange(target.module);
-      setGlobalQuery("");
-      setOpenMenu(null);
+      handleModuleChange(target.module);
     }
   }
+
+  const drawerTransition = reducedMotion
+    ? { duration: 0 }
+    : { duration: motionTokens.duration.normal, ease: motionTokens.ease.enter };
+  const drawerExitTransition = reducedMotion
+    ? { duration: 0 }
+    : { duration: motionTokens.duration.fast, ease: motionTokens.ease.exit };
+  const sidebarNavigationProps = {
+    activeModule,
+    globalQuery,
+    onGlobalQueryChange: setGlobalQuery,
+    onModuleChange: handleModuleChange,
+    onSearch: handleGlobalSearch,
+    onSignOut: handleLogout,
+    session,
+    visibleNavGroups
+  };
 
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Primary navigation">
-        <div className="brand">
-          <div className="brand-lockup">
-            <div className="brand-shield">
-              <ShieldCheck aria-hidden="true" size={19} />
-            </div>
-            <div>
-              <strong>BAT HMS</strong>
-              <span>v2.0</span>
-            </div>
-          </div>
-          <form className="sidebar-search" onSubmit={handleGlobalSearch}>
-            <Search aria-hidden="true" size={16} />
-            <label className="sr-only" htmlFor="sidebar-search-input">
-              Search assets and customers
-            </label>
-            <input
-              id="sidebar-search-input"
-              placeholder="Search assets, customers..."
-              value={globalQuery}
-              onChange={(event) => setGlobalQuery(event.target.value)}
-            />
-            <kbd>⌘K</kbd>
-          </form>
-        </div>
-        <nav className="nav-list">
-          {visibleNavGroups.map((group) => (
-            <div className="nav-group" key={group.label}>
-              <span className="nav-group-label">{group.label}</span>
-              {group.items.map((item) => {
-                const Icon = item.icon;
-                const isActive = item.module === activeModule;
-                return (
-                  <button
-                    className={`nav-item${isActive ? " is-active" : ""}`}
-                    key={item.label}
-                    onClick={() => {
-                      onModuleChange(item.module);
-                      setOpenMenu(null);
-                    }}
-                    type="button"
-                  >
-                    <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
-                    <span>{item.label}</span>
-                    {item.badge ? (
-                      <span aria-hidden="true" className="nav-badge">
-                        {item.badge}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </nav>
-        <div className="sidebar-user">
-          <div className="avatar">{initialsFor(session.displayName)}</div>
-          <div>
-            <strong>{session.displayName}</strong>
-            <span>{session.roles.join(", ")}</span>
-          </div>
-          <button
-            aria-label="Sign out"
-            className="sidebar-logout"
-            onClick={handleLogout}
-            type="button"
-          >
-            <LogOut aria-hidden="true" size={17} />
-          </button>
-        </div>
+        <SidebarNavigation {...sidebarNavigationProps} idSuffix="desktop" />
       </aside>
+
+      <AnimatePresence initial={false}>
+        {isMobileNavigationOpen ? (
+          <>
+            <m.button
+              aria-label="Close navigation menu"
+              className="mobile-nav-backdrop"
+              exit={{ opacity: 0, transition: drawerExitTransition }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              onClick={() => setIsMobileNavigationOpen(false)}
+              transition={drawerTransition}
+              type="button"
+            />
+            <m.aside
+              aria-label="Navigation menu"
+              aria-modal="true"
+              className="mobile-nav-drawer"
+              exit={{
+                x: reducedMotion ? 0 : "-100%",
+                transition: drawerExitTransition
+              }}
+              initial={{ x: reducedMotion ? 0 : "-100%" }}
+              animate={{ x: 0 }}
+              role="dialog"
+              transition={drawerTransition}
+            >
+              <SidebarNavigation {...sidebarNavigationProps} idSuffix="mobile" />
+            </m.aside>
+          </>
+        ) : null}
+      </AnimatePresence>
 
       <div className="workspace">
         <header className="topbar">
@@ -260,6 +374,15 @@ export function AppShell({
             <p>{description}</p>
           </div>
           <div className="topbar-actions">
+            <button
+              aria-expanded={isMobileNavigationOpen}
+              aria-label="Open navigation menu"
+              className="icon-button mobile-nav-toggle"
+              onClick={() => setIsMobileNavigationOpen(true)}
+              type="button"
+            >
+              <Menu aria-hidden="true" size={20} />
+            </button>
             <form className="global-search" onSubmit={handleGlobalSearch}>
               <Search aria-hidden="true" className="global-search-icon" size={17} />
               <label className="sr-only" htmlFor="global-search-input">
@@ -295,7 +418,7 @@ export function AppShell({
             {canCreateAsset ? (
               <button
                 className="primary-button topbar-primary"
-                onClick={() => onModuleChange("assets")}
+                onClick={() => handleModuleChange("assets")}
                 type="button"
               >
                 <Plus aria-hidden="true" size={17} />
