@@ -552,7 +552,7 @@ export function AuthFlow({ children }: { children?: ReactNode }) {
         className="auth-flow"
         data-state={state.status}
         exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
-        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
+        initial={reducedMotion ? false : { opacity: 0, y: 8 }}
         key={state.status}
         transition={{ duration: reducedMotion ? 0 : 0.16 }}
       >
