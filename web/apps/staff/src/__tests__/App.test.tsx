@@ -571,7 +571,7 @@ describe("App", () => {
       within(dashboard)
         .getAllByRole("heading", { level: 2 })
         .map((heading) => heading.textContent)
-    ).toEqual(["Overdue Retests", "Awaiting Review", "Fleet Health", "Due This Week"]);
+    ).toEqual(["Overdue Retests", "Fleet Health", "Due This Week", "Awaiting Review"]);
 
     expect(
       [...within(dashboard).getByLabelText("Operational highlights").querySelectorAll(".kpi-card > span")]

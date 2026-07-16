@@ -136,6 +136,7 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
   return (
     <section className="console-dashboard" aria-label="Dashboard workspace">
       <div className="dashboard-source-row">
+        <span className="dashboard-context">Live fleet overview</span>
         <span className={source === "api" ? "source-api" : "source-mock"}>
           {source === "api" ? "Backend" : "Mock data"}
         </span>
@@ -207,26 +208,6 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
               <button type="button">View all</button>
             </div>
           </section>
-
-          <section className="data-panel awaiting-panel">
-            <div className="panel-heading">
-              <div>
-                <h2>Awaiting Review</h2>
-                <p>8 inspections submitted, pending reviewer approval</p>
-              </div>
-              <button className="secondary-button" type="button">Review All</button>
-            </div>
-            <div className="review-strip">
-              {awaitingReviewRows.map(([inspection, asset, status, note]) => (
-                <article key={inspection}>
-                  <span className="asset-code">{inspection}</span>
-                  <strong>{asset}</strong>
-                  <span className={`mini-status ${status.toLowerCase()}`}>{status}</span>
-                  <p>{note}</p>
-                </article>
-              ))}
-            </div>
-          </section>
         </div>
 
         <aside className="dashboard-side">
@@ -261,6 +242,26 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
           </section>
         </aside>
       </div>
+
+      <section className="data-panel awaiting-panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Awaiting Review</h2>
+            <p>8 inspections submitted, pending reviewer approval</p>
+          </div>
+          <button className="secondary-button" type="button">Review All</button>
+        </div>
+        <div className="review-strip">
+          {awaitingReviewRows.map(([inspection, asset, status, note]) => (
+            <article key={inspection}>
+              <span className="asset-code">{inspection}</span>
+              <strong>{asset}</strong>
+              <span className={`mini-status ${status.toLowerCase()}`}>{status}</span>
+              <p>{note}</p>
+            </article>
+          ))}
+        </div>
+      </section>
     </section>
   );
 }

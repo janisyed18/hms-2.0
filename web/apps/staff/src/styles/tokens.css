@@ -24,13 +24,13 @@
   --color-danger-soft: #fee4e2;
 
   --bg: var(--color-white);
-  --workspace: var(--color-neutral-50);
+  --workspace: #f3f6fa;
   --panel: var(--color-white);
-  --panel-subtle: #f9fafc;
+  --panel-subtle: #f8fafc;
   --ink: var(--color-neutral-950);
   --muted: var(--color-neutral-600);
   --soft: var(--color-neutral-500);
-  --border: var(--color-neutral-200);
+  --border: #dfe7f1;
   --border-strong: var(--color-neutral-300);
   --nav: var(--color-navy-900);
   --nav-2: var(--color-navy-800);
@@ -49,15 +49,15 @@
 
   --radius-sm: 6px;
   --radius-md: 8px;
-  --shadow-soft: 0 4px 12px rgb(15 23 42 / 6%);
-  --shadow: 0 12px 28px rgb(15 23 42 / 10%);
+  --shadow-soft: 0 6px 18px rgb(15 23 42 / 6%);
+  --shadow: 0 16px 38px rgb(15 23 42 / 12%);
   --focus: 0 0 0 3px rgb(47 111 218 / 22%);
 
-  --sidebar-width: 224px;
+  --sidebar-width: 240px;
   --sidebar-compact-width: 72px;
-  --topbar-height: 64px;
+  --topbar-height: 72px;
   --toolbar-height: 56px;
-  --control-height: 40px;
+  --control-height: 42px;
   --control-height-mobile: 44px;
   --icon-control-size: 40px;
 
