@@ -175,6 +175,10 @@
     grid-template-columns: 1fr;
   }
 
+  .workspace {
+    grid-column: 1;
+  }
+
   .sidebar {
     display: none;
   }
