@@ -299,27 +299,30 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
                         customers={workspace.visibleCustomers}
                         totalCount={workspace.totalCount}
                         selectedId={workspace.selectedCustomer?.id ?? null}
+                        selectedCustomerName={workspace.selectedCustomer?.name ?? null}
                         query={workspace.query}
                         riskFilter={workspace.riskFilter}
                         statusFilter={workspace.statusFilter}
                         onQueryChange={workspace.setQuery}
                         onRiskFilterChange={workspace.setRiskFilter}
                         onStatusFilterChange={workspace.setStatusFilter}
-                        onSelectCustomer={workspace.setSelectedId}
+                        onSelectCustomer={workspace.selectCustomer}
                         onAddCustomer={() => workspace.setFormOpen(true)}
                       />
-                      <ActivityFeed items={workspace.selectedCustomer?.metrics.activity ?? []} />
+                      {workspace.selectedCustomer ? (
+                        <div className="customer-detail-stack">
+                          <CustomerDetail
+                            customer={workspace.selectedCustomer}
+                            activeTab={workspace.activeTab}
+                            onClose={workspace.closeDetail}
+                            onTabChange={workspace.setActiveTab}
+                          />
+                          <ActivityFeed items={workspace.selectedCustomer.metrics.activity} />
+                        </div>
+                      ) : null}
                     </>
                   )}
                 </div>
-                {!workspace.isLoading && !workspace.error && workspace.selectedCustomer ? (
-                  <CustomerDetail
-                    customer={workspace.selectedCustomer}
-                    activeTab={workspace.activeTab}
-                    onClose={workspace.closeDetail}
-                    onTabChange={workspace.setActiveTab}
-                  />
-                ) : null}
               </main>
               <CustomerForm
                 open={workspace.isFormOpen}

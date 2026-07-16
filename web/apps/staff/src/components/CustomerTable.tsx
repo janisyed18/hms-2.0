@@ -1,6 +1,7 @@
-import { Download, Filter, Plus, Search } from "lucide-react";
+import { CheckCircle2, ChevronDown, Download, Filter, Plus, Search } from "lucide-react";
 import { useState } from "react";
 
+import { PresencePanel } from "../motion/MotionPrimitives";
 import { WorkspaceState } from "./WorkspaceState";
 import type { CustomerRecord } from "../domain/types";
 
@@ -9,6 +10,7 @@ interface CustomerTableProps {
   customers: CustomerRecord[];
   totalCount: number;
   selectedId: string | null;
+  selectedCustomerName: string | null;
   query: string;
   riskFilter: string;
   statusFilter: string;
@@ -71,6 +73,7 @@ export function CustomerTable({
   customers,
   totalCount,
   selectedId,
+  selectedCustomerName,
   query,
   riskFilter,
   statusFilter,
@@ -179,6 +182,7 @@ export function CustomerTable({
         {customers.map((customer) => (
           <button
             aria-label={`Select customer ${customer.name}`}
+            aria-pressed={customer.id === selectedId}
             className={`customer-card${customer.id === selectedId ? " is-selected" : ""}`}
             key={customer.id}
             onClick={() => onSelectCustomer(customer.id)}
@@ -213,6 +217,27 @@ export function CustomerTable({
           </button>
         ))}
       </div>
+      {selectedId && selectedCustomerName ? (
+        <div
+          aria-label="Customer selection"
+          className="customer-selection-status"
+          role="status"
+        >
+          <PresencePanel
+            className="customer-selection-banner"
+            presenceKey={selectedId}
+          >
+            <span className="customer-selection-icon">
+              <CheckCircle2 aria-hidden="true" size={18} />
+            </span>
+            <span className="customer-selection-copy">
+              <strong>Customer selected</strong>
+              <span>{selectedCustomerName} details are shown below.</span>
+            </span>
+            <ChevronDown aria-hidden="true" className="customer-selection-arrow" size={18} />
+          </PresencePanel>
+        </div>
+      ) : null}
       {customers.length === 0 ? (
         <WorkspaceState title="No customers found">
           Adjust the search text or filters to expand the current view.

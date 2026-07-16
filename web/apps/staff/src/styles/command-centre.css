@@ -12,9 +12,128 @@ button:active:not(:disabled) {
   background: var(--workspace);
 }
 
+.customer-page {
+  display: block;
+  min-height: calc(100vh - 80px);
+}
+
 .record-page,
 .customer-main {
   padding: var(--space-3);
+}
+
+.customer-main {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.customer-detail-stack {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.customer-detail-motion {
+  min-width: 0;
+}
+
+.customer-detail-stack .customer-detail-card {
+  position: static;
+  max-height: none;
+  overflow: visible;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.customer-detail-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.customer-detail-heading > .detail-tags {
+  grid-column: 2;
+  margin-top: 0;
+}
+
+.customer-detail-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #cfe0fb;
+  border-radius: 12px;
+  background: #eef5ff;
+  color: var(--accent);
+}
+
+.customer-detail-eyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--soft);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.customer-selection-status {
+  min-width: 0;
+}
+
+.customer-selection-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 12px 16px;
+  border: 1px solid #cfe0fb;
+  border-radius: var(--radius-md);
+  background: #f4f8ff;
+  color: var(--ink);
+}
+
+.customer-selection-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--color-success-soft);
+  color: var(--success);
+}
+
+.customer-selection-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.customer-selection-copy strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.customer-selection-copy > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customer-selection-arrow {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--accent);
 }
 
 .record-main {

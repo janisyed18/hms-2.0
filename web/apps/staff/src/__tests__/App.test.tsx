@@ -582,6 +582,10 @@ describe("App", () => {
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
       "North Sea Drilling Ltd."
     );
+    expect(screen.getByRole("status", { name: "Customer selection" })).toHaveTextContent(
+      "North Sea Drilling Ltd. details are shown below."
+    );
+    expect(screen.getByRole("heading", { name: "Recent Activity" })).toBeVisible();
   });
 
   it("keeps the command centre hierarchy and dashboard order explicit", async () => {
@@ -641,6 +645,10 @@ describe("App", () => {
 
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
       "Bluewater Energy"
+    );
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true"
     );
   });
 

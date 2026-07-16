@@ -1,4 +1,5 @@
 import {
+  Building2,
   Edit3,
   ExternalLink,
   FileText,
@@ -9,6 +10,7 @@ import {
 } from "lucide-react";
 
 import type { CustomerRecord } from "../domain/types";
+import { PresencePanel } from "../motion/MotionPrimitives";
 
 interface CustomerDetailProps {
   customer: CustomerRecord | null;
@@ -40,19 +42,26 @@ export function CustomerDetail({
   const primaryLocation = customer.locations[0];
 
   return (
-    <aside className="detail-panel" aria-label="Customer detail">
-      <div className="detail-header">
-        <div>
-          <h2>{customer.name}</h2>
-          <div className="detail-tags">
-            <span className={`status-pill risk-${customer.riskLevel.toLowerCase()}`}>
-              {customer.riskLevel} Risk
+    <PresencePanel className="customer-detail-motion" presenceKey={customer.id}>
+      <aside className="detail-panel customer-detail-card" aria-label="Customer detail">
+        <div className="detail-header">
+          <div className="customer-detail-heading">
+            <span className="customer-detail-mark">
+              <Building2 aria-hidden="true" size={19} />
             </span>
-            <span className={`status-pill status-${statusClass(customer.status)}`}>
-              {customer.status}
-            </span>
+            <div>
+              <span className="customer-detail-eyebrow">Customer record</span>
+              <h2>{customer.name}</h2>
+            </div>
+            <div className="detail-tags">
+              <span className={`status-pill risk-${customer.riskLevel.toLowerCase()}`}>
+                {customer.riskLevel} Risk
+              </span>
+              <span className={`status-pill status-${statusClass(customer.status)}`}>
+                {customer.status}
+              </span>
+            </div>
           </div>
-        </div>
         <div className="detail-actions">
           <button
             className="icon-button light"
@@ -66,7 +75,7 @@ export function CustomerDetail({
             <MoreVertical size={17} />
           </button>
         </div>
-      </div>
+        </div>
 
       <div className="summary-grid">
         <div>
@@ -268,6 +277,7 @@ export function CustomerDetail({
         View Customer Details
         <ExternalLink aria-hidden="true" size={17} />
       </button>
-    </aside>
+      </aside>
+    </PresencePanel>
   );
 }

@@ -84,6 +84,11 @@ export function useCustomerWorkspace() {
     setSelectedId(null);
   }
 
+  function selectCustomer(id: string) {
+    setSelectedId(id);
+    setActiveTab("Overview");
+  }
+
   async function createCustomer(values: CustomerFormValues) {
     let created: CustomerRecord;
     if (source === "api") {
@@ -114,6 +119,7 @@ export function useCustomerWorkspace() {
     isLoading,
     query,
     riskFilter,
+    selectCustomer,
     selectedCustomer,
     setActiveTab,
     setFormOpen,
