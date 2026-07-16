@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
 
 import { AuthProvider, useAuth } from "../auth/AuthProvider";
 import type { BrowserAuthClient } from "../auth/authClient";
@@ -71,6 +72,16 @@ function renderWith(client: BrowserAuthClient) {
   );
 }
 
+function renderWithStrictMode(client: BrowserAuthClient) {
+  return render(
+    <StrictMode>
+      <AuthProvider client={client}>
+        <Harness />
+      </AuthProvider>
+    </StrictMode>
+  );
+}
+
 function ProtectedRequestHarness({ fetcher }: { fetcher: typeof fetch }) {
   const auth = useAuth();
   return (
@@ -110,6 +121,13 @@ describe("AuthProvider", () => {
       expect(screen.getByTestId("status").textContent).toBe("signed-out")
     );
     expect(screen.getByTestId("token").textContent).toBe("none");
+  });
+
+  it("finishes session restore under React Strict Mode", async () => {
+    renderWithStrictMode(fakeClient());
+    await waitFor(() =>
+      expect(screen.getByTestId("status").textContent).toBe("signed-out")
+    );
   });
 
   it("drives the full first-login flow to recovery codes then authenticated", async () => {

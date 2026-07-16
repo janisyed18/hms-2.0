@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 
 import { AssetEndEditor } from "./AssetEndEditor";
@@ -88,8 +88,11 @@ export function AssetForm({
     setProductId((current) => current || productOptions[0]?.id || "");
   }, [asset?.product.id, productOptions, open]);
 
-  const customerLocations =
-    locationOptions.find((group) => group.customerId === customerId)?.locations ?? [];
+  const customerLocations = useMemo(
+    () =>
+      locationOptions.find((group) => group.customerId === customerId)?.locations ?? [],
+    [customerId, locationOptions]
+  );
   const selectedLocation =
     customerLocations.find((location) => location.id === locationId) ?? null;
 

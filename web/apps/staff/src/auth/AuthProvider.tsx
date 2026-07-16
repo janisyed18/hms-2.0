@@ -65,7 +65,7 @@ export function AuthProvider({ client, children }: AuthProviderProps) {
   const stateRef = useRef<AuthState>(state);
   const tokenRef = useRef<string | null>(null);
   const refreshInFlight = useRef<Promise<string> | null>(null);
-  const initialAuthStarted = useRef(false);
+  const resetTokenRef = useRef<string | null | undefined>(undefined);
 
   const apply = useCallback((next: AuthState) => {
     stateRef.current = next;
@@ -121,14 +121,14 @@ export function AuthProvider({ client, children }: AuthProviderProps) {
   );
 
   useEffect(() => {
-    // Strict Mode replays effects in development. Do not consume a reset link
-    // on the first pass and then fall back to signed-out on the replay.
-    if (initialAuthStarted.current) {
-      return;
-    }
-    initialAuthStarted.current = true;
     let active = true;
-    const resetToken = capturePasswordResetToken();
+    // Strict Mode replays effects in development. Capture a reset token once
+    // so the replay does not consume it a second time or skip state restore.
+    const resetToken =
+      resetTokenRef.current === undefined
+        ? capturePasswordResetToken()
+        : resetTokenRef.current;
+    resetTokenRef.current = resetToken;
     if (resetToken) {
       apply({ status: "password-reset", token: resetToken });
       return () => {

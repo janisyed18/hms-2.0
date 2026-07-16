@@ -1,32 +1,63 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
 import { ActivityFeed } from "./components/ActivityFeed";
-import { AnalyticsWorkspace } from "./components/AnalyticsWorkspace";
 import { AppShell, type AppModule } from "./components/AppShell";
 import { AssetsWorkspace } from "./components/AssetsWorkspace";
-import { CertificatesWorkspace } from "./components/CertificatesWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
 import { CustomerForm } from "./components/CustomerForm";
 import { CustomerTable } from "./components/CustomerTable";
-import { InspectionsWorkspace } from "./components/InspectionsWorkspace";
-import {
-  OperationalWorkspace,
-  type OperationalModule
-} from "./components/OperationalWorkspace";
-import { ProductsWorkspace } from "./components/ProductsWorkspace";
-import { ReferenceWorkspace } from "./components/ReferenceWorkspace";
-import { RetestScheduleWorkspace } from "./components/RetestScheduleWorkspace";
+import type { OperationalModule } from "./components/OperationalWorkspace";
 import { WorkspaceState } from "./components/WorkspaceState";
-import {
-  SystemWorkspace,
-  type SystemModule
-} from "./components/SystemWorkspace";
-import { AuthFlow } from "./auth/AuthFlow";
+import type { SystemModule } from "./components/SystemWorkspace";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import type { BrowserAuthClient } from "./auth/authClient";
 import type { StaffPermission, StaffRole, StaffSession } from "./domain/types";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import { PageMotion } from "./motion/MotionPrimitives";
+
+const AnalyticsWorkspace = lazy(() =>
+  import("./components/AnalyticsWorkspace").then(({ AnalyticsWorkspace }) => ({
+    default: AnalyticsWorkspace
+  }))
+);
+const AuthFlow = lazy(() =>
+  import("./auth/AuthFlow").then(({ AuthFlow }) => ({ default: AuthFlow }))
+);
+const CertificatesWorkspace = lazy(() =>
+  import("./components/CertificatesWorkspace").then(({ CertificatesWorkspace }) => ({
+    default: CertificatesWorkspace
+  }))
+);
+const InspectionsWorkspace = lazy(() =>
+  import("./components/InspectionsWorkspace").then(({ InspectionsWorkspace }) => ({
+    default: InspectionsWorkspace
+  }))
+);
+const OperationalWorkspace = lazy(() =>
+  import("./components/OperationalWorkspace").then(({ OperationalWorkspace }) => ({
+    default: OperationalWorkspace
+  }))
+);
+const ProductsWorkspace = lazy(() =>
+  import("./components/ProductsWorkspace").then(({ ProductsWorkspace }) => ({
+    default: ProductsWorkspace
+  }))
+);
+const ReferenceWorkspace = lazy(() =>
+  import("./components/ReferenceWorkspace").then(({ ReferenceWorkspace }) => ({
+    default: ReferenceWorkspace
+  }))
+);
+const RetestScheduleWorkspace = lazy(() =>
+  import("./components/RetestScheduleWorkspace").then(({ RetestScheduleWorkspace }) => ({
+    default: RetestScheduleWorkspace
+  }))
+);
+const SystemWorkspace = lazy(() =>
+  import("./components/SystemWorkspace").then(({ SystemWorkspace }) => ({
+    default: SystemWorkspace
+  }))
+);
 
 const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   dashboard: {
@@ -167,7 +198,15 @@ export default function App({ initialSession, authClient }: AppProps = {}) {
   }
   return (
     <AuthProvider client={authClient}>
-      <AuthGate />
+      <Suspense
+        fallback={
+          <WorkspaceState title="Loading sign-in" tone="loading">
+            Preparing secure staff authentication.
+          </WorkspaceState>
+        }
+      >
+        <AuthGate />
+      </Suspense>
     </AuthProvider>
   );
 }
@@ -225,103 +264,111 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
       visibleModules={visibleModules}
     >
       <PageMotion key={renderedActiveModule} motionKey={renderedActiveModule}>
-        {isOperationalModule(renderedActiveModule) ? (
-          <main className="record-page">
-            <div className="record-main">
-              <OperationalWorkspace
-                module={renderedActiveModule}
-                source={workspace.source}
-              />
-            </div>
-          </main>
-        ) : renderedActiveModule === "customers" ? (
-          <>
-            <main className={`customer-page${workspace.selectedCustomer ? "" : " detail-closed"}`}>
-              <div className="customer-main">
-                {workspace.isLoading ? (
-                  <WorkspaceState title="Loading customers" tone="loading">
-                    Retrieving the customer register.
-                  </WorkspaceState>
-                ) : workspace.error ? (
-                  <WorkspaceState title="Customer data unavailable" tone="error">
-                    {workspace.error}
-                  </WorkspaceState>
-                ) : (
-                  <>
-                    <CustomerTable
-                      canWrite={hasPermission(session, "customer:write")}
-                      customers={workspace.visibleCustomers}
-                      totalCount={workspace.totalCount}
-                      selectedId={workspace.selectedCustomer?.id ?? null}
-                      query={workspace.query}
-                      riskFilter={workspace.riskFilter}
-                      statusFilter={workspace.statusFilter}
-                      onQueryChange={workspace.setQuery}
-                      onRiskFilterChange={workspace.setRiskFilter}
-                      onStatusFilterChange={workspace.setStatusFilter}
-                      onSelectCustomer={workspace.setSelectedId}
-                      onAddCustomer={() => workspace.setFormOpen(true)}
-                    />
-                    <ActivityFeed items={workspace.selectedCustomer?.metrics.activity ?? []} />
-                  </>
-                )}
-              </div>
-              {!workspace.isLoading && !workspace.error && workspace.selectedCustomer ? (
-                <CustomerDetail
-                  customer={workspace.selectedCustomer}
-                  activeTab={workspace.activeTab}
-                  onClose={workspace.closeDetail}
-                  onTabChange={workspace.setActiveTab}
-                />
-              ) : null}
-            </main>
-            <CustomerForm
-              open={workspace.isFormOpen}
-              onClose={() => workspace.setFormOpen(false)}
-              onSubmit={workspace.createCustomer}
-            />
-          </>
-        ) : (
-          <main className="record-page">
-            <div className="record-main">
-              {renderedActiveModule === "assets" ? (
-                <AssetsWorkspace canWrite={hasPermission(session, "asset:write")} />
-              ) : null}
-              {renderedActiveModule === "analytics" ? (
-                <AnalyticsWorkspace source={workspace.source} />
-              ) : null}
-              {renderedActiveModule === "products" ? <ProductsWorkspace /> : null}
-              {renderedActiveModule === "reference" ? <ReferenceWorkspace /> : null}
-              {renderedActiveModule === "inspections" ? (
-                <InspectionsWorkspace
-                  canApprove={hasPermission(session, "certificate:approve")}
-                  canWrite={hasPermission(session, "inspection:write")}
-                />
-              ) : null}
-              {renderedActiveModule === "certificates" ? (
-                <CertificatesWorkspace
-                  canManage={hasPermission(session, "certificate:approve")}
-                />
-              ) : null}
-              {renderedActiveModule === "retest" ? (
-                <RetestScheduleWorkspace
-                  canWrite={hasPermission(session, "asset:write")}
-                />
-              ) : null}
-              {isSystemModule(renderedActiveModule) ? (
-                <SystemWorkspace
-                  actorRoles={session.roles}
-                  customerOptions={workspace.customers.map((customer) => ({
-                    id: customer.id,
-                    name: customer.name
-                  }))}
+        <Suspense
+          fallback={
+            <WorkspaceState title="Loading workspace" tone="loading">
+              Preparing the selected HMS workspace.
+            </WorkspaceState>
+          }
+        >
+          {isOperationalModule(renderedActiveModule) ? (
+            <main className="record-page">
+              <div className="record-main">
+                <OperationalWorkspace
                   module={renderedActiveModule}
                   source={workspace.source}
                 />
-              ) : null}
-            </div>
-          </main>
-        )}
+              </div>
+            </main>
+          ) : renderedActiveModule === "customers" ? (
+            <>
+              <main className={`customer-page${workspace.selectedCustomer ? "" : " detail-closed"}`}>
+                <div className="customer-main">
+                  {workspace.isLoading ? (
+                    <WorkspaceState title="Loading customers" tone="loading">
+                      Retrieving the customer register.
+                    </WorkspaceState>
+                  ) : workspace.error ? (
+                    <WorkspaceState title="Customer data unavailable" tone="error">
+                      {workspace.error}
+                    </WorkspaceState>
+                  ) : (
+                    <>
+                      <CustomerTable
+                        canWrite={hasPermission(session, "customer:write")}
+                        customers={workspace.visibleCustomers}
+                        totalCount={workspace.totalCount}
+                        selectedId={workspace.selectedCustomer?.id ?? null}
+                        query={workspace.query}
+                        riskFilter={workspace.riskFilter}
+                        statusFilter={workspace.statusFilter}
+                        onQueryChange={workspace.setQuery}
+                        onRiskFilterChange={workspace.setRiskFilter}
+                        onStatusFilterChange={workspace.setStatusFilter}
+                        onSelectCustomer={workspace.setSelectedId}
+                        onAddCustomer={() => workspace.setFormOpen(true)}
+                      />
+                      <ActivityFeed items={workspace.selectedCustomer?.metrics.activity ?? []} />
+                    </>
+                  )}
+                </div>
+                {!workspace.isLoading && !workspace.error && workspace.selectedCustomer ? (
+                  <CustomerDetail
+                    customer={workspace.selectedCustomer}
+                    activeTab={workspace.activeTab}
+                    onClose={workspace.closeDetail}
+                    onTabChange={workspace.setActiveTab}
+                  />
+                ) : null}
+              </main>
+              <CustomerForm
+                open={workspace.isFormOpen}
+                onClose={() => workspace.setFormOpen(false)}
+                onSubmit={workspace.createCustomer}
+              />
+            </>
+          ) : (
+            <main className="record-page">
+              <div className="record-main">
+                {renderedActiveModule === "assets" ? (
+                  <AssetsWorkspace canWrite={hasPermission(session, "asset:write")} />
+                ) : null}
+                {renderedActiveModule === "analytics" ? (
+                  <AnalyticsWorkspace source={workspace.source} />
+                ) : null}
+                {renderedActiveModule === "products" ? <ProductsWorkspace /> : null}
+                {renderedActiveModule === "reference" ? <ReferenceWorkspace /> : null}
+                {renderedActiveModule === "inspections" ? (
+                  <InspectionsWorkspace
+                    canApprove={hasPermission(session, "certificate:approve")}
+                    canWrite={hasPermission(session, "inspection:write")}
+                  />
+                ) : null}
+                {renderedActiveModule === "certificates" ? (
+                  <CertificatesWorkspace
+                    canManage={hasPermission(session, "certificate:approve")}
+                  />
+                ) : null}
+                {renderedActiveModule === "retest" ? (
+                  <RetestScheduleWorkspace
+                    canWrite={hasPermission(session, "asset:write")}
+                  />
+                ) : null}
+                {isSystemModule(renderedActiveModule) ? (
+                  <SystemWorkspace
+                    actorRoles={session.roles}
+                    customerOptions={workspace.customers.map((customer) => ({
+                      id: customer.id,
+                      name: customer.name
+                    }))}
+                    module={renderedActiveModule}
+                    source={workspace.source}
+                  />
+                ) : null}
+              </div>
+            </main>
+          )}
+        </Suspense>
       </PageMotion>
     </AppShell>
   );

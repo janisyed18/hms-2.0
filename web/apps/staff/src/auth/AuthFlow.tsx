@@ -319,9 +319,7 @@ function MfaEnrollmentScreen({
     if (!otpauthUri) {
       void startMfaEnrollment();
     }
-    // Only re-run when the challenge changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [challenge]);
+  }, [challenge, otpauthUri, startMfaEnrollment]);
 
   function submit(event: FormEvent) {
     event.preventDefault();

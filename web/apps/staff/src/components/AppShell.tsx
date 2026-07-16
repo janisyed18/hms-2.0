@@ -287,6 +287,7 @@ export function AppShell({
     if (!isMobileNavigationOpen) return;
 
     const previouslyFocused = document.activeElement as HTMLElement | null;
+    const mobileToggle = mobileToggleRef.current;
     const focusableSelector =
       'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
     const focusable = Array.from(
@@ -315,7 +316,7 @@ export function AppShell({
     window.addEventListener("keydown", closeOnEscape);
     return () => {
       window.removeEventListener("keydown", closeOnEscape);
-      (previouslyFocused ?? mobileToggleRef.current)?.focus();
+      (previouslyFocused ?? mobileToggle)?.focus();
     };
   }, [isMobileNavigationOpen]);
 

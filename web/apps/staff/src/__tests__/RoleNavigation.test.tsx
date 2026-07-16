@@ -65,6 +65,7 @@ describe("role navigation", () => {
     expect(screen.queryByRole("button", { name: "Issue Certificate" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Retest Schedule" }));
+    expect(await screen.findByRole("heading", { name: "Retest Schedule" })).toBeVisible();
     await user.click((await screen.findAllByRole("button", { name: /open schedule/i }))[0]);
     expect(screen.queryByRole("button", { name: "Save schedule" })).not.toBeInTheDocument();
   });

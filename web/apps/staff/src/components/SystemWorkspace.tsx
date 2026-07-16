@@ -32,6 +32,7 @@ import type {
   DeviceRecord,
   StaffRole
 } from "../domain/types";
+import { formatDateTime } from "../utils/dateTime";
 import { OneTimeCredentialDialog, type OneTimeCredential } from "./OneTimeCredentialDialog";
 import {
   UserAdminDialog,
@@ -668,10 +669,6 @@ function maxOfflineWindow(devices: DeviceRecord[]): number {
     (largest, device) => Math.max(largest, device.offlineWindowDays),
     0
   );
-}
-
-function formatDateTime(value: string): string {
-  return value.replace("T", " ").replace(/Z$/, "");
 }
 
 function formatRole(role: string): string {

@@ -40,8 +40,10 @@ afterEach(() => {
 });
 
 describe("Command Centre shell", () => {
-  it("shows only the modules authorized by visibleModules", () => {
+  it("shows only the modules authorized by visibleModules", async () => {
     renderShell();
+
+    await screen.findByRole("heading", { name: "Overdue Retests" });
 
     expect(screen.getByRole("button", { name: "Dashboard" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Assets" })).toBeVisible();

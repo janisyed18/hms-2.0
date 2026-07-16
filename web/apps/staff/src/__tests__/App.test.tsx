@@ -543,11 +543,11 @@ describe("App", () => {
     expect(screen.getByText("System")).toBeVisible();
     expect(screen.getByText("Live Environment")).toBeVisible();
     expect(screen.getByRole("button", { name: "New Asset" })).toBeVisible();
-    expect(screen.getByText("Total Assets")).toBeVisible();
-    expect(screen.getByText("In Service")).toBeVisible();
-    expect(screen.getByText("Overdue Retests")).toBeVisible();
-    expect(screen.getByText("Fleet Health")).toBeVisible();
-    expect(screen.getByText("Due This Week")).toBeVisible();
+    expect(await screen.findByText("Total Assets")).toBeVisible();
+    expect(await screen.findByText("In Service")).toBeVisible();
+    expect(await screen.findByText("Overdue Retests")).toBeVisible();
+    expect(await screen.findByText("Fleet Health")).toBeVisible();
+    expect(await screen.findByText("Due This Week")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Awaiting Review" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Customers" }));
 
@@ -789,9 +789,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Reference Data" }));
     expect(await screen.findByRole("heading", { name: "Reference Data" })).toBeVisible();
-    expect(
-      screen.getByRole("table", { name: "Reference standard records" })
-    ).toHaveTextContent("AS2683");
+    expect(await screen.findByText("AS2683")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Inspections" }));
     expect(await screen.findByRole("heading", { name: "Inspection Management" })).toBeVisible();
@@ -1288,15 +1286,16 @@ describe("App", () => {
 
     await user.click(await screen.findByRole("button", { name: "Analytics" }));
     expect(await screen.findByRole("heading", { name: "Analytics" })).toBeVisible();
-    expect(screen.getByText("Fleet Health Trend")).toBeVisible();
-    expect(screen.getByText("Retest Risk by Customer")).toBeVisible();
+    expect(await screen.findByText("Fleet Health Trend")).toBeVisible();
+    expect(await screen.findByText("Retest Risk by Customer")).toBeVisible();
     expect(screen.getByRole("table", { name: "Risk ranking" })).toHaveTextContent(
       "North Sea Drilling"
     );
 
     await user.click(screen.getByRole("button", { name: "Users & Roles" }));
     expect(await screen.findByRole("heading", { name: "Users & Roles" })).toBeVisible();
-    expect(screen.getByText("Role Matrix")).toBeVisible();
+    expect(await screen.findByText("Role Matrix")).toBeVisible();
+    expect(await screen.findByText("James Mitchell")).toBeVisible();
     expect(screen.getByRole("table", { name: "User access records" })).toHaveTextContent(
       "James Mitchell"
     );

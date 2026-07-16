@@ -13,17 +13,13 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
-from hms_backend.app.core.auth import (
-    TokenValidationError,
-    decode_hs256_bearer_token,
-    encode_hs256_bearer_token,
-)
+from hms_backend.app.core.auth import TokenValidationError, encode_hs256_bearer_token
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.passwords import (
     hash_password,
@@ -37,10 +33,12 @@ from hms_backend.app.core.rbac import (
     require_permission,
 )
 from hms_backend.app.modules.identity.models import User
-from hms_backend.app.modules.notifications.enums import NotificationCategory
-from hms_backend.app.modules.notifications.outbox import emit_event
-
-_RESET_PURPOSE = "pw_reset"
+from hms_backend.app.modules.identity.password_reset import (
+    GENERIC_RESET_MESSAGE,
+    INVALID_RESET_ERROR,
+    PasswordResetError,
+    PasswordResetService,
+)
 
 router = APIRouter(prefix="/auth")
 
@@ -183,68 +181,35 @@ async def admin_set_password(
 
 @router.post("/password/reset-request", response_model=MessageResponse)
 async def request_password_reset(
-    payload: ResetRequest, session: SessionDep
+    payload: ResetRequest, request: Request, session: SessionDep
 ) -> MessageResponse:
-    """Email a short-TTL reset link (transactional; N-12).
-
-    Always returns the same message so email existence is never revealed.
-    """
-    generic = MessageResponse(
-        message="If that email exists, a password reset link has been sent."
-    )
-    if not settings.auth_bearer_hmac_secret:
-        return generic
-    user = await session.scalar(
-        select(User).where(
-            func.lower(User.email) == payload.email.strip().lower(),
-            User.deleted_at.is_(None),
-        )
-    )
-    if user is None:
-        return generic
-
-    token = encode_hs256_bearer_token(
-        subject=user.oidc_subject,
-        secret=settings.auth_bearer_hmac_secret,
-        ttl_seconds=settings.auth_password_reset_ttl_seconds,
-        extra_claims={"purpose": _RESET_PURPOSE},
-    )
-    link = f"{settings.public_base_url.rstrip('/')}/reset-password?token={token}"
-    await emit_event(
+    """Compatibility alias for the hardened browser reset request flow."""
+    await PasswordResetService().request(
         session,
-        category=NotificationCategory.PASSWORD_RESET,
-        aggregate_type="user",
-        aggregate_id=user.id,
-        payload={"user_id": user.id, "email": user.email, "link": link},
+        email=payload.email,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
     )
     await session.commit()
-    return generic
+    return MessageResponse(message=GENERIC_RESET_MESSAGE)
 
 
 @router.post("/password/reset-confirm", response_model=MessageResponse)
 async def confirm_password_reset(
     payload: ResetConfirm, session: SessionDep
 ) -> MessageResponse:
-    invalid = HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Invalid or expired reset token",
-    )
     try:
-        claims = decode_hs256_bearer_token(
-            payload.token, secret=settings.auth_bearer_hmac_secret
+        await PasswordResetService().confirm(
+            session,
+            token=payload.token,
+            new_password=payload.new_password,
         )
-    except TokenValidationError as exc:
-        raise invalid from exc
-    if claims.purpose != _RESET_PURPOSE:
-        raise invalid
-    user = await session.scalar(
-        select(User).where(
-            User.oidc_subject == claims.subject, User.deleted_at.is_(None)
-        )
-    )
-    if user is None:
-        raise invalid
-    user.password_hash = hash_password(payload.new_password)
+    except PasswordResetError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=INVALID_RESET_ERROR if str(exc) == INVALID_RESET_ERROR else str(exc),
+        ) from exc
     await session.commit()
     return MessageResponse(message="Password reset. You can now log in.")
 

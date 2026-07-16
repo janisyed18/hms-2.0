@@ -129,6 +129,42 @@ async def test_reset_request_is_generic_for_known_and_unknown_email(
 
 
 @pytest.mark.asyncio
+async def test_legacy_reset_alias_uses_one_time_password_reset_service(
+    client: httpx.AsyncClient,
+    session_factory: SessionFactory,
+) -> None:
+    await seed(session_factory)
+    requested = await client.post(
+        "/api/v1/auth/password/reset-request", json={"email": EMAIL}
+    )
+    assert requested.status_code == 200
+
+    async with session_factory() as session:
+        delivery = await session.scalar(select(PasswordResetDelivery))
+        user = await session.scalar(select(User).where(User.email == EMAIL))
+        assert delivery is not None and user is not None
+        token = decrypt_password_reset_delivery(
+            EncryptedPasswordResetDelivery(delivery.ciphertext, delivery.key_version),
+            reset_id=delivery.reset_id,
+            user_id=user.id,
+        )
+
+    assert token.count(".") != 2
+    confirmed = await client.post(
+        "/api/v1/auth/password/reset-confirm",
+        json={"token": token, "new_password": "N3w-Reset-Passphrase!"},
+    )
+    assert confirmed.status_code == 200
+
+    reused = await client.post(
+        "/api/v1/auth/password/reset-confirm",
+        json={"token": token, "new_password": "N3w-Reset-Passphrase!"},
+    )
+    assert reused.status_code == 400
+    assert reused.json()["detail"] == "Invalid or expired reset link."
+
+
+@pytest.mark.asyncio
 async def test_reset_confirm_changes_password_and_returns_safe_message(
     client: httpx.AsyncClient,
     session_factory: SessionFactory,

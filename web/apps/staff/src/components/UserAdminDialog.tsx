@@ -54,9 +54,7 @@ export function UserAdminDialog({
       setRole(initial?.role ?? roleOptions[0] ?? "INSPECTOR");
       setCustomerId(initial?.customerId ?? "");
     }
-    // Re-seed the form each time the dialog opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [initial, open, roleOptions]);
 
   useEffect(() => {
     if (open) {

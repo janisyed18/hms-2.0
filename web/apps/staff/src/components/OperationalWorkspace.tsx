@@ -14,6 +14,7 @@ import type { ReactNode } from "react";
 import { HmsApiError, loadAuditEventsWithFallback } from "../api/hmsClient";
 import type { AuditEventRecord, DataSource } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
+import { formatDateTime } from "../utils/dateTime";
 import { WorkspaceState } from "./WorkspaceState";
 
 export type OperationalModule = "dashboard" | "sync" | "audit";
@@ -356,10 +357,6 @@ function OperationsTable({
       </div>
     </section>
   );
-}
-
-function formatDateTime(value: string): string {
-  return value.replace("T", " ").replace(/Z$/, "");
 }
 
 function formatAuditAction(action: string): string {
