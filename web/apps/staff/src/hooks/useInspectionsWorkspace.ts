@@ -93,6 +93,8 @@ export function useInspectionsWorkspace() {
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [source, setSource] = useState<DataSource>("mock");
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<InspectionStatusFilter>("ALL");
@@ -103,6 +105,8 @@ export function useInspectionsWorkspace() {
 
   useEffect(() => {
     let active = true;
+    setIsLoading(true);
+    setError(null);
     Promise.all([
       loadInspectionsWithFallback({ sort: "-created_at" }),
       loadAssetsWithFallback({ sort: "asset_number" })
@@ -113,6 +117,13 @@ export function useInspectionsWorkspace() {
       setInspections(inspectionResult.items);
       setAssets(assetResult.items);
       setSource(inspectionResult.source);
+      setIsLoading(false);
+    }).catch((reason: unknown) => {
+      if (!active) {
+        return;
+      }
+      setError(reason instanceof Error ? reason.message : "Inspection records could not be loaded.");
+      setIsLoading(false);
     });
     return () => {
       active = false;
@@ -303,6 +314,8 @@ export function useInspectionsWorkspace() {
     setStatusFilter,
     setTypeFilter,
     source,
+    isLoading,
+    error,
     statusFilter,
     submitInspection,
     typeFilter,

@@ -116,6 +116,8 @@ export function useAssetsWorkspace() {
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [products, setProducts] = useState<AssetProductSummary[]>([]);
   const [source, setSource] = useState<DataSource>("mock");
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [customerFilter, setCustomerFilter] = useState("ALL");
   const [productFilter, setProductFilter] = useState("ALL");
@@ -128,6 +130,8 @@ export function useAssetsWorkspace() {
 
   useEffect(() => {
     let active = true;
+    setIsLoading(true);
+    setError(null);
     Promise.all([
       loadAssetsWithFallback({ sort: "asset_number" }),
       loadCustomersWithFallback({ sort: "name", limit: 100 }),
@@ -145,6 +149,13 @@ export function useAssetsWorkspace() {
         ])
       );
       setSource(assetResult.source);
+      setIsLoading(false);
+    }).catch((reason: unknown) => {
+      if (!active) {
+        return;
+      }
+      setError(reason instanceof Error ? reason.message : "Asset records could not be loaded.");
+      setIsLoading(false);
     });
     return () => {
       active = false;
@@ -334,6 +345,8 @@ export function useAssetsWorkspace() {
     setProductFilter,
     setQuery,
     source,
+    isLoading,
+    error,
     viewingAsset,
     visibleAssets
   };

@@ -166,6 +166,17 @@ button:active:not(:disabled) {
   border-radius: var(--radius-md);
 }
 
+.table-frame {
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.table-frame > .workspace-state {
+  min-width: 320px;
+  margin: 16px;
+}
+
 .data-panel,
 .table-panel.module-panel,
 .inspection-dashboard,
@@ -225,6 +236,7 @@ button:active:not(:disabled) {
 
 .console-table,
 .module-table {
+  min-width: 860px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -240,6 +252,8 @@ button:active:not(:disabled) {
 .module-table th {
   background: var(--panel-subtle);
   color: var(--color-neutral-500);
+  line-height: 1.2;
+  white-space: normal;
 }
 
 .console-table td strong,

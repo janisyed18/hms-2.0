@@ -171,7 +171,11 @@ export function InspectionsWorkspace({
             <ModuleTable
               actionLabel={canWrite ? "Add Inspection" : undefined}
               columns={columns}
-              countLabel={`${workspace.visibleInspections.length} inspections`}
+              countLabel={
+                workspace.isLoading
+                  ? "Loading inspections"
+                  : `${workspace.visibleInspections.length} inspections`
+              }
               emptyLabel="No inspections match the current filters."
               exportRows={(inspection) => [
                 inspection.status,
@@ -219,6 +223,7 @@ export function InspectionsWorkspace({
               }
               getRowKey={(inspection) => inspection.id}
               items={workspace.visibleInspections}
+              loading={workspace.isLoading}
               onAction={canWrite ? workspace.openCreate : undefined}
               onQueryChange={workspace.setQuery}
               onRowSelect={workspace.openDetail}
@@ -227,6 +232,7 @@ export function InspectionsWorkspace({
               searchPlaceholder="Search inspections..."
               source={workspace.source}
               tableLabel="Inspection records"
+              error={workspace.error}
             />
           </div>
         )}

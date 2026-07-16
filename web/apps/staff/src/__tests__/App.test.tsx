@@ -525,6 +525,29 @@ describe("App", () => {
     expect(onRowSelect).toHaveBeenCalledWith({ id: "record-1", name: "Record one" });
   });
 
+  it("does not show a transient empty row while a module request is settling", () => {
+    render(
+      <ModuleTable
+        columns={[{ header: "Name", render: (item: { id: string; name: string }) => item.name }]}
+        countLabel="Loading records"
+        emptyLabel="No records"
+        exportRows={(item) => [item.name]}
+        getRowKey={(item) => item.id}
+        items={[]}
+        loading
+        onQueryChange={() => undefined}
+        query=""
+        searchLabel="Search records"
+        searchPlaceholder="Search records"
+        source="mock"
+        tableLabel="Test records"
+      />
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Loading records");
+    expect(screen.queryByText("No records found")).not.toBeInTheDocument();
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

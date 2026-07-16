@@ -136,7 +136,7 @@ export function AssetsWorkspace({ canWrite }: { canWrite: boolean }) {
       <ModuleTable
         actionLabel={canWrite ? "Add Asset" : undefined}
         columns={assetColumns}
-        countLabel={`${workspace.assets.length} assets`}
+        countLabel={workspace.isLoading ? "Loading assets" : `${workspace.assets.length} assets`}
         emptyLabel="No assets match the current filters."
         exportRows={(asset) => [
           asset.assetNumber,
@@ -222,6 +222,7 @@ export function AssetsWorkspace({ canWrite }: { canWrite: boolean }) {
         }
         getRowKey={(asset) => asset.id}
         items={workspace.visibleAssets}
+        loading={workspace.isLoading}
         onAction={canWrite ? workspace.openCreate : undefined}
         onRowSelect={workspace.openDetail}
         onQueryChange={workspace.setQuery}
@@ -230,6 +231,7 @@ export function AssetsWorkspace({ canWrite }: { canWrite: boolean }) {
         searchPlaceholder="Search assets..."
         source={workspace.source}
         tableLabel="Asset records"
+        error={workspace.error}
       />
       {canWrite ? (
         <AssetForm

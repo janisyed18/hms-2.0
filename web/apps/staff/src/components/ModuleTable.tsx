@@ -22,8 +22,10 @@ interface ModuleTableProps<TItem> {
   exportRows: (item: TItem) => string[];
   filterControls?: ReactNode;
   activeFilterCount?: number;
+  error?: string | null;
   getRowKey: (item: TItem) => string;
   items: TItem[];
+  loading?: boolean;
   onAction?: () => void;
   onRowSelect?: (item: TItem) => void;
   onQueryChange: (value: string) => void;
@@ -69,8 +71,10 @@ export function ModuleTable<TItem>({
   exportRows,
   filterControls,
   activeFilterCount = 0,
+  error = null,
   getRowKey,
   items,
+  loading = false,
   onAction,
   onRowSelect,
   onQueryChange,
@@ -116,7 +120,14 @@ export function ModuleTable<TItem>({
         </label>
         <label className="field select-field">
           <span>Source</span>
-          <select value={source} onChange={() => undefined} aria-label={`${tableLabel} source`}>
+          <select
+            aria-label={`${tableLabel} source`}
+            disabled={loading || Boolean(error)}
+            value={source}
+            onChange={() => undefined}
+          >
+            {loading ? <option value="mock">Loading source...</option> : null}
+            {error ? <option value="mock">Unavailable</option> : null}
             <option value="api">Backend</option>
             <option value="mock">Mock data</option>
           </select>
@@ -173,42 +184,52 @@ export function ModuleTable<TItem>({
       </div>
 
       <div className="table-frame">
-        <table className="module-table" aria-label={tableLabel}>
-          <thead>
-            <tr>
-              {columns.map((column) => (
-                <th key={column.header}>{column.header}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => {
-              const rowKey = getRowKey(item);
-              const isSelected = selectedRowKey === rowKey;
-              return (
-                <tr
-                  aria-selected={isSelected || undefined}
-                  className={`${onRowSelect ? "is-clickable" : ""}${isSelected ? " is-selected" : ""}`}
-                  key={rowKey}
-                  onClick={(event) => handleRowClick(event, item)}
-                  onKeyDown={(event) => handleRowKeyDown(event, item)}
-                  tabIndex={onRowSelect ? 0 : undefined}
-                >
-                  {columns.map((column) => (
-                    <td key={column.header}>{column.render(item)}</td>
-                  ))}
-                </tr>
-              );
-            })}
-            {items.length === 0 ? (
+        {loading ? (
+          <WorkspaceState title="Loading records" tone="loading">
+            Fetching the latest {tableLabel.toLowerCase()}.
+          </WorkspaceState>
+        ) : error ? (
+          <WorkspaceState title="Records unavailable" tone="error">
+            {error}
+          </WorkspaceState>
+        ) : (
+          <table className="module-table" aria-label={tableLabel}>
+            <thead>
               <tr>
-                <td colSpan={columns.length}>
-                  <WorkspaceState title="No records found">{emptyLabel}</WorkspaceState>
-                </td>
+                {columns.map((column) => (
+                  <th key={column.header}>{column.header}</th>
+                ))}
               </tr>
-            ) : null}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {items.map((item) => {
+                const rowKey = getRowKey(item);
+                const isSelected = selectedRowKey === rowKey;
+                return (
+                  <tr
+                    aria-selected={isSelected || undefined}
+                    className={`${onRowSelect ? "is-clickable" : ""}${isSelected ? " is-selected" : ""}`}
+                    key={rowKey}
+                    onClick={(event) => handleRowClick(event, item)}
+                    onKeyDown={(event) => handleRowKeyDown(event, item)}
+                    tabIndex={onRowSelect ? 0 : undefined}
+                  >
+                    {columns.map((column) => (
+                      <td key={column.header}>{column.render(item)}</td>
+                    ))}
+                  </tr>
+                );
+              })}
+              {items.length === 0 ? (
+                <tr>
+                  <td colSpan={columns.length}>
+                    <WorkspaceState title="No records found">{emptyLabel}</WorkspaceState>
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        )}
       </div>
       <div className="pagination">
         <span>Rows per page</span>
