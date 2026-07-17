@@ -229,7 +229,8 @@
 }
 
 .sidebar-user .avatar,
-.user-menu .avatar {
+.user-menu .avatar,
+.account-avatar {
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -468,6 +469,56 @@
   min-height: 32px;
 }
 
+.account-popover-content {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-2) var(--space-2);
+}
+
+.account-identity {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.account-avatar {
+  width: 40px;
+  height: 40px;
+}
+
+.account-identity strong,
+.account-email {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-identity strong {
+  font-size: 14px;
+}
+
+.account-email {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.account-role {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-subtle);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .notification-popover {
   width: min(392px, calc(100vw - 32px));
   padding: 0;
@@ -606,5 +657,8 @@
 
 .popover-signout {
   width: 100%;
-  margin-top: var(--space-2);
+  min-height: 40px;
+  margin-top: var(--space-1);
+  border-color: var(--border-strong);
+  color: var(--ink);
 }

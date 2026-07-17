@@ -82,6 +82,7 @@ export type StaffPermission =
 export interface StaffSession {
   userId: string;
   displayName: string;
+  email?: string;
   roles: StaffRole[];
   permissions: StaffPermission[];
   customerIds: string[];

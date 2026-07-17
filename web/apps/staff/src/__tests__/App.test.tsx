@@ -841,7 +841,7 @@ describe("App", () => {
       "Ivy Inspector"
     );
     expect(screen.getByRole("button", { name: "User menu" })).toHaveTextContent(
-      "INSPECTOR"
+      "Inspector"
     );
   });
 
@@ -1700,6 +1700,29 @@ describe("App", () => {
     expect(screen.getByRole("dialog", { name: "User menu" })).toHaveTextContent(
       "Sam Admin"
     );
+  });
+
+  it("uses a name-first account menu when the profile display name is an email address", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    const user = userEvent.setup();
+    const emailProfileSession = {
+      ...adminSession,
+      displayName: "super.admin@example.test",
+      email: "super.admin@example.test"
+    } satisfies StaffSession;
+
+    render(<App initialSession={emailProfileSession} />);
+
+    const accountMenu = await screen.findByRole("button", { name: "User menu" });
+    expect(accountMenu).toHaveTextContent("Super Admin");
+    expect(accountMenu).not.toHaveTextContent("super.admin@example.test");
+
+    await user.click(accountMenu);
+
+    const accountPanel = screen.getByRole("dialog", { name: "User menu" });
+    expect(accountPanel).toHaveTextContent("Super Admin");
+    expect(accountPanel).toHaveTextContent("super.admin@example.test");
+    expect(screen.getByLabelText("Roles: Super Admin")).toHaveTextContent("Super Admin");
   });
 
   it("uses working filter summaries and download actions", async () => {

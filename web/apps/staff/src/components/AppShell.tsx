@@ -119,7 +119,41 @@ function popoverBody(menu: TopbarMenu, session: StaffSession) {
   if (menu === "help") {
     return "Support, release notes, and workflow guidance.";
   }
-  return `${session.displayName}. ${session.roles.join(", ")} workspace.`;
+  return `${accountNameFor(session)} workspace.`;
+}
+
+function accountNameFor(session: StaffSession): string {
+  const source = session.displayName.trim();
+  if (!source || source.includes("@")) {
+    const localPart = (session.email ?? source).split("@", 1)[0] ?? "";
+    const friendlyName = localPart
+      .split(/[._-]+/)
+      .filter(Boolean)
+      .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1).toLowerCase()}`)
+      .join(" ");
+    return friendlyName || "HMS User";
+  }
+  return source;
+}
+
+function accountEmailFor(session: StaffSession): string | null {
+  if (session.email) {
+    return session.email;
+  }
+  return session.displayName.includes("@") ? session.displayName : null;
+}
+
+function roleLabel(role: string): string {
+  return role
+    .toLowerCase()
+    .split("_")
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+}
+
+function roleSummary(roles: string[]): string {
+  const labels = roles.map(roleLabel);
+  return labels.length > 0 ? labels.join(" · ") : "HMS User";
 }
 
 function notificationIcon(category: string): LucideIcon {
@@ -191,6 +225,7 @@ function SidebarNavigation({
   const activeIndicatorTransition = reducedMotion
     ? { duration: 0 }
     : motionTokens.spring.gentle;
+  const accountName = accountNameFor(session);
 
   return (
     <>
@@ -255,10 +290,10 @@ function SidebarNavigation({
         ))}
       </nav>
       <div className="sidebar-user">
-        <div className="avatar">{initialsFor(session.displayName)}</div>
+        <div className="avatar">{initialsFor(accountName)}</div>
         <div>
-          <strong>{session.displayName}</strong>
-          <span>{session.roles.join(", ")}</span>
+          <strong>{accountName}</strong>
+          <span>{roleSummary(session.roles)}</span>
         </div>
         <button
           aria-label="Sign out"
@@ -296,6 +331,8 @@ export function AppShell({
   const mobileDrawerRef = useRef<HTMLElement>(null);
   const mobileToggleRef = useRef<HTMLButtonElement>(null);
   const reducedMotion = useReducedMotion();
+  const accountName = accountNameFor(session);
+  const accountEmail = accountEmailFor(session);
 
   const loadNotifications = useCallback(async () => {
     setNotificationStatus("loading");
@@ -543,10 +580,10 @@ export function AppShell({
               onClick={() => setOpenMenu(openMenu === "user" ? null : "user")}
               type="button"
             >
-              <div className="avatar">{initialsFor(session.displayName)}</div>
+              <div className="avatar">{initialsFor(accountName)}</div>
               <div>
-                <strong>{session.displayName}</strong>
-                <span>{session.roles.join(", ")}</span>
+                <strong>{accountName}</strong>
+                <span>{roleLabel(session.roles[0] ?? "HMS_USER")}</span>
               </div>
               <ChevronDown aria-hidden="true" size={15} />
             </button>
@@ -630,6 +667,20 @@ export function AppShell({
                       })}
                     </div>
                   ) : null}
+                </div>
+              ) : openMenu === "user" ? (
+                <div className="account-popover-content">
+                  <div className="account-identity">
+                    <div className="avatar account-avatar">{initialsFor(accountName)}</div>
+                    <div>
+                      <strong>{accountName}</strong>
+                      {accountEmail ? <span className="account-email">{accountEmail}</span> : null}
+                    </div>
+                  </div>
+                  <div className="account-role" aria-label={`Roles: ${roleSummary(session.roles)}`}>
+                    <ShieldCheck aria-hidden="true" size={15} />
+                    <span>{roleSummary(session.roles)}</span>
+                  </div>
                 </div>
               ) : (
                 <p>{popoverBody(openMenu, session)}</p>

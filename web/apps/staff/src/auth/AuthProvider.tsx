@@ -27,6 +27,7 @@ function toSession(me: BrowserMeResponse): StaffSession {
   return {
     userId: me.user_id,
     displayName: me.display_name,
+    email: me.email,
     roles: me.roles as StaffRole[],
     permissions: me.permissions as StaffPermission[],
     customerIds: me.customer_ids,
