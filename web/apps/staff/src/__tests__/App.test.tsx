@@ -636,13 +636,16 @@ describe("App", () => {
       within(dashboard)
         .getAllByRole("heading", { level: 2 })
         .map((heading) => heading.textContent)
-    ).toEqual(["Overdue Retests", "Fleet Health", "Due This Week", "Awaiting Review"]);
+    ).toEqual(["Overdue Retests", "Awaiting Review", "Fleet Health", "Due This Week"]);
 
     expect(
       [...within(dashboard).getByLabelText("Operational highlights").querySelectorAll(".kpi-card > span")]
         .map((label) => label.textContent)
     ).toEqual(["Total Assets", "In Service", "Overdue", "Awaiting Review"]);
     expect(within(dashboard).queryByText("Pending Review")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Awaiting Review" }).closest(".dashboard-primary")
+    ).not.toBeNull();
   });
 
   it("paginates overdue retests and resets to the first page when the page size changes", async () => {

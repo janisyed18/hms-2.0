@@ -280,6 +280,27 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
               total={dashboard.overdueTotal}
             />
           </section>
+
+          <section className="data-panel awaiting-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>Awaiting Review</h2>
+                <p>{dashboard.awaitingReviewInspections} inspections submitted, pending reviewer approval</p>
+              </div>
+              <button className="secondary-button" type="button">Review All</button>
+            </div>
+            <div className="review-strip">
+              {dashboard.awaitingReview.map((inspection) => (
+                <article key={inspection.inspectionId}>
+                  <span className="asset-code">{inspection.inspectionId}</span>
+                  <strong>{inspection.assetNumber}</strong>
+                  <span className={`mini-status ${inspection.status.toLowerCase()}`}>{inspection.status}</span>
+                  <p>{inspection.result ?? inspection.inspectionType}</p>
+                </article>
+              ))}
+              {dashboard.awaitingReview.length === 0 ? <p className="dashboard-empty">No inspections are awaiting review.</p> : null}
+            </div>
+          </section>
         </div>
 
         <aside className="dashboard-side">
@@ -287,7 +308,9 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
             <div className="panel-heading compact">
               <h2>Fleet Health</h2>
             </div>
-            <div className="fleet-ring" aria-hidden="true" style={fleetRingStyle} />
+            <div className="fleet-ring" aria-hidden="true" style={fleetRingStyle}>
+              <span className="fleet-ring-core" />
+            </div>
             <div className="health-legend">
               <div><span><i className="dot success-dot" />Active fleet</span><strong>{formatNumber(dashboard.inServiceAssets)}</strong></div>
               <div><span><i className="dot warning-dot" />Due Soon</span><strong>{formatNumber(dashboard.dueSoonAssets)}</strong></div>
@@ -316,26 +339,6 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
         </aside>
       </div>
 
-      <section className="data-panel awaiting-panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Awaiting Review</h2>
-            <p>{dashboard.awaitingReviewInspections} inspections submitted, pending reviewer approval</p>
-          </div>
-          <button className="secondary-button" type="button">Review All</button>
-        </div>
-        <div className="review-strip">
-          {dashboard.awaitingReview.map((inspection) => (
-            <article key={inspection.inspectionId}>
-              <span className="asset-code">{inspection.inspectionId}</span>
-              <strong>{inspection.assetNumber}</strong>
-              <span className={`mini-status ${inspection.status.toLowerCase()}`}>{inspection.status}</span>
-              <p>{inspection.result ?? inspection.inspectionType}</p>
-            </article>
-          ))}
-          {dashboard.awaitingReview.length === 0 ? <p className="dashboard-empty">No inspections are awaiting review.</p> : null}
-        </div>
-      </section>
     </section>
   );
 }

@@ -1877,7 +1877,6 @@ tbody tr.is-selected {
       var(--warning) 82% 94%,
       var(--danger) 94% 100%
     );
-  mask: radial-gradient(farthest-side, transparent 60%, #000 62%);
 }
 
 .health-legend {
