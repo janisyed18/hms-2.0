@@ -150,12 +150,11 @@ button:active:not(:disabled) {
 .dashboard-source-row {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   min-height: 24px;
 }
 
 .dashboard-context {
-  margin-right: auto;
   color: var(--soft);
   font-size: 12px;
   font-weight: 650;
@@ -196,6 +195,7 @@ button:active:not(:disabled) {
 .kpi-card {
   position: relative;
   display: grid;
+  width: 100%;
   align-content: start;
   gap: var(--space-1);
   min-height: 156px;
@@ -204,11 +204,21 @@ button:active:not(:disabled) {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--panel);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
   box-shadow: var(--shadow-soft);
 }
 
-.kpi-card::after {
-  display: none;
+.kpi-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+}
+
+.kpi-card:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
 }
 
 .kpi-icon {
@@ -224,7 +234,7 @@ button:active:not(:disabled) {
   color: var(--accent);
 }
 
-.kpi-card > span {
+.kpi-label {
   max-width: calc(100% - 40px);
   color: var(--muted);
   font-size: 11px;
@@ -244,6 +254,25 @@ button:active:not(:disabled) {
   color: var(--soft);
   font-size: 12px;
   font-weight: 600;
+}
+
+.kpi-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: auto;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.kpi-action svg {
+  transition: transform 0.16s ease-out;
+}
+
+.kpi-card:hover .kpi-action svg,
+.kpi-card:focus-visible .kpi-action svg {
+  transform: translate(2px, -2px);
 }
 
 .tone-green .kpi-icon {

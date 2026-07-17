@@ -250,7 +250,6 @@
     display: none;
   }
 
-  .environment-button,
   .topbar-primary,
   .icon-button,
   .user-menu {
@@ -261,17 +260,6 @@
   .user-menu {
     width: var(--control-height-mobile);
     height: var(--control-height-mobile);
-  }
-
-  .environment-button span:not(.status-dot),
-  .environment-button svg {
-    display: none;
-  }
-
-  .environment-button {
-    width: var(--control-height-mobile);
-    justify-content: center;
-    padding: 0;
   }
 
   .topbar-popover {

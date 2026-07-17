@@ -650,7 +650,7 @@ describe("App", () => {
     expect(screen.getByText("Operations")).toBeVisible();
     expect(screen.getByText("Management")).toBeVisible();
     expect(screen.getByText("System")).toBeVisible();
-    expect(screen.getByText("Live Environment")).toBeVisible();
+    expect(screen.queryByText("Live Environment")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New Asset" })).toBeVisible();
     expect(await screen.findByText("Total Assets")).toBeVisible();
     expect(await screen.findByText("In Service")).toBeVisible();
@@ -687,13 +687,31 @@ describe("App", () => {
     ).toEqual(["Overdue Retests", "Awaiting Review", "Fleet Health", "Due This Week"]);
 
     expect(
-      [...within(dashboard).getByLabelText("Operational highlights").querySelectorAll(".kpi-card > span")]
+      [...within(dashboard).getByLabelText("Operational highlights").querySelectorAll(".kpi-label")]
         .map((label) => label.textContent)
     ).toEqual(["Total Assets", "In Service", "Overdue", "Awaiting Review"]);
     expect(within(dashboard).queryByText("Pending Review")).not.toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Awaiting Review" }).closest(".dashboard-primary")
     ).not.toBeNull();
+  });
+
+  it("turns dashboard metrics into useful workspace shortcuts", async () => {
+    vi.stubGlobal("fetch", dashboardFetch());
+    const user = userEvent.setup();
+
+    render(<App initialSession={adminSession} />);
+
+    await user.click(await screen.findByRole("button", { name: /Open asset register/i }));
+    expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Dashboard" }));
+    await user.click(await screen.findByRole("button", { name: /Review overdue retests/i }));
+    expect(await screen.findByRole("heading", { name: "Retest Schedule" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Dashboard" }));
+    await user.click(await screen.findByRole("button", { name: /Review submitted inspections/i }));
+    expect(await screen.findByRole("heading", { name: "Inspection Management" })).toBeVisible();
   });
 
   it("paginates overdue retests and resets to the first page when the page size changes", async () => {
@@ -1415,7 +1433,7 @@ describe("App", () => {
 
     await user.click(await screen.findByRole("button", { name: "Dashboard" }));
     expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
-    expect(screen.getByText("Backend data")).toBeVisible();
+    expect(screen.queryByText("Backend data")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Sync Queue/i }));
     expect(await screen.findByRole("heading", { name: "Sync Queue" })).toBeVisible();
@@ -1588,7 +1606,7 @@ describe("App", () => {
     expect(await screen.findByText("Missing permission: user:admin")).toBeVisible();
   });
 
-  it("opens topbar menus and applies global search navigation", async () => {
+  it("opens remaining topbar menus and applies global search navigation", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
@@ -1597,11 +1615,6 @@ describe("App", () => {
     await user.type(await screen.findByLabelText("Global search"), "certificate");
     await user.click(screen.getByRole("button", { name: "Run global search" }));
     expect(await screen.findByRole("heading", { name: "Certificate Management" })).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "Environment and source details" }));
-    expect(screen.getByRole("dialog", { name: "Environment details" })).toHaveTextContent(
-      "Demo mode"
-    );
 
     await user.click(screen.getByRole("button", { name: "Notifications" }));
     expect(screen.getByRole("dialog", { name: "Notifications" })).toHaveTextContent(

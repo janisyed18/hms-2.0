@@ -351,30 +351,11 @@
   color: var(--color-cobalt-700);
 }
 
-.environment-button,
 .topbar-primary,
 .icon-button,
 .user-menu {
   min-height: var(--control-height);
   border-radius: var(--radius-sm);
-}
-
-.environment-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--success);
 }
 
 .topbar-primary {
@@ -441,7 +422,6 @@
   font-size: 9px;
 }
 
-.environment-button:hover,
 .icon-button:hover,
 .user-menu:hover {
   border-color: var(--border-strong);

@@ -259,7 +259,6 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
       onLogout={onLogout}
       onModuleChange={handleModuleChange}
       session={session}
-      source={workspace.source}
       title={activeCopy.title}
       visibleModules={visibleModules}
     >
@@ -276,6 +275,7 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
               <div className="record-main">
                 <OperationalWorkspace
                   module={renderedActiveModule}
+                  onModuleChange={handleModuleChange}
                   source={workspace.source}
                 />
               </div>

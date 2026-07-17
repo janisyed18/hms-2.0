@@ -8,8 +8,10 @@ import {
   Download,
   Hourglass,
   RefreshCcw,
-  ShieldCheck
+  ShieldCheck,
+  ArrowUpRight
 } from "lucide-react";
+import { m, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -20,13 +22,16 @@ import {
 } from "../api/hmsClient";
 import type { AuditEventRecord, DashboardRecord, DataSource } from "../domain/types";
 import { PresencePanel, StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
+import { motionTokens } from "../motion/motionTokens";
 import { formatDateTime } from "../utils/dateTime";
 import { WorkspaceState } from "./WorkspaceState";
+import type { AppModule } from "./AppShell";
 
 export type OperationalModule = "dashboard" | "sync" | "audit";
 
 interface OperationalWorkspaceProps {
   module: OperationalModule;
+  onModuleChange: (module: AppModule) => void;
   source: DataSource;
 }
 
@@ -38,7 +43,11 @@ const syncRows = [
 
 const overduePageSizes = [5, 10, 25];
 
-export function OperationalWorkspace({ module, source }: OperationalWorkspaceProps) {
+export function OperationalWorkspace({
+  module,
+  onModuleChange,
+  source
+}: OperationalWorkspaceProps) {
   const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>([]);
   const [auditSource, setAuditSource] = useState<DataSource>(source);
   const [auditError, setAuditError] = useState<string | null>(null);
@@ -192,8 +201,7 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
   return (
     <section className="console-dashboard" aria-label="Dashboard workspace">
       <div className="dashboard-source-row">
-        <span className="dashboard-context">Live fleet overview</span>
-        <span className="source-api">Backend data</span>
+        <span className="dashboard-context">Operational overview</span>
       </div>
       <div className="kpi-grid" aria-label="Operational highlights" role="group">
         <StaggerGroup className="kpi-grid-motion">
@@ -203,6 +211,8 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
               label="Total Assets"
               value={formatNumber(dashboard.totalAssets)}
               helper={`Across ${formatNumber(dashboard.totalCustomers)} customers`}
+              action="Open asset register"
+              onClick={() => onModuleChange("assets")}
               tone="blue"
             />
           </StaggerItem>
@@ -212,6 +222,8 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
               label="In Service"
               value={formatNumber(dashboard.inServiceAssets)}
               helper={`${fleetHealth}% fleet health`}
+              action="View in-service assets"
+              onClick={() => onModuleChange("assets")}
               tone="green"
             />
           </StaggerItem>
@@ -221,6 +233,8 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
               label="Overdue"
               value={formatNumber(dashboard.overdueAssets)}
               helper={dashboard.overdueAssets ? "Requires immediate action" : "No overdue retests"}
+              action="Review overdue retests"
+              onClick={() => onModuleChange("retest")}
               tone="red"
             />
           </StaggerItem>
@@ -230,6 +244,8 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
               label="Awaiting Review"
               value={formatNumber(dashboard.awaitingReviewInspections)}
               helper="Submitted inspections pending review"
+              action="Review submitted inspections"
+              onClick={() => onModuleChange("inspections")}
               tone="amber"
             />
           </StaggerItem>
@@ -430,25 +446,43 @@ function OperationsHeader({
 }
 
 function MetricCard({
+  action,
   helper,
   icon,
   label,
+  onClick,
   tone,
   value
 }: {
+  action: string;
   helper: string;
   icon: ReactNode;
   label: string;
+  onClick: () => void;
   tone: "blue" | "green" | "amber" | "red";
   value: string;
 }) {
+  const reducedMotion = useReducedMotion();
+
   return (
-    <div className={`kpi-card tone-${tone}`}>
+    <m.button
+      aria-label={action}
+      className={`kpi-card tone-${tone}`}
+      onClick={onClick}
+      transition={motionTokens.spring.gentle}
+      type="button"
+      whileHover={reducedMotion ? undefined : { y: -4 }}
+      whileTap={reducedMotion ? undefined : { scale: 0.985 }}
+    >
       <div className="kpi-icon">{icon}</div>
-      <span>{label}</span>
+      <span className="kpi-label">{label}</span>
       <strong>{value}</strong>
       <small>{helper}</small>
-    </div>
+      <span className="kpi-action">
+        {action}
+        <ArrowUpRight aria-hidden="true" size={15} />
+      </span>
+    </m.button>
   );
 }
 

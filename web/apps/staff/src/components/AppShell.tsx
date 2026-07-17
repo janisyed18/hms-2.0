@@ -44,7 +44,7 @@ export type AppModule =
   | "users"
   | "devices";
 
-type TopbarMenu = "environment" | "notifications" | "help" | "user";
+type TopbarMenu = "notifications" | "help" | "user";
 
 interface NavItem {
   label: string;
@@ -61,7 +61,6 @@ interface AppShellProps {
   onLogout?: () => void;
   onModuleChange: (module: AppModule) => void;
   session: StaffSession;
-  source: "api" | "mock";
   title: string;
   visibleModules: AppModule[];
 }
@@ -103,9 +102,6 @@ const navGroups: Array<{ label: string; items: NavItem[] }> = [
 ];
 
 function popoverTitle(menu: TopbarMenu) {
-  if (menu === "environment") {
-    return "Environment details";
-  }
   if (menu === "notifications") {
     return "Notifications";
   }
@@ -119,10 +115,7 @@ function popoverCloseLabel(menu: TopbarMenu) {
   return `Close ${popoverTitle(menu).toLowerCase()}`;
 }
 
-function popoverBody(menu: TopbarMenu, source: "api" | "mock", session: StaffSession) {
-  if (menu === "environment") {
-    return source === "api" ? "Backend connection active." : "Demo mode uses local mock data.";
-  }
+function popoverBody(menu: TopbarMenu, session: StaffSession) {
   if (menu === "help") {
     return "Support, release notes, and workflow guidance.";
   }
@@ -288,7 +281,6 @@ export function AppShell({
   onLogout,
   onModuleChange,
   session,
-  source,
   title,
   visibleModules
 }: AppShellProps) {
@@ -512,18 +504,6 @@ export function AppShell({
                 <Search aria-hidden="true" size={15} />
               </button>
             </form>
-            <button
-              aria-label="Environment and source details"
-              className="environment-button"
-              onClick={() =>
-                setOpenMenu(openMenu === "environment" ? null : "environment")
-              }
-              type="button"
-            >
-              <span className="status-dot" />
-              <span>Live Environment</span>
-              <ChevronDown aria-hidden="true" size={15} />
-            </button>
             {canCreateAsset ? (
               <button
                 className="primary-button topbar-primary"
@@ -652,7 +632,7 @@ export function AppShell({
                   ) : null}
                 </div>
               ) : (
-                <p>{popoverBody(openMenu, source, session)}</p>
+                <p>{popoverBody(openMenu, session)}</p>
               )}
               {openMenu === "user" && onLogout ? (
                 <button
