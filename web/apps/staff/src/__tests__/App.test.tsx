@@ -343,6 +343,48 @@ function dashboardFetch() {
   });
 }
 
+function dashboardActionsFetch() {
+  return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const requestUrl = new URL(String(url), "http://test");
+    if (requestUrl.pathname === "/api/v1/dashboard") {
+      return okJson({
+        total_assets: 1,
+        total_customers: 1,
+        in_service_assets: 0,
+        due_soon_assets: 0,
+        overdue_assets: 1,
+        awaiting_review_inspections: 1,
+        overdue_total: 1,
+        overdue_limit: 5,
+        overdue_offset: 0,
+        overdue_retests: [dashboardRetests[0]],
+        due_this_week: [],
+        awaiting_review: [{
+          inspection_id: apiInspection.id,
+          asset_id: apiInspection.asset_id,
+          asset_number: apiInspection.asset.asset_number,
+          inspection_type: apiInspection.inspection_type,
+          status: "SUBMITTED",
+          result: "PASS"
+        }]
+      });
+    }
+    if (
+      requestUrl.pathname === "/api/v1/retest-schedules/escalate-overdue" &&
+      init?.method === "POST"
+    ) {
+      return okJson({ dispatched: 1 });
+    }
+    if (requestUrl.pathname === "/api/v1/inspections") {
+      return okJson({ total: 1, limit: 50, offset: 0, items: [apiInspection] });
+    }
+    if (requestUrl.pathname === "/api/v1/assets") {
+      return okJson({ total: 1, limit: 50, offset: 0, items: [apiAsset] });
+    }
+    throw new Error(`Unhandled URL: ${requestUrl.pathname}`);
+  });
+}
+
 function notificationFeedFetch() {
   const notification = {
     id: "notification-1",
@@ -712,6 +754,36 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Dashboard" }));
     await user.click(await screen.findByRole("button", { name: /Review submitted inspections/i }));
     expect(await screen.findByRole("heading", { name: "Inspection Management" })).toBeVisible();
+  });
+
+  it("exports overdue retests, queues escalation, and opens submitted reviews", async () => {
+    const fetchMock = dashboardActionsFetch();
+    const downloadClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:test") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const user = userEvent.setup();
+
+    render(<App initialSession={adminSession} />);
+
+    await user.click(await screen.findByRole("button", { name: "Export" }));
+    expect(downloadClick).toHaveBeenCalledOnce();
+    expect(screen.getByRole("status")).toHaveTextContent("Downloaded the current overdue retest page.");
+
+    await user.click(screen.getByRole("button", { name: "Send Escalation" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Queued escalations for 1 overdue asset.");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/retest-schedules/escalate-overdue"),
+      expect.objectContaining({ method: "POST" })
+    );
+
+    await user.click(screen.getByRole("button", { name: "Review All" }));
+    expect(await screen.findByRole("heading", { name: "Inspection Management" })).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Dashboard" }));
+    await user.click(await screen.findByRole("button", { name: "Open inspection API-777" }));
+    expect(await screen.findByRole("heading", { name: "Inspection API-777" })).toBeVisible();
   });
 
   it("paginates overdue retests and resets to the first page when the page size changes", async () => {

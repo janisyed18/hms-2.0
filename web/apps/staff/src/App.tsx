@@ -224,6 +224,7 @@ function AuthGate() {
 
 export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
   const [activeModule, setActiveModule] = useState<AppModule>("dashboard");
+  const [pendingInspectionId, setPendingInspectionId] = useState<string | null>(null);
   const [session, setSession] = useState<StaffSession>(
     normaliseSession(providedSession)
   );
@@ -245,8 +246,11 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
     }
   }, [activeModule, visibleModules]);
 
-  function handleModuleChange(module: AppModule) {
+  function handleModuleChange(module: AppModule, inspectionId?: string) {
     if (visibleModules.includes(module)) {
+      if (module === "inspections") {
+        setPendingInspectionId(inspectionId ?? null);
+      }
       setActiveModule(module);
     }
   }
@@ -274,6 +278,7 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
             <main className="record-page">
               <div className="record-main">
                 <OperationalWorkspace
+                  canEscalate={hasPermission(session, "asset:write")}
                   module={renderedActiveModule}
                   onModuleChange={handleModuleChange}
                   source={workspace.source}
@@ -345,6 +350,8 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
                   <InspectionsWorkspace
                     canApprove={hasPermission(session, "certificate:approve")}
                     canWrite={hasPermission(session, "inspection:write")}
+                    initialInspectionId={pendingInspectionId}
+                    onInitialInspectionOpened={() => setPendingInspectionId(null)}
                   />
                 ) : null}
                 {renderedActiveModule === "certificates" ? (

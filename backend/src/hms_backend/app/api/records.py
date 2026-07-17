@@ -52,6 +52,7 @@ from hms_backend.app.api.schemas import (
     ProductRead,
     ProductSummary,
     ProductUpdate,
+    RetestEscalationResponse,
     RetestScheduleListResponse,
     RetestScheduleRead,
     RetestScheduleSummary,
@@ -103,7 +104,10 @@ from hms_backend.app.modules.inspections.models import (
     PressureTestResult,
 )
 from hms_backend.app.modules.notifications.enums import NotificationCategory
-from hms_backend.app.modules.notifications.outbox import emit_event
+from hms_backend.app.modules.notifications.outbox import (
+    emit_event,
+    emit_event_if_absent,
+)
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Standard
 from hms_backend.app.modules.scheduling.models import (
@@ -995,6 +999,64 @@ async def list_retest_schedules(
         offset=offset,
         items=[_retest_schedule_read(schedule) for schedule in schedules],
     )
+
+
+@router.post(
+    "/retest-schedules/escalate-overdue",
+    response_model=RetestEscalationResponse,
+)
+async def escalate_overdue_retests(
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> RetestEscalationResponse:
+    _require_asset_write(principal)
+    today = datetime.now(UTC).date()
+    now = utc_now()
+    schedules = (
+        await session.scalars(
+            _apply_asset_scope(_retest_schedule_statement(), principal)
+            .where(
+                RetestSchedule.status != RetestScheduleStatus.SUSPENDED.value,
+                RetestSchedule.due_at < today,
+            )
+            .with_for_update()
+        )
+    ).all()
+    dispatched = 0
+    for schedule in schedules:
+        if schedule.escalated_at and schedule.escalated_at.date() == today:
+            continue
+        asset = schedule.asset
+        event = await emit_event_if_absent(
+            session,
+            category=NotificationCategory.RETEST_OVERDUE,
+            aggregate_type="asset",
+            aggregate_id=asset.id,
+            payload={
+                "customer_id": schedule.customer_id,
+                "asset_id": asset.id,
+                "asset_number": asset.asset_number,
+                "due_date": schedule.due_at.isoformat(),
+                "days_overdue": (today - schedule.due_at).days,
+                "escalation_level": 1,
+                "link": settings.public_base_url.rstrip("/"),
+            },
+            dedupe_key=f"RETEST_OVERDUE:manual:{schedule.id}:{today.isoformat()}",
+        )
+        if event is None:
+            continue
+        before = schedule.to_audit_dict()
+        schedule.escalated_at = now
+        await record_update(
+            session,
+            schedule,
+            actor_id=principal.user_id,
+            action="retest_schedule.escalated",
+            before=before,
+        )
+        dispatched += 1
+    await session.commit()
+    return RetestEscalationResponse(dispatched=dispatched)
 
 
 @router.get("/retest-schedules/{schedule_id}", response_model=RetestScheduleRead)

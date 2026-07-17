@@ -50,12 +50,16 @@ function countByStatus(inspections: InspectionRecord[], status: string) {
 
 export function InspectionsWorkspace({
   canApprove,
-  canWrite
+  canWrite,
+  initialInspectionId,
+  onInitialInspectionOpened
 }: {
   canApprove: boolean;
   canWrite: boolean;
+  initialInspectionId?: string | null;
+  onInitialInspectionOpened?: () => void;
 }) {
-  const workspace = useInspectionsWorkspace();
+  const workspace = useInspectionsWorkspace(initialInspectionId, onInitialInspectionOpened);
   const draftCount = countByStatus(workspace.inspections, "DRAFT");
   const submittedCount = countByStatus(workspace.inspections, "SUBMITTED");
   const approvedCount = countByStatus(workspace.inspections, "APPROVED");

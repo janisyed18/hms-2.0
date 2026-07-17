@@ -25,13 +25,15 @@ import { PresencePanel, StaggerGroup, StaggerItem } from "../motion/MotionPrimit
 import { motionTokens } from "../motion/motionTokens";
 import { formatDateTime } from "../utils/dateTime";
 import { WorkspaceState } from "./WorkspaceState";
+import { downloadCsv } from "./ModuleTable";
 import type { AppModule } from "./AppShell";
 
 export type OperationalModule = "dashboard" | "sync" | "audit";
 
 interface OperationalWorkspaceProps {
+  canEscalate: boolean;
   module: OperationalModule;
-  onModuleChange: (module: AppModule) => void;
+  onModuleChange: (module: AppModule, inspectionId?: string) => void;
   source: DataSource;
 }
 
@@ -44,6 +46,7 @@ const syncRows = [
 const overduePageSizes = [5, 10, 25];
 
 export function OperationalWorkspace({
+  canEscalate,
   module,
   onModuleChange,
   source
@@ -57,6 +60,10 @@ export function OperationalWorkspace({
   const [dashboard, setDashboard] = useState<DashboardRecord | null>(null);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardNotice, setDashboardNotice] = useState<string | null>(null);
+  const [dashboardActionError, setDashboardActionError] = useState<string | null>(null);
+  const [isEscalating, setEscalating] = useState(false);
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     if (module !== "audit") {
@@ -198,6 +205,52 @@ export function OperationalWorkspace({
     background: `conic-gradient(var(--success) 0 ${fleetHealth}%, var(--warning) ${fleetHealth}% ${fleetHealth + (healthTotal ? Math.round((dashboard.dueSoonAssets / healthTotal) * 100) : 0)}%, var(--danger) 0 100%)`
   };
 
+  function exportOverdueRetests() {
+    if (!dashboard) {
+      return;
+    }
+    downloadCsv("overdue-retests.csv", [
+      ["Asset", "Customer", "Product", "Due date", "Days overdue", "Status"],
+      ...dashboard.overdueRetests.map((retest) => [
+        retest.assetNumber,
+        retest.customerName,
+        retest.productName,
+        retest.dueAt,
+        String(retest.daysOverdue),
+        retest.status
+      ])
+    ]);
+    setDashboardActionError(null);
+    setDashboardNotice("Downloaded the current overdue retest page.");
+  }
+
+  async function sendOverdueEscalation() {
+    const currentDashboard = dashboard;
+    if (!canEscalate || !currentDashboard || currentDashboard.overdueTotal === 0 || isEscalating) {
+      return;
+    }
+    if (!window.confirm(`Send overdue retest escalations for ${currentDashboard.overdueTotal} asset${currentDashboard.overdueTotal === 1 ? "" : "s"}?`)) {
+      return;
+    }
+    setEscalating(true);
+    setDashboardNotice(null);
+    setDashboardActionError(null);
+    try {
+      const client = createHmsClient();
+      const dispatched = await client.escalateOverdueRetests();
+      setDashboard(await client.getDashboard(overduePageSize, overdueStart));
+      setDashboardNotice(
+        dispatched
+          ? `Queued escalations for ${dispatched} overdue asset${dispatched === 1 ? "" : "s"}.`
+          : "All overdue retests have already been escalated today."
+      );
+    } catch (error: unknown) {
+      setDashboardActionError(errorMessage(error, "Unable to send overdue retest escalations."));
+    } finally {
+      setEscalating(false);
+    }
+  }
+
   return (
     <section className="console-dashboard" aria-label="Dashboard workspace">
       <div className="dashboard-source-row">
@@ -261,13 +314,22 @@ export function OperationalWorkspace({
                 <p>{dashboard.overdueTotal} assets past their retest due date</p>
               </div>
               <div className="panel-actions">
-                <button className="secondary-button" type="button">
+                <button className="secondary-button" onClick={exportOverdueRetests} type="button">
                   <Download aria-hidden="true" size={15} />
                   Export
                 </button>
-                <button className="danger-button" type="button">Send Escalation</button>
+                <button
+                  className="danger-button"
+                  disabled={!canEscalate || dashboard.overdueTotal === 0 || isEscalating}
+                  onClick={() => void sendOverdueEscalation()}
+                  type="button"
+                >
+                  {isEscalating ? "Sending..." : "Send Escalation"}
+                </button>
               </div>
             </div>
+            {dashboardNotice ? <p className="dashboard-action-notice" role="status">{dashboardNotice}</p> : null}
+            {dashboardActionError ? <p className="dashboard-action-error" role="alert">{dashboardActionError}</p> : null}
             <PresencePanel presenceKey={`overdue-${overduePage}-${overduePageSize}`}>
               <OperationsTable
                 ariaLabel="Overdue retests"
@@ -303,16 +365,26 @@ export function OperationalWorkspace({
                 <h2>Awaiting Review</h2>
                 <p>{dashboard.awaitingReviewInspections} inspections submitted, pending reviewer approval</p>
               </div>
-              <button className="secondary-button" type="button">Review All</button>
+              <button className="secondary-button" onClick={() => onModuleChange("inspections")} type="button">Review All</button>
             </div>
             <div className="review-strip">
               {dashboard.awaitingReview.map((inspection) => (
-                <article key={inspection.inspectionId}>
+                <m.button
+                  aria-label={`Open inspection ${inspection.assetNumber}`}
+                  className="review-card"
+                  key={inspection.inspectionId}
+                  onClick={() => onModuleChange("inspections", inspection.inspectionId)}
+                  transition={motionTokens.spring.gentle}
+                  type="button"
+                  whileHover={reducedMotion ? undefined : { y: -3 }}
+                  whileTap={reducedMotion ? undefined : { scale: 0.985 }}
+                >
                   <span className="asset-code">{inspection.inspectionId}</span>
                   <strong>{inspection.assetNumber}</strong>
                   <span className={`mini-status ${inspection.status.toLowerCase()}`}>{inspection.status}</span>
-                  <p>{inspection.result ?? inspection.inspectionType}</p>
-                </article>
+                  <span className="review-card-result">{inspection.result ?? inspection.inspectionType}</span>
+                  <span className="review-card-action">Open review <ArrowUpRight aria-hidden="true" size={14} /></span>
+                </m.button>
               ))}
               {dashboard.awaitingReview.length === 0 ? <p className="dashboard-empty">No inspections are awaiting review.</p> : null}
             </div>
@@ -320,7 +392,11 @@ export function OperationalWorkspace({
         </div>
 
         <aside className="dashboard-side">
-          <section className="data-panel health-panel">
+          <m.section
+            className="data-panel health-panel"
+            transition={motionTokens.spring.gentle}
+            whileHover={reducedMotion ? undefined : { y: -2 }}
+          >
             <div className="panel-heading compact">
               <h2>Fleet Health</h2>
             </div>
@@ -332,7 +408,7 @@ export function OperationalWorkspace({
               <div><span><i className="dot warning-dot" />Due Soon</span><strong>{formatNumber(dashboard.dueSoonAssets)}</strong></div>
               <div><span><i className="dot danger-dot" />Overdue</span><strong>{formatNumber(dashboard.overdueAssets)}</strong></div>
             </div>
-          </section>
+          </m.section>
 
           <section className="data-panel due-panel">
             <div className="panel-heading compact">
@@ -538,12 +614,12 @@ function formatAuditAction(action: string): string {
     .join(" ");
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error: unknown, fallback = "Audit events could not be loaded."): string {
   if (error instanceof HmsApiError) {
     return error.message;
   }
   if (error instanceof Error) {
     return error.message;
   }
-  return "Audit events could not be loaded.";
+  return fallback;
 }

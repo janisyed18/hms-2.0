@@ -89,7 +89,10 @@ function localInspectionUpdate(
   };
 }
 
-export function useInspectionsWorkspace() {
+export function useInspectionsWorkspace(
+  initialInspectionId?: string | null,
+  onInitialInspectionOpened?: () => void
+) {
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [source, setSource] = useState<DataSource>("mock");
@@ -170,6 +173,14 @@ export function useInspectionsWorkspace() {
     () => inspections.find((inspection) => inspection.id === selectedId) ?? null,
     [inspections, selectedId]
   );
+
+  useEffect(() => {
+    if (!initialInspectionId || !inspections.some((inspection) => inspection.id === initialInspectionId)) {
+      return;
+    }
+    setSelectedId(initialInspectionId);
+    onInitialInspectionOpened?.();
+  }, [initialInspectionId, inspections, onInitialInspectionOpened]);
 
   function openCreate() {
     setFormOpen(true);

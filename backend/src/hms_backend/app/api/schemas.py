@@ -323,6 +323,10 @@ class RetestScheduleListResponse(BaseModel):
     items: list[RetestScheduleRead]
 
 
+class RetestEscalationResponse(BaseModel):
+    dispatched: int
+
+
 class DashboardRetestRead(BaseModel):
     asset_id: str
     asset_number: str

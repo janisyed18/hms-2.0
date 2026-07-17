@@ -149,6 +149,10 @@ interface ApiDashboard {
   awaiting_review: ApiDashboardReview[];
 }
 
+interface ApiRetestEscalation {
+  dispatched: number;
+}
+
 interface ApiNotification {
   id: string;
   category: string;
@@ -1202,6 +1206,14 @@ export function createHmsClient(options: HmsClientOptions = {}) {
     async getDashboard(limit = 5, offset = 0): Promise<DashboardRecord> {
       const response = await request<ApiDashboard>("/api/v1/dashboard", {}, { limit, offset });
       return toDashboard(response.data);
+    },
+
+    async escalateOverdueRetests(): Promise<number> {
+      const response = await request<ApiRetestEscalation>(
+        "/api/v1/retest-schedules/escalate-overdue",
+        { method: "POST" }
+      );
+      return response.data.dispatched;
     },
 
     async listNotifications(): Promise<NotificationFeedResult> {

@@ -31,6 +31,7 @@ from hms_backend.app.modules.inspections.models import (
     InspectionType,
     PressureTestResult,
 )
+from hms_backend.app.modules.notifications.models import OutboxEvent
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Standard
 from hms_backend.app.modules.scheduling.models import (
@@ -288,6 +289,46 @@ async def test_dashboard_returns_live_operational_data_and_respects_customer_sco
     assert scoped_response.json()["due_soon_assets"] == 0
     assert scoped_response.json()["due_this_week"] == []
     assert scoped_response.json()["overdue_retests"][0]["asset_number"] == "997950"
+
+
+@pytest.mark.asyncio
+async def test_manual_overdue_escalation_queues_one_event_per_schedule_per_day(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        first_response = await client.post("/api/v1/retest-schedules/escalate-overdue")
+        second_response = await client.post("/api/v1/retest-schedules/escalate-overdue")
+
+    assert first_response.status_code == 200
+    assert first_response.json() == {"dispatched": 1}
+    assert second_response.status_code == 200
+    assert second_response.json() == {"dispatched": 0}
+
+    async with session_factory() as session:
+        schedule = await session.scalar(
+            select(RetestSchedule).where(
+                RetestSchedule.asset_id == seeded_session["vopak_asset_id"]
+            )
+        )
+        events = (
+            await session.scalars(
+                select(OutboxEvent).where(
+                    OutboxEvent.aggregate_id == seeded_session["vopak_asset_id"]
+                )
+            )
+        ).all()
+
+    assert schedule is not None
+    assert schedule.escalated_at is not None
+    assert len(events) == 1
+    assert events[0].event_type == "RETEST_OVERDUE"
 
 
 @pytest.mark.asyncio
