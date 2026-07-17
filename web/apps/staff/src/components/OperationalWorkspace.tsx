@@ -3,6 +3,8 @@ import {
   AlertTriangle,
   CalendarClock,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Hourglass,
   RefreshCcw,
@@ -11,9 +13,13 @@ import {
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
-import { HmsApiError, loadAuditEventsWithFallback } from "../api/hmsClient";
-import type { AuditEventRecord, DataSource } from "../domain/types";
-import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
+import {
+  createHmsClient,
+  HmsApiError,
+  loadAuditEventsWithFallback
+} from "../api/hmsClient";
+import type { AuditEventRecord, DashboardRecord, DataSource } from "../domain/types";
+import { PresencePanel, StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { formatDateTime } from "../utils/dateTime";
 import { WorkspaceState } from "./WorkspaceState";
 
@@ -30,31 +36,18 @@ const syncRows = [
   ["Asset update", "Waiting", "ORIC-100", "18 min ago"]
 ];
 
-const overdueRows = [
-  ["HOS-2024-0891", "North Sea Shipping", "Composite 2\" WP20", "2026-05-15", "+43", "Overdue"],
-  ["HOS-2024-0643", "Pacific Marine Ltd", "Rubber 3\" WP15", "2026-05-22", "+36", "Overdue"],
-  ["HOS-2025-0112", "Bateman Offshore", "SS 1.5\" WP50", "2026-06-01", "+26", "Escalated"],
-  ["HOS-2023-1044", "Coastal Fuels Pty", "PVC 4\" WP10", "2026-06-10", "+17", "Escalated"],
-  ["HOS-2025-0331", "Harbour Logistics", "Composite 1\" WP25", "2026-06-18", "+9", "Overdue"]
-];
-
-const dueThisWeekRows = [
-  ["HOS-2024-0921", "North Sea Shipping", "Jun 30"],
-  ["HOS-2025-0156", "Pacific Marine Ltd", "Jul 01"],
-  ["HOS-2024-0788", "Bateman Offshore", "Jul 02"],
-  ["HOS-2025-0299", "Coastal Fuels Pty", "Jul 03"]
-];
-
-const awaitingReviewRows = [
-  ["INS-2026-0441", "HOS-2024-0891", "Submitted", "Pressure test passed"],
-  ["INS-2026-0440", "HOS-2024-0643", "Failed", "Pressure below threshold"],
-  ["INS-2026-0438", "HOS-2025-0201", "Approved", "Certificate ready"]
-];
+const overduePageSizes = [5, 10, 25];
 
 export function OperationalWorkspace({ module, source }: OperationalWorkspaceProps) {
   const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>([]);
   const [auditSource, setAuditSource] = useState<DataSource>(source);
   const [auditError, setAuditError] = useState<string | null>(null);
+  const [overduePage, setOverduePage] = useState(1);
+  const [overduePageSize, setOverduePageSize] = useState(overduePageSizes[0]);
+  const overdueStart = (overduePage - 1) * overduePageSize;
+  const [dashboard, setDashboard] = useState<DashboardRecord | null>(null);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
 
   useEffect(() => {
     if (module !== "audit") {
@@ -81,6 +74,40 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
       active = false;
     };
   }, [module]);
+
+  useEffect(() => {
+    if (module !== "dashboard") {
+      return;
+    }
+
+    let active = true;
+    setDashboardLoading(true);
+    setDashboardError(null);
+    createHmsClient()
+      .getDashboard(overduePageSize, overdueStart)
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+        const pageCount = Math.max(1, Math.ceil(result.overdueTotal / overduePageSize));
+        if (overduePage > pageCount) {
+          setOverduePage(pageCount);
+          return;
+        }
+        setDashboard(result);
+        setDashboardLoading(false);
+      })
+      .catch((error: unknown) => {
+        if (active) {
+          setDashboardError(errorMessage(error));
+          setDashboardLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [module, overduePage, overduePageSize, overdueStart]);
 
   if (module === "sync") {
     return (
@@ -133,13 +160,40 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
     );
   }
 
+  if (dashboardLoading && dashboard === null) {
+    return (
+      <WorkspaceState title="Loading dashboard" tone="loading">
+        Loading current operational data from the backend.
+      </WorkspaceState>
+    );
+  }
+
+  if (dashboardError || dashboard === null) {
+    return (
+      <WorkspaceState title="Dashboard unavailable" tone="error">
+        {dashboardError ?? "Dashboard data could not be loaded."}
+      </WorkspaceState>
+    );
+  }
+
+  const overduePageCount = Math.max(
+    1,
+    Math.ceil(dashboard.overdueTotal / overduePageSize)
+  );
+  const healthTotal =
+    dashboard.inServiceAssets + dashboard.dueSoonAssets + dashboard.overdueAssets;
+  const fleetHealth = healthTotal
+    ? Math.round((dashboard.inServiceAssets / healthTotal) * 100)
+    : 0;
+  const fleetRingStyle = {
+    background: `conic-gradient(var(--success) 0 ${fleetHealth}%, var(--warning) ${fleetHealth}% ${fleetHealth + (healthTotal ? Math.round((dashboard.dueSoonAssets / healthTotal) * 100) : 0)}%, var(--danger) 0 100%)`
+  };
+
   return (
     <section className="console-dashboard" aria-label="Dashboard workspace">
       <div className="dashboard-source-row">
         <span className="dashboard-context">Live fleet overview</span>
-        <span className={source === "api" ? "source-api" : "source-mock"}>
-          {source === "api" ? "Backend" : "Mock data"}
-        </span>
+        <span className="source-api">Backend data</span>
       </div>
       <div className="kpi-grid" aria-label="Operational highlights" role="group">
         <StaggerGroup className="kpi-grid-motion">
@@ -147,8 +201,8 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
             <MetricCard
               icon={<Activity aria-hidden="true" size={18} />}
               label="Total Assets"
-              value="1,247"
-              helper="Across 34 customers"
+              value={formatNumber(dashboard.totalAssets)}
+              helper={`Across ${formatNumber(dashboard.totalCustomers)} customers`}
               tone="blue"
             />
           </StaggerItem>
@@ -156,8 +210,8 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
             <MetricCard
               icon={<CheckCircle2 aria-hidden="true" size={18} />}
               label="In Service"
-              value="1,089"
-              helper="87.3% fleet health"
+              value={formatNumber(dashboard.inServiceAssets)}
+              helper={`${fleetHealth}% fleet health`}
               tone="green"
             />
           </StaggerItem>
@@ -165,8 +219,8 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
             <MetricCard
               icon={<AlertTriangle aria-hidden="true" size={18} />}
               label="Overdue"
-              value="23"
-              helper="Requires immediate action"
+              value={formatNumber(dashboard.overdueAssets)}
+              helper={dashboard.overdueAssets ? "Requires immediate action" : "No overdue retests"}
               tone="red"
             />
           </StaggerItem>
@@ -174,8 +228,8 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
             <MetricCard
               icon={<Hourglass aria-hidden="true" size={18} />}
               label="Awaiting Review"
-              value="8"
-              helper="3 critical, 5 standard"
+              value={formatNumber(dashboard.awaitingReviewInspections)}
+              helper="Submitted inspections pending review"
               tone="amber"
             />
           </StaggerItem>
@@ -188,7 +242,7 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
             <div className="panel-heading">
               <div>
                 <h2>Overdue Retests</h2>
-                <p>23 assets past their retest due date</p>
+                <p>{dashboard.overdueTotal} assets past their retest due date</p>
               </div>
               <div className="panel-actions">
                 <button className="secondary-button" type="button">
@@ -198,15 +252,33 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
                 <button className="danger-button" type="button">Send Escalation</button>
               </div>
             </div>
-            <OperationsTable
-              ariaLabel="Overdue retests"
-              columns={["Asset", "Customer", "Product", "Due Date", "Days Overdue", "Status"]}
-              rows={overdueRows}
+            <PresencePanel presenceKey={`overdue-${overduePage}-${overduePageSize}`}>
+              <OperationsTable
+                ariaLabel="Overdue retests"
+                columns={["Asset", "Customer", "Product", "Due Date", "Days Overdue", "Status"]}
+                emptyMessage="No overdue retests in the backend data."
+                rows={dashboard.overdueRetests.map((retest) => [
+                  retest.assetNumber,
+                  retest.customerName,
+                  retest.productName,
+                  retest.dueAt,
+                  `+${retest.daysOverdue}`,
+                  retest.status
+                ])}
+              />
+            </PresencePanel>
+            <DashboardPagination
+              onPageChange={setOverduePage}
+              onPageSizeChange={(size) => {
+                setOverduePageSize(size);
+                setOverduePage(1);
+              }}
+              page={overduePage}
+              pageCount={overduePageCount}
+              pageSize={overduePageSize}
+              start={overdueStart}
+              total={dashboard.overdueTotal}
             />
-            <div className="panel-footer">
-              <span>Showing 5 of 23 overdue</span>
-              <button type="button">View all</button>
-            </div>
           </section>
         </div>
 
@@ -215,11 +287,11 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
             <div className="panel-heading compact">
               <h2>Fleet Health</h2>
             </div>
-            <div className="fleet-ring" aria-hidden="true" />
+            <div className="fleet-ring" aria-hidden="true" style={fleetRingStyle} />
             <div className="health-legend">
-              <div><span><i className="dot success-dot" />Active fleet</span><strong>1,089</strong></div>
-              <div><span><i className="dot warning-dot" />Due Soon</span><strong>135</strong></div>
-              <div><span><i className="dot danger-dot" />Overdue</span><strong>23</strong></div>
+              <div><span><i className="dot success-dot" />Active fleet</span><strong>{formatNumber(dashboard.inServiceAssets)}</strong></div>
+              <div><span><i className="dot warning-dot" />Due Soon</span><strong>{formatNumber(dashboard.dueSoonAssets)}</strong></div>
+              <div><span><i className="dot danger-dot" />Overdue</span><strong>{formatNumber(dashboard.overdueAssets)}</strong></div>
             </div>
           </section>
 
@@ -228,16 +300,17 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
               <h2>Due This Week</h2>
             </div>
             <div className="due-list">
-              {dueThisWeekRows.map(([asset, customer, due]) => (
-                <article key={asset}>
+              {dashboard.dueThisWeek.map((item) => (
+                <article key={item.assetId}>
                   <CalendarClock aria-hidden="true" size={15} />
                   <div>
-                    <strong>{asset}</strong>
-                    <span>{customer}</span>
+                    <strong>{item.assetNumber}</strong>
+                    <span>{item.customerName}</span>
                   </div>
-                  <time>{due}</time>
+                  <time>{item.dueAt}</time>
                 </article>
               ))}
+              {dashboard.dueThisWeek.length === 0 ? <p className="dashboard-empty">No retests due this week.</p> : null}
             </div>
           </section>
         </aside>
@@ -247,23 +320,82 @@ export function OperationalWorkspace({ module, source }: OperationalWorkspacePro
         <div className="panel-heading">
           <div>
             <h2>Awaiting Review</h2>
-            <p>8 inspections submitted, pending reviewer approval</p>
+            <p>{dashboard.awaitingReviewInspections} inspections submitted, pending reviewer approval</p>
           </div>
           <button className="secondary-button" type="button">Review All</button>
         </div>
         <div className="review-strip">
-          {awaitingReviewRows.map(([inspection, asset, status, note]) => (
-            <article key={inspection}>
-              <span className="asset-code">{inspection}</span>
-              <strong>{asset}</strong>
-              <span className={`mini-status ${status.toLowerCase()}`}>{status}</span>
-              <p>{note}</p>
+          {dashboard.awaitingReview.map((inspection) => (
+            <article key={inspection.inspectionId}>
+              <span className="asset-code">{inspection.inspectionId}</span>
+              <strong>{inspection.assetNumber}</strong>
+              <span className={`mini-status ${inspection.status.toLowerCase()}`}>{inspection.status}</span>
+              <p>{inspection.result ?? inspection.inspectionType}</p>
             </article>
           ))}
+          {dashboard.awaitingReview.length === 0 ? <p className="dashboard-empty">No inspections are awaiting review.</p> : null}
         </div>
       </section>
     </section>
   );
+}
+
+function DashboardPagination({
+  onPageChange,
+  onPageSizeChange,
+  page,
+  pageCount,
+  pageSize,
+  start,
+  total
+}: {
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
+  page: number;
+  pageCount: number;
+  pageSize: number;
+  start: number;
+  total: number;
+}) {
+  const end = Math.min(start + pageSize, total);
+  const hasItems = total > 0;
+
+  return (
+    <div className="dashboard-pagination">
+      <label className="dashboard-page-size">
+        <span>Rows per page</span>
+        <select aria-label="Rows per page" onChange={(event) => onPageSizeChange(Number(event.target.value))} value={pageSize}>
+          {overduePageSizes.map((size) => <option key={size} value={size}>{size}</option>)}
+        </select>
+      </label>
+      <span className="dashboard-page-status">Page {page} of {pageCount}</span>
+      <nav aria-label="Overdue retest pages" className="dashboard-page-controls">
+        <button aria-label="Previous page" disabled={page === 1 || !hasItems} onClick={() => onPageChange(page - 1)} type="button">
+          <ChevronLeft aria-hidden="true" size={16} />
+        </button>
+        {Array.from({ length: pageCount }, (_, index) => index + 1).map((number) => (
+          <button
+            aria-current={number === page ? "page" : undefined}
+            aria-label={`Page ${number}`}
+            className={number === page ? "is-active" : undefined}
+            key={number}
+            onClick={() => onPageChange(number)}
+            type="button"
+          >
+            {number}
+          </button>
+        ))}
+        <button aria-label="Next page" disabled={page === pageCount || !hasItems} onClick={() => onPageChange(page + 1)} type="button">
+          <ChevronRight aria-hidden="true" size={16} />
+        </button>
+      </nav>
+      <span className="dashboard-page-summary">{hasItems ? `${start + 1}-${end} of ${total} overdue` : "No overdue retests"}</span>
+    </div>
+  );
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat("en-AU").format(value);
 }
 
 function OperationsHeader({

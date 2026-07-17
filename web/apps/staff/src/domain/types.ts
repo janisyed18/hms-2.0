@@ -1,5 +1,46 @@
 export type DataSource = "api" | "mock";
 
+export interface DashboardRetestRecord {
+  assetId: string;
+  assetNumber: string;
+  customerName: string;
+  productName: string;
+  dueAt: string;
+  daysOverdue: number;
+  status: string;
+}
+
+export interface DashboardDueRecord {
+  assetId: string;
+  assetNumber: string;
+  customerName: string;
+  dueAt: string;
+}
+
+export interface DashboardReviewRecord {
+  inspectionId: string;
+  assetId: string;
+  assetNumber: string;
+  inspectionType: string;
+  status: string;
+  result: string | null;
+}
+
+export interface DashboardRecord {
+  totalAssets: number;
+  totalCustomers: number;
+  inServiceAssets: number;
+  dueSoonAssets: number;
+  overdueAssets: number;
+  awaitingReviewInspections: number;
+  overdueTotal: number;
+  overdueLimit: number;
+  overdueOffset: number;
+  overdueRetests: DashboardRetestRecord[];
+  dueThisWeek: DashboardDueRecord[];
+  awaitingReview: DashboardReviewRecord[];
+}
+
 export type StaffRole =
   | "SUPER_ADMIN"
   | "HMS_ADMIN"

@@ -1,6 +1,6 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, timedelta
 
 import httpx
 import pytest
@@ -192,6 +192,102 @@ async def test_reference_standards_endpoint_returns_enabled_standards_only(
             }
         ]
     }
+
+
+@pytest.mark.asyncio
+async def test_dashboard_returns_live_operational_data_and_respects_customer_scope(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        vopak_asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        orica_asset = await session.get(Asset, seeded_session["orica_asset_id"])
+        assert vopak_asset is not None
+        assert orica_asset is not None
+        session.add_all(
+            [
+                RetestSchedule(
+                    customer_id=seeded_session["orica_id"],
+                    asset=orica_asset,
+                    due_at=date.today() + timedelta(days=3),
+                    status=RetestScheduleStatus.DUE.value,
+                ),
+                Inspection(
+                    asset=vopak_asset,
+                    inspection_type=InspectionType.SERVICE.value,
+                    status=InspectionStatus.SUBMITTED.value,
+                    result="PASS",
+                    inspector_user_id="inspector-1",
+                ),
+            ]
+        )
+        await session.commit()
+
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    customer_user = Principal(
+        user_id="customer-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+
+    async with api_client(session_factory, admin) as client:
+        admin_response = await client.get("/api/v1/dashboard", params={"limit": 5})
+    async with api_client(session_factory, customer_user) as client:
+        scoped_response = await client.get("/api/v1/dashboard", params={"limit": 5})
+
+    assert admin_response.status_code == 200
+    assert admin_response.json() == {
+        "total_assets": 2,
+        "total_customers": 2,
+        "in_service_assets": 1,
+        "due_soon_assets": 1,
+        "overdue_assets": 1,
+        "awaiting_review_inspections": 1,
+        "overdue_total": 1,
+        "overdue_limit": 5,
+        "overdue_offset": 0,
+        "overdue_retests": [
+            {
+                "asset_id": seeded_session["vopak_asset_id"],
+                "asset_number": "997950",
+                "customer_name": "Vopak",
+                "product_name": "FUELFLEX GREEN",
+                "due_at": "2023-11-02",
+                "days_overdue": (date.today() - date(2023, 11, 2)).days,
+                "status": "OVERDUE",
+            }
+        ],
+        "due_this_week": [
+            {
+                "asset_id": seeded_session["orica_asset_id"],
+                "asset_number": "ORIC-100",
+                "customer_name": "Orica",
+                "due_at": (date.today() + timedelta(days=3)).isoformat(),
+            }
+        ],
+        "awaiting_review": [
+            {
+                "inspection_id": admin_response.json()["awaiting_review"][0][
+                    "inspection_id"
+                ],
+                "asset_id": seeded_session["vopak_asset_id"],
+                "asset_number": "997950",
+                "inspection_type": "SERVICE",
+                "status": "SUBMITTED",
+                "result": "PASS",
+            }
+        ],
+    }
+    assert scoped_response.status_code == 200
+    assert scoped_response.json()["total_assets"] == 1
+    assert scoped_response.json()["total_customers"] == 1
+    assert scoped_response.json()["due_soon_assets"] == 0
+    assert scoped_response.json()["due_this_week"] == []
+    assert scoped_response.json()["overdue_retests"][0]["asset_number"] == "997950"
 
 
 @pytest.mark.asyncio

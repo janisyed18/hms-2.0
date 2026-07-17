@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from sqlalchemy import false, func, or_, select
+from sqlalchemy import desc, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import Select
@@ -32,6 +32,10 @@ from hms_backend.app.api.schemas import (
     CustomerRead,
     CustomerSummary,
     CustomerUpdate,
+    DashboardDueRead,
+    DashboardRead,
+    DashboardRetestRead,
+    DashboardReviewRead,
     InspectionAssetSummary,
     InspectionCreate,
     InspectionListResponse,
@@ -102,7 +106,10 @@ from hms_backend.app.modules.notifications.enums import NotificationCategory
 from hms_backend.app.modules.notifications.outbox import emit_event
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Standard
-from hms_backend.app.modules.scheduling.models import RetestSchedule
+from hms_backend.app.modules.scheduling.models import (
+    RetestSchedule,
+    RetestScheduleStatus,
+)
 
 router = APIRouter()
 
@@ -820,6 +827,114 @@ async def create_asset(
     await session.commit()
     loaded = await _get_visible_asset_or_404(session, asset.id, principal)
     return _asset_read(loaded)
+
+
+@router.get("/dashboard", response_model=DashboardRead)
+async def get_dashboard(
+    session: SessionDep,
+    principal: PrincipalDep,
+    limit: LimitParam = 5,
+    offset: OffsetParam = 0,
+) -> DashboardRead:
+    _require_asset_read(principal)
+    today = datetime.now(UTC).date()
+    week_end = today + timedelta(days=7)
+
+    assets = _apply_asset_scope(
+        select(Asset).where(Asset.deleted_at.is_(None)), principal
+    )
+    schedules = _apply_asset_scope(_retest_schedule_statement(), principal)
+    active_schedules = schedules.where(
+        RetestSchedule.status != RetestScheduleStatus.SUSPENDED.value
+    )
+    overdue_schedules = active_schedules.where(RetestSchedule.due_at < today)
+    due_soon_schedules = active_schedules.where(
+        RetestSchedule.due_at.between(today, week_end)
+    )
+    reviews = _apply_asset_scope(_inspection_statement(), principal).where(
+        Inspection.status == InspectionStatus.SUBMITTED.value
+    )
+
+    total_assets = await _count(session, assets)
+    total_customers = await _count(
+        session,
+        _apply_customer_scope(
+            select(Customer).where(Customer.deleted_at.is_(None)), principal
+        ),
+    )
+    in_service_assets = await _count(
+        session,
+        assets.where(Asset.lifecycle_status == "IN_SERVICE"),
+    )
+    overdue_total = await _count(session, overdue_schedules)
+    due_soon_assets = await _count(session, due_soon_schedules)
+    awaiting_review_inspections = await _count(session, reviews)
+
+    overdue_items = (
+        await session.scalars(
+            overdue_schedules.order_by(RetestSchedule.due_at, Asset.asset_number)
+            .offset(offset)
+            .limit(limit)
+        )
+    ).all()
+    due_items = (
+        await session.scalars(
+            due_soon_schedules.order_by(
+                RetestSchedule.due_at, Asset.asset_number
+            ).limit(4)
+        )
+    ).all()
+    review_items = (
+        await session.scalars(
+            reviews.order_by(
+                desc(Inspection.submitted_at), desc(Inspection.created_at)
+            ).limit(3)
+        )
+    ).all()
+
+    return DashboardRead(
+        total_assets=total_assets,
+        total_customers=total_customers,
+        in_service_assets=in_service_assets,
+        due_soon_assets=due_soon_assets,
+        overdue_assets=overdue_total,
+        awaiting_review_inspections=awaiting_review_inspections,
+        overdue_total=overdue_total,
+        overdue_limit=limit,
+        overdue_offset=offset,
+        overdue_retests=[
+            DashboardRetestRead(
+                asset_id=schedule.asset.id,
+                asset_number=schedule.asset.asset_number,
+                customer_name=schedule.asset.customer.name,
+                product_name=schedule.asset.product.name,
+                due_at=schedule.due_at,
+                days_overdue=(today - schedule.due_at).days,
+                status="ESCALATED" if schedule.escalated_at else "OVERDUE",
+            )
+            for schedule in overdue_items
+        ],
+        due_this_week=[
+            DashboardDueRead(
+                asset_id=schedule.asset.id,
+                asset_number=schedule.asset.asset_number,
+                customer_name=schedule.asset.customer.name,
+                due_at=schedule.due_at,
+            )
+            for schedule in due_items
+        ],
+        awaiting_review=[
+            DashboardReviewRead(
+                inspection_id=inspection.id,
+                asset_id=inspection.asset.id,
+                asset_number=inspection.asset.asset_number,
+                inspection_type=inspection.inspection_type,
+                status=inspection.status,
+                result=inspection.result,
+            )
+            for inspection in review_items
+        ],
+    )
 
 
 @router.get("/retest-schedules", response_model=RetestScheduleListResponse)

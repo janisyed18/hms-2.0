@@ -41,6 +41,7 @@ import type {
   CustomerListResult,
   CustomerLocation,
   CustomerRecord,
+  DashboardRecord,
   DeviceListResult,
   DeviceRecord,
   DeviceUpdateValues,
@@ -103,6 +104,47 @@ interface ApiCustomerList {
   limit: number;
   offset: number;
   items: ApiCustomer[];
+}
+
+interface ApiDashboardRetest {
+  asset_id: string;
+  asset_number: string;
+  customer_name: string;
+  product_name: string;
+  due_at: string;
+  days_overdue: number;
+  status: string;
+}
+
+interface ApiDashboardDue {
+  asset_id: string;
+  asset_number: string;
+  customer_name: string;
+  due_at: string;
+}
+
+interface ApiDashboardReview {
+  inspection_id: string;
+  asset_id: string;
+  asset_number: string;
+  inspection_type: string;
+  status: string;
+  result: string | null;
+}
+
+interface ApiDashboard {
+  total_assets: number;
+  total_customers: number;
+  in_service_assets: number;
+  due_soon_assets: number;
+  overdue_assets: number;
+  awaiting_review_inspections: number;
+  overdue_total: number;
+  overdue_limit: number;
+  overdue_offset: number;
+  overdue_retests: ApiDashboardRetest[];
+  due_this_week: ApiDashboardDue[];
+  awaiting_review: ApiDashboardReview[];
 }
 
 interface ApiReferenceStandard {
@@ -540,6 +582,43 @@ function toContact(contact: ApiContact): CustomerContact {
     phone: contact.phone,
     role: contact.role,
     receivesRetestReminders: contact.receives_retest_reminders
+  };
+}
+
+function toDashboard(dashboard: ApiDashboard): DashboardRecord {
+  return {
+    totalAssets: dashboard.total_assets,
+    totalCustomers: dashboard.total_customers,
+    inServiceAssets: dashboard.in_service_assets,
+    dueSoonAssets: dashboard.due_soon_assets,
+    overdueAssets: dashboard.overdue_assets,
+    awaitingReviewInspections: dashboard.awaiting_review_inspections,
+    overdueTotal: dashboard.overdue_total,
+    overdueLimit: dashboard.overdue_limit,
+    overdueOffset: dashboard.overdue_offset,
+    overdueRetests: dashboard.overdue_retests.map((retest) => ({
+      assetId: retest.asset_id,
+      assetNumber: retest.asset_number,
+      customerName: retest.customer_name,
+      productName: retest.product_name,
+      dueAt: retest.due_at,
+      daysOverdue: retest.days_overdue,
+      status: retest.status
+    })),
+    dueThisWeek: dashboard.due_this_week.map((item) => ({
+      assetId: item.asset_id,
+      assetNumber: item.asset_number,
+      customerName: item.customer_name,
+      dueAt: item.due_at
+    })),
+    awaitingReview: dashboard.awaiting_review.map((inspection) => ({
+      inspectionId: inspection.inspection_id,
+      assetId: inspection.asset_id,
+      assetNumber: inspection.asset_number,
+      inspectionType: inspection.inspection_type,
+      status: inspection.status,
+      result: inspection.result
+    }))
   };
 }
 
@@ -1082,6 +1161,11 @@ export function createHmsClient(options: HmsClientOptions = {}) {
     async getAuthSession(): Promise<StaffSession> {
       const response = await request<ApiAuthSession>("/api/v1/auth/me");
       return toStaffSession(response.data);
+    },
+
+    async getDashboard(limit = 5, offset = 0): Promise<DashboardRecord> {
+      const response = await request<ApiDashboard>("/api/v1/dashboard", {}, { limit, offset });
+      return toDashboard(response.data);
     },
 
     async listCustomers(

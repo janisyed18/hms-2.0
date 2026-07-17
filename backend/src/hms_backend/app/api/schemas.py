@@ -323,6 +323,47 @@ class RetestScheduleListResponse(BaseModel):
     items: list[RetestScheduleRead]
 
 
+class DashboardRetestRead(BaseModel):
+    asset_id: str
+    asset_number: str
+    customer_name: str
+    product_name: str
+    due_at: date
+    days_overdue: int
+    status: str
+
+
+class DashboardDueRead(BaseModel):
+    asset_id: str
+    asset_number: str
+    customer_name: str
+    due_at: date
+
+
+class DashboardReviewRead(BaseModel):
+    inspection_id: str
+    asset_id: str
+    asset_number: str
+    inspection_type: str
+    status: str
+    result: str | None
+
+
+class DashboardRead(BaseModel):
+    total_assets: int
+    total_customers: int
+    in_service_assets: int
+    due_soon_assets: int
+    overdue_assets: int
+    awaiting_review_inspections: int
+    overdue_total: int
+    overdue_limit: int
+    overdue_offset: int
+    overdue_retests: list[DashboardRetestRead]
+    due_this_week: list[DashboardDueRead]
+    awaiting_review: list[DashboardReviewRead]
+
+
 class InspectionRead(BaseModel):
     id: str
     asset_id: str

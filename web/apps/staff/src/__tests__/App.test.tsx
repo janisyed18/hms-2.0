@@ -308,6 +308,41 @@ function noContent() {
   };
 }
 
+const dashboardRetests = Array.from({ length: 23 }, (_, index) => ({
+  asset_id: `asset-dashboard-${index + 1}`,
+  asset_number: index === 0 ? "HOS-2024-0891" : index === 5 ? "HOS-2026-0044" : `HOS-2026-${String(index + 1).padStart(4, "0")}`,
+  customer_name: `Customer ${index + 1}`,
+  product_name: "Composite WP20",
+  due_at: "2026-06-01",
+  days_overdue: 23 - index,
+  status: "OVERDUE"
+}));
+
+function dashboardFetch() {
+  return vi.fn(async (url: string | URL | Request) => {
+    const requestUrl = new URL(String(url), "http://test");
+    if (requestUrl.pathname !== "/api/v1/dashboard") {
+      throw new Error(`Unhandled URL: ${requestUrl.pathname}`);
+    }
+    const limit = Number(requestUrl.searchParams.get("limit") ?? "5");
+    const offset = Number(requestUrl.searchParams.get("offset") ?? "0");
+    return okJson({
+      total_assets: 1247,
+      total_customers: 34,
+      in_service_assets: 1089,
+      due_soon_assets: 135,
+      overdue_assets: 23,
+      awaiting_review_inspections: 8,
+      overdue_total: dashboardRetests.length,
+      overdue_limit: limit,
+      overdue_offset: offset,
+      overdue_retests: dashboardRetests.slice(offset, offset + limit),
+      due_this_week: [],
+      awaiting_review: []
+    });
+  });
+}
+
 function deferredJson() {
   let resolve!: (value: ReturnType<typeof okJson>) => void;
   const promise = new Promise<ReturnType<typeof okJson>>((done) => {
@@ -321,6 +356,9 @@ function routeFetch() {
     const path = String(url);
     if (init?.method === "DELETE") {
       return noContent();
+    }
+    if (path.startsWith("/api/v1/dashboard")) {
+      return dashboardFetch()(url);
     }
     if (path.startsWith("/api/v1/customers")) {
       return okJson({
@@ -554,7 +592,7 @@ describe("App", () => {
   });
 
   it("renders the operations dashboard first and keeps the customer workspace reachable", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    vi.stubGlobal("fetch", dashboardFetch());
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);
@@ -589,7 +627,7 @@ describe("App", () => {
   });
 
   it("keeps the command centre hierarchy and dashboard order explicit", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    vi.stubGlobal("fetch", dashboardFetch());
 
     render(<App initialSession={adminSession} />);
 
@@ -605,6 +643,40 @@ describe("App", () => {
         .map((label) => label.textContent)
     ).toEqual(["Total Assets", "In Service", "Overdue", "Awaiting Review"]);
     expect(within(dashboard).queryByText("Pending Review")).not.toBeInTheDocument();
+  });
+
+  it("paginates overdue retests and resets to the first page when the page size changes", async () => {
+    vi.stubGlobal("fetch", dashboardFetch());
+    const user = userEvent.setup();
+
+    render(<App initialSession={adminSession} />);
+
+    const overdueTable = await screen.findByRole("table", { name: "Overdue retests" });
+    expect(within(overdueTable).getByText("HOS-2024-0891")).toBeVisible();
+    expect(screen.getByText("Page 1 of 5")).toBeVisible();
+    expect(screen.getByText("1-5 of 23 overdue")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+
+    await waitFor(() => {
+      const updatedTable = screen.getByRole("table", { name: "Overdue retests" });
+      expect(within(updatedTable).getByText("HOS-2026-0044")).toBeVisible();
+      expect(within(updatedTable).queryByText("HOS-2024-0891")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("Page 2 of 5")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Previous page" }));
+    expect(await screen.findByText("Page 1 of 5")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Page 2" }));
+    await user.selectOptions(screen.getByLabelText("Rows per page"), "10");
+
+    await waitFor(() => {
+      expect(within(screen.getByRole("table", { name: "Overdue retests" })).getByText("HOS-2024-0891")).toBeVisible();
+    });
+    expect(screen.getByText("Page 1 of 3")).toBeVisible();
+    expect(screen.getByText("1-10 of 23 overdue")).toBeVisible();
   });
 
   it("hides admin-only navigation for inspector sessions", async () => {
@@ -1257,14 +1329,14 @@ describe("App", () => {
   });
 
   it("opens dashboard, sync queue, and audit as real shell workspaces", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    vi.stubGlobal("fetch", dashboardFetch());
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Dashboard" }));
     expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
-    expect(screen.getByText("Mock data")).toBeVisible();
+    expect(screen.getByText("Backend data")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: /Sync Queue/i }));
     expect(await screen.findByRole("heading", { name: "Sync Queue" })).toBeVisible();
