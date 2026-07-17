@@ -290,9 +290,44 @@ async def my_notifications(
     base = select(Notification).where(
         Notification.recipient_type == _USER,
         Notification.recipient_id == user.id,
+        Notification.channel == NotificationChannel.IN_APP.value,
         Notification.deleted_at.is_(None),
     )
-    return await _paginate(session, base, limit, offset)
+    unread_total = (
+        await session.scalar(
+            select(func.count()).select_from(
+                base.where(Notification.read_at.is_(None)).subquery()
+            )
+        )
+    ) or 0
+    return await _paginate(session, base, limit, offset, unread_total=unread_total)
+
+
+@router.post("/notifications/{notification_id}/read", response_model=NotificationRead)
+async def mark_notification_read(
+    notification_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> NotificationRead:
+    user = await _current_user(session, principal)
+    notification = await session.scalar(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.recipient_type == _USER,
+            Notification.recipient_id == user.id,
+            Notification.channel == NotificationChannel.IN_APP.value,
+            Notification.deleted_at.is_(None),
+        )
+    )
+    if notification is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notification not found",
+        )
+    if notification.read_at is None:
+        notification.read_at = datetime.now(UTC)
+        await session.commit()
+    return _read(notification)
 
 
 @router.get("/admin/notifications", response_model=NotificationListResponse)
@@ -330,6 +365,8 @@ async def _paginate(
     base: Select[tuple[Notification]],
     limit: int,
     offset: int,
+    *,
+    unread_total: int = 0,
 ) -> NotificationListResponse:
     total = (
         await session.scalar(
@@ -343,6 +380,7 @@ async def _paginate(
     ).all()
     return NotificationListResponse(
         total=total,
+        unread_total=unread_total,
         limit=limit,
         offset=offset,
         items=[_read(n) for n in rows],
@@ -409,4 +447,5 @@ def _read(n: Notification) -> NotificationRead:
         asset_id=n.asset_id,
         created_at=n.created_at,
         sent_at=n.sent_at,
+        read_at=n.read_at,
     )

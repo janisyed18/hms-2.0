@@ -1105,6 +1105,67 @@ describe("hmsClient", () => {
     });
   });
 
+  it("loads the signed-in user's in-app notifications and marks a record read", async () => {
+    const notification = {
+      id: "notification-1",
+      event_ref: "inspection:INS-100",
+      category: "INSPECTION_SUBMITTED",
+      tier: "IMPORTANT",
+      channel: "IN_APP",
+      recipient_type: "USER",
+      recipient_id: "staff-ui-dev",
+      recipient_address: null,
+      subject: "Inspection awaiting review",
+      body: "Inspection INS-100 is ready for review.",
+      status: "SENT",
+      attempts: 1,
+      provider_message_id: null,
+      error: null,
+      customer_id: "customer-1",
+      asset_id: "asset-1",
+      created_at: "2026-07-17T09:00:00Z",
+      sent_at: "2026-07-17T09:00:00Z",
+      read_at: null
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okJson({
+          total: 1,
+          unread_total: 1,
+          limit: 12,
+          offset: 0,
+          items: [notification]
+        })
+      )
+      .mockResolvedValueOnce(
+        okJson({ ...notification, read_at: "2026-07-17T09:01:00Z" })
+      );
+
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const feed = await client.listNotifications();
+    const readNotification = await client.markNotificationRead("notification-1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/notifications/me?limit=12&offset=0",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/notifications/notification-1/read",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(feed).toMatchObject({ total: 1, unreadTotal: 1 });
+    expect(feed.items[0]).toMatchObject({
+      id: "notification-1",
+      subject: "Inspection awaiting review",
+      assetId: "asset-1",
+      readAt: null
+    });
+    expect(readNotification.readAt).toBe("2026-07-17T09:01:00Z");
+  });
+
   it("maps secure admin-user lifecycle commands", async () => {
     const disabled = { ...apiAdminUser, account_status: "DISABLED" };
     const locked = {

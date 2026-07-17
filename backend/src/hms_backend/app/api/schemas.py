@@ -471,10 +471,12 @@ class NotificationRead(BaseModel):
     asset_id: str | None
     created_at: datetime
     sent_at: datetime | None
+    read_at: datetime | None
 
 
 class NotificationListResponse(BaseModel):
     total: int
+    unread_total: int = 0
     limit: int
     offset: int
     items: list[NotificationRead]

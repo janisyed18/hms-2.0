@@ -343,6 +343,54 @@ function dashboardFetch() {
   });
 }
 
+function notificationFeedFetch() {
+  const notification = {
+    id: "notification-1",
+    event_ref: "inspection:INS-100",
+    category: "INSPECTION_SUBMITTED",
+    tier: "IMPORTANT",
+    channel: "IN_APP",
+    recipient_type: "USER",
+    recipient_id: "admin-1",
+    recipient_address: null,
+    subject: "Inspection awaiting review",
+    body: "Inspection INS-100 is ready for review.",
+    status: "SENT",
+    attempts: 1,
+    provider_message_id: null,
+    error: null,
+    customer_id: "cust-api-1",
+    asset_id: "asset-api-1",
+    created_at: "2026-07-17T09:00:00Z",
+    sent_at: "2026-07-17T09:00:00Z",
+    read_at: null as string | null
+  };
+
+  return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const requestUrl = new URL(String(url), "http://test");
+    if (requestUrl.pathname === "/api/v1/dashboard") {
+      return dashboardFetch()(url);
+    }
+    if (requestUrl.pathname === "/api/v1/notifications/me") {
+      return okJson({
+        total: 1,
+        unread_total: notification.read_at ? 0 : 1,
+        limit: 12,
+        offset: 0,
+        items: [notification]
+      });
+    }
+    if (
+      requestUrl.pathname === "/api/v1/notifications/notification-1/read" &&
+      init?.method === "POST"
+    ) {
+      notification.read_at = "2026-07-17T09:01:00Z";
+      return okJson(notification);
+    }
+    throw new Error(`Unhandled URL: ${requestUrl.pathname}`);
+  });
+}
+
 function deferredJson() {
   let resolve!: (value: ReturnType<typeof okJson>) => void;
   const promise = new Promise<ReturnType<typeof okJson>>((done) => {
@@ -735,11 +783,39 @@ describe("App", () => {
 
     await user.click(await screen.findByRole("button", { name: "Notifications" }));
     const dialog = screen.getByRole("dialog", { name: "Notifications" });
-    expect(dialog).toHaveTextContent("Inspection approval");
+    expect(dialog).toHaveTextContent("Notifications could not be loaded");
 
     await user.click(within(dialog).getByRole("button", { name: "Close notifications" }));
 
     expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
+  });
+
+  it("marks a selected notification read before opening its linked asset workspace", async () => {
+    const fetchMock = notificationFeedFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App initialSession={adminSession} />);
+
+    const notificationButton = await screen.findByRole("button", { name: "Notifications" });
+    await waitFor(() => expect(notificationButton).toHaveTextContent("1"));
+    await user.click(notificationButton);
+    const dialog = screen.getByRole("dialog", { name: "Notifications" });
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Open unread notification Inspection awaiting review"
+      })
+    );
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/v1/notifications/notification-1/read",
+        expect.objectContaining({ method: "POST" })
+      )
+    );
+    expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
+    expect(notificationButton).not.toHaveTextContent("1");
   });
 
   it("opens and closes selected record details across core modules", async () => {
@@ -1529,7 +1605,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Notifications" }));
     expect(screen.getByRole("dialog", { name: "Notifications" })).toHaveTextContent(
-      "Inspection approval"
+      "Notifications could not be loaded"
     );
 
     await user.click(screen.getByRole("button", { name: "Help" }));

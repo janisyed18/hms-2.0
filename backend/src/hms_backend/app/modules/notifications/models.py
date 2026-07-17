@@ -93,6 +93,9 @@ class Notification(SyncableMixin, Base):
     failed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    read_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Compliance linkage — retrievable against the customer/asset (N-09).
     customer_id: Mapped[str | None] = mapped_column(

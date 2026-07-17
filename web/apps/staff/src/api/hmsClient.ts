@@ -51,6 +51,8 @@ import type {
   InspectionStatus,
   InspectionType,
   InspectionUpdateValues,
+  NotificationFeedResult,
+  NotificationRecord,
   ProductListResult,
   ProductFormValues,
   ProductRecord,
@@ -145,6 +147,26 @@ interface ApiDashboard {
   overdue_retests: ApiDashboardRetest[];
   due_this_week: ApiDashboardDue[];
   awaiting_review: ApiDashboardReview[];
+}
+
+interface ApiNotification {
+  id: string;
+  category: string;
+  tier: string;
+  subject: string | null;
+  body: string;
+  customer_id: string | null;
+  asset_id: string | null;
+  created_at: string;
+  read_at: string | null;
+}
+
+interface ApiNotificationList {
+  total: number;
+  unread_total: number;
+  limit: number;
+  offset: number;
+  items: ApiNotification[];
 }
 
 interface ApiReferenceStandard {
@@ -619,6 +641,20 @@ function toDashboard(dashboard: ApiDashboard): DashboardRecord {
       status: inspection.status,
       result: inspection.result
     }))
+  };
+}
+
+function toNotification(notification: ApiNotification): NotificationRecord {
+  return {
+    id: notification.id,
+    category: notification.category,
+    tier: notification.tier,
+    subject: notification.subject,
+    body: notification.body,
+    customerId: notification.customer_id,
+    assetId: notification.asset_id,
+    createdAt: notification.created_at,
+    readAt: notification.read_at
   };
 }
 
@@ -1166,6 +1202,26 @@ export function createHmsClient(options: HmsClientOptions = {}) {
     async getDashboard(limit = 5, offset = 0): Promise<DashboardRecord> {
       const response = await request<ApiDashboard>("/api/v1/dashboard", {}, { limit, offset });
       return toDashboard(response.data);
+    },
+
+    async listNotifications(): Promise<NotificationFeedResult> {
+      const response = await request<ApiNotificationList>("/api/v1/notifications/me", {}, {
+        limit: 12,
+        offset: 0
+      });
+      return {
+        total: response.data.total,
+        unreadTotal: response.data.unread_total,
+        items: response.data.items.map(toNotification)
+      };
+    },
+
+    async markNotificationRead(id: string): Promise<NotificationRecord> {
+      const response = await request<ApiNotification>(
+        `/api/v1/notifications/${encodeURIComponent(id)}/read`,
+        { method: "POST" }
+      );
+      return toNotification(response.data);
     },
 
     async listCustomers(

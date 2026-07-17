@@ -41,6 +41,24 @@ export interface DashboardRecord {
   awaitingReview: DashboardReviewRecord[];
 }
 
+export interface NotificationRecord {
+  id: string;
+  category: string;
+  tier: string;
+  subject: string | null;
+  body: string;
+  customerId: string | null;
+  assetId: string | null;
+  createdAt: string;
+  readAt: string | null;
+}
+
+export interface NotificationFeedResult {
+  total: number;
+  unreadTotal: number;
+  items: NotificationRecord[];
+}
+
 export type StaffRole =
   | "SUPER_ADMIN"
   | "HMS_ADMIN"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from collections.abc import AsyncGenerator, Generator
 
+import fakeredis.aioredis
 import httpx
 import pytest
 import pytest_asyncio
@@ -54,7 +55,7 @@ def config(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
         "auth_password_reset_encryption_key",
         base64.urlsafe_b64encode(b"a" * 32).decode(),
     )
-    set_redis_client(None)
+    set_redis_client(fakeredis.aioredis.FakeRedis(decode_responses=True))
     yield
     set_redis_client(None)
 
