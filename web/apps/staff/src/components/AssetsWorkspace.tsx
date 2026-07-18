@@ -32,18 +32,18 @@ function statusClass(status: string) {
   return "mini-status current";
 }
 
-function boreLabel(_asset: AssetRecord) {
-  const sizes = [assetEndSize(_asset.aEnd), assetEndSize(_asset.bEnd)].filter(Boolean);
+function boreLabel(asset: AssetRecord) {
+  const sizes = [assetEndSize(asset.aEnd), assetEndSize(asset.bEnd)].filter(Boolean);
   const uniqueSizes = Array.from(new Set(sizes));
   return uniqueSizes.length === 1 ? uniqueSizes[0] : uniqueSizes.join(" / ") || "Not recorded";
 }
 
 function assetEndSize(end: AssetRecord["aEnd"]) {
-  return end.size.trim();
+  return end.nominalBore?.name ?? end.size.trim();
 }
 
 function assetEndLabel(end: AssetRecord["aEnd"]) {
-  const parts = [end.fitting.trim(), end.size.trim()].filter(Boolean);
+  const parts = [end.coupling?.name ?? end.fitting.trim(), end.attachMethod?.name].filter(Boolean);
   return parts.join(" ") || "Not recorded";
 }
 
@@ -72,11 +72,11 @@ export function AssetsWorkspace({
 
   const assetColumns: ModuleColumn<AssetRecord>[] = [
     {
-      header: "Asset ID",
+      header: "Asset",
       render: (asset) => (
         <span className="asset-id-cell">
-          <strong>{asset.assetNumber}</strong>
-          {asset.notes ? <small>{asset.notes}</small> : null}
+          <strong>{asset.assetName || asset.assetNumber}</strong>
+          {asset.customerSerialNo ? <small>{asset.customerSerialNo}</small> : null}
         </span>
       )
     },
@@ -158,7 +158,7 @@ export function AssetsWorkspace({
         countLabel={workspace.isLoading ? "Loading assets" : `${workspace.assets.length} assets`}
         emptyLabel="No assets match the current filters."
         exportRows={(asset) => [
-          asset.assetNumber,
+          asset.assetName || asset.assetNumber,
           asset.customer.name,
           asset.product.name,
           boreLabel(asset),
@@ -254,6 +254,7 @@ export function AssetsWorkspace({
       {canWrite ? (
         <AssetForm
           asset={workspace.editingAsset}
+          configurationOptions={workspace.configurationOptions}
           customerOptions={workspace.customerOptions}
           locationOptions={workspace.locationOptions}
           productOptions={workspace.productOptions}

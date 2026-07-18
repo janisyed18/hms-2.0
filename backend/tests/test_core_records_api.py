@@ -33,7 +33,14 @@ from hms_backend.app.modules.inspections.models import (
 )
 from hms_backend.app.modules.notifications.models import OutboxEvent
 from hms_backend.app.modules.products.models import Product
-from hms_backend.app.modules.reference.models import Standard
+from hms_backend.app.modules.reference.models import (
+    AttachMethod,
+    Coupling,
+    CouplingAddOn,
+    Material,
+    NominalBore,
+    Standard,
+)
 from hms_backend.app.modules.scheduling.models import (
     RetestSchedule,
     RetestScheduleStatus,
@@ -58,6 +65,11 @@ async def seeded_session(
     async with session_factory() as session:
         standard = Standard(code="AS2683", name="AS2683")
         hidden_standard = Standard(code="DISABLED", name="Disabled", enabled=False)
+        material = Material(code="COMPOSITE", name="Composite")
+        coupling = Coupling(code="CAMLOCK", name="Camlock")
+        coupling_add_on = CouplingAddOn(code="SAFETY_LOCK", name="Safety lock")
+        attach_method = AttachMethod(code="CRIMP", name="Crimp")
+        nominal_bore = NominalBore(code="2IN", label="2 inch")
         product = Product(
             category="Composite",
             sub_category="Petrol & Oil",
@@ -122,6 +134,11 @@ async def seeded_session(
             [
                 standard,
                 hidden_standard,
+                material,
+                coupling,
+                coupling_add_on,
+                attach_method,
+                nominal_bore,
                 product,
                 other_product,
                 contact,
@@ -141,6 +158,11 @@ async def seeded_session(
             "vopak_contact_id": contact.id,
             "vopak_asset_id": vopak_asset.id,
             "orica_asset_id": orica_asset.id,
+            "material_id": material.id,
+            "coupling_id": coupling.id,
+            "coupling_add_on_id": coupling_add_on.id,
+            "attach_method_id": attach_method.id,
+            "nominal_bore_id": nominal_bore.id,
         }
 
 
@@ -193,6 +215,66 @@ async def test_reference_standards_endpoint_returns_enabled_standards_only(
             }
         ]
     }
+
+
+@pytest.mark.asyncio
+async def test_asset_profile_uses_customer_location_and_reference_configuration(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        lookups = await client.get("/api/v1/reference/asset-configuration")
+        response = await client.post(
+            "/api/v1/assets",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "product_id": seeded_session["product_id"],
+                "asset_name": "Transfer Hose A",
+                "serial_number": "SER-PROFILE-100",
+                "description": "Install on the Bay 3 manifold.",
+                "purchase_order_number": "PO-100",
+                "installation_date": "2026-01-15",
+                "grave_date": "2031-01-15",
+                "next_inspection_date": "2026-07-15",
+                "length_m": "6.100",
+                "material_id": seeded_session["material_id"],
+                "nominal_bore_id": seeded_session["nominal_bore_id"],
+                "a_end": {
+                    "coupling_id": seeded_session["coupling_id"],
+                    "coupling_add_on_id": seeded_session["coupling_add_on_id"],
+                    "attach_method_id": seeded_session["attach_method_id"],
+                },
+                "b_end": {
+                    "coupling_id": seeded_session["coupling_id"],
+                    "coupling_add_on_id": seeded_session["coupling_add_on_id"],
+                    "attach_method_id": seeded_session["attach_method_id"],
+                },
+            },
+        )
+
+    assert lookups.status_code == 200
+    assert lookups.json()["materials"] == [
+        {"id": seeded_session["material_id"], "code": "COMPOSITE", "name": "Composite"}
+    ]
+    assert response.status_code == 201
+    body = response.json()
+    assert body["asset_name"] == "Transfer Hose A"
+    assert body["customer_serial_no"] == "SER-PROFILE-100"
+    assert body["description"] == "Install on the Bay 3 manifold."
+    assert body["purchase_order_number"] == "PO-100"
+    assert body["installation_date"] == "2026-01-15"
+    assert body["grave_date"] == "2031-01-15"
+    assert body["next_retest_due_at"] == "2026-07-15"
+    assert body["a_end"]["material"]["name"] == "Composite"
+    assert body["a_end"]["nominal_bore"]["name"] == "2 inch"
+    assert body["b_end"]["coupling"]["name"] == "Camlock"
 
 
 @pytest.mark.asyncio
@@ -1739,8 +1821,10 @@ async def test_create_asset_with_retest_schedule_writes_audit_and_sync(
     assert body["location"]["address_1"] == "1 Friendship Road"
     assert body["location"]["address_2"] == "Bay 3"
     assert body["retest_schedule"]["status"] == "DUE"
-    assert body["a_end"] == {"fitting": "Camlock M", "size": "2 inch"}
-    assert body["b_end"] == {"fitting": "Flange W", "size": "2 inch"}
+    assert body["a_end"]["fitting"] == "Camlock M"
+    assert body["a_end"]["size"] == "2 inch"
+    assert body["b_end"]["fitting"] == "Flange W"
+    assert body["b_end"]["size"] == "2 inch"
 
     async with session_factory() as session:
         asset = (

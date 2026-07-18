@@ -309,14 +309,19 @@ export interface AssetRetestSummary {
 export interface AssetRecord {
   id: string;
   assetNumber: string;
+  assetName: string | null;
   customerSerialNo: string | null;
+  purchaseOrderNumber: string | null;
   tag: string | null;
   lifecycleStatus: string;
   manufactureDate: string | null;
+  installationDate: string | null;
+  graveDate: string | null;
   nextRetestDueAt: string | null;
   condemnedAt: string | null;
   lengthM: string | null;
   notes: string | null;
+  description: string | null;
   customer: RecordSummary;
   product: AssetProductSummary;
   location: AssetLocationSummary | null;
@@ -336,17 +341,35 @@ export interface AssetListResult {
 export interface AssetEndValues {
   fitting: string;
   size: string;
+  nominalBore: RecordSummary | null;
+  material: RecordSummary | null;
+  coupling: RecordSummary | null;
+  couplingAddOn: RecordSummary | null;
+  attachMethod: RecordSummary | null;
+}
+
+export interface AssetConfigurationOptions {
+  materials: RecordSummary[];
+  couplings: RecordSummary[];
+  couplingAddOns: RecordSummary[];
+  attachMethods: RecordSummary[];
+  nominalBores: RecordSummary[];
 }
 
 export interface AssetFormValues {
-  assetNumber: string;
   customerId: string;
   locationId: string | null;
-  customerSerialNo: string | null;
   productId: string;
-  lifecycleStatus: string;
-  nextRetestDueAt: string | null;
-  notes: string | null;
+  assetName: string;
+  serialNumber: string;
+  description: string;
+  purchaseOrderNumber: string;
+  installationDate: string | null;
+  graveDate: string | null;
+  nextInspectionDate: string | null;
+  lengthM: string | null;
+  materialId: string | null;
+  nominalBoreId: string | null;
   aEnd: AssetEndValues;
   bEnd: AssetEndValues;
 }

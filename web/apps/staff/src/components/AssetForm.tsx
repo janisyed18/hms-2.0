@@ -3,16 +3,18 @@ import { X } from "lucide-react";
 
 import { AssetEndEditor } from "./AssetEndEditor";
 import type {
+  AssetConfigurationOptions,
   AssetEndValues,
   AssetFormValues,
-  AssetRecord,
   AssetProductSummary,
+  AssetRecord,
   CustomerLocation,
   RecordSummary
 } from "../domain/types";
 
 interface AssetFormProps {
   asset: AssetRecord | null;
+  configurationOptions: AssetConfigurationOptions;
   customerOptions: RecordSummary[];
   locationOptions: Array<{
     customerId: string;
@@ -26,11 +28,17 @@ interface AssetFormProps {
 
 const blankEnd: AssetEndValues = {
   fitting: "",
-  size: ""
+  size: "",
+  nominalBore: null,
+  material: null,
+  coupling: null,
+  couplingAddOn: null,
+  attachMethod: null
 };
 
 export function AssetForm({
   asset,
+  configurationOptions,
   customerOptions,
   locationOptions,
   productOptions,
@@ -38,14 +46,19 @@ export function AssetForm({
   onClose,
   onSubmit
 }: AssetFormProps) {
-  const [assetNumber, setAssetNumber] = useState("");
-  const [customerSerialNo, setCustomerSerialNo] = useState("");
+  const [assetName, setAssetName] = useState("");
+  const [serialNumber, setSerialNumber] = useState("");
+  const [description, setDescription] = useState("");
+  const [purchaseOrderNumber, setPurchaseOrderNumber] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [locationId, setLocationId] = useState("");
   const [productId, setProductId] = useState("");
-  const [lifecycleStatus, setLifecycleStatus] = useState("IN_SERVICE");
-  const [nextRetestDueAt, setNextRetestDueAt] = useState("");
-  const [notes, setNotes] = useState("");
+  const [installationDate, setInstallationDate] = useState("");
+  const [graveDate, setGraveDate] = useState("");
+  const [nextInspectionDate, setNextInspectionDate] = useState("");
+  const [lengthM, setLengthM] = useState("");
+  const [materialId, setMaterialId] = useState("");
+  const [nominalBoreId, setNominalBoreId] = useState("");
   const [aEnd, setAEnd] = useState<AssetEndValues>(blankEnd);
   const [bEnd, setBEnd] = useState<AssetEndValues>(blankEnd);
   const [isSubmitting, setSubmitting] = useState(false);
@@ -54,68 +67,50 @@ export function AssetForm({
     if (!open) {
       return;
     }
-    setAssetNumber(asset?.assetNumber ?? "");
-    setCustomerSerialNo(asset?.customerSerialNo ?? "");
+    setAssetName(asset?.assetName ?? asset?.assetNumber ?? "");
+    setSerialNumber(asset?.customerSerialNo ?? "");
+    setDescription(asset?.description ?? asset?.notes ?? "");
+    setPurchaseOrderNumber(asset?.purchaseOrderNumber ?? "");
     setCustomerId(asset?.customer.id ?? "");
     setLocationId(asset?.location?.id ?? "");
     setProductId(asset?.product.id ?? "");
-    setLifecycleStatus(asset?.lifecycleStatus ?? "IN_SERVICE");
-    setNextRetestDueAt(asset?.nextRetestDueAt ?? "");
-    setNotes(asset?.notes ?? "");
+    setInstallationDate(asset?.installationDate ?? "");
+    setGraveDate(asset?.graveDate ?? "");
+    setNextInspectionDate(asset?.nextRetestDueAt ?? "");
+    setLengthM(asset?.lengthM ?? "");
+    setMaterialId(asset?.aEnd.material?.id ?? asset?.bEnd.material?.id ?? "");
+    setNominalBoreId(asset?.aEnd.nominalBore?.id ?? asset?.bEnd.nominalBore?.id ?? "");
     setAEnd(asset?.aEnd ?? blankEnd);
     setBEnd(asset?.bEnd ?? blankEnd);
   }, [asset, open]);
 
   useEffect(() => {
-    if (!open) {
-      return;
+    if (open && !asset?.customer.id) {
+      setCustomerId((current) => current || customerOptions[0]?.id || "");
     }
-    if (asset?.customer.id) {
-      setCustomerId(asset.customer.id);
-      return;
-    }
-    setCustomerId((current) => current || customerOptions[0]?.id || "");
   }, [asset?.customer.id, customerOptions, open]);
 
   useEffect(() => {
-    if (!open) {
-      return;
+    if (open && !asset?.product.id) {
+      setProductId((current) => current || productOptions[0]?.id || "");
     }
-    if (asset?.product.id) {
-      setProductId(asset.product.id);
-      return;
-    }
-    setProductId((current) => current || productOptions[0]?.id || "");
   }, [asset?.product.id, productOptions, open]);
 
   const customerLocations = useMemo(
-    () =>
-      locationOptions.find((group) => group.customerId === customerId)?.locations ?? [],
+    () => locationOptions.find((group) => group.customerId === customerId)?.locations ?? [],
     [customerId, locationOptions]
   );
-  const selectedLocation =
-    customerLocations.find((location) => location.id === locationId) ?? null;
 
   useEffect(() => {
     if (!open) {
       return;
     }
-    setLocationId((current) => {
-      if (customerLocations.length === 0) {
-        return "";
-      }
-      if (current && customerLocations.some((location) => location.id === current)) {
-        return current;
-      }
-      if (
-        asset?.location?.id &&
-        customerLocations.some((location) => location.id === asset.location?.id)
-      ) {
-        return asset.location.id;
-      }
-      return customerLocations[0].id;
-    });
-  }, [asset?.location?.id, customerLocations, open]);
+    setLocationId((current) => (
+      customerLocations.some((location) => location.id === current)
+        ? current
+        : customerLocations[0]?.id ?? ""
+    ));
+  }, [customerLocations, open]);
 
   if (!open) {
     return null;
@@ -124,135 +119,123 @@ export function AssetForm({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
-    await onSubmit({
-      assetNumber,
-      customerId,
-      locationId: locationId || null,
-      customerSerialNo: customerSerialNo || null,
-      productId,
-      lifecycleStatus,
-      nextRetestDueAt: nextRetestDueAt || null,
-      notes: notes.trim() || null,
-      aEnd,
-      bEnd
-    });
-    setSubmitting(false);
+    try {
+      await onSubmit({
+        customerId,
+        locationId: locationId || null,
+        productId,
+        assetName: assetName.trim(),
+        serialNumber: serialNumber.trim(),
+        description: description.trim(),
+        purchaseOrderNumber: purchaseOrderNumber.trim(),
+        installationDate: installationDate || null,
+        graveDate: graveDate || null,
+        nextInspectionDate: nextInspectionDate || null,
+        lengthM: lengthM || null,
+        materialId: materialId || null,
+        nominalBoreId: nominalBoreId || null,
+        aEnd,
+        bEnd
+      });
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
     <div className="drawer-backdrop">
-      <form className="customer-drawer" onSubmit={handleSubmit}>
+      <form className="customer-drawer asset-profile-form" onSubmit={handleSubmit}>
         <div className="drawer-header">
-          <div>
-            <h2>{asset ? "Edit Asset" : "Add Asset"}</h2>
-            <p>Maintain assembly identity, lifecycle, and end configuration.</p>
-          </div>
+          <h2>{asset ? "Edit Asset" : "Add Asset"}</h2>
           <button className="icon-button light" type="button" aria-label="Close form" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
         <label>
-          <span>Asset number</span>
-          <input
-            aria-label="Asset number"
-            required
-            value={assetNumber}
-            onChange={(event) => setAssetNumber(event.target.value.toUpperCase())}
-          />
-        </label>
-        <label>
-          <span>Customer serial number</span>
-          <input
-            aria-label="Customer serial number"
-            value={customerSerialNo}
-            onChange={(event) => setCustomerSerialNo(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>Customer</span>
-          <select
-            aria-label="Asset customer"
-            value={customerId}
-            onChange={(event) => setCustomerId(event.target.value)}
-          >
-            {customerOptions.map((customer) => (
-              <option key={customer.id} value={customer.id}>
-                {customer.name}
-              </option>
-            ))}
+          <span>Agent</span>
+          <select aria-label="Agent" required value={customerId} onChange={(event) => setCustomerId(event.target.value)}>
+            <option value="">Select agent</option>
+            {customerOptions.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
           </select>
         </label>
         <label>
-          <span>Customer site/address</span>
-          <select
-            aria-label="Asset location"
-            disabled={customerLocations.length === 0}
-            value={locationId}
-            onChange={(event) => setLocationId(event.target.value)}
-          >
-            {customerLocations.length === 0 ? (
-              <option value="">No customer locations available</option>
-            ) : null}
-            {customerLocations.map((location) => (
-              <option key={location.id} value={location.id}>
-                {location.name}
-              </option>
-            ))}
+          <span>Location</span>
+          <select aria-label="Location" required value={locationId} onChange={(event) => setLocationId(event.target.value)}>
+            <option value="">Select location</option>
+            {customerLocations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
           </select>
-          <small className="field-hint">
-            {selectedLocation ? locationAddress(selectedLocation) : "Create a customer location before assigning this asset."}
-          </small>
+        </label>
+        <label>
+          <span>Asset Name</span>
+          <input aria-label="Asset Name" required value={assetName} onChange={(event) => setAssetName(event.target.value)} />
+        </label>
+        <label>
+          <span>Serial Number</span>
+          <input aria-label="Serial Number" required value={serialNumber} onChange={(event) => setSerialNumber(event.target.value)} />
+        </label>
+        <label>
+          <span>Description</span>
+          <textarea aria-label="Description" rows={3} value={description} onChange={(event) => setDescription(event.target.value)} />
+        </label>
+        <label>
+          <span>Purchase Order Number</span>
+          <input aria-label="Purchase Order Number" value={purchaseOrderNumber} onChange={(event) => setPurchaseOrderNumber(event.target.value)} />
+        </label>
+        <label>
+          <span>Installation Date</span>
+          <input aria-label="Installation Date" type="date" value={installationDate} onChange={(event) => setInstallationDate(event.target.value)} />
+        </label>
+        <label>
+          <span>Grave Date</span>
+          <input aria-label="Grave Date" type="date" value={graveDate} onChange={(event) => setGraveDate(event.target.value)} />
+        </label>
+        <label>
+          <span>Next Inspection Date</span>
+          <input aria-label="Next Inspection Date" type="date" value={nextInspectionDate} onChange={(event) => setNextInspectionDate(event.target.value)} />
+        </label>
+        <label>
+          <span>Length (m)</span>
+          <input aria-label="Length (m)" min="0" step="0.001" type="number" value={lengthM} onChange={(event) => setLengthM(event.target.value)} />
         </label>
         <label>
           <span>Product</span>
-          <select
-            aria-label="Asset product"
-            value={productId}
-            onChange={(event) => setProductId(event.target.value)}
-          >
-            {productOptions.map((product) => (
-              <option key={product.id} value={product.id}>
-                {product.name}
-              </option>
-            ))}
+          <select aria-label="Product" required value={productId} onChange={(event) => setProductId(event.target.value)}>
+            <option value="">Select product</option>
+            {productOptions.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
           </select>
         </label>
         <label>
-          <span>Lifecycle status</span>
-          <select
-            aria-label="Lifecycle status"
-            value={lifecycleStatus}
-            onChange={(event) => setLifecycleStatus(event.target.value)}
-          >
-            <option value="IN_SERVICE">In service</option>
-            <option value="DUE">Due</option>
-            <option value="OVERDUE">Overdue</option>
+          <span>Material</span>
+          <select aria-label="Material" value={materialId} onChange={(event) => setMaterialId(event.target.value)}>
+            <option value="">Select material</option>
+            {configurationOptions.materials.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
           </select>
         </label>
+        <AssetEndEditor
+          attachMethods={configurationOptions.attachMethods}
+          couplingAddOns={configurationOptions.couplingAddOns}
+          couplings={configurationOptions.couplings}
+          label="A"
+          values={aEnd}
+          onChange={setAEnd}
+        />
+        <AssetEndEditor
+          attachMethods={configurationOptions.attachMethods}
+          couplingAddOns={configurationOptions.couplingAddOns}
+          couplings={configurationOptions.couplings}
+          label="B"
+          values={bEnd}
+          onChange={setBEnd}
+        />
         <label>
-          <span>Next retest due</span>
-          <input
-            aria-label="Next retest due"
-            type="date"
-            value={nextRetestDueAt}
-            onChange={(event) => setNextRetestDueAt(event.target.value)}
-          />
+          <span>Nominal Bore</span>
+          <select aria-label="Nominal Bore" value={nominalBoreId} onChange={(event) => setNominalBoreId(event.target.value)}>
+            <option value="">Select nominal bore</option>
+            {configurationOptions.nominalBores.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+          </select>
         </label>
-        <label>
-          <span>Asset notes</span>
-          <textarea
-            aria-label="Asset notes"
-            rows={4}
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-          />
-        </label>
-        <AssetEndEditor label="A" values={aEnd} onChange={setAEnd} />
-        <AssetEndEditor label="B" values={bEnd} onChange={setBEnd} />
         <div className="drawer-actions">
-          <button className="secondary-button" type="button" onClick={onClose}>
-            Cancel
-          </button>
+          <button className="secondary-button" type="button" onClick={onClose}>Cancel</button>
           <button className="primary-button" type="submit" disabled={isSubmitting}>
             {isSubmitting ? "Saving..." : "Save asset"}
           </button>
@@ -260,15 +243,4 @@ export function AssetForm({
       </form>
     </div>
   );
-}
-
-function locationAddress(location: CustomerLocation): string {
-  const parts = [
-    location.address1,
-    location.address2,
-    location.city,
-    location.state,
-    location.country
-  ].filter(Boolean);
-  return parts.length > 0 ? parts.join(", ") : "No address recorded for this site.";
 }

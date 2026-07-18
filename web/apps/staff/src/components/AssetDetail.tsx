@@ -9,52 +9,46 @@ interface AssetDetailProps {
   onEdit: (asset: AssetRecord) => void;
 }
 
-function statusClass(status: string) {
-  if (status === "OVERDUE") {
-    return "mini-status overdue";
-  }
-  if (status === "DUE") {
-    return "mini-status due-soon";
-  }
-  return "mini-status current";
-}
-
-function endLabel(end: AssetRecord["aEnd"]) {
-  const parts = [end.fitting.trim(), end.size.trim()].filter(Boolean);
-  return parts.join(" ") || "Not recorded";
-}
-
 function locationLabel(asset: AssetRecord) {
   if (!asset.location) {
     return "No location";
   }
-  return (
-    [
-      asset.location.name,
-      asset.location.address1,
-      asset.location.address2,
-      asset.location.city,
-      asset.location.state,
-      asset.location.country
-    ]
-      .filter(Boolean)
-      .join(", ") || "No location"
-  );
+
+  return [
+    asset.location.name,
+    asset.location.address1,
+    asset.location.address2,
+    asset.location.city,
+    asset.location.state,
+    asset.location.country
+  ]
+    .filter(Boolean)
+    .join(", ") || "No location";
 }
 
 function orDash(value: string | null | undefined) {
   return value && value.trim() ? value : "—";
 }
 
+function endValue(end: AssetRecord["aEnd"], property: "coupling" | "couplingAddOn" | "attachMethod") {
+  return end[property]?.name ?? "—";
+}
+
+function materialLabel(asset: AssetRecord) {
+  return asset.aEnd.material?.name ?? asset.bEnd.material?.name ?? "—";
+}
+
+function boreLabel(asset: AssetRecord) {
+  return asset.aEnd.nominalBore?.name ?? asset.bEnd.nominalBore?.name ?? "—";
+}
+
 export function AssetDetail({ asset, canWrite, onBack, onEdit }: AssetDetailProps) {
+  const assetName = asset.assetName || asset.assetNumber;
+
   return (
     <section className="detail-page" role="complementary" aria-label="Asset detail">
       <div className="detail-page-header">
-        <button
-          className="secondary-button detail-back"
-          onClick={onBack}
-          type="button"
-        >
+        <button className="secondary-button detail-back" onClick={onBack} type="button">
           <ArrowLeft aria-hidden="true" size={16} />
           Back to list
         </button>
@@ -68,11 +62,7 @@ export function AssetDetail({ asset, canWrite, onBack, onEdit }: AssetDetailProp
             <X aria-hidden="true" size={16} />
           </button>
           {canWrite ? (
-            <button
-              className="primary-button"
-              onClick={() => onEdit(asset)}
-              type="button"
-            >
+            <button className="primary-button" onClick={() => onEdit(asset)} type="button">
               <Edit3 aria-hidden="true" size={16} />
               Edit
             </button>
@@ -82,104 +72,104 @@ export function AssetDetail({ asset, canWrite, onBack, onEdit }: AssetDetailProp
 
       <div className="detail-page-title">
         <div>
-          <h2>{asset.assetNumber}</h2>
-          {asset.notes ? <p>{asset.notes}</p> : null}
+          <h2>{assetName}</h2>
+          <p>{asset.customer.name}{asset.location ? ` · ${asset.location.name}` : ""}</p>
         </div>
-        <span className={statusClass(asset.lifecycleStatus)}>
-          {asset.lifecycleStatus.replace("_", " ")}
-        </span>
       </div>
 
       <section className="detail-section">
-        <h3>Identification</h3>
+        <h3>Asset profile</h3>
         <dl className="info-grid">
           <div>
-            <dt>Asset ID</dt>
-            <dd>{asset.assetNumber}</dd>
-          </div>
-          <div>
-            <dt>Customer serial</dt>
-            <dd>{orDash(asset.customerSerialNo)}</dd>
-          </div>
-          <div>
-            <dt>Tag</dt>
-            <dd>{orDash(asset.tag)}</dd>
-          </div>
-          <div>
-            <dt>Lifecycle</dt>
-            <dd>{asset.lifecycleStatus.replace("_", " ")}</dd>
-          </div>
-        </dl>
-      </section>
-
-      <section className="detail-section">
-        <h3>Customer &amp; product</h3>
-        <dl className="info-grid">
-          <div>
-            <dt>Customer</dt>
+            <dt>Agent</dt>
             <dd>{asset.customer.name}</dd>
-          </div>
-          <div>
-            <dt>Product</dt>
-            <dd>{asset.product.name}</dd>
-          </div>
-          <div>
-            <dt>Category</dt>
-            <dd>{orDash(asset.product.category)}</dd>
           </div>
           <div>
             <dt>Location</dt>
             <dd>{locationLabel(asset)}</dd>
           </div>
+          <div>
+            <dt>Asset name</dt>
+            <dd>{assetName}</dd>
+          </div>
+          <div>
+            <dt>Serial number</dt>
+            <dd>{orDash(asset.customerSerialNo)}</dd>
+          </div>
+          <div>
+            <dt>Purchase order number</dt>
+            <dd>{orDash(asset.purchaseOrderNumber)}</dd>
+          </div>
+          <div>
+            <dt>Description</dt>
+            <dd>{orDash(asset.description)}</dd>
+          </div>
         </dl>
       </section>
 
       <section className="detail-section">
-        <h3>Configuration</h3>
+        <h3>Product and inspection</h3>
         <dl className="info-grid">
           <div>
-            <dt>End A</dt>
-            <dd>{endLabel(asset.aEnd)}</dd>
+            <dt>Product</dt>
+            <dd>{asset.product.name}</dd>
           </div>
           <div>
-            <dt>End B</dt>
-            <dd>{endLabel(asset.bEnd)}</dd>
+            <dt>Installation date</dt>
+            <dd>{asset.installationDate ?? "—"}</dd>
+          </div>
+          <div>
+            <dt>Grave date</dt>
+            <dd>{asset.graveDate ?? "—"}</dd>
+          </div>
+          <div>
+            <dt>Next inspection date</dt>
+            <dd>{asset.nextRetestDueAt ?? "Not scheduled"}</dd>
           </div>
           <div>
             <dt>Length (m)</dt>
             <dd>{orDash(asset.lengthM)}</dd>
           </div>
           <div>
-            <dt>Manufactured</dt>
-            <dd>{orDash(asset.manufactureDate)}</dd>
+            <dt>Material</dt>
+            <dd>{materialLabel(asset)}</dd>
+          </div>
+          <div>
+            <dt>Nominal bore</dt>
+            <dd>{boreLabel(asset)}</dd>
           </div>
         </dl>
       </section>
 
       <section className="detail-section">
-        <h3>Retest &amp; lifecycle</h3>
+        <h3>End configuration</h3>
         <dl className="info-grid">
           <div>
-            <dt>Retest due</dt>
-            <dd>{asset.nextRetestDueAt ?? "Not scheduled"}</dd>
+            <dt>Coupling (A)</dt>
+            <dd>{endValue(asset.aEnd, "coupling")}</dd>
           </div>
           <div>
-            <dt>Retest status</dt>
-            <dd>{orDash(asset.retestSchedule?.status)}</dd>
+            <dt>Add-ons (A)</dt>
+            <dd>{endValue(asset.aEnd, "couplingAddOn")}</dd>
           </div>
           <div>
-            <dt>Condemned</dt>
-            <dd>{orDash(asset.condemnedAt)}</dd>
+            <dt>Attach methods (A)</dt>
+            <dd>{endValue(asset.aEnd, "attachMethod")}</dd>
+          </div>
+          <div>
+            <dt>Coupling (B)</dt>
+            <dd>{endValue(asset.bEnd, "coupling")}</dd>
+          </div>
+          <div>
+            <dt>Add-ons (B)</dt>
+            <dd>{endValue(asset.bEnd, "couplingAddOn")}</dd>
+          </div>
+          <div>
+            <dt>Attach methods (B)</dt>
+            <dd>{endValue(asset.bEnd, "attachMethod")}</dd>
           </div>
         </dl>
       </section>
-
-      {asset.notes ? (
-        <section className="detail-section">
-          <h3>Notes</h3>
-          <p className="record-notes">{asset.notes}</p>
-        </section>
-      ) : null}
     </section>
   );
 }

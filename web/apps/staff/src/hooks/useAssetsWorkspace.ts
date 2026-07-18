@@ -8,6 +8,7 @@ import {
 } from "../api/hmsClient";
 import type {
   AssetFormValues,
+  AssetConfigurationOptions,
   AssetLocationSummary,
   AssetProductSummary,
   AssetRecord,
@@ -22,12 +23,13 @@ function uniqueById<TItem extends { id: string }>(items: TItem[]): TItem[] {
   return Array.from(new Map(items.map((item) => [item.id, item])).values());
 }
 
-function retestScheduleStatus(lifecycleStatus: string): string {
-  if (lifecycleStatus === "DUE" || lifecycleStatus === "OVERDUE") {
-    return lifecycleStatus;
-  }
-  return "UPCOMING";
-}
+const emptyConfigurationOptions: AssetConfigurationOptions = {
+  materials: [],
+  couplings: [],
+  couplingAddOns: [],
+  attachMethods: [],
+  nominalBores: []
+};
 
 function customerSummary(customer: CustomerRecord): RecordSummary {
   return {
@@ -75,22 +77,27 @@ function localAsset(
     .find((location) => location.id === values.locationId);
   return {
     id: current?.id ?? `asset-${Date.now()}`,
-    assetNumber: values.assetNumber.trim().toUpperCase(),
-    customerSerialNo: values.customerSerialNo,
+    assetNumber: current?.assetNumber ?? `HMS-${Date.now()}`,
+    assetName: values.assetName,
+    customerSerialNo: values.serialNumber,
+    purchaseOrderNumber: values.purchaseOrderNumber || null,
     tag: current?.tag ?? null,
-    lifecycleStatus: values.lifecycleStatus,
+    lifecycleStatus: current?.lifecycleStatus ?? "IN_SERVICE",
     manufactureDate: current?.manufactureDate ?? null,
-    nextRetestDueAt: values.nextRetestDueAt,
+    installationDate: values.installationDate,
+    graveDate: values.graveDate,
+    nextRetestDueAt: values.nextInspectionDate,
     condemnedAt: current?.condemnedAt ?? null,
-    lengthM: current?.lengthM ?? null,
-    notes: values.notes,
+    lengthM: values.lengthM,
+    notes: values.description || null,
+    description: values.description || null,
     customer,
     product,
     location: selectedLocation ? assetLocationSummary(selectedLocation) : null,
-    retestSchedule: values.nextRetestDueAt
+    retestSchedule: values.nextInspectionDate
       ? {
-          dueAt: values.nextRetestDueAt,
-          status: retestScheduleStatus(values.lifecycleStatus)
+          dueAt: values.nextInspectionDate,
+          status: "UPCOMING"
         }
       : current?.retestSchedule ?? null,
     aEnd: values.aEnd,
@@ -115,6 +122,9 @@ export function useAssetsWorkspace() {
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [products, setProducts] = useState<AssetProductSummary[]>([]);
+  const [configurationOptions, setConfigurationOptions] = useState<AssetConfigurationOptions>(
+    emptyConfigurationOptions
+  );
   const [source, setSource] = useState<DataSource>("mock");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -135,8 +145,9 @@ export function useAssetsWorkspace() {
     Promise.all([
       loadAssetsWithFallback({ sort: "asset_number" }),
       loadCustomersWithFallback({ sort: "name", limit: 100 }),
-      loadProductsWithFallback({ sort: "name", limit: 100 })
-    ]).then(([assetResult, customerResult, productResult]) => {
+      loadProductsWithFallback({ sort: "name", limit: 100 }),
+      createHmsClient().getAssetConfigurationOptions().catch(() => emptyConfigurationOptions)
+    ]).then(([assetResult, customerResult, productResult, configurationResult]) => {
       if (!active) {
         return;
       }
@@ -148,6 +159,7 @@ export function useAssetsWorkspace() {
           ...assetResult.items.map((asset) => asset.product)
         ])
       );
+      setConfigurationOptions(configurationResult);
       setSource(assetResult.source);
       setIsLoading(false);
     }).catch((reason: unknown) => {
@@ -178,7 +190,9 @@ export function useAssetsWorkspace() {
         !normalized ||
         [
           asset.assetNumber,
+          asset.assetName,
           asset.customerSerialNo,
+          asset.purchaseOrderNumber,
           asset.tag,
           asset.lifecycleStatus,
           asset.customer.code,
@@ -191,7 +205,8 @@ export function useAssetsWorkspace() {
           asset.location?.city,
           asset.location?.state,
           asset.location?.country,
-          asset.notes
+          asset.notes,
+          asset.description
         ]
           .filter(Boolean)
           .some((value) => value?.toLowerCase().includes(normalized));
@@ -340,6 +355,7 @@ export function useAssetsWorkspace() {
     closeDetail,
     customerFilter,
     customerOptions,
+    configurationOptions,
     dueFrom,
     dueTo,
     editingAsset,

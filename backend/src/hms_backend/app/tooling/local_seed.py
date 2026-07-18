@@ -26,7 +26,14 @@ from hms_backend.app.modules.inspections.models import (
     PressureTestResult,
 )
 from hms_backend.app.modules.products.models import Product
-from hms_backend.app.modules.reference.models import Standard
+from hms_backend.app.modules.reference.models import (
+    AttachMethod,
+    Coupling,
+    CouplingAddOn,
+    Material,
+    NominalBore,
+    Standard,
+)
 from hms_backend.app.modules.scheduling.models import RetestSchedule
 from hms_backend.app.tooling.migration import build_domain_import_plan
 from hms_backend.app.tooling.synthetic import generate_clean_dataset
@@ -44,6 +51,7 @@ async def seed_local_demo_data(
     plan = build_domain_import_plan(generate_clean_dataset(), today=today)
 
     standards_by_code = await _seed_standards(session, plan)
+    await _seed_asset_configuration_lookups(session)
     customers_by_code = await _seed_customers(session, plan)
     locations_by_customer_code = await _seed_customer_locations(
         session,
@@ -105,6 +113,68 @@ async def _seed_standards(session: AsyncSession, plan: Any) -> dict[str, Standar
             )
         standards_by_code[code] = standard
     return standards_by_code
+
+
+async def _seed_asset_configuration_lookups(session: AsyncSession) -> None:
+    for model, rows in (
+        (
+            Material,
+            (
+                ("COMPOSITE", "Composite"),
+                ("RUBBER", "Rubber"),
+                ("SS", "Stainless Steel"),
+                ("PVC", "PVC"),
+            ),
+        ),
+        (
+            Coupling,
+            (
+                ("BSP", "BSP"),
+                ("CAMLOCK", "Camlock"),
+                ("FLANGE", "Flange"),
+                ("NPT", "NPT"),
+                ("STORZ", "Storz"),
+            ),
+        ),
+        (CouplingAddOn, (("DUST_CAP", "Dust cap"), ("SAFETY_LOCK", "Safety lock"))),
+        (AttachMethod, (("CLAMP", "Clamp"), ("CRIMP", "Crimp"), ("SWAGE", "Swage"))),
+    ):
+        for code, name in rows:
+            if (
+                await _scalar_one_or_none(
+                    session, select(model).where(model.code == code)
+                )
+                is None
+            ):
+                record = model(code=code, name=name, enabled=True)
+                session.add(record)
+                await record_create(
+                    session,
+                    record,
+                    actor_id=SEED_ACTOR_ID,
+                    action="asset_configuration_lookup.seeded",
+                )
+
+    for code, label in (
+        ("1.5IN", "1.5 inch"),
+        ("2IN", "2 inch"),
+        ("3IN", "3 inch"),
+        ("4IN", "4 inch"),
+    ):
+        if (
+            await _scalar_one_or_none(
+                session, select(NominalBore).where(NominalBore.code == code)
+            )
+            is None
+        ):
+            record = NominalBore(code=code, label=label, enabled=True)
+            session.add(record)
+            await record_create(
+                session,
+                record,
+                actor_id=SEED_ACTOR_ID,
+                action="asset_configuration_lookup.seeded",
+            )
 
 
 async def _seed_customers(session: AsyncSession, plan: Any) -> dict[str, Customer]:

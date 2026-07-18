@@ -23,6 +23,7 @@ import type {
   AdminUserRecord,
   AnalyticsOverview,
   AdminUserUpdateValues,
+  AssetConfigurationOptions,
   TemporaryPasswordResult,
   AssetEndValues,
   AssetListResult,
@@ -265,19 +266,37 @@ interface ApiAssetRetestSchedule {
 interface ApiAssetEnd {
   fitting: string | null;
   size: string | null;
+  nominal_bore?: ApiSummary | null;
+  material?: ApiSummary | null;
+  coupling?: ApiSummary | null;
+  coupling_add_on?: ApiSummary | null;
+  attach_method?: ApiSummary | null;
+}
+
+interface ApiAssetConfigurationOptions {
+  materials: ApiSummary[];
+  couplings: ApiSummary[];
+  coupling_add_ons: ApiSummary[];
+  attach_methods: ApiSummary[];
+  nominal_bores: ApiSummary[];
 }
 
 interface ApiAsset {
   id: string;
   asset_number: string;
+  asset_name?: string | null;
   customer_serial_no: string | null;
+  purchase_order_number?: string | null;
   tag: string | null;
   lifecycle_status: string;
   manufacture_date: string | null;
+  installation_date?: string | null;
+  grave_date?: string | null;
   next_retest_due_at: string | null;
   condemned_at: string | null;
   length_m: string | null;
   notes: string | null;
+  description?: string | null;
   customer: ApiSummary;
   product: ApiProductSummary;
   location: ApiLocationSummary | null;
@@ -852,7 +871,24 @@ function toAssetRetestSummary(
 function toAssetEnd(end: ApiAssetEnd | null | undefined): AssetEndValues {
   return {
     fitting: end?.fitting ?? "",
-    size: end?.size ?? ""
+    size: end?.size ?? "",
+    nominalBore: end?.nominal_bore ? toSummary(end.nominal_bore) : null,
+    material: end?.material ? toSummary(end.material) : null,
+    coupling: end?.coupling ? toSummary(end.coupling) : null,
+    couplingAddOn: end?.coupling_add_on ? toSummary(end.coupling_add_on) : null,
+    attachMethod: end?.attach_method ? toSummary(end.attach_method) : null
+  };
+}
+
+function toAssetConfigurationOptions(
+  options: ApiAssetConfigurationOptions
+): AssetConfigurationOptions {
+  return {
+    materials: options.materials.map(toSummary),
+    couplings: options.couplings.map(toSummary),
+    couplingAddOns: options.coupling_add_ons.map(toSummary),
+    attachMethods: options.attach_methods.map(toSummary),
+    nominalBores: options.nominal_bores.map(toSummary)
   };
 }
 
@@ -861,14 +897,19 @@ function toAsset(asset: ApiAsset, etag: string | null = null): AssetRecord {
     {
       id: asset.id,
       assetNumber: asset.asset_number,
+      assetName: asset.asset_name ?? asset.asset_number,
       customerSerialNo: asset.customer_serial_no,
+      purchaseOrderNumber: asset.purchase_order_number ?? null,
       tag: asset.tag,
       lifecycleStatus: asset.lifecycle_status,
       manufactureDate: asset.manufacture_date,
+      installationDate: asset.installation_date ?? null,
+      graveDate: asset.grave_date ?? null,
       nextRetestDueAt: asset.next_retest_due_at,
       condemnedAt: asset.condemned_at,
       lengthM: asset.length_m,
       notes: asset.notes,
+      description: asset.description ?? asset.notes,
       customer: toSummary(asset.customer),
       product: toProductSummary(asset.product),
       location: toLocationSummary(asset.location),
@@ -1085,17 +1126,13 @@ function pressureTestPayload(
   };
 }
 
-function retestScheduleStatus(lifecycleStatus: string): string {
-  if (lifecycleStatus === "DUE" || lifecycleStatus === "OVERDUE") {
-    return lifecycleStatus;
-  }
-  return "UPCOMING";
-}
-
 function assetEndPayload(end: AssetEndValues): Record<string, string | null> {
   return {
     fitting: end.fitting.trim() || null,
-    size: end.size.trim() || null
+    size: end.size.trim() || null,
+    coupling_id: end.coupling?.id ?? null,
+    coupling_add_on_id: end.couplingAddOn?.id ?? null,
+    attach_method_id: end.attachMethod?.id ?? null
   };
 }
 
@@ -1104,15 +1141,20 @@ function assetPayload(values: AssetFormValues) {
     customer_id: values.customerId,
     location_id: values.locationId,
     product_id: values.productId,
-    asset_number: values.assetNumber,
-    customer_serial_no: values.customerSerialNo,
-    lifecycle_status: values.lifecycleStatus,
-    next_retest_due_at: values.nextRetestDueAt,
-    notes: values.notes,
-    retest_schedule: values.nextRetestDueAt
+    asset_name: values.assetName,
+    serial_number: values.serialNumber,
+    description: values.description,
+    purchase_order_number: values.purchaseOrderNumber || null,
+    installation_date: values.installationDate,
+    grave_date: values.graveDate,
+    next_inspection_date: values.nextInspectionDate,
+    length_m: values.lengthM,
+    material_id: values.materialId,
+    nominal_bore_id: values.nominalBoreId,
+    retest_schedule: values.nextInspectionDate
       ? {
-          due_at: values.nextRetestDueAt,
-          status: retestScheduleStatus(values.lifecycleStatus)
+          due_at: values.nextInspectionDate,
+          status: "UPCOMING"
         }
       : null,
     a_end: assetEndPayload(values.aEnd),
@@ -1510,6 +1552,13 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         `/api/v1/assets/${encodeURIComponent(id)}`
       );
       return toAsset(response.data, response.etag);
+    },
+
+    async getAssetConfigurationOptions(): Promise<AssetConfigurationOptions> {
+      const response = await request<ApiAssetConfigurationOptions>(
+        "/api/v1/reference/asset-configuration"
+      );
+      return toAssetConfigurationOptions(response.data);
     },
 
     async createAsset(values: AssetFormValues): Promise<AssetRecord> {

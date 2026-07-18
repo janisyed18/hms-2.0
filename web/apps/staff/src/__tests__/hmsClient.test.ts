@@ -650,47 +650,74 @@ describe("hmsClient", () => {
     );
   });
 
-  it("sends asset retest schedule and end configuration payloads", async () => {
+  it("sends the asset profile and end configuration payload", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       okJson({
         ...apiAsset,
-        asset_number: "E2E-ASSET-001",
+        asset_name: "Bay transfer hose",
         customer_serial_no: "SER-E2E-001",
-        lifecycle_status: "IN_SERVICE",
+        purchase_order_number: "PO-E2E-001",
+        installation_date: "2026-01-15",
+        grave_date: "2031-01-15",
         next_retest_due_at: "2026-09-15",
-        notes: "Install after pressure test approval.",
+        description: "Install after pressure test approval.",
         retest_schedule: {
           due_at: "2026-09-15",
           status: "UPCOMING"
         },
         a_end: {
-          fitting: "Camlock M",
-          size: "2 inch"
+          fitting: null,
+          size: null,
+          material: { id: "material-api-1", code: "COMPOSITE", name: "Composite" },
+          nominal_bore: { id: "bore-api-1", code: "2IN", name: "2 inch" },
+          coupling: { id: "coupling-api-1", code: "CAMLOCK", name: "Camlock" },
+          coupling_add_on: null,
+          attach_method: { id: "attach-api-1", code: "CRIMP", name: "Crimp" }
         },
         b_end: {
-          fitting: "Flange W",
-          size: "2 inch"
+          fitting: null,
+          size: null,
+          material: { id: "material-api-1", code: "COMPOSITE", name: "Composite" },
+          nominal_bore: { id: "bore-api-1", code: "2IN", name: "2 inch" },
+          coupling: { id: "coupling-api-1", code: "CAMLOCK", name: "Camlock" },
+          coupling_add_on: null,
+          attach_method: { id: "attach-api-1", code: "CRIMP", name: "Crimp" }
         }
       })
     );
 
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
     const created = await client.createAsset({
-      assetNumber: "E2E-ASSET-001",
       customerId: "cust-api-1",
       locationId: "loc-1",
-      customerSerialNo: "SER-E2E-001",
       productId: "product-api-1",
-      lifecycleStatus: "IN_SERVICE",
-      nextRetestDueAt: "2026-09-15",
-      notes: "Install after pressure test approval.",
+      assetName: "Bay transfer hose",
+      serialNumber: "SER-E2E-001",
+      description: "Install after pressure test approval.",
+      purchaseOrderNumber: "PO-E2E-001",
+      installationDate: "2026-01-15",
+      graveDate: "2031-01-15",
+      nextInspectionDate: "2026-09-15",
+      lengthM: "6.100",
+      materialId: "material-api-1",
+      nominalBoreId: "bore-api-1",
       aEnd: {
-        fitting: "Camlock M",
-        size: "2 inch"
+        fitting: "",
+        size: "",
+        nominalBore: null,
+        material: null,
+        coupling: { id: "coupling-api-1", code: "CAMLOCK", name: "Camlock" },
+        couplingAddOn: null,
+        attachMethod: { id: "attach-api-1", code: "CRIMP", name: "Crimp" }
       },
       bEnd: {
-        fitting: "Flange W",
-        size: "2 inch"
+        fitting: "",
+        size: "",
+        nominalBore: null,
+        material: null,
+        coupling: { id: "coupling-api-1", code: "CAMLOCK", name: "Camlock" },
+        couplingAddOn: null,
+        attachMethod: { id: "attach-api-1", code: "CRIMP", name: "Crimp" }
       }
     });
 
@@ -702,34 +729,46 @@ describe("hmsClient", () => {
           customer_id: "cust-api-1",
           location_id: "loc-1",
           product_id: "product-api-1",
-          asset_number: "E2E-ASSET-001",
-          customer_serial_no: "SER-E2E-001",
-          lifecycle_status: "IN_SERVICE",
-          next_retest_due_at: "2026-09-15",
-          notes: "Install after pressure test approval.",
+          asset_name: "Bay transfer hose",
+          serial_number: "SER-E2E-001",
+          description: "Install after pressure test approval.",
+          purchase_order_number: "PO-E2E-001",
+          installation_date: "2026-01-15",
+          grave_date: "2031-01-15",
+          next_inspection_date: "2026-09-15",
+          length_m: "6.100",
+          material_id: "material-api-1",
+          nominal_bore_id: "bore-api-1",
           retest_schedule: {
             due_at: "2026-09-15",
             status: "UPCOMING"
           },
           a_end: {
-            fitting: "Camlock M",
-            size: "2 inch"
+            fitting: null,
+            size: null,
+            coupling_id: "coupling-api-1",
+            coupling_add_on_id: null,
+            attach_method_id: "attach-api-1"
           },
           b_end: {
-            fitting: "Flange W",
-            size: "2 inch"
+            fitting: null,
+            size: null,
+            coupling_id: "coupling-api-1",
+            coupling_add_on_id: null,
+            attach_method_id: "attach-api-1"
           }
         })
       })
     );
+    expect(created.assetName).toBe("Bay transfer hose");
     expect(created.nextRetestDueAt).toBe("2026-09-15");
     expect(created.retestSchedule).toEqual({
       dueAt: "2026-09-15",
       status: "UPCOMING"
     });
-    expect(created.notes).toBe("Install after pressure test approval.");
-    expect(created.aEnd).toEqual({ fitting: "Camlock M", size: "2 inch" });
-    expect(created.bEnd).toEqual({ fitting: "Flange W", size: "2 inch" });
+    expect(created.description).toBe("Install after pressure test approval.");
+    expect(created.aEnd.coupling?.name).toBe("Camlock");
+    expect(created.bEnd.attachMethod?.name).toBe("Crimp");
   });
 
   it("maps inspection list responses and workflow mutations", async () => {

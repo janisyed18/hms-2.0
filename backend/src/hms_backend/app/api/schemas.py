@@ -46,6 +46,14 @@ class LookupListResponse(BaseModel):
     items: list[LookupRead]
 
 
+class AssetConfigurationLookupsRead(BaseModel):
+    materials: list[LookupRead]
+    couplings: list[LookupRead]
+    coupling_add_ons: list[LookupRead]
+    attach_methods: list[LookupRead]
+    nominal_bores: list[LookupRead]
+
+
 class ProductRead(BaseModel):
     id: str
     code: str
@@ -229,24 +237,39 @@ class RetestScheduleUpdate(BaseModel):
 class AssetEndRead(BaseModel):
     fitting: str | None
     size: str | None
+    nominal_bore: LookupRead | None = None
+    material: LookupRead | None = None
+    coupling: LookupRead | None = None
+    coupling_add_on: LookupRead | None = None
+    attach_method: LookupRead | None = None
 
 
 class AssetEndWrite(BaseModel):
     fitting: str | None = None
     size: str | None = None
+    nominal_bore_id: str | None = None
+    material_id: str | None = None
+    coupling_id: str | None = None
+    coupling_add_on_id: str | None = None
+    attach_method_id: str | None = None
 
 
 class AssetRead(BaseModel):
     id: str
     asset_number: str
+    asset_name: str | None
     customer_serial_no: str | None
+    purchase_order_number: str | None
     tag: str | None
     lifecycle_status: str
     manufacture_date: date | None
+    installation_date: date | None
+    grave_date: date | None
     next_retest_due_at: date | None
     condemned_at: date | None
     length_m: Decimal | None
     notes: str | None
+    description: str | None
     customer: CustomerSummary
     product: ProductSummary
     location: LocationSummary | None
@@ -266,15 +289,24 @@ class AssetCreate(BaseModel):
     customer_id: str
     location_id: str | None = None
     product_id: str
-    asset_number: str
+    asset_number: str | None = None
+    asset_name: str | None = None
     customer_serial_no: str | None = None
+    serial_number: str | None = None
+    purchase_order_number: str | None = None
     tag: str | None = None
-    lifecycle_status: str
+    lifecycle_status: str = "IN_SERVICE"
     manufacture_date: date | None = None
+    installation_date: date | None = None
+    grave_date: date | None = None
     next_retest_due_at: date | None = None
+    next_inspection_date: date | None = None
     condemned_at: date | None = None
     length_m: Decimal | None = None
     notes: str | None = None
+    description: str | None = None
+    material_id: str | None = None
+    nominal_bore_id: str | None = None
     retest_schedule: RetestScheduleWrite | None = None
     a_end: AssetEndWrite | None = None
     b_end: AssetEndWrite | None = None
@@ -285,14 +317,23 @@ class AssetUpdate(BaseModel):
     location_id: str | None = None
     product_id: str | None = None
     asset_number: str | None = None
+    asset_name: str | None = None
     customer_serial_no: str | None = None
+    serial_number: str | None = None
+    purchase_order_number: str | None = None
     tag: str | None = None
     lifecycle_status: str | None = None
     manufacture_date: date | None = None
+    installation_date: date | None = None
+    grave_date: date | None = None
     next_retest_due_at: date | None = None
+    next_inspection_date: date | None = None
     condemned_at: date | None = None
     length_m: Decimal | None = None
     notes: str | None = None
+    description: str | None = None
+    material_id: str | None = None
+    nominal_bore_id: str | None = None
     retest_schedule: RetestScheduleWrite | None = None
     a_end: AssetEndWrite | None = None
     b_end: AssetEndWrite | None = None

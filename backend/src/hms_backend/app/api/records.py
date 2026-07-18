@@ -17,6 +17,7 @@ from hms_backend.app.api.schemas import (
     AnalyticsFleetPostureRead,
     AnalyticsInspectionOutcomeRead,
     AnalyticsOverviewRead,
+    AssetConfigurationLookupsRead,
     AssetCreate,
     AssetEndRead,
     AssetEndWrite,
@@ -115,7 +116,14 @@ from hms_backend.app.modules.notifications.outbox import (
     emit_event_if_absent,
 )
 from hms_backend.app.modules.products.models import Product
-from hms_backend.app.modules.reference.models import Standard
+from hms_backend.app.modules.reference.models import (
+    AttachMethod,
+    Coupling,
+    CouplingAddOn,
+    Material,
+    NominalBore,
+    Standard,
+)
 from hms_backend.app.modules.scheduling.models import (
     RetestSchedule,
     RetestScheduleStatus,
@@ -279,6 +287,47 @@ async def create_standard(
 
 
 _STANDARDS_CACHE_PREFIX = "reference:standards:"
+
+
+async def _active_lookup_items(
+    session: AsyncSession,
+    model: type[Any],
+    *,
+    label_attribute: str = "name",
+) -> list[LookupRead]:
+    rows = (
+        await session.scalars(
+            select(model)
+            .where(model.enabled.is_(True), model.deleted_at.is_(None))
+            .order_by(model.code)
+        )
+    ).all()
+    return [
+        LookupRead(id=row.id, code=row.code, name=getattr(row, label_attribute))
+        for row in rows
+    ]
+
+
+@router.get(
+    "/reference/asset-configuration",
+    response_model=AssetConfigurationLookupsRead,
+)
+async def list_asset_configuration_lookups(
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> AssetConfigurationLookupsRead:
+    _require_asset_read(principal)
+    return AssetConfigurationLookupsRead(
+        materials=await _active_lookup_items(session, Material),
+        couplings=await _active_lookup_items(session, Coupling),
+        coupling_add_ons=await _active_lookup_items(session, CouplingAddOn),
+        attach_methods=await _active_lookup_items(session, AttachMethod),
+        nominal_bores=await _active_lookup_items(
+            session,
+            NominalBore,
+            label_attribute="label",
+        ),
+    )
 
 
 @router.get("/reference/standards", response_model=LookupListResponse)
@@ -476,9 +525,7 @@ async def list_customers(
         frozenset({"code", "name", "created_at", "updated_at"}),
         default="code",
     )
-    customers = (
-        await session.scalars(statement.offset(offset).limit(limit))
-    ).all()
+    customers = (await session.scalars(statement.offset(offset).limit(limit))).all()
     return CustomerListResponse(
         total=total,
         limit=limit,
@@ -890,19 +937,38 @@ async def create_asset(
         payload.location_id,
         customer_id=customer.id,
     )
+    asset_number = (
+        _clean_optional(payload.asset_number) or f"HMS-{uuid4().hex[:10].upper()}"
+    )
+    next_inspection_date = (
+        payload.next_inspection_date
+        if payload.next_inspection_date is not None
+        else payload.next_retest_due_at
+    )
+    description = (
+        payload.description if payload.description is not None else payload.notes
+    )
     asset = Asset(
         customer=customer,
         location=location,
         product=product,
-        asset_number=payload.asset_number.strip(),
-        customer_serial_no=_clean_optional(payload.customer_serial_no),
+        asset_number=asset_number,
+        asset_name=_clean_optional(payload.asset_name) or asset_number,
+        customer_serial_no=_clean_optional(
+            payload.serial_number
+            if payload.serial_number is not None
+            else payload.customer_serial_no
+        ),
+        purchase_order_number=_clean_optional(payload.purchase_order_number),
         tag=_clean_optional(payload.tag),
         lifecycle_status=payload.lifecycle_status,
         manufacture_date=payload.manufacture_date,
-        next_retest_due_at=payload.next_retest_due_at,
+        installation_date=payload.installation_date,
+        grave_date=payload.grave_date,
+        next_retest_due_at=next_inspection_date,
         condemned_at=payload.condemned_at,
         length_m=payload.length_m,
-        notes=_clean_optional(payload.notes),
+        notes=_clean_optional(description),
     )
     session.add(asset)
     await record_create(
@@ -913,14 +979,26 @@ async def create_asset(
     )
     await _upsert_asset_end(
         session,
-        payload.a_end,
+        _with_shared_end_fields(
+            payload.a_end,
+            material_id=payload.material_id,
+            nominal_bore_id=payload.nominal_bore_id,
+            use_material=payload.material_id is not None,
+            use_nominal_bore=payload.nominal_bore_id is not None,
+        ),
         asset=asset,
         end="A",
         actor_id=principal.user_id,
     )
     await _upsert_asset_end(
         session,
-        payload.b_end,
+        _with_shared_end_fields(
+            payload.b_end,
+            material_id=payload.material_id,
+            nominal_bore_id=payload.nominal_bore_id,
+            use_material=payload.material_id is not None,
+            use_nominal_bore=payload.nominal_bore_id is not None,
+        ),
         asset=asset,
         end="B",
         actor_id=principal.user_id,
@@ -1196,9 +1274,7 @@ async def get_analytics_overview(
             issued=len(active_certificates),
             covered_assets=covered_assets,
             missing_assets=max(0, len(in_service_asset_ids) - covered_assets),
-            coverage_percent=round(
-                covered_assets / len(in_service_asset_ids) * 100
-            )
+            coverage_percent=round(covered_assets / len(in_service_asset_ids) * 100)
             if in_service_asset_ids
             else 0,
             expiring_soon=expiring_soon,
@@ -1868,9 +1944,7 @@ async def list_certificates(
         ),
         default="-issued_at",
     )
-    certificates = (
-        await session.scalars(statement.offset(offset).limit(limit))
-    ).all()
+    certificates = (await session.scalars(statement.offset(offset).limit(limit))).all()
     return CertificateListResponse(
         total=total,
         limit=limit,
@@ -1984,9 +2058,7 @@ async def list_products(
         frozenset({"code", "name", "category", "created_at", "updated_at"}),
         default="code",
     )
-    products = (
-        await session.scalars(statement.offset(offset).limit(limit))
-    ).all()
+    products = (await session.scalars(statement.offset(offset).limit(limit))).all()
     return ProductListResponse(
         total=total,
         limit=limit,
@@ -2123,9 +2195,7 @@ async def list_assets(
         ),
         default="asset_number",
     )
-    assets = (
-        await session.scalars(statement.offset(offset).limit(limit))
-    ).all()
+    assets = (await session.scalars(statement.offset(offset).limit(limit))).all()
     return AssetListResponse(
         total=total,
         limit=limit,
@@ -2163,22 +2233,36 @@ async def update_asset(
         )
     if "asset_number" in updates and payload.asset_number is not None:
         asset.asset_number = payload.asset_number.strip()
+    if "asset_name" in updates:
+        asset.asset_name = _clean_optional(payload.asset_name)
     if "customer_serial_no" in updates:
         asset.customer_serial_no = _clean_optional(payload.customer_serial_no)
+    if "serial_number" in updates:
+        asset.customer_serial_no = _clean_optional(payload.serial_number)
+    if "purchase_order_number" in updates:
+        asset.purchase_order_number = _clean_optional(payload.purchase_order_number)
     if "tag" in updates:
         asset.tag = _clean_optional(payload.tag)
     if "lifecycle_status" in updates and payload.lifecycle_status is not None:
         asset.lifecycle_status = payload.lifecycle_status
     if "manufacture_date" in updates:
         asset.manufacture_date = payload.manufacture_date
+    if "installation_date" in updates:
+        asset.installation_date = payload.installation_date
+    if "grave_date" in updates:
+        asset.grave_date = payload.grave_date
     if "next_retest_due_at" in updates:
         asset.next_retest_due_at = payload.next_retest_due_at
+    if "next_inspection_date" in updates:
+        asset.next_retest_due_at = payload.next_inspection_date
     if "condemned_at" in updates:
         asset.condemned_at = payload.condemned_at
     if "length_m" in updates:
         asset.length_m = payload.length_m
     if "notes" in updates:
         asset.notes = _clean_optional(payload.notes)
+    if "description" in updates:
+        asset.notes = _clean_optional(payload.description)
 
     await record_update(
         session,
@@ -2212,18 +2296,30 @@ async def update_asset(
             customer=target_customer,
             actor_id=principal.user_id,
         )
-    if "a_end" in updates:
+    if "a_end" in updates or "material_id" in updates or "nominal_bore_id" in updates:
         await _upsert_asset_end(
             session,
-            payload.a_end,
+            _with_shared_end_fields(
+                payload.a_end,
+                material_id=payload.material_id,
+                nominal_bore_id=payload.nominal_bore_id,
+                use_material="material_id" in updates,
+                use_nominal_bore="nominal_bore_id" in updates,
+            ),
             asset=asset,
             end="A",
             actor_id=principal.user_id,
         )
-    if "b_end" in updates:
+    if "b_end" in updates or "material_id" in updates or "nominal_bore_id" in updates:
         await _upsert_asset_end(
             session,
-            payload.b_end,
+            _with_shared_end_fields(
+                payload.b_end,
+                material_id=payload.material_id,
+                nominal_bore_id=payload.nominal_bore_id,
+                use_material="material_id" in updates,
+                use_nominal_bore="nominal_bore_id" in updates,
+            ),
             asset=asset,
             end="B",
             actor_id=principal.user_id,
@@ -2282,7 +2378,11 @@ def _asset_statement() -> Select[tuple[Asset]]:
         selectinload(Asset.customer),
         selectinload(Asset.location),
         selectinload(Asset.product),
-        selectinload(Asset.ends),
+        selectinload(Asset.ends).selectinload(AssetEndConfiguration.nominal_bore),
+        selectinload(Asset.ends).selectinload(AssetEndConfiguration.material),
+        selectinload(Asset.ends).selectinload(AssetEndConfiguration.coupling),
+        selectinload(Asset.ends).selectinload(AssetEndConfiguration.coupling_add_on),
+        selectinload(Asset.ends).selectinload(AssetEndConfiguration.attach_method),
         selectinload(Asset.retest_schedule),
     )
 
@@ -2397,11 +2497,7 @@ def _customer_contact_read(contact: CustomerContact) -> CustomerContactRead:
 
 def _customer_read(customer: Customer) -> CustomerRead:
     locations = sorted(
-        (
-            location
-            for location in customer.locations
-            if location.deleted_at is None
-        ),
+        (location for location in customer.locations if location.deleted_at is None),
         key=lambda location: location.name,
     )
     contacts = sorted(
@@ -2554,6 +2650,47 @@ async def _get_location_or_400(
             detail="Location does not belong to customer",
         )
     return location
+
+
+async def _get_active_lookup_or_400(
+    session: AsyncSession,
+    model: type[Any],
+    value: str | None,
+    label: str,
+) -> Any | None:
+    if value is None:
+        return None
+    record = await session.get(model, value)
+    if record is None or record.deleted_at is not None or not record.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{label} is not available",
+        )
+    return record
+
+
+def _with_shared_end_fields(
+    payload: AssetEndWrite | None,
+    *,
+    material_id: str | None,
+    nominal_bore_id: str | None,
+    use_material: bool,
+    use_nominal_bore: bool,
+) -> AssetEndWrite | None:
+    if payload is None and not use_material and not use_nominal_bore:
+        return None
+    return (payload or AssetEndWrite()).model_copy(
+        update={
+            "material_id": material_id
+            if use_material
+            else (payload.material_id if payload else None),
+            "nominal_bore_id": (
+                nominal_bore_id
+                if use_nominal_bore
+                else (payload.nominal_bore_id if payload else None)
+            ),
+        }
+    )
 
 
 async def _get_visible_asset_or_404(
@@ -2751,6 +2888,36 @@ async def _upsert_asset_end(
 
     fitting = _clean_optional(payload.fitting)
     size = _clean_optional(payload.size)
+    nominal_bore = await _get_active_lookup_or_400(
+        session,
+        NominalBore,
+        payload.nominal_bore_id,
+        "Nominal bore",
+    )
+    material = await _get_active_lookup_or_400(
+        session,
+        Material,
+        payload.material_id,
+        "Material",
+    )
+    coupling = await _get_active_lookup_or_400(
+        session,
+        Coupling,
+        payload.coupling_id,
+        "Coupling",
+    )
+    coupling_add_on = await _get_active_lookup_or_400(
+        session,
+        CouplingAddOn,
+        payload.coupling_add_on_id,
+        "Coupling add-on",
+    )
+    attach_method = await _get_active_lookup_or_400(
+        session,
+        AttachMethod,
+        payload.attach_method_id,
+        "Attach method",
+    )
     existing = (
         await session.scalars(
             select(AssetEndConfiguration).where(
@@ -2761,13 +2928,26 @@ async def _upsert_asset_end(
         )
     ).first()
     if existing is None:
-        if fitting is None and size is None:
+        if (
+            fitting is None
+            and size is None
+            and nominal_bore is None
+            and material is None
+            and coupling is None
+            and coupling_add_on is None
+            and attach_method is None
+        ):
             return
         configuration = AssetEndConfiguration(
             asset=asset,
             end=end,
             fitting=fitting,
             size=size,
+            nominal_bore=nominal_bore,
+            material=material,
+            coupling=coupling,
+            coupling_add_on=coupling_add_on,
+            attach_method=attach_method,
         )
         session.add(configuration)
         await record_create(
@@ -2781,6 +2961,11 @@ async def _upsert_asset_end(
     before = existing.to_audit_dict()
     existing.fitting = fitting
     existing.size = size
+    existing.nominal_bore = nominal_bore
+    existing.material = material
+    existing.coupling = coupling
+    existing.coupling_add_on = coupling_add_on
+    existing.attach_method = attach_method
     await record_update(
         session,
         existing,
@@ -2916,12 +3101,29 @@ def _certificate_read(certificate: Certificate) -> CertificateRead:
     )
 
 
+def _lookup_read(
+    record: Any | None, *, label_attribute: str = "name"
+) -> LookupRead | None:
+    if record is None:
+        return None
+    return LookupRead(
+        id=record.id,
+        code=record.code,
+        name=getattr(record, label_attribute),
+    )
+
+
 def _asset_end_read(configuration: AssetEndConfiguration | None) -> AssetEndRead | None:
     if configuration is None:
         return None
     return AssetEndRead(
         fitting=configuration.fitting,
         size=configuration.size,
+        nominal_bore=_lookup_read(configuration.nominal_bore, label_attribute="label"),
+        material=_lookup_read(configuration.material),
+        coupling=_lookup_read(configuration.coupling),
+        coupling_add_on=_lookup_read(configuration.coupling_add_on),
+        attach_method=_lookup_read(configuration.attach_method),
     )
 
 
@@ -2934,14 +3136,19 @@ def _asset_read(asset: Asset) -> AssetRead:
     return AssetRead(
         id=asset.id,
         asset_number=asset.asset_number,
+        asset_name=asset.asset_name,
         customer_serial_no=asset.customer_serial_no,
+        purchase_order_number=asset.purchase_order_number,
         tag=asset.tag,
         lifecycle_status=asset.lifecycle_status,
         manufacture_date=asset.manufacture_date,
+        installation_date=asset.installation_date,
+        grave_date=asset.grave_date,
         next_retest_due_at=asset.next_retest_due_at,
         condemned_at=asset.condemned_at,
         length_m=asset.length_m,
         notes=asset.notes,
+        description=asset.notes,
         customer=CustomerSummary(
             id=asset.customer.id,
             code=asset.customer.code,

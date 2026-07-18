@@ -63,7 +63,11 @@ class Asset(SyncableMixin, Base):
         index=True,
     )
     asset_number: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
+    asset_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     customer_serial_no: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    purchase_order_number: Mapped[str | None] = mapped_column(
+        String(120), nullable=True
+    )
     tag: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True)
     lifecycle_status: Mapped[str] = mapped_column(
         String(40),
@@ -71,6 +75,8 @@ class Asset(SyncableMixin, Base):
         default=AssetLifecycleStatus.DRAFT.value,
     )
     manufacture_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    installation_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    grave_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     next_retest_due_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     condemned_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     length_m: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)

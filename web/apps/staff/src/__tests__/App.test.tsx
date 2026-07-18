@@ -1165,7 +1165,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Assets" }));
     expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
     expect(screen.getByRole("table", { name: "Asset records" })).toHaveTextContent(
-      "Asset ID"
+      "Asset"
     );
     expect(screen.getByRole("table", { name: "Asset records" })).toHaveTextContent(
       "End A / End B"
@@ -1244,12 +1244,12 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Add Asset" }));
 
     expect(
-      within(screen.getByLabelText("Asset customer")).getByRole("option", {
+      within(screen.getByLabelText("Agent")).getByRole("option", {
         name: "E2E API Customer"
       })
     ).toBeVisible();
     expect(
-      within(screen.getByLabelText("Asset product")).getByRole("option", {
+      within(screen.getByLabelText("Product")).getByRole("option", {
         name: "API Spare Hose"
       })
     ).toBeVisible();
@@ -1278,8 +1278,8 @@ describe("App", () => {
 
     await user.click(await screen.findByRole("button", { name: "Assets" }));
     await user.click(await screen.findByRole("button", { name: "Add Asset" }));
-    await user.type(screen.getByLabelText("Asset number"), "ASYNC-ASSET-001");
-    await user.type(screen.getByLabelText("Customer serial number"), "SERIAL-ASYNC");
+    await user.type(screen.getByLabelText("Asset Name"), "Async transfer hose");
+    await user.type(screen.getByLabelText("Serial Number"), "SERIAL-ASYNC");
 
     customers.resolve(
       okJson({
@@ -1299,17 +1299,17 @@ describe("App", () => {
     );
 
     expect(
-      await within(screen.getByLabelText("Asset customer")).findByRole("option", {
+      await within(screen.getByLabelText("Agent")).findByRole("option", {
         name: "E2E API Customer"
       })
     ).toBeVisible();
     expect(
-      await within(screen.getByLabelText("Asset product")).findByRole("option", {
+      await within(screen.getByLabelText("Product")).findByRole("option", {
         name: "API Spare Hose"
       })
     ).toBeVisible();
-    expect(screen.getByLabelText("Asset number")).toHaveValue("ASYNC-ASSET-001");
-    expect(screen.getByLabelText("Customer serial number")).toHaveValue("SERIAL-ASYNC");
+    expect(screen.getByLabelText("Asset Name")).toHaveValue("Async transfer hose");
+    expect(screen.getByLabelText("Serial Number")).toHaveValue("SERIAL-ASYNC");
   });
 
   it("issues a certificate from an approved inspection in the staff UI", async () => {
@@ -1499,7 +1499,7 @@ describe("App", () => {
     expect(await screen.findByRole("row", { name: /API Demo Hose/i })).toBeVisible();
   });
 
-  it("opens the asset drawer, edits A/B end values, and saves an asset", async () => {
+  it("opens the asset drawer and saves an asset profile", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
 
@@ -1507,25 +1507,17 @@ describe("App", () => {
 
     await user.click(await screen.findByRole("button", { name: "Assets" }));
     await user.click(screen.getByRole("button", { name: "Add Asset" }));
-    await user.type(screen.getByLabelText("Asset number"), "ASSET-200");
-    await user.type(screen.getByLabelText("Customer serial number"), "SER-200");
-    await user.type(screen.getByLabelText("Next retest due"), "2026-09-15");
-    await user.type(screen.getByLabelText("Asset notes"), "Keep capped until install.");
-    await user.type(screen.getByLabelText("A end fitting"), "Camlock A");
-    await user.type(screen.getByLabelText("A end size"), "2 inch");
-    await user.type(screen.getByLabelText("B end fitting"), "Flange B");
-    await user.type(screen.getByLabelText("B end size"), "2 inch");
-
-    expect(screen.getByDisplayValue("Camlock A")).toBeVisible();
-    expect(screen.getByDisplayValue("Flange B")).toBeVisible();
+    await user.type(screen.getByLabelText("Asset Name"), "Bay transfer hose");
+    await user.type(screen.getByLabelText("Serial Number"), "SER-200");
+    await user.type(screen.getByLabelText("Next Inspection Date"), "2026-09-15");
+    await user.type(screen.getByLabelText("Description"), "Keep capped until install.");
 
     await user.click(screen.getByRole("button", { name: "Save asset" }));
 
-    const assetRow = await screen.findByRole("row", { name: /ASSET-200/i });
+    const assetRow = await screen.findByRole("row", { name: /Bay transfer hose/i });
     expect(assetRow).toBeVisible();
     expect(assetRow).toHaveTextContent("2026-09-15");
-    expect(assetRow).toHaveTextContent("Camlock A 2 inch / Flange B 2 inch");
-    expect(assetRow).toHaveTextContent("Keep capped until install.");
+    expect(assetRow).toHaveTextContent("SER-200");
   });
 
   it("filters asset and product records from the filter panel", async () => {
@@ -1585,7 +1577,7 @@ describe("App", () => {
 
     await user.click(await screen.findByRole("button", { name: "Assets" }));
     await user.click(screen.getByRole("button", { name: "Add Asset" }));
-    expect(screen.getByLabelText("Next retest due")).toHaveAttribute("type", "date");
+    expect(screen.getByLabelText("Next Inspection Date")).toHaveAttribute("type", "date");
     await user.click(screen.getByRole("button", { name: "Close form" }));
 
     await user.click(screen.getByRole("button", { name: /Retest Schedule/i }));
