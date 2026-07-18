@@ -292,6 +292,151 @@ async def test_dashboard_returns_live_operational_data_and_respects_customer_sco
 
 
 @pytest.mark.asyncio
+async def test_analytics_overview_uses_live_records_and_respects_customer_scope(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        vopak_asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        orica_asset = await session.get(Asset, seeded_session["orica_asset_id"])
+        assert vopak_asset is not None
+        assert orica_asset is not None
+        approved_inspection = Inspection(
+            asset=orica_asset,
+            inspection_type=InspectionType.NEW_ASSET.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+        )
+        session.add_all(
+            [
+                RetestSchedule(
+                    customer_id=seeded_session["orica_id"],
+                    asset=orica_asset,
+                    due_at=date.today() + timedelta(days=3),
+                    status=RetestScheduleStatus.DUE.value,
+                ),
+                Inspection(
+                    asset=vopak_asset,
+                    inspection_type=InspectionType.SERVICE.value,
+                    status=InspectionStatus.SUBMITTED.value,
+                    result="PASS",
+                    inspector_user_id="inspector-1",
+                ),
+                approved_inspection,
+            ]
+        )
+        await session.flush()
+        session.add(
+            Certificate(
+                inspection_id=approved_inspection.id,
+                asset_id=orica_asset.id,
+                number="CERT-ANALYTICS-1",
+                valid_until=date.today() + timedelta(days=10),
+                pdf_object_key="certificates/analytics-test.pdf",
+                verification_hash="analytics-test-hash",
+                public_token="analytics-test-token",
+                issued_by_user_id="admin-1",
+                status=CertificateStatus.ISSUED.value,
+            )
+        )
+        await session.commit()
+
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    customer_user = Principal(
+        user_id="customer-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+
+    async with api_client(session_factory, admin) as client:
+        admin_response = await client.get("/api/v1/analytics/overview")
+    async with api_client(session_factory, customer_user) as client:
+        scoped_response = await client.get("/api/v1/analytics/overview")
+
+    assert admin_response.status_code == 200
+    admin_data = admin_response.json()
+    assert admin_data["total_assets"] == 2
+    assert admin_data["in_service_assets"] == 1
+    assert admin_data["overdue_assets"] == 1
+    assert admin_data["due_soon_assets"] == 1
+    assert admin_data["awaiting_review_inspections"] == 1
+    assert admin_data["fleet_posture"] == {
+        "clear": 0,
+        "due_soon": 1,
+        "overdue": 1,
+    }
+    assert admin_data["certificate_coverage"] == {
+        "issued": 1,
+        "covered_assets": 1,
+        "missing_assets": 0,
+        "coverage_percent": 100,
+        "expiring_soon": 1,
+        "expired": 0,
+    }
+    assert admin_data["customer_risk"] == [
+        {
+            "customer_id": seeded_session["vopak_id"],
+            "customer_name": "Vopak",
+            "overdue": 1,
+            "due_soon": 0,
+            "risk": "HIGH",
+        },
+        {
+            "customer_id": seeded_session["orica_id"],
+            "customer_name": "Orica",
+            "overdue": 0,
+            "due_soon": 1,
+            "risk": "WATCH",
+        },
+    ]
+    assert admin_data["inspection_outcomes"] == [
+        {
+            "inspection_type": "NEW_ASSET",
+            "submitted": 0,
+            "approved": 1,
+            "rejected": 0,
+        },
+        {
+            "inspection_type": "SERVICE",
+            "submitted": 1,
+            "approved": 0,
+            "rejected": 0,
+        },
+    ]
+    assert scoped_response.status_code == 200
+    scoped_data = scoped_response.json()
+    assert scoped_data["total_assets"] == 1
+    assert scoped_data["due_soon_assets"] == 0
+    assert scoped_data["fleet_posture"] == {
+        "clear": 0,
+        "due_soon": 0,
+        "overdue": 1,
+    }
+    assert scoped_data["customer_risk"] == [
+        {
+            "customer_id": seeded_session["vopak_id"],
+            "customer_name": "Vopak",
+            "overdue": 1,
+            "due_soon": 0,
+            "risk": "HIGH",
+        }
+    ]
+    assert scoped_data["inspection_outcomes"] == [
+        {
+            "inspection_type": "SERVICE",
+            "submitted": 1,
+            "approved": 0,
+            "rejected": 0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_manual_overdue_escalation_queues_one_event_per_schedule_per_day(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],

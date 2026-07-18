@@ -368,6 +368,49 @@ class DashboardRead(BaseModel):
     awaiting_review: list[DashboardReviewRead]
 
 
+class AnalyticsCertificateCoverageRead(BaseModel):
+    covered_assets: int
+    coverage_percent: int
+    expiring_soon: int
+    expired: int
+    issued: int
+    missing_assets: int
+
+
+class AnalyticsFleetPostureRead(BaseModel):
+    clear: int
+    due_soon: int
+    overdue: int
+
+
+class AnalyticsInspectionOutcomeRead(BaseModel):
+    inspection_type: str
+    submitted: int
+    approved: int
+    rejected: int
+
+
+class AnalyticsCustomerRiskRead(BaseModel):
+    customer_id: str
+    customer_name: str
+    overdue: int
+    due_soon: int
+    risk: str
+
+
+class AnalyticsOverviewRead(BaseModel):
+    generated_at: datetime
+    total_assets: int
+    in_service_assets: int
+    due_soon_assets: int
+    overdue_assets: int
+    awaiting_review_inspections: int
+    fleet_posture: AnalyticsFleetPostureRead
+    certificate_coverage: AnalyticsCertificateCoverageRead
+    customer_risk: list[AnalyticsCustomerRiskRead]
+    inspection_outcomes: list[AnalyticsInspectionOutcomeRead]
+
+
 class InspectionRead(BaseModel):
     id: str
     asset_id: str

@@ -41,6 +41,49 @@ export interface DashboardRecord {
   awaitingReview: DashboardReviewRecord[];
 }
 
+export interface AnalyticsCertificateCoverage {
+  coveredAssets: number;
+  coveragePercent: number;
+  expiringSoon: number;
+  expired: number;
+  issued: number;
+  missingAssets: number;
+}
+
+export interface AnalyticsFleetPosture {
+  clear: number;
+  dueSoon: number;
+  overdue: number;
+}
+
+export interface AnalyticsInspectionOutcome {
+  inspectionType: string;
+  submitted: number;
+  approved: number;
+  rejected: number;
+}
+
+export interface AnalyticsCustomerRisk {
+  customerId: string;
+  customerName: string;
+  overdue: number;
+  dueSoon: number;
+  risk: "HIGH" | "WATCH";
+}
+
+export interface AnalyticsOverview {
+  generatedAt: string;
+  totalAssets: number;
+  inServiceAssets: number;
+  dueSoonAssets: number;
+  overdueAssets: number;
+  awaitingReviewInspections: number;
+  fleetPosture: AnalyticsFleetPosture;
+  certificateCoverage: AnalyticsCertificateCoverage;
+  customerRisk: AnalyticsCustomerRisk[];
+  inspectionOutcomes: AnalyticsInspectionOutcome[];
+}
+
 export interface NotificationRecord {
   id: string;
   category: string;

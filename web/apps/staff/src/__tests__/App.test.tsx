@@ -343,6 +343,49 @@ function dashboardFetch() {
   });
 }
 
+function analyticsFetch() {
+  return vi.fn(async (url: string | URL | Request) => {
+    const requestUrl = new URL(String(url), "http://test");
+    if (requestUrl.pathname === "/api/v1/analytics/overview") {
+      return okJson({
+        generated_at: "2026-07-18T09:30:00Z",
+        total_assets: 12,
+        in_service_assets: 9,
+        due_soon_assets: 2,
+        overdue_assets: 1,
+        awaiting_review_inspections: 3,
+        fleet_posture: {
+          clear: 6,
+          due_soon: 2,
+          overdue: 1
+        },
+        certificate_coverage: {
+          covered_assets: 8,
+          coverage_percent: 89,
+          expiring_soon: 2,
+          expired: 1,
+          issued: 10,
+          missing_assets: 1
+        },
+        customer_risk: [{
+          customer_id: "customer-vopak",
+          customer_name: "Vopak",
+          overdue: 1,
+          due_soon: 0,
+          risk: "HIGH"
+        }],
+        inspection_outcomes: [{
+          inspection_type: "SERVICE",
+          submitted: 3,
+          approved: 8,
+          rejected: 1
+        }]
+      });
+    }
+    throw new Error(`Unhandled URL: ${requestUrl.pathname}`);
+  });
+}
+
 function dashboardActionsFetch() {
   return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const requestUrl = new URL(String(url), "http://test");
@@ -1625,19 +1668,19 @@ describe("App", () => {
     expect(screen.getByRole("row", { name: /997950/i })).toHaveTextContent("2026-09-15");
   });
 
-  it("opens analytics, users, and devices as implemented console workspaces", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+  it("opens live analytics and the implemented system console workspaces", async () => {
+    vi.stubGlobal("fetch", analyticsFetch());
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Analytics" }));
     expect(await screen.findByRole("heading", { name: "Analytics" })).toBeVisible();
-    expect(await screen.findByText("Fleet Health Trend")).toBeVisible();
-    expect(await screen.findByText("Retest Risk by Customer")).toBeVisible();
-    expect(screen.getByRole("table", { name: "Risk ranking" })).toHaveTextContent(
-      "North Sea Drilling"
-    );
+    expect(await screen.findByText("Fleet posture")).toBeVisible();
+    expect(screen.getByText("Vopak")).toBeVisible();
+    expect(screen.queryByText("Mock data")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Open certificates/i }));
+    expect(await screen.findByRole("heading", { name: "Certificate Management" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Users & Roles" }));
     expect(await screen.findByRole("heading", { name: "Users & Roles" })).toBeVisible();

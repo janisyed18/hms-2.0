@@ -11,6 +11,11 @@ from sqlalchemy.sql import Select
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.api.schemas import (
+    AnalyticsCertificateCoverageRead,
+    AnalyticsCustomerRiskRead,
+    AnalyticsFleetPostureRead,
+    AnalyticsInspectionOutcomeRead,
+    AnalyticsOverviewRead,
     AssetCreate,
     AssetEndRead,
     AssetEndWrite,
@@ -937,6 +942,173 @@ async def get_dashboard(
                 result=inspection.result,
             )
             for inspection in review_items
+        ],
+    )
+
+
+@router.get("/analytics/overview", response_model=AnalyticsOverviewRead)
+async def get_analytics_overview(
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> AnalyticsOverviewRead:
+    """Return current, scoped operational analytics without manufacturing history."""
+    _require_asset_read(principal)
+    today = datetime.now(UTC).date()
+    week_end = today + timedelta(days=7)
+    certificate_expiry = today + timedelta(days=60)
+
+    assets = _apply_asset_scope(
+        select(Asset).where(Asset.deleted_at.is_(None)), principal
+    )
+    in_service_asset_ids = set(
+        (
+            await session.scalars(
+                _apply_asset_scope(
+                    select(Asset.id).where(
+                        Asset.deleted_at.is_(None),
+                        Asset.lifecycle_status == "IN_SERVICE",
+                    ),
+                    principal,
+                )
+            )
+        ).all()
+    )
+    fleet_asset_ids = set(
+        (
+            await session.scalars(
+                _apply_asset_scope(
+                    select(Asset.id).where(
+                        Asset.deleted_at.is_(None),
+                        Asset.lifecycle_status.not_in(
+                            {"DRAFT", "CONDEMNED", "RETIRED"}
+                        ),
+                    ),
+                    principal,
+                )
+            )
+        ).all()
+    )
+    schedules = _apply_asset_scope(_retest_schedule_statement(), principal).where(
+        RetestSchedule.status != RetestScheduleStatus.SUSPENDED.value
+    )
+    inspections = await session.scalars(
+        _apply_asset_scope(_inspection_statement(), principal)
+    )
+    certificates = await session.scalars(
+        _apply_asset_scope(_certificate_statement(), principal)
+    )
+    schedule_items = (await session.scalars(schedules)).all()
+
+    overdue_asset_ids = {
+        schedule.asset_id for schedule in schedule_items if schedule.due_at < today
+    }
+    due_soon_asset_ids = {
+        schedule.asset_id
+        for schedule in schedule_items
+        if today <= schedule.due_at <= week_end
+    }
+    overdue_assets = len(overdue_asset_ids)
+    due_soon_assets = len(due_soon_asset_ids)
+    active_certificates = [
+        certificate
+        for certificate in certificates
+        if certificate.status == CertificateStatus.ISSUED.value
+    ]
+    valid_certificate_asset_ids = {
+        certificate.asset_id
+        for certificate in active_certificates
+        if certificate.valid_until is None or certificate.valid_until >= today
+    }
+    covered_assets = len(in_service_asset_ids & valid_certificate_asset_ids)
+    expiring_soon = sum(
+        certificate.valid_until is not None
+        and today <= certificate.valid_until <= certificate_expiry
+        for certificate in active_certificates
+    )
+    expired = sum(
+        certificate.valid_until is not None and certificate.valid_until < today
+        for certificate in active_certificates
+    )
+
+    customer_risk: dict[str, dict[str, Any]] = {}
+    for schedule in schedule_items:
+        if schedule.due_at > week_end:
+            continue
+        customer = schedule.asset.customer
+        row = customer_risk.setdefault(
+            customer.id,
+            {
+                "customer_id": customer.id,
+                "customer_name": customer.name,
+                "overdue": 0,
+                "due_soon": 0,
+            },
+        )
+        if schedule.due_at < today:
+            row["overdue"] += 1
+        else:
+            row["due_soon"] += 1
+
+    inspection_outcomes: dict[str, dict[str, int | str]] = {}
+    awaiting_review = 0
+    for inspection in inspections:
+        if inspection.status == InspectionStatus.SUBMITTED.value:
+            awaiting_review += 1
+        if inspection.status not in {
+            InspectionStatus.SUBMITTED.value,
+            InspectionStatus.APPROVED.value,
+            InspectionStatus.REJECTED.value,
+        }:
+            continue
+        row = inspection_outcomes.setdefault(
+            inspection.inspection_type,
+            {
+                "inspection_type": inspection.inspection_type,
+                "submitted": 0,
+                "approved": 0,
+                "rejected": 0,
+            },
+        )
+        row[inspection.status.lower()] += 1
+
+    risk_rows = sorted(
+        customer_risk.values(),
+        key=lambda row: (-row["overdue"], -row["due_soon"], row["customer_name"]),
+    )[:6]
+    return AnalyticsOverviewRead(
+        generated_at=datetime.now(UTC),
+        total_assets=await _count(session, assets),
+        in_service_assets=len(in_service_asset_ids),
+        due_soon_assets=due_soon_assets,
+        overdue_assets=overdue_assets,
+        awaiting_review_inspections=awaiting_review,
+        fleet_posture=AnalyticsFleetPostureRead(
+            clear=len(fleet_asset_ids - overdue_asset_ids - due_soon_asset_ids),
+            due_soon=len(fleet_asset_ids & due_soon_asset_ids),
+            overdue=len(fleet_asset_ids & overdue_asset_ids),
+        ),
+        certificate_coverage=AnalyticsCertificateCoverageRead(
+            issued=len(active_certificates),
+            covered_assets=covered_assets,
+            missing_assets=max(0, len(in_service_asset_ids) - covered_assets),
+            coverage_percent=round(
+                covered_assets / len(in_service_asset_ids) * 100
+            )
+            if in_service_asset_ids
+            else 0,
+            expiring_soon=expiring_soon,
+            expired=expired,
+        ),
+        customer_risk=[
+            AnalyticsCustomerRiskRead(
+                **row,
+                risk="HIGH" if row["overdue"] else "WATCH",
+            )
+            for row in risk_rows
+        ],
+        inspection_outcomes=[
+            AnalyticsInspectionOutcomeRead(**row)
+            for _, row in sorted(inspection_outcomes.items())
         ],
     )
 

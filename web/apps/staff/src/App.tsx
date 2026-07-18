@@ -356,7 +356,7 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
                   />
                 ) : null}
                 {renderedActiveModule === "analytics" ? (
-                  <AnalyticsWorkspace source={workspace.source} />
+                  <AnalyticsWorkspace onModuleChange={handleModuleChange} />
                 ) : null}
                 {renderedActiveModule === "products" ? <ProductsWorkspace /> : null}
                 {renderedActiveModule === "reference" ? <ReferenceWorkspace /> : null}

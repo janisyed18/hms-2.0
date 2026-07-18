@@ -21,6 +21,7 @@ import type {
   AdminUserCreateResult,
   AdminUserListResult,
   AdminUserRecord,
+  AnalyticsOverview,
   AdminUserUpdateValues,
   TemporaryPasswordResult,
   AssetEndValues,
@@ -147,6 +148,41 @@ interface ApiDashboard {
   overdue_retests: ApiDashboardRetest[];
   due_this_week: ApiDashboardDue[];
   awaiting_review: ApiDashboardReview[];
+}
+
+interface ApiAnalyticsOverview {
+  generated_at: string;
+  total_assets: number;
+  in_service_assets: number;
+  due_soon_assets: number;
+  overdue_assets: number;
+  awaiting_review_inspections: number;
+  fleet_posture: {
+    clear: number;
+    due_soon: number;
+    overdue: number;
+  };
+  certificate_coverage: {
+    covered_assets: number;
+    coverage_percent: number;
+    expiring_soon: number;
+    expired: number;
+    issued: number;
+    missing_assets: number;
+  };
+  customer_risk: Array<{
+    customer_id: string;
+    customer_name: string;
+    overdue: number;
+    due_soon: number;
+    risk: "HIGH" | "WATCH";
+  }>;
+  inspection_outcomes: Array<{
+    inspection_type: string;
+    submitted: number;
+    approved: number;
+    rejected: number;
+  }>;
 }
 
 interface ApiRetestEscalation {
@@ -644,6 +680,43 @@ function toDashboard(dashboard: ApiDashboard): DashboardRecord {
       inspectionType: inspection.inspection_type,
       status: inspection.status,
       result: inspection.result
+    }))
+  };
+}
+
+function toAnalyticsOverview(overview: ApiAnalyticsOverview): AnalyticsOverview {
+  return {
+    generatedAt: overview.generated_at,
+    totalAssets: overview.total_assets,
+    inServiceAssets: overview.in_service_assets,
+    dueSoonAssets: overview.due_soon_assets,
+    overdueAssets: overview.overdue_assets,
+    awaitingReviewInspections: overview.awaiting_review_inspections,
+    fleetPosture: {
+      clear: overview.fleet_posture.clear,
+      dueSoon: overview.fleet_posture.due_soon,
+      overdue: overview.fleet_posture.overdue
+    },
+    certificateCoverage: {
+      coveredAssets: overview.certificate_coverage.covered_assets,
+      coveragePercent: overview.certificate_coverage.coverage_percent,
+      expiringSoon: overview.certificate_coverage.expiring_soon,
+      expired: overview.certificate_coverage.expired,
+      issued: overview.certificate_coverage.issued,
+      missingAssets: overview.certificate_coverage.missing_assets
+    },
+    customerRisk: overview.customer_risk.map((risk) => ({
+      customerId: risk.customer_id,
+      customerName: risk.customer_name,
+      overdue: risk.overdue,
+      dueSoon: risk.due_soon,
+      risk: risk.risk
+    })),
+    inspectionOutcomes: overview.inspection_outcomes.map((outcome) => ({
+      inspectionType: outcome.inspection_type,
+      submitted: outcome.submitted,
+      approved: outcome.approved,
+      rejected: outcome.rejected
     }))
   };
 }
@@ -1206,6 +1279,11 @@ export function createHmsClient(options: HmsClientOptions = {}) {
     async getDashboard(limit = 5, offset = 0): Promise<DashboardRecord> {
       const response = await request<ApiDashboard>("/api/v1/dashboard", {}, { limit, offset });
       return toDashboard(response.data);
+    },
+
+    async getAnalyticsOverview(): Promise<AnalyticsOverview> {
+      const response = await request<ApiAnalyticsOverview>("/api/v1/analytics/overview");
+      return toAnalyticsOverview(response.data);
     },
 
     async escalateOverdueRetests(): Promise<number> {

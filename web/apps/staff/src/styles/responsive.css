@@ -1,6 +1,8 @@
 @media (max-width: 1280px) {
   .dashboard-layout,
   .analytics-layout,
+  .analytics-command-grid,
+  .analytics-insight-grid,
   .analytics-table-grid,
   .inspection-layout,
   .system-layout,
@@ -100,6 +102,10 @@
   .table-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .analytics-fleet-panel .health-legend {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .global-search {
@@ -372,6 +378,37 @@
 
   .dashboard-page-summary {
     margin-left: auto;
+  }
+
+  .analytics-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .analytics-header .analytics-refresh {
+    width: 100%;
+  }
+
+  .analytics-fleet-panel .health-legend {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-fleet-panel .fleet-legend-button {
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-height: 42px;
+  }
+
+  .analytics-fleet-panel .fleet-legend-button > span {
+    align-items: center;
+  }
+
+  .analytics-outcome {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .analytics-outcome-totals {
+    width: 100%;
   }
 }
 
