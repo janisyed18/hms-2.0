@@ -321,14 +321,16 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
                         onRiskFilterChange={workspace.setRiskFilter}
                         onStatusFilterChange={workspace.setStatusFilter}
                         onSelectCustomer={workspace.selectCustomer}
-                        onAddCustomer={() => workspace.setFormOpen(true)}
+                        onAddCustomer={workspace.openCreateCustomer}
                       />
                       {workspace.selectedCustomer ? (
                         <div className="customer-detail-stack">
                           <CustomerDetail
                             customer={workspace.selectedCustomer}
                             activeTab={workspace.activeTab}
+                            canWrite={hasPermission(session, "customer:write")}
                             onClose={workspace.closeDetail}
+                            onEdit={() => workspace.openEditCustomer(workspace.selectedCustomer!)}
                             onTabChange={workspace.setActiveTab}
                           />
                           <ActivityFeed items={workspace.selectedCustomer.metrics.activity} />
@@ -340,8 +342,9 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
               </main>
               <CustomerForm
                 open={workspace.isFormOpen}
-                onClose={() => workspace.setFormOpen(false)}
-                onSubmit={workspace.createCustomer}
+                customer={workspace.editingCustomer}
+                onClose={workspace.closeCustomerForm}
+                onSubmit={workspace.saveCustomer}
               />
             </>
           ) : (

@@ -572,39 +572,82 @@ describe("hmsClient", () => {
     );
   });
 
-  it("sends customer notes in create payloads", async () => {
+  it("sends customer locations, contacts, and requirements in create payloads", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       okJson({
         ...apiCustomer,
         code: "SUM",
         name: "Summit Marine Group",
-        notes: "Use Newcastle dispatch contact for retest planning."
+        ppe_requirements: ["High Vis", "Safety Boots"],
+        additional_requirements: ["2-way radio"]
       })
     );
 
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
     const created = await client.createCustomer({
-      code: "SUM",
       name: "Summit Marine Group",
-      notes: "Use Newcastle dispatch contact for retest planning.",
-      retestEnabled: true,
-      defaultRetestMonths: 12
-    } as never);
+      locations: [{ name: "Newcastle operations yard" }, { name: "Kooragang workshop" }],
+      phone: "+61 2 5555 0200",
+      email: "operations@summit.example.test",
+      ppeRequirements: ["High Vis", "Safety Boots"],
+      additionalRequirements: ["2-way radio"]
+    });
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/customers",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
-          code: "SUM",
           name: "Summit Marine Group",
-          notes: "Use Newcastle dispatch contact for retest planning.",
-          retest_enabled: true,
-          default_retest_months: 12
+          locations: [
+            { name: "Newcastle operations yard" },
+            { name: "Kooragang workshop" }
+          ],
+          phone: "+61 2 5555 0200",
+          email: "operations@summit.example.test",
+          ppe_requirements: ["High Vis", "Safety Boots"],
+          additional_requirements: ["2-way radio"]
         })
       })
     );
-    expect(created.notes).toBe("Use Newcastle dispatch contact for retest planning.");
+    expect(created.ppeRequirements).toEqual(["High Vis", "Safety Boots"]);
+  });
+
+  it("updates the customer profile with its current ETag", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okJson({
+        ...apiCustomer,
+        name: "Summit Marine Services",
+        ppe_requirements: ["Hard Hat"],
+        additional_requirements: ["Vehicle Site Approval"]
+      }, { ETag: '"4"' })
+    );
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    await client.updateCustomer("customer-api-1", {
+      name: "Summit Marine Services",
+      locations: [{ id: "location-api-1", name: "Newcastle workshop" }],
+      phone: "+61 2 5555 0300",
+      email: "service@summit.example.test",
+      ppeRequirements: ["Hard Hat"],
+      additionalRequirements: ["Vehicle Site Approval"]
+    }, '"3"');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/customers/customer-api-1",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: expect.objectContaining({ "If-Match": '"3"' }),
+        body: JSON.stringify({
+          name: "Summit Marine Services",
+          locations: [{ id: "location-api-1", name: "Newcastle workshop" }],
+          phone: "+61 2 5555 0300",
+          email: "service@summit.example.test",
+          ppe_requirements: ["Hard Hat"],
+          additional_requirements: ["Vehicle Site Approval"]
+        })
+      })
+    );
   });
 
   it("sends asset retest schedule and end configuration payloads", async () => {

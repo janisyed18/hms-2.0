@@ -113,6 +113,8 @@ function customer(
     notes: `Coordinate retest scheduling and site access through ${location.name}.`,
     retestEnabled: true,
     defaultRetestMonths: 12,
+    ppeRequirements: ["High Vis", "Long Sleeve", "Long Pants", "Safety Boots"],
+    additionalRequirements: [],
     status: "Active",
     riskLevel,
     industry: "Offshore Drilling",
@@ -319,11 +321,13 @@ export function makeLocalCustomer(values: CustomerFormValues): CustomerRecord {
   const id = `local-${Date.now()}`;
   return {
     id,
-    code: values.code.trim().toUpperCase(),
+    code: `CUST-${Date.now().toString().slice(-6)}`,
     name: values.name.trim(),
-    notes: values.notes,
-    retestEnabled: values.retestEnabled,
-    defaultRetestMonths: values.defaultRetestMonths,
+    notes: null,
+    retestEnabled: false,
+    defaultRetestMonths: null,
+    ppeRequirements: values.ppeRequirements,
+    additionalRequirements: values.additionalRequirements,
     status: "Review",
     riskLevel: "Low",
     industry: "Marine Operations",
@@ -332,8 +336,25 @@ export function makeLocalCustomer(values: CustomerFormValues): CustomerRecord {
     contractEnd: "Not set",
     lastActivity: "Just now",
     metrics: metrics(0, 0, 100, "All Current"),
-    locations: [],
-    contacts: []
+    locations: values.locations.map((location, index) => ({
+      id: location.id ?? `${id}-location-${index + 1}`,
+      name: location.name.trim(),
+      address1: null,
+      address2: null,
+      city: null,
+      state: null,
+      country: null
+    })),
+    contacts: values.phone.trim() || values.email.trim()
+      ? [{
+          id: `${id}-contact-1`,
+          name: values.name.trim(),
+          email: values.email.trim() || null,
+          phone: values.phone.trim() || null,
+          role: null,
+          receivesRetestReminders: false
+        }]
+      : []
   };
 }
 

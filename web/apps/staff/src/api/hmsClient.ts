@@ -98,6 +98,8 @@ interface ApiCustomer {
   notes: string | null;
   retest_enabled: boolean;
   default_retest_months: number | null;
+  ppe_requirements: string[];
+  additional_requirements: string[];
   locations: ApiLocation[];
   contacts: ApiContact[];
 }
@@ -745,6 +747,8 @@ function toCustomer(customer: ApiCustomer, etag: string | null = null): Customer
         notes: customer.notes,
         retestEnabled: customer.retest_enabled,
         defaultRetestMonths: customer.default_retest_months,
+        ppeRequirements: customer.ppe_requirements,
+        additionalRequirements: customer.additional_requirements,
         locations: customer.locations.map(toLocation),
         contacts: customer.contacts.map(toContact),
         status: "Active",
@@ -756,10 +760,14 @@ function toCustomer(customer: ApiCustomer, etag: string | null = null): Customer
         lastActivity: "Synced",
         metrics: makeLocalCustomer({
           name: customer.name,
-          code: customer.code,
-          notes: customer.notes,
-          retestEnabled: customer.retest_enabled,
-          defaultRetestMonths: customer.default_retest_months
+          locations: customer.locations.map((location) => ({
+            id: location.id,
+            name: location.name
+          })),
+          phone: customer.contacts[0]?.phone ?? "",
+          email: customer.contacts[0]?.email ?? "",
+          ppeRequirements: customer.ppe_requirements,
+          additionalRequirements: customer.additional_requirements
         }).metrics
       },
       etag
@@ -1198,6 +1206,20 @@ function ifMatchHeader(etag?: string | null): Record<string, string> {
   return etag ? { "If-Match": etag } : {};
 }
 
+function customerPayload(values: CustomerFormValues) {
+  return {
+    name: values.name.trim(),
+    locations: values.locations.map((location) => ({
+      ...(location.id ? { id: location.id } : {}),
+      name: location.name.trim()
+    })),
+    phone: values.phone.trim() || null,
+    email: values.email.trim() || null,
+    ppe_requirements: values.ppeRequirements,
+    additional_requirements: values.additionalRequirements
+  };
+}
+
 export function createHmsClient(options: HmsClientOptions = {}) {
   const baseUrl = options.baseUrl ?? "";
   const fetcher = options.fetcher ?? fetch;
@@ -1341,13 +1363,23 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         "/api/v1/customers",
         {
           method: "POST",
-          body: JSON.stringify({
-            code: values.code,
-            name: values.name,
-            notes: values.notes,
-            retest_enabled: values.retestEnabled,
-            default_retest_months: values.defaultRetestMonths
-          })
+          body: JSON.stringify(customerPayload(values))
+        }
+      );
+      return toCustomer(response.data, response.etag);
+    },
+
+    async updateCustomer(
+      id: string,
+      values: CustomerFormValues,
+      etag?: string | null
+    ): Promise<CustomerRecord> {
+      const response = await request<ApiCustomer>(
+        `/api/v1/customers/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          headers: ifMatchHeader(etag),
+          body: JSON.stringify(customerPayload(values))
         }
       );
       return toCustomer(response.data, response.etag);

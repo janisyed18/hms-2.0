@@ -21,6 +21,7 @@ export function useCustomerWorkspace() {
   const [statusFilter, setStatusFilter] = useState("All");
   const [activeTab, setActiveTab] = useState("Overview");
   const [isFormOpen, setFormOpen] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null);
   const [isLoading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -84,45 +85,80 @@ export function useCustomerWorkspace() {
     setSelectedId(null);
   }
 
+  function closeCustomerForm() {
+    setEditingCustomer(null);
+    setFormOpen(false);
+  }
+
+  function openCreateCustomer() {
+    setEditingCustomer(null);
+    setFormOpen(true);
+  }
+
+  function openEditCustomer(customer: CustomerRecord) {
+    setEditingCustomer(customer);
+    setFormOpen(true);
+  }
+
   function selectCustomer(id: string) {
     setSelectedId(id);
     setActiveTab("Overview");
   }
 
-  async function createCustomer(values: CustomerFormValues) {
-    let created: CustomerRecord;
+  async function saveCustomer(values: CustomerFormValues) {
+    let saved: CustomerRecord;
     if (source === "api") {
-      try {
-        created = await createHmsClient().createCustomer(values);
-      } catch {
-        created = makeLocalCustomer(values);
-      }
+      saved = editingCustomer
+        ? await createHmsClient().updateCustomer(editingCustomer.id, values, editingCustomer.etag)
+        : await createHmsClient().createCustomer(values);
     } else {
-      created = makeLocalCustomer(values);
+      saved = editingCustomer
+        ? {
+            ...makeLocalCustomer(values),
+            id: editingCustomer.id,
+            code: editingCustomer.code,
+            etag: editingCustomer.etag,
+            metrics: editingCustomer.metrics,
+            status: editingCustomer.status,
+            riskLevel: editingCustomer.riskLevel,
+            industry: editingCustomer.industry,
+            paymentTerms: editingCustomer.paymentTerms,
+            contractStart: editingCustomer.contractStart,
+            contractEnd: editingCustomer.contractEnd,
+            lastActivity: "Just now"
+          }
+        : makeLocalCustomer(values);
     }
-    setCustomers((current) => [created, ...current]);
-    setTotalCount((current) => current + 1);
+    setCustomers((current) => editingCustomer
+      ? current.map((customer) => customer.id === saved.id ? saved : customer)
+      : [saved, ...current]);
+    if (!editingCustomer) {
+      setTotalCount((current) => current + 1);
+    }
     setQuery("");
     setRiskFilter("All");
     setStatusFilter("All");
-    setSelectedId(created.id);
-    setFormOpen(false);
+    setSelectedId(saved.id);
+    closeCustomerForm();
   }
 
   return {
     activeTab,
     closeDetail,
-    createCustomer,
+    closeCustomerForm,
     customers,
+    editingCustomer,
     error,
     isFormOpen,
     isLoading,
+    openCreateCustomer,
+    openEditCustomer,
     query,
     riskFilter,
+    saveCustomer,
     selectCustomer,
     selectedCustomer,
     setActiveTab,
-    setFormOpen,
     setQuery,
     setRiskFilter,
     setSelectedId,

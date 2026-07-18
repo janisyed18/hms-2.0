@@ -915,7 +915,95 @@ async def test_create_customer_writes_sync_change_and_audit_event(
         assert audit_event.after["notes"] == (
             "Preferred contact before scheduling retests."
         )
-        assert await verify_audit_chain(session)
+    assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_customer_profile_create_and_update_are_atomic(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        create_response = await client.post(
+            "/api/v1/customers",
+            json={
+                "name": "Summit Marine Group",
+                "locations": [
+                    {"name": "Newcastle operations yard"},
+                    {"name": "Kooragang workshop"},
+                ],
+                "phone": "+61 2 5555 0200",
+                "email": "operations@summit.example.test",
+                "ppe_requirements": ["High Vis", "Safety Boots"],
+                "additional_requirements": ["2-way radio"],
+            },
+        )
+
+        assert create_response.status_code == 201
+        created = create_response.json()
+        assert created["code"].startswith("CUST-")
+        assert [location["name"] for location in created["locations"]] == [
+            "Kooragang workshop",
+            "Newcastle operations yard",
+        ]
+        assert created["contacts"][0]["phone"] == "+61 2 5555 0200"
+        assert created["ppe_requirements"] == ["High Vis", "Safety Boots"]
+
+        location_id = created["locations"][0]["id"]
+        update_response = await client.patch(
+            f"/api/v1/customers/{created['id']}",
+            headers={"If-Match": '"1"'},
+            json={
+                "name": "Summit Marine Services",
+                "locations": [
+                    {"id": location_id, "name": "Kooragang service workshop"},
+                    {"name": "Port of Newcastle berth"},
+                ],
+                "phone": "+61 2 5555 0299",
+                "email": "service@summit.example.test",
+                "ppe_requirements": ["Hard Hat", "Safety Glasses"],
+                "additional_requirements": ["Vehicle Site Approval"],
+            },
+        )
+
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["name"] == "Summit Marine Services"
+    assert updated["contacts"][0]["email"] == "service@summit.example.test"
+    assert updated["ppe_requirements"] == ["Hard Hat", "Safety Glasses"]
+    assert updated["additional_requirements"] == ["Vehicle Site Approval"]
+    assert {location["name"] for location in updated["locations"]} == {
+        "Kooragang service workshop",
+        "Newcastle operations yard",
+        "Port of Newcastle berth",
+    }
+
+
+@pytest.mark.asyncio
+async def test_customer_profile_rejects_unknown_site_requirements(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            "/api/v1/customers",
+            json={
+                "name": "Validation Test Customer",
+                "ppe_requirements": ["Unapproved protective item"],
+            },
+        )
+
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio

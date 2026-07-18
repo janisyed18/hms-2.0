@@ -194,6 +194,8 @@ export interface CustomerRecord {
   notes: string | null;
   retestEnabled: boolean;
   defaultRetestMonths: number | null;
+  ppeRequirements: string[];
+  additionalRequirements: string[];
   locations: CustomerLocation[];
   contacts: CustomerContact[];
   status: CustomerStatus;
@@ -215,10 +217,11 @@ export interface CustomerListResult {
 
 export interface CustomerFormValues {
   name: string;
-  code: string;
-  notes: string | null;
-  retestEnabled: boolean;
-  defaultRetestMonths: number | null;
+  locations: Array<{ id?: string; name: string }>;
+  phone: string;
+  email: string;
+  ppeRequirements: string[];
+  additionalRequirements: string[];
 }
 
 export interface ApiListResult<TItem> {

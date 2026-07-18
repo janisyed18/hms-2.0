@@ -2,9 +2,26 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+PpeRequirement = Literal[
+    "High Vis",
+    "Long Sleeve",
+    "Long Pants",
+    "Safety Boots",
+    "Hard Hat",
+    "Safety Glasses",
+    "Gloves",
+    "Ear Protection",
+]
+AdditionalRequirement = Literal[
+    "2-way radio",
+    "Vehicle flashing lights",
+    "Vehicle Site Approval",
+    "Mobile phone restrictions",
+]
 
 
 class LookupRead(BaseModel):
@@ -89,6 +106,8 @@ class CustomerRead(BaseModel):
     notes: str | None
     retest_enabled: bool
     default_retest_months: int | None
+    ppe_requirements: list[PpeRequirement]
+    additional_requirements: list[AdditionalRequirement]
     locations: list[CustomerLocationRead]
     contacts: list[CustomerContactRead]
 
@@ -100,12 +119,22 @@ class CustomerListResponse(BaseModel):
     items: list[CustomerRead]
 
 
+class CustomerLocationWrite(BaseModel):
+    id: str | None = None
+    name: str = Field(min_length=1, max_length=160)
+
+
 class CustomerCreate(BaseModel):
-    code: str
+    code: str | None = None
     name: str
     notes: str | None = None
     retest_enabled: bool = False
     default_retest_months: int | None = None
+    locations: list[CustomerLocationWrite] = Field(default_factory=list)
+    phone: str | None = None
+    email: str | None = None
+    ppe_requirements: list[PpeRequirement] = Field(default_factory=list)
+    additional_requirements: list[AdditionalRequirement] = Field(default_factory=list)
 
 
 class CustomerUpdate(BaseModel):
@@ -114,6 +143,11 @@ class CustomerUpdate(BaseModel):
     notes: str | None = None
     retest_enabled: bool | None = None
     default_retest_months: int | None = None
+    locations: list[CustomerLocationWrite] | None = None
+    phone: str | None = None
+    email: str | None = None
+    ppe_requirements: list[PpeRequirement] | None = None
+    additional_requirements: list[AdditionalRequirement] | None = None
 
 
 class CustomerLocationCreate(BaseModel):

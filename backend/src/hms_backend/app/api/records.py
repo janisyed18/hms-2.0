@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import desc, false, func, or_, select
@@ -400,11 +401,13 @@ async def create_customer(
 ) -> CustomerRead:
     _require_customer_write(principal)
     customer = Customer(
-        code=payload.code.strip().upper(),
+        code=_customer_code(payload.code),
         name=payload.name.strip(),
         notes=_clean_optional(payload.notes),
         retest_enabled=payload.retest_enabled,
         default_retest_months=payload.default_retest_months,
+        ppe_requirements=list(payload.ppe_requirements),
+        additional_requirements=list(payload.additional_requirements),
     )
     session.add(customer)
     await record_create(
@@ -413,6 +416,32 @@ async def create_customer(
         actor_id=principal.user_id,
         action="customer.created",
     )
+    for location_payload in payload.locations:
+        location = CustomerLocation(
+            customer=customer,
+            name=location_payload.name.strip(),
+        )
+        session.add(location)
+        await record_create(
+            session,
+            location,
+            actor_id=principal.user_id,
+            action="customer_location.created",
+        )
+    if payload.phone is not None or payload.email is not None:
+        contact = CustomerContact(
+            customer=customer,
+            name=customer.name,
+            email=_clean_optional(payload.email),
+            phone=_clean_optional(payload.phone),
+        )
+        session.add(contact)
+        await record_create(
+            session,
+            contact,
+            actor_id=principal.user_id,
+            action="customer_contact.created",
+        )
     await session.commit()
     loaded = await _get_visible_customer_or_404(session, customer.id, principal)
     return _customer_read(loaded)
@@ -690,6 +719,13 @@ async def update_customer(
         customer.retest_enabled = payload.retest_enabled
     if "default_retest_months" in updates:
         customer.default_retest_months = payload.default_retest_months
+    if "ppe_requirements" in updates and payload.ppe_requirements is not None:
+        customer.ppe_requirements = list(payload.ppe_requirements)
+    if (
+        "additional_requirements" in updates
+        and payload.additional_requirements is not None
+    ):
+        customer.additional_requirements = list(payload.additional_requirements)
 
     await record_update(
         session,
@@ -698,6 +734,75 @@ async def update_customer(
         action="customer.updated",
         before=before,
     )
+    if payload.locations is not None:
+        visible_locations = {
+            location.id: location
+            for location in customer.locations
+            if location.deleted_at is None
+        }
+        for location_payload in payload.locations:
+            if location_payload.id is None:
+                location = CustomerLocation(
+                    customer=customer,
+                    name=location_payload.name.strip(),
+                )
+                session.add(location)
+                await record_create(
+                    session,
+                    location,
+                    actor_id=principal.user_id,
+                    action="customer_location.created",
+                )
+                continue
+            location = visible_locations.get(location_payload.id)
+            if location is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Location not found",
+                )
+            location_before = location.to_audit_dict()
+            location.name = location_payload.name.strip()
+            await record_update(
+                session,
+                location,
+                actor_id=principal.user_id,
+                action="customer_location.updated",
+                before=location_before,
+            )
+    if "phone" in updates or "email" in updates:
+        contacts = sorted(
+            (contact for contact in customer.contacts if contact.deleted_at is None),
+            key=lambda contact: (contact.created_at, contact.id),
+        )
+        if contacts:
+            contact = contacts[0]
+            contact_before = contact.to_audit_dict()
+            contact.name = customer.name
+            if "phone" in updates:
+                contact.phone = _clean_optional(payload.phone)
+            if "email" in updates:
+                contact.email = _clean_optional(payload.email)
+            await record_update(
+                session,
+                contact,
+                actor_id=principal.user_id,
+                action="customer_contact.updated",
+                before=contact_before,
+            )
+        elif payload.phone is not None or payload.email is not None:
+            contact = CustomerContact(
+                customer=customer,
+                name=customer.name,
+                email=_clean_optional(payload.email),
+                phone=_clean_optional(payload.phone),
+            )
+            session.add(contact)
+            await record_create(
+                session,
+                contact,
+                actor_id=principal.user_id,
+                action="customer_contact.created",
+            )
     await session.commit()
     _set_etag(response, customer.version)
     return _customer_read(customer)
@@ -2310,9 +2415,17 @@ def _customer_read(customer: Customer) -> CustomerRead:
         notes=customer.notes,
         retest_enabled=customer.retest_enabled,
         default_retest_months=customer.default_retest_months,
+        ppe_requirements=customer.ppe_requirements,
+        additional_requirements=customer.additional_requirements,
         locations=[_customer_location_read(location) for location in locations],
         contacts=[_customer_contact_read(contact) for contact in contacts],
     )
+
+
+def _customer_code(value: str | None) -> str:
+    if value is not None and value.strip():
+        return value.strip().upper()
+    return f"CUST-{uuid4().hex[:12].upper()}"
 
 
 def _product_read(product: Product) -> ProductRead:
