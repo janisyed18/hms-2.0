@@ -42,11 +42,3 @@ export function WorkspaceState({
     </PresencePanel>
   );
 }
-
-export function SourceBadge({ source }: { source: "api" | "mock" }) {
-  return (
-    <span className={`source-badge source-${source}`}>
-      {source === "api" ? "Backend" : "Mock data"}
-    </span>
-  );
-}

@@ -197,7 +197,6 @@ export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
             query={workspace.query}
             searchLabel="Search retest schedules"
             searchPlaceholder="Search schedules..."
-            source={workspace.source}
             tableLabel="Retest schedule records"
           />
         </div>

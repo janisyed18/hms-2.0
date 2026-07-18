@@ -8,9 +8,10 @@ import {
   Phone,
   X
 } from "lucide-react";
+import { m, useReducedMotion } from "motion/react";
 
 import type { CustomerRecord } from "../domain/types";
-import { PresencePanel } from "../motion/MotionPrimitives";
+import { motionTokens } from "../motion/motionTokens";
 
 interface CustomerDetailProps {
   customer: CustomerRecord | null;
@@ -31,6 +32,8 @@ export function CustomerDetail({
   onClose,
   onTabChange
 }: CustomerDetailProps) {
+  const reducedMotion = useReducedMotion();
+
   if (!customer) {
     return (
       <aside className="detail-panel" aria-label="Customer detail">
@@ -42,26 +45,32 @@ export function CustomerDetail({
   const primaryLocation = customer.locations[0];
 
   return (
-    <PresencePanel className="customer-detail-motion" presenceKey={customer.id}>
-      <aside className="detail-panel customer-detail-card" aria-label="Customer detail">
-        <div className="detail-header">
-          <div className="customer-detail-heading">
-            <span className="customer-detail-mark">
-              <Building2 aria-hidden="true" size={19} />
-            </span>
-            <div>
-              <span className="customer-detail-eyebrow">Customer record</span>
-              <h2>{customer.name}</h2>
-            </div>
-            <div className="detail-tags">
-              <span className={`status-pill risk-${customer.riskLevel.toLowerCase()}`}>
-                {customer.riskLevel} Risk
-              </span>
-              <span className={`status-pill status-${statusClass(customer.status)}`}>
-                {customer.status}
-              </span>
-            </div>
+    <m.aside
+      animate={reducedMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+      aria-label="Customer detail"
+      className="detail-panel customer-detail-card customer-detail-motion"
+      initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: motionTokens.distance.overlay, scale: 0.992 }}
+      key={customer.id}
+      transition={motionTokens.spring.gentle}
+    >
+      <div className="detail-header">
+        <div className="customer-detail-heading">
+          <span className="customer-detail-mark">
+            <Building2 aria-hidden="true" size={19} />
+          </span>
+          <div>
+            <span className="customer-detail-eyebrow">Customer record</span>
+            <h2>{customer.name}</h2>
           </div>
+          <div className="detail-tags">
+            <span className={`status-pill risk-${customer.riskLevel.toLowerCase()}`}>
+              {customer.riskLevel} Risk
+            </span>
+            <span className={`status-pill status-${statusClass(customer.status)}`}>
+              {customer.status}
+            </span>
+          </div>
+        </div>
         <div className="detail-actions">
           <button
             className="icon-button light"
@@ -277,7 +286,6 @@ export function CustomerDetail({
         View Customer Details
         <ExternalLink aria-hidden="true" size={17} />
       </button>
-      </aside>
-    </PresencePanel>
+    </m.aside>
   );
 }

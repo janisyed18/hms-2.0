@@ -240,7 +240,6 @@ export function SystemWorkspace({
   if (module === "devices") {
     return (
       <section className="system-workspace" aria-label="Device workspace">
-        <WorkspaceSource source={dataSource} />
         {error ? <WorkspaceState title="Device admin unavailable" tone="error">{error}</WorkspaceState> : null}
         <MetricGrid
           items={[
@@ -310,7 +309,6 @@ export function SystemWorkspace({
 
   return (
     <section className="system-workspace" aria-label="Users and roles workspace">
-      <WorkspaceSource source={dataSource} />
       {error ? <WorkspaceState title="User admin unavailable" tone="error">{error}</WorkspaceState> : null}
       <MetricGrid
         items={[
@@ -409,16 +407,6 @@ export function SystemWorkspace({
         onClose={() => setCredential(null)}
       />
     </section>
-  );
-}
-
-function WorkspaceSource({ source }: { source: DataSource }) {
-  return (
-    <div className="dashboard-source-row">
-      <span className={source === "api" ? "source-api" : "source-mock"}>
-        {source === "api" ? "Backend" : "Mock data"}
-      </span>
-    </div>
   );
 }
 

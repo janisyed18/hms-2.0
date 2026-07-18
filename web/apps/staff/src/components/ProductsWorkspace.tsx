@@ -110,7 +110,6 @@ export function ProductsWorkspace() {
             searchLabel="Search products"
             searchPlaceholder="Search products..."
             selectedRowKey={workspace.selectedProduct?.id ?? null}
-            source={workspace.source}
             tableLabel="Product records"
           />
         </div>

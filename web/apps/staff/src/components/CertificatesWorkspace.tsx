@@ -196,7 +196,6 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
             searchLabel="Search certificates"
             searchPlaceholder="Search certificates..."
             selectedRowKey={workspace.selectedCertificate?.id ?? null}
-            source={workspace.source}
             tableLabel="Certificate records"
           />
         </div>

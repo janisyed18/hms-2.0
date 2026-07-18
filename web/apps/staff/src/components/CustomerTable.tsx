@@ -1,7 +1,8 @@
-import { CheckCircle2, ChevronDown, Download, Filter, Plus, Search } from "lucide-react";
+import { CheckCircle2, Download, Filter, Plus, Search } from "lucide-react";
 import { useState } from "react";
+import { m, useReducedMotion } from "motion/react";
 
-import { PresencePanel } from "../motion/MotionPrimitives";
+import { motionTokens } from "../motion/motionTokens";
 import { PaginationControls, usePagination } from "./Pagination";
 import { WorkspaceState } from "./WorkspaceState";
 import type { CustomerRecord } from "../domain/types";
@@ -11,7 +12,6 @@ interface CustomerTableProps {
   customers: CustomerRecord[];
   totalCount: number;
   selectedId: string | null;
-  selectedCustomerName: string | null;
   query: string;
   riskFilter: string;
   statusFilter: string;
@@ -74,7 +74,6 @@ export function CustomerTable({
   customers,
   totalCount,
   selectedId,
-  selectedCustomerName,
   query,
   riskFilter,
   statusFilter,
@@ -85,6 +84,7 @@ export function CustomerTable({
   onAddCustomer
 }: CustomerTableProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const reducedMotion = useReducedMotion();
   const pagination = usePagination(customers);
   const exportRows = [
     [
@@ -181,43 +181,68 @@ export function CustomerTable({
       </div>
 
       <div className="customer-card-grid">
-        {pagination.items.map((customer) => (
-          <button
-            aria-label={`Select customer ${customer.name}`}
-            aria-pressed={customer.id === selectedId}
-            className={`customer-card${customer.id === selectedId ? " is-selected" : ""}`}
-            key={customer.id}
-            onClick={() => onSelectCustomer(customer.id)}
-            type="button"
-          >
-            <span className="customer-card-top">
-              <span className="customer-avatar">{customer.code.slice(0, 2)}</span>
-              <span className={`status-pill status-${customer.status.toLowerCase()}`}>
-                {customer.status}
+        {pagination.items.map((customer) => {
+          const isSelected = customer.id === selectedId;
+
+          return (
+            <m.button
+              aria-label={`Select customer ${customer.name}`}
+              aria-pressed={isSelected}
+              animate={
+                reducedMotion
+                  ? undefined
+                  : { scale: isSelected ? 1.008 : 1, y: isSelected ? -3 : 0 }
+              }
+              className={`customer-card${isSelected ? " is-selected" : ""}`}
+              key={customer.id}
+              onClick={() => onSelectCustomer(customer.id)}
+              type="button"
+              transition={motionTokens.spring.gentle}
+              whileHover={reducedMotion ? undefined : { y: isSelected ? -3 : -2 }}
+              whileTap={reducedMotion ? undefined : { scale: 0.985 }}
+            >
+              <span className="customer-card-top">
+                <span className="customer-avatar">{customer.code.slice(0, 2)}</span>
+                <span className="customer-card-state">
+                  {isSelected ? (
+                    <m.span
+                      aria-hidden="true"
+                      className="customer-selected-indicator"
+                      initial={reducedMotion ? false : { opacity: 0, scale: 0.7 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={motionTokens.spring.snappy}
+                    >
+                      <CheckCircle2 size={16} />
+                    </m.span>
+                  ) : null}
+                  <span className={`status-pill status-${customer.status.toLowerCase()}`}>
+                    {customer.status}
+                  </span>
+                </span>
               </span>
-            </span>
-            <span className="customer-name">{customer.name}</span>
-            <span className="customer-code">{customer.code}</span>
-            <span className="customer-location">{locationLabel(customer)}</span>
-            <span className="customer-metrics">
-              <span>
-                <strong>{customer.metrics.assetCount}</strong>
-                <small>Assets</small>
+              <span className="customer-name">{customer.name}</span>
+              <span className="customer-code">{customer.code}</span>
+              <span className="customer-location">{locationLabel(customer)}</span>
+              <span className="customer-metrics">
+                <span>
+                  <strong>{customer.metrics.assetCount}</strong>
+                  <small>Assets</small>
+                </span>
+                <span>
+                  <strong className={inspectionClass(customer.metrics.inspectionDueLabel)}>
+                    {customer.metrics.inspectionDueCount}
+                  </strong>
+                  <small>{inspectionShortLabel(customer.metrics.inspectionDueLabel)}</small>
+                </span>
+                <span>
+                  <strong>{customer.locations.length}</strong>
+                  <small>{customer.locations.length === 1 ? "Site" : "Sites"}</small>
+                </span>
               </span>
-              <span>
-                <strong className={inspectionClass(customer.metrics.inspectionDueLabel)}>
-                  {customer.metrics.inspectionDueCount}
-                </strong>
-                <small>{inspectionShortLabel(customer.metrics.inspectionDueLabel)}</small>
-              </span>
-              <span>
-                <strong>{customer.locations.length}</strong>
-                <small>{customer.locations.length === 1 ? "Site" : "Sites"}</small>
-              </span>
-            </span>
-            <span className={riskClass(customer.riskLevel)}>{customer.riskLevel} Risk</span>
-          </button>
-        ))}
+              <span className={riskClass(customer.riskLevel)}>{customer.riskLevel} Risk</span>
+            </m.button>
+          );
+        })}
       </div>
       <PaginationControls
         label="Customer records"
@@ -229,27 +254,6 @@ export function CustomerTable({
         start={pagination.start}
         total={pagination.total}
       />
-      {selectedId && selectedCustomerName ? (
-        <div
-          aria-label="Customer selection"
-          className="customer-selection-status"
-          role="status"
-        >
-          <PresencePanel
-            className="customer-selection-banner"
-            presenceKey={selectedId}
-          >
-            <span className="customer-selection-icon">
-              <CheckCircle2 aria-hidden="true" size={18} />
-            </span>
-            <span className="customer-selection-copy">
-              <strong>Customer selected</strong>
-              <span>{selectedCustomerName} details are shown below.</span>
-            </span>
-            <ChevronDown aria-hidden="true" className="customer-selection-arrow" size={18} />
-          </PresencePanel>
-        </div>
-      ) : null}
       {customers.length === 0 ? (
         <WorkspaceState title="No customers found">
           Adjust the search text or filters to expand the current view.

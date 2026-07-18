@@ -134,7 +134,6 @@ export function OperationalWorkspace({
         <OperationsHeader
           eyebrow="Operations"
           icon={<RefreshCcw aria-hidden="true" size={20} />}
-          source={source}
           title="Sync Queue"
           description="Queued inspection, certificate, and asset events awaiting staff review."
         />
@@ -160,7 +159,6 @@ export function OperationalWorkspace({
         <OperationsHeader
           eyebrow="Governance"
           icon={<ShieldCheck aria-hidden="true" size={20} />}
-          source={auditSource}
           title="Audit Trail"
           description="Recent inspection, certificate, and asset lifecycle events across the staff workspace."
         />
@@ -336,6 +334,7 @@ export function OperationalWorkspace({
                 emptyMessage="No overdue retests in the backend data."
                 onFirstCellClick={(index) => onAssetOpen(dashboard.overdueRetests[index].assetId)}
                 firstCellActionLabel={(index) => `Open asset ${dashboard.overdueRetests[index].assetNumber}`}
+                paginate={false}
                 rows={dashboard.overdueRetests.map((retest) => [
                   retest.assetNumber,
                   retest.customerName,
@@ -486,13 +485,11 @@ function OperationsHeader({
   description,
   eyebrow,
   icon,
-  source,
   title
 }: {
   description: string;
   eyebrow: string;
   icon: ReactNode;
-  source: DataSource;
   title: string;
 }) {
   return (
@@ -503,9 +500,6 @@ function OperationsHeader({
         <strong className="operations-title">{title}</strong>
         <p>{description}</p>
       </div>
-      <strong className={source === "api" ? "source-api" : "source-mock"}>
-        {source === "api" ? "Backend" : "Mock data"}
-      </strong>
     </header>
   );
 }
@@ -681,6 +675,7 @@ function OperationsTable({
   emptyMessage = "No records found.",
   firstCellActionLabel,
   onFirstCellClick,
+  paginate = true,
   rows
 }: {
   ariaLabel: string;
@@ -688,9 +683,12 @@ function OperationsTable({
   emptyMessage?: string;
   firstCellActionLabel?: (index: number) => string;
   onFirstCellClick?: (index: number) => void;
+  paginate?: boolean;
   rows: string[][];
 }) {
   const pagination = usePagination(rows);
+  const visibleRows = paginate ? pagination.items : rows;
+  const rowStart = paginate ? pagination.start : 0;
 
   return (
     <section className="operations-table-panel">
@@ -709,15 +707,15 @@ function OperationsTable({
                 <td colSpan={columns.length}>{emptyMessage}</td>
               </tr>
             ) : (
-              pagination.items.map((row, rowIndex) => (
+              visibleRows.map((row, rowIndex) => (
                 <tr key={row.join("-")}>
                   {row.map((cell, index) => (
                     <td key={`${cell}-${index}`}>
                       {index === 0 && onFirstCellClick && firstCellActionLabel ? (
                         <button
-                          aria-label={firstCellActionLabel(pagination.start + rowIndex)}
+                          aria-label={firstCellActionLabel(rowStart + rowIndex)}
                           className="dashboard-asset-link"
-                          onClick={() => onFirstCellClick(pagination.start + rowIndex)}
+                          onClick={() => onFirstCellClick(rowStart + rowIndex)}
                           type="button"
                         >
                           {cell}
@@ -731,16 +729,18 @@ function OperationsTable({
           </tbody>
         </table>
       </div>
-      <PaginationControls
-        label={ariaLabel}
-        onPageChange={pagination.setPage}
-        onPageSizeChange={pagination.setPageSize}
-        page={pagination.page}
-        pageCount={pagination.pageCount}
-        pageSize={pagination.pageSize}
-        start={pagination.start}
-        total={pagination.total}
-      />
+      {paginate ? (
+        <PaginationControls
+          label={ariaLabel}
+          onPageChange={pagination.setPage}
+          onPageSizeChange={pagination.setPageSize}
+          page={pagination.page}
+          pageCount={pagination.pageCount}
+          pageSize={pagination.pageSize}
+          start={pagination.start}
+          total={pagination.total}
+        />
+      ) : null}
     </section>
   );
 }

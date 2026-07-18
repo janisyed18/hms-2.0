@@ -25,6 +25,25 @@ function PaginatedRows() {
 }
 
 describe("shared pagination", () => {
+  it("keeps the page controls visible for a single-page list", () => {
+    render(
+      <PaginationControls
+        label="Single record list"
+        onPageChange={() => undefined}
+        onPageSizeChange={() => undefined}
+        page={1}
+        pageCount={1}
+        pageSize={5}
+        start={0}
+        total={1}
+      />
+    );
+
+    expect(screen.getByLabelText("Single record list rows per page")).toBeVisible();
+    expect(screen.getByText("Page 1 of 1")).toBeVisible();
+    expect(screen.getByText("1-1 of 1")).toBeVisible();
+  });
+
   it("moves through records and returns to the first page when the page size changes", async () => {
     const user = userEvent.setup();
     render(<PaginatedRows />);

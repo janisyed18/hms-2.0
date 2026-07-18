@@ -234,7 +234,6 @@ export function InspectionsWorkspace({
               query={workspace.query}
               searchLabel="Search inspections"
               searchPlaceholder="Search inspections..."
-              source={workspace.source}
               tableLabel="Inspection records"
               error={workspace.error}
             />

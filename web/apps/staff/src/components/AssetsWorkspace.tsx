@@ -248,7 +248,6 @@ export function AssetsWorkspace({
         query={workspace.query}
         searchLabel="Search assets"
         searchPlaceholder="Search assets..."
-        source={workspace.source}
         tableLabel="Asset records"
         error={workspace.error}
       />

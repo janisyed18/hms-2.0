@@ -44,7 +44,6 @@ export function ReferenceWorkspace() {
         query={workspace.query}
         searchLabel="Search reference standards"
         searchPlaceholder="Search standards..."
-        source={workspace.source}
         tableLabel="Reference standard records"
       />
       <ReferenceForm

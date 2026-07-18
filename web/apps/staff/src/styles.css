@@ -1412,20 +1412,6 @@ tbody tr.is-selected {
   line-height: 1.5;
 }
 
-.operations-header > strong,
-.source-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 26px;
-  border-radius: 999px;
-  padding: 0 10px;
-  background: #ecfdf3;
-  color: var(--success);
-  font-size: 11px;
-  font-weight: 800;
-}
-
 .operations-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2007,10 +1993,11 @@ tbody tr.is-selected {
 }
 
 .customer-card.is-selected {
-  border-color: rgba(37, 99, 235, 0.55);
+  border-color: rgba(37, 99, 235, 0.68);
+  background: #fbfdff;
   box-shadow:
-    0 0 0 1px rgba(37, 99, 235, 0.12),
-    var(--shadow-soft);
+    0 0 0 3px rgba(37, 99, 235, 0.12),
+    0 18px 38px rgba(37, 99, 235, 0.14);
 }
 
 .customer-card-top {
@@ -2018,6 +2005,24 @@ tbody tr.is-selected {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.customer-card-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.customer-selected-indicator {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid #b9ead7;
+  border-radius: 50%;
+  background: #ecfbf4;
+  color: var(--success);
+  box-shadow: 0 5px 12px rgba(16, 185, 129, 0.16);
 }
 
 .customer-avatar {

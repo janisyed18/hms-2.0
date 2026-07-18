@@ -34,7 +34,6 @@ interface ModuleTableProps<TItem> {
   searchLabel: string;
   searchPlaceholder: string;
   selectedRowKey?: string | null;
-  source: "api" | "mock";
   tableLabel: string;
 }
 
@@ -83,7 +82,6 @@ export function ModuleTable<TItem>({
   searchLabel,
   searchPlaceholder,
   selectedRowKey = null,
-  source,
   tableLabel
 }: ModuleTableProps<TItem>) {
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -120,20 +118,6 @@ export function ModuleTable<TItem>({
             onChange={(event) => onQueryChange(event.target.value)}
           />
         </label>
-        <label className="field select-field">
-          <span>Source</span>
-          <select
-            aria-label={`${tableLabel} source`}
-            disabled={loading || Boolean(error)}
-            value={source}
-            onChange={() => undefined}
-          >
-            {loading ? <option value="mock">Loading source...</option> : null}
-            {error ? <option value="mock">Unavailable</option> : null}
-            <option value="api">Backend</option>
-            <option value="mock">Mock data</option>
-          </select>
-        </label>
         <button
           aria-expanded={filtersOpen}
           className="secondary-button"
@@ -151,7 +135,6 @@ export function ModuleTable<TItem>({
           <div className="filter-panel" aria-label={`${tableLabel} filters`}>
             <div className="filter-summary" role="status" aria-label={`${tableLabel} filter summary`}>
               <strong>Active view</strong>
-              <span>Source: {source === "api" ? "Backend" : "Mock data"}</span>
               <span>Search: {query.trim() || "All records"}</span>
               <span>{activeFilterCount} active filters</span>
             </div>

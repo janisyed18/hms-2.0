@@ -724,7 +724,6 @@ describe("App", () => {
         query=""
         searchLabel="Search records"
         searchPlaceholder="Search records"
-        source="mock"
         tableLabel="Test records"
       />
     );
@@ -753,7 +752,6 @@ describe("App", () => {
         query=""
         searchLabel="Search records"
         searchPlaceholder="Search records"
-        source="mock"
         tableLabel="Test records"
       />
     );
@@ -796,9 +794,10 @@ describe("App", () => {
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
       "North Sea Drilling Ltd."
     );
-    expect(screen.getByRole("status", { name: "Customer selection" })).toHaveTextContent(
-      "North Sea Drilling Ltd. details are shown below."
-    );
+    expect(
+      screen.getByRole("button", { name: /Select customer North Sea Drilling Ltd./i })
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Customer selected")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Recent Activity" })).toBeVisible();
   });
 
@@ -1715,7 +1714,7 @@ describe("App", () => {
     expect(await screen.findByRole("row", { name: /user.created/i })).toHaveTextContent(
       "staff-ui-dev"
     );
-    expect(screen.getByText("Backend")).toBeVisible();
+    expect(screen.queryByText("Backend")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Users & Roles" }));
     expect(await screen.findByRole("row", { name: /staff@example.com/i })).toHaveTextContent(
@@ -1871,7 +1870,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Filters" }));
     expect(
       screen.getByRole("status", { name: "Certificate records filter summary" })
-    ).toHaveTextContent("Source");
+    ).toHaveTextContent("Search: All records");
 
     await user.click(screen.getByRole("button", { name: "Download Certificate records" }));
     expect(createObjectURL).toHaveBeenCalledTimes(2);

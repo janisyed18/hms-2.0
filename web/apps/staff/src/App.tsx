@@ -314,7 +314,6 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
                         customers={workspace.visibleCustomers}
                         totalCount={workspace.totalCount}
                         selectedId={workspace.selectedCustomer?.id ?? null}
-                        selectedCustomerName={workspace.selectedCustomer?.name ?? null}
                         query={workspace.query}
                         riskFilter={workspace.riskFilter}
                         statusFilter={workspace.statusFilter}

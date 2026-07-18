@@ -46,10 +46,6 @@ export function PaginationControls({
   start: number;
   total: number;
 }) {
-  if (total <= pageSizes[0]) {
-    return null;
-  }
-
   const firstVisiblePage = Math.min(Math.max(page - 2, 1), Math.max(pageCount - 4, 1));
   const pages = Array.from(
     { length: Math.min(pageCount, 5) },
