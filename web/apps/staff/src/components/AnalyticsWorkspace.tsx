@@ -294,7 +294,6 @@ function AnalyticsMetric({
 }
 
 function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOverview; onNavigate: () => void }) {
-  const reducedMotion = useReducedMotion();
   const [selected, setSelected] = useState<FleetPosture>("clear");
   const posture = overview.fleetPosture;
   const total = fleetPostureTotal(overview);
@@ -314,11 +313,7 @@ function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOvervi
         </div>
         <GaugeIcon />
       </div>
-      <m.div
-        className="fleet-ring"
-        transition={motionTokens.spring.gentle}
-        whileHover={reducedMotion ? undefined : { rotateX: 8, rotateZ: -2, scale: 1.03 }}
-      >
+      <div className="fleet-ring">
         <svg className="fleet-ring-chart" viewBox="0 0 120 120" aria-label="Fleet posture breakdown" role="img">
           <circle className="fleet-ring-track" cx="60" cy="60" r="40" />
           {segments.map((segment) => {
@@ -357,7 +352,7 @@ function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOvervi
           <strong>{posture[selected]}</strong>
           <small>assets</small>
         </span>
-      </m.div>
+      </div>
       <div className="health-legend">
         {segments.map((segment) => (
           <button
