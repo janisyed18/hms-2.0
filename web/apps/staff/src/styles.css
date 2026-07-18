@@ -683,6 +683,131 @@ tr.is-selected .row-check {
   color: var(--accent);
 }
 
+.reference-catalog-workspace {
+  display: grid;
+  gap: 16px;
+}
+
+.reference-catalog-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 2px 0;
+}
+
+.reference-catalog-header span,
+.reference-catalog-eyebrow {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.reference-catalog-header h2 {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.reference-catalog-header p,
+.reference-catalog-context p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.reference-catalog-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px;
+  scrollbar-width: thin;
+}
+
+.reference-catalog-tabs button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 13px;
+  background: var(--panel);
+  color: #475569;
+  font-size: 12px;
+  font-weight: 750;
+  transition: background-color 180ms ease-out, border-color 180ms ease-out, box-shadow 180ms ease-out, color 180ms ease-out, transform 180ms ease-out;
+}
+
+.reference-catalog-tabs button:hover {
+  border-color: #a9c5f5;
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.reference-catalog-tabs button.is-active {
+  border-color: #91b7f5;
+  background: #eef4ff;
+  box-shadow: inset 0 0 0 1px #d7e6ff;
+  color: #1d4ed8;
+}
+
+.reference-catalog-tabs button:focus-visible {
+  outline: 3px solid #bfdbfe;
+  outline-offset: 2px;
+}
+
+.reference-catalog-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.reference-catalog-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 2px;
+}
+
+.reference-access {
+  flex: 0 0 auto;
+  border: 1px solid #b7ead8;
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: #087f5b;
+  background: #effbf6;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.reference-access.is-read-only {
+  border-color: #dbe3ef;
+  color: #64748b;
+  background: #f8fafc;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reference-catalog-tabs button {
+    transition: none;
+  }
+
+  .reference-catalog-tabs button:hover {
+    transform: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .reference-catalog-header,
+  .reference-catalog-context {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .detail-section,
 .inspection-list {
   padding: 14px;

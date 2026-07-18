@@ -2,26 +2,29 @@ import { FormEvent, useEffect, useState } from "react";
 import { X } from "lucide-react";
 
 import type {
-  ReferenceStandardFormValues,
-  ReferenceStandardRecord
+  ReferenceCatalogFormValues,
+  ReferenceCatalogRecord
 } from "../domain/types";
 
 interface ReferenceFormProps {
   open: boolean;
-  standard: ReferenceStandardRecord | null;
+  standard: ReferenceCatalogRecord | null;
   onClose: () => void;
-  onSubmit: (values: ReferenceStandardFormValues) => Promise<void>;
+  onSubmit: (values: ReferenceCatalogFormValues) => Promise<void>;
+  entityLabel?: string;
 }
 
 export function ReferenceForm({
   open,
   standard,
   onClose,
-  onSubmit
+  onSubmit,
+  entityLabel = "Standard"
 }: ReferenceFormProps) {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [isSubmitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -29,6 +32,7 @@ export function ReferenceForm({
     }
     setCode(standard?.code ?? "");
     setName(standard?.name ?? "");
+    setSubmitError(null);
   }, [open, standard]);
 
   if (!open) {
@@ -37,9 +41,15 @@ export function ReferenceForm({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSubmitting(true);
-    await onSubmit({ code, name });
-    setSubmitting(false);
+    try {
+      setSubmitting(true);
+      setSubmitError(null);
+      await onSubmit({ code, name });
+    } catch (reason) {
+      setSubmitError(reason instanceof Error ? reason.message : "Unable to save this record.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -47,37 +57,38 @@ export function ReferenceForm({
       <form className="customer-drawer" onSubmit={handleSubmit}>
         <div className="drawer-header">
           <div>
-            <h2>{standard ? "Edit Standard" : "Add Standard"}</h2>
-            <p>Maintain controlled pressure and hose standards.</p>
+            <h2>{standard ? `Edit ${entityLabel}` : `Add ${entityLabel}`}</h2>
+            <p>Controlled catalog data is available immediately to asset configuration.</p>
           </div>
           <button className="icon-button light" type="button" aria-label="Close form" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
         <label>
-          <span>Standard code</span>
+          <span>{entityLabel} code</span>
           <input
-            aria-label="Standard code"
+            aria-label={`${entityLabel} code`}
             required
             value={code}
             onChange={(event) => setCode(event.target.value.toUpperCase())}
           />
         </label>
         <label>
-          <span>Standard name</span>
+          <span>{entityLabel} name</span>
           <input
-            aria-label="Standard name"
+            aria-label={`${entityLabel} name`}
             required
             value={name}
             onChange={(event) => setName(event.target.value)}
           />
         </label>
+        {submitError ? <p className="form-error" role="alert">{submitError}</p> : null}
         <div className="drawer-actions">
           <button className="secondary-button" type="button" onClick={onClose}>
             Cancel
           </button>
           <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Saving..." : "Save standard"}
+            {isSubmitting ? "Saving..." : `Save ${entityLabel.toLowerCase()}`}
           </button>
         </div>
       </form>

@@ -249,6 +249,26 @@ export interface ReferenceStandardFormValues {
   name: string;
 }
 
+export type ReferenceCatalogKey =
+  | "standards"
+  | "materials"
+  | "couplings"
+  | "coupling-add-ons"
+  | "attach-methods"
+  | "nominal-bores";
+
+export interface ReferenceCatalogRecord {
+  id: string;
+  code: string;
+  name: string;
+  etag?: string | null;
+}
+
+export interface ReferenceCatalogFormValues {
+  code: string;
+  name: string;
+}
+
 export interface ProductRecord {
   id: string;
   code: string;

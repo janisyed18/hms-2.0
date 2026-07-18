@@ -288,6 +288,14 @@ async def create_standard(
 
 _STANDARDS_CACHE_PREFIX = "reference:standards:"
 
+_REFERENCE_CATALOGS: dict[str, tuple[type[Any], str]] = {
+    "couplings": (Coupling, "name"),
+    "coupling-add-ons": (CouplingAddOn, "name"),
+    "attach-methods": (AttachMethod, "name"),
+    "materials": (Material, "name"),
+    "nominal-bores": (NominalBore, "label"),
+}
+
 
 async def _active_lookup_items(
     session: AsyncSession,
@@ -306,6 +314,145 @@ async def _active_lookup_items(
         LookupRead(id=row.id, code=row.code, name=getattr(row, label_attribute))
         for row in rows
     ]
+
+
+def _reference_catalog_or_404(category: str) -> tuple[type[Any], str]:
+    catalog = _REFERENCE_CATALOGS.get(category)
+    if catalog is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Reference catalog not found",
+        )
+    return catalog
+
+
+def _reference_lookup_read(record: Any, label_attribute: str) -> LookupRead:
+    return LookupRead(
+        id=record.id,
+        code=record.code,
+        name=getattr(record, label_attribute),
+    )
+
+
+@router.get("/reference/catalog/{category}", response_model=LookupListResponse)
+async def list_reference_catalog(
+    category: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> LookupListResponse:
+    _require_asset_read(principal)
+    model, label_attribute = _reference_catalog_or_404(category)
+    return LookupListResponse(
+        items=await _active_lookup_items(
+            session,
+            model,
+            label_attribute=label_attribute,
+        )
+    )
+
+
+@router.post(
+    "/reference/catalog/{category}",
+    response_model=LookupRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_reference_catalog_item(
+    category: str,
+    payload: StandardCreate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> LookupRead:
+    _require_reference_admin(principal)
+    model, label_attribute = _reference_catalog_or_404(category)
+    attributes = {
+        "code": payload.code.strip().upper(),
+        label_attribute: payload.name.strip(),
+        "enabled": payload.enabled,
+    }
+    record = model(**attributes)
+    session.add(record)
+    await record_create(
+        session,
+        record,
+        actor_id=principal.user_id,
+        action=f"{model.__name__.lower()}.created",
+    )
+    await session.commit()
+    return _reference_lookup_read(record, label_attribute)
+
+
+@router.patch(
+    "/reference/catalog/{category}/{record_id}",
+    response_model=LookupRead,
+)
+async def update_reference_catalog_item(
+    category: str,
+    record_id: str,
+    payload: StandardUpdate,
+    session: SessionDep,
+    principal: PrincipalDep,
+    response: Response,
+    if_match: IfMatchHeader = None,
+) -> LookupRead:
+    _require_reference_admin(principal)
+    model, label_attribute = _reference_catalog_or_404(category)
+    record = await session.get(model, record_id)
+    if record is None or record.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Reference catalog item not found",
+        )
+    _enforce_if_match(if_match, record.version)
+
+    before = record.to_audit_dict()
+    updates = payload.model_dump(exclude_unset=True)
+    if "code" in updates and payload.code is not None:
+        record.code = payload.code.strip().upper()
+    if "name" in updates and payload.name is not None:
+        setattr(record, label_attribute, payload.name.strip())
+    if "enabled" in updates and payload.enabled is not None:
+        record.enabled = payload.enabled
+
+    await record_update(
+        session,
+        record,
+        actor_id=principal.user_id,
+        action=f"{model.__name__.lower()}.updated",
+        before=before,
+    )
+    await session.commit()
+    _set_etag(response, record.version)
+    return _reference_lookup_read(record, label_attribute)
+
+
+@router.delete(
+    "/reference/catalog/{category}/{record_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_reference_catalog_item(
+    category: str,
+    record_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+    if_match: IfMatchHeader = None,
+) -> Response:
+    _require_reference_admin(principal)
+    model, _ = _reference_catalog_or_404(category)
+    record = await session.get(model, record_id)
+    if record is None or record.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Reference catalog item not found",
+        )
+    _enforce_if_match(if_match, record.version)
+    await soft_delete(
+        session,
+        record,
+        actor_id=principal.user_id,
+        action=f"{model.__name__.lower()}.deleted",
+    )
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

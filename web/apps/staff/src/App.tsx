@@ -360,8 +360,12 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
                 {renderedActiveModule === "analytics" ? (
                   <AnalyticsWorkspace onModuleChange={handleModuleChange} />
                 ) : null}
-                {renderedActiveModule === "products" ? <ProductsWorkspace /> : null}
-                {renderedActiveModule === "reference" ? <ReferenceWorkspace /> : null}
+                {renderedActiveModule === "products" ? (
+                  <ProductsWorkspace canManage={hasPermission(session, "reference:admin")} />
+                ) : null}
+                {renderedActiveModule === "reference" ? (
+                  <ReferenceWorkspace canManage={hasPermission(session, "reference:admin")} />
+                ) : null}
                 {renderedActiveModule === "inspections" ? (
                   <InspectionsWorkspace
                     canApprove={hasPermission(session, "certificate:approve")}

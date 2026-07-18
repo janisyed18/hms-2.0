@@ -9,8 +9,10 @@ services, a **React/Vite** staff console and field inspector app, backed by
 **PostgreSQL**, **Redis**, and **Celery**, and packaged to run end-to-end with
 **Docker Compose**.
 
-Do not connect local development commands to production HMS data. The included
-seed data is synthetic and HMS-shaped for demo and verification use only.
+Do not connect local development commands to production HMS data. Operational
+seed records are synthetic and HMS-shaped for demo and verification use only.
+The reference catalogue also includes approved values transcribed from supplied
+legacy metadata; it does not import or connect to the production HMS database.
 
 ## Features
 

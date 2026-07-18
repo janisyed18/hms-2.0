@@ -31,9 +31,7 @@ export function useProductsWorkspace() {
   useEffect(() => {
     let active = true;
     loadProductsWithFallback({ sort: "code" }).then((result) => {
-      if (!active) {
-        return;
-      }
+      if (!active) return;
       setProducts(result.items);
       setSource(result.source);
     });
@@ -99,14 +97,10 @@ export function useProductsWorkspace() {
   async function saveProduct(values: ProductFormValues) {
     let saved = localProduct(values, editingProduct);
     if (source === "api") {
-      try {
-        const client = createHmsClient();
-        saved = editingProduct
-          ? await client.updateProduct(editingProduct.id, values, editingProduct.etag)
-          : await client.createProduct(values);
-      } catch {
-        saved = localProduct(values, editingProduct);
-      }
+      const client = createHmsClient();
+      saved = editingProduct
+        ? await client.updateProduct(editingProduct.id, values, editingProduct.etag)
+        : await client.createProduct(values);
     }
 
     setProducts((current) => {

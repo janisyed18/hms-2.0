@@ -60,6 +60,7 @@ async def seed_local_demo_data(
     )
     await _seed_customer_contacts(session, plan, customers_by_code)
     products_by_code = await _seed_products(session, plan, standards_by_code)
+    await _seed_legacy_catalog_products(session)
     assets_by_number = await _seed_assets(
         session,
         plan,
@@ -124,6 +125,12 @@ async def _seed_asset_configuration_lookups(session: AsyncSession) -> None:
                 ("RUBBER", "Rubber"),
                 ("SS", "Stainless Steel"),
                 ("PVC", "PVC"),
+                ("AL_ALUMINIUM", "AL Aluminium"),
+                ("GP_ALUMINIUM", "GP Aluminium"),
+                ("CARBON_STEEL", "Carbon Steel"),
+                ("BRASS", "Brass"),
+                ("POLYPROPYLENE", "Polypropylene"),
+                ("STEEL", "Steel"),
             ),
         ),
         (
@@ -134,10 +141,47 @@ async def _seed_asset_configuration_lookups(session: AsyncSession) -> None:
                 ("FLANGE", "Flange"),
                 ("NPT", "NPT"),
                 ("STORZ", "Storz"),
+                ("LEGACY-1", "Flanged TTMA"),
+                ("LEGACY-2", "Camlock Male"),
+                ("LEGACY-5", "BSP Male"),
+                ("LEGACY-6", "BSP Female"),
+                ("LEGACY-18", "Storz Coupling"),
+                ("LEGACY-22", '3" Brown Flex'),
+                ("LEGACY-23", "TRAVIS MALE"),
+                ("LEGACY-25", "Bsm female"),
+                ("LEGACY-26", "Bsm male"),
+                ("LEGACY-27", "NPT MALE"),
+                ("LEGACY-32", "Male Camlock"),
+                ("LEGACY-33", "Open End"),
+                ("LEGACY-35", "Tri - Clover"),
+                ("LEGACY-36", "DIN16 Flange"),
+                ("LEGACY-37", "BAUER MALE"),
             ),
         ),
-        (CouplingAddOn, (("DUST_CAP", "Dust cap"), ("SAFETY_LOCK", "Safety lock"))),
-        (AttachMethod, (("CLAMP", "Clamp"), ("CRIMP", "Crimp"), ("SWAGE", "Swage"))),
+        (
+            CouplingAddOn,
+            (
+                ("DUST_CAP", "Dust cap"),
+                ("SAFETY_LOCK", "Safety lock"),
+                ("NO_ADDITIONAL", "No Additional"),
+                ("CAMLOCK_MALE", "Camlock Male"),
+                ("STORZ_FITTING", "Storz fitting"),
+                ("CLAW_TYPE_A", "Claw Type A"),
+                ("OPEN_END", "Open End"),
+            ),
+        ),
+        (
+            AttachMethod,
+            (
+                ("CLAMP", "Clamp"),
+                ("CRIMP", "Crimp"),
+                ("SWAGE", "Swage"),
+                ("WIRE_WHIPPED", "Wire Whipped"),
+                ("PRE_FORMED", "Pre-formed"),
+                ("WELDED", "Welded"),
+                ("SUPER_CLAMP", "Super clamp"),
+            ),
+        ),
     ):
         for code, name in rows:
             if (
@@ -160,6 +204,17 @@ async def _seed_asset_configuration_lookups(session: AsyncSession) -> None:
         ("2IN", "2 inch"),
         ("3IN", "3 inch"),
         ("4IN", "4 inch"),
+        ("12NB", "12NB"),
+        ("20NB", "20NB"),
+        ("25NB", "25NB"),
+        ("32NB", "32NB"),
+        ("38NB", "38NB"),
+        ("50NB", "50NB"),
+        ("63NB", "63NB"),
+        ("75NB", "75NB"),
+        ("100NB", "100NB"),
+        ("150NB", "150NB"),
+        ("200NB", "200NB"),
     ):
         if (
             await _scalar_one_or_none(
@@ -307,6 +362,53 @@ async def _seed_products(
             )
         products_by_code[row.code] = product
     return products_by_code
+
+
+async def _seed_legacy_catalog_products(session: AsyncSession) -> None:
+    """Seed only the fully visible legacy product catalogue entries."""
+    for name, code in (
+        ("SS2 CONV", "NA"),
+        ("Teflon Smooth", "na"),
+        ("MAXIMUS FC", "PPDF11"),
+        ("PLUTONE A", "PHFS10"),
+        ("OILFLEX GG", "901"),
+        ("FLEXWING", "RWCS20"),
+        ("SAHARA", "RWFD20"),
+        ("CHEMFLEX", "969"),
+        ("VAPOUR", "VAPOUR"),
+        ("PETROFLEX A", "1003"),
+        ("CHBC3621", "952(PS)"),
+        ("CHBC3525", "951(PG)"),
+        ("DANOIL 7GG", "DANOIL 7GG"),
+        ("PVC BLUE AIR", "PPDA12"),
+        ("HYD. R2", "HHRR02"),
+        ("BYD", "BYD"),
+    ):
+        if (
+            await _scalar_one_or_none(
+                session,
+                select(Product).where(Product.code == code, Product.name == name),
+            )
+            is not None
+        ):
+            continue
+
+        product = Product(
+            category="Legacy catalogue",
+            code=code,
+            name=name,
+            enabled=True,
+            legacy_system="provided_metadata",
+            legacy_table="products",
+            legacy_id=f"{name}:{code}",
+        )
+        session.add(product)
+        await record_create(
+            session,
+            product,
+            actor_id=SEED_ACTOR_ID,
+            action="product.seeded",
+        )
 
 
 async def _seed_assets(

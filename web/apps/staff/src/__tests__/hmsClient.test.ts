@@ -572,6 +572,75 @@ describe("hmsClient", () => {
     );
   });
 
+  it("manages category-scoped reference catalog values", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okJson(
+          { items: [{ id: "material-api-1", code: "COMPOSITE", name: "Composite" }] },
+          { ETag: '"materials-1"' }
+        )
+      )
+      .mockResolvedValueOnce(
+        okJson({ id: "material-api-2", code: "CARBON_STEEL", name: "Carbon steel" })
+      )
+      .mockResolvedValueOnce(
+        okJson(
+          { id: "material-api-2", code: "CARBON_STEEL", name: "Carbon steel alloy" },
+          { ETag: '"materials-2"' }
+        )
+      )
+      .mockResolvedValueOnce(noContent());
+
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const materials = await client.listReferenceCatalog("materials");
+    await client.createReferenceCatalogItem("materials", {
+      code: "carbon_steel",
+      name: "Carbon steel"
+    });
+    await client.updateReferenceCatalogItem(
+      "materials",
+      "material-api-2",
+      { code: "CARBON_STEEL", name: "Carbon steel alloy" },
+      '"materials-1"'
+    );
+    await client.archiveReferenceCatalogItem(
+      "materials",
+      "material-api-2",
+      '"materials-2"'
+    );
+
+    expect(materials.items).toEqual([
+      { id: "material-api-1", code: "COMPOSITE", name: "Composite", etag: '"materials-1"' }
+    ]);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/reference/catalog/materials",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/reference/catalog/materials",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/reference/catalog/materials/material-api-2",
+      expect.objectContaining({
+        method: "PATCH",
+        headers: expect.objectContaining({ "If-Match": '"materials-1"' })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/api/v1/reference/catalog/materials/material-api-2",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "If-Match": '"materials-2"' })
+      })
+    );
+  });
+
   it("sends customer locations, contacts, and requirements in create payloads", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       okJson({

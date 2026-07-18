@@ -6,119 +6,192 @@ import {
 } from "../api/hmsClient";
 import type {
   DataSource,
-  ReferenceStandardFormValues,
-  ReferenceStandardRecord
+  ReferenceCatalogFormValues,
+  ReferenceCatalogKey,
+  ReferenceCatalogRecord
 } from "../domain/types";
 
-function localStandard(
-  values: ReferenceStandardFormValues,
-  current?: ReferenceStandardRecord | null
-): ReferenceStandardRecord {
+export const referenceCatalogMeta: Record<
+  ReferenceCatalogKey,
+  { description: string; plural: string; singular: string }
+> = {
+  standards: {
+    singular: "Standard",
+    plural: "Standards",
+    description: "Pressure and hose standards used by the product catalogue."
+  },
+  materials: {
+    singular: "Material",
+    plural: "Materials",
+    description: "Hose construction materials available on asset end configurations."
+  },
+  couplings: {
+    singular: "Coupling",
+    plural: "Couplings",
+    description: "End fittings available for hose assembly configurations."
+  },
+  "coupling-add-ons": {
+    singular: "Add-on",
+    plural: "Add-ons",
+    description: "Optional fittings and accessories applied to an end configuration."
+  },
+  "attach-methods": {
+    singular: "Attachment Method",
+    plural: "Attachment Methods",
+    description: "Approved methods used to secure a hose end fitting."
+  },
+  "nominal-bores": {
+    singular: "Nominal Bore",
+    plural: "Nominal Bores",
+    description: "Controlled bore sizes used by products and hose assemblies."
+  }
+};
+
+function emptyCatalogs(): Record<ReferenceCatalogKey, ReferenceCatalogRecord[]> {
   return {
-    id: current?.id ?? `standard-${Date.now()}`,
-    code: values.code.trim().toUpperCase(),
-    name: values.name.trim(),
-    etag: current?.etag ?? null
+    standards: [],
+    materials: [],
+    couplings: [],
+    "coupling-add-ons": [],
+    "attach-methods": [],
+    "nominal-bores": []
   };
 }
 
 export function useReferenceWorkspace() {
-  const [standards, setStandards] = useState<ReferenceStandardRecord[]>([]);
-  const [source, setSource] = useState<DataSource>("mock");
+  const [activeCategory, setActiveCategory] =
+    useState<ReferenceCatalogKey>("standards");
+  const [catalogs, setCatalogs] = useState(emptyCatalogs);
   const [query, setQuery] = useState("");
-  const [editingStandard, setEditingStandard] =
-    useState<ReferenceStandardRecord | null>(null);
+  const [isLoading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeSource, setActiveSource] = useState<DataSource>("api");
+  const [editingRecord, setEditingRecord] =
+    useState<ReferenceCatalogRecord | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
-    loadReferenceStandardsWithFallback({ sort: "code" }).then((result) => {
-      if (!active) {
-        return;
-      }
-      setStandards(result.items);
-      setSource(result.source);
-    });
+    setLoading(true);
+    setError(null);
+    const loadCatalog =
+      activeCategory === "standards"
+        ? loadReferenceStandardsWithFallback().then((result) => ({
+            items: result.items,
+            source: result.source
+          }))
+        : createHmsClient()
+            .listReferenceCatalog(activeCategory)
+            .then((result) => ({ items: result.items, source: "api" as const }));
+
+    loadCatalog
+      .then((result) => {
+        if (!active) return;
+        setCatalogs((current) => ({ ...current, [activeCategory]: result.items }));
+        setActiveSource(result.source);
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setError(reason instanceof Error ? reason.message : "Unable to load catalog data.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeCategory]);
 
-  const visibleStandards = useMemo(() => {
+  const activeMeta = referenceCatalogMeta[activeCategory];
+  const records = catalogs[activeCategory];
+  const visibleRecords = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) {
-      return standards;
-    }
-    return standards.filter((standard) =>
-      [standard.code, standard.name]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(normalized))
+    if (!normalized) return records;
+    return records.filter((record) =>
+      [record.code, record.name].some((value) => value.toLowerCase().includes(normalized))
     );
-  }, [standards, query]);
+  }, [query, records]);
+
+  function selectCategory(category: ReferenceCatalogKey) {
+    setActiveCategory(category);
+    setQuery("");
+    setEditingRecord(null);
+    setFormOpen(false);
+  }
 
   function openCreate() {
-    setEditingStandard(null);
+    setEditingRecord(null);
     setFormOpen(true);
   }
 
-  function openEdit(standard: ReferenceStandardRecord) {
-    setEditingStandard(standard);
+  function openEdit(record: ReferenceCatalogRecord) {
+    setEditingRecord(record);
     setFormOpen(true);
   }
 
-  async function saveStandard(values: ReferenceStandardFormValues) {
-    let saved = localStandard(values, editingStandard);
-    if (source === "api") {
-      try {
-        const client = createHmsClient();
-        saved = editingStandard
-          ? await client.updateReferenceStandard(
-              editingStandard.id,
-              values,
-              editingStandard.etag
-            )
-          : await client.createReferenceStandard(values);
-      } catch {
-        saved = localStandard(values, editingStandard);
-      }
-    }
+  async function saveRecord(values: ReferenceCatalogFormValues) {
+    const saved =
+      activeSource === "mock"
+        ? {
+            id: editingRecord?.id ?? `reference-${Date.now()}`,
+            code: values.code.trim().toUpperCase(),
+            name: values.name.trim(),
+            etag: editingRecord?.etag ?? null
+          }
+        : await (async () => {
+            const client = createHmsClient();
+            return editingRecord
+              ? client.updateReferenceCatalogItem(
+                  activeCategory,
+                  editingRecord.id,
+                  values,
+                  editingRecord.etag
+                )
+              : client.createReferenceCatalogItem(activeCategory, values);
+          })();
 
-    setStandards((current) => {
-      if (editingStandard) {
-        return current.map((standard) =>
-          standard.id === editingStandard.id ? saved : standard
-        );
-      }
-      return [saved, ...current];
-    });
+    setCatalogs((current) => ({
+      ...current,
+      [activeCategory]: editingRecord
+        ? current[activeCategory].map((record) =>
+            record.id === editingRecord.id ? saved : record
+          )
+        : [saved, ...current[activeCategory]]
+    }));
+    setEditingRecord(null);
     setFormOpen(false);
-    setEditingStandard(null);
   }
 
-  async function archiveStandard(standard: ReferenceStandardRecord) {
-    if (!window.confirm(`Archive ${standard.name}?`)) {
-      return;
+  async function archiveRecord(record: ReferenceCatalogRecord) {
+    if (!window.confirm(`Archive ${record.name}?`)) return;
+    if (activeSource === "api") {
+      await createHmsClient().archiveReferenceCatalogItem(
+        activeCategory,
+        record.id,
+        record.etag
+      );
     }
-    if (source === "api") {
-      await createHmsClient().archiveReferenceStandard(standard.id, standard.etag);
-    }
-    setStandards((current) =>
-      current.filter((item) => item.id !== standard.id)
-    );
+    setCatalogs((current) => ({
+      ...current,
+      [activeCategory]: current[activeCategory].filter((item) => item.id !== record.id)
+    }));
   }
 
   return {
-    archiveStandard,
-    editingStandard,
+    activeCategory,
+    activeMeta,
+    archiveRecord,
+    editingRecord,
+    error,
     isFormOpen,
+    isLoading,
     openCreate,
     openEdit,
     query,
-    saveStandard,
+    saveRecord,
+    selectCategory,
     setFormOpen,
     setQuery,
-    source,
-    standards,
-    visibleStandards
+    visibleRecords
   };
 }

@@ -27,6 +27,7 @@ export function ProductForm({
   const [subCategory, setSubCategory] = useState("");
   const [pressureRatings, setPressureRatings] = useState<PressureRatingRecord[]>([]);
   const [isSubmitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -37,6 +38,7 @@ export function ProductForm({
     setCategory(product?.category ?? "");
     setSubCategory(product?.subCategory ?? "");
     setPressureRatings([]);
+    setSubmitError(null);
   }, [open, product]);
 
   if (!open) {
@@ -56,16 +58,22 @@ export function ProductForm({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSubmitting(true);
-    await onSubmit({
-      code,
-      name,
-      category,
-      subCategory: subCategory || null,
-      standardId: null,
-      pressureRatings
-    });
-    setSubmitting(false);
+    try {
+      setSubmitting(true);
+      setSubmitError(null);
+      await onSubmit({
+        code,
+        name,
+        category,
+        subCategory: subCategory || null,
+        standardId: null,
+        pressureRatings
+      });
+    } catch (reason) {
+      setSubmitError(reason instanceof Error ? reason.message : "Unable to save this product.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -116,6 +124,7 @@ export function ProductForm({
           />
         </label>
         <PressureMatrixEditor rows={pressureRatings} onAddRow={addPressureRating} />
+        {submitError ? <p className="form-error" role="alert">{submitError}</p> : null}
         <div className="drawer-actions">
           <button className="secondary-button" type="button" onClick={onClose}>
             Cancel

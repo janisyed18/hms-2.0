@@ -218,6 +218,71 @@ async def test_reference_standards_endpoint_returns_enabled_standards_only(
 
 
 @pytest.mark.asyncio
+async def test_reference_catalog_material_lifecycle_writes_sync_and_audit(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        listed = await client.get("/api/v1/reference/catalog/materials")
+        created = await client.post(
+            "/api/v1/reference/catalog/materials",
+            json={"code": "carbon_steel", "name": "Carbon steel", "enabled": True},
+        )
+        material_id = created.json()["id"]
+        updated = await client.patch(
+            f"/api/v1/reference/catalog/materials/{material_id}",
+            json={"name": "Carbon steel alloy"},
+        )
+        deleted = await client.delete(
+            f"/api/v1/reference/catalog/materials/{material_id}",
+        )
+        relisted = await client.get("/api/v1/reference/catalog/materials")
+
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["code"] == "COMPOSITE"
+    assert created.status_code == 201
+    assert created.json()["code"] == "CARBON_STEEL"
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Carbon steel alloy"
+    assert deleted.status_code == 204
+    assert all(item["id"] != material_id for item in relisted.json()["items"])
+
+    async with session_factory() as session:
+        material = await session.get(Material, material_id)
+        sync_changes = (
+            await session.scalars(
+                select(SyncChange)
+                .where(SyncChange.entity_id == material_id)
+                .order_by(SyncChange.seq)
+            )
+        ).all()
+        audit_events = (
+            await session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.entity_id == material_id)
+                .order_by(AuditEvent.sequence)
+            )
+        ).all()
+
+        assert material is not None
+        assert material.deleted_at is not None
+        assert material.version == 3
+        assert [change.op for change in sync_changes] == ["create", "update", "delete"]
+        assert [event.action for event in audit_events] == [
+            "material.created",
+            "material.updated",
+            "material.deleted",
+        ]
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
 async def test_asset_profile_uses_customer_location_and_reference_configuration(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
@@ -849,8 +914,13 @@ async def test_customer_user_cannot_create_reference_standard(
             "/api/v1/reference/standards",
             json={"code": "ISO10380", "name": "ISO 10380", "enabled": True},
         )
+        catalog_response = await client.post(
+            "/api/v1/reference/catalog/materials",
+            json={"code": "CARBON_STEEL", "name": "Carbon steel", "enabled": True},
+        )
 
     assert response.status_code == 403
+    assert catalog_response.status_code == 403
 
 
 @pytest.mark.asyncio

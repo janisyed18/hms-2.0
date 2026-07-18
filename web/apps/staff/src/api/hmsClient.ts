@@ -61,6 +61,9 @@ import type {
   PressureTestRecord,
   PressureTestValues,
   RecordSummary,
+  ReferenceCatalogFormValues,
+  ReferenceCatalogKey,
+  ReferenceCatalogRecord,
   ReferenceStandardListResult,
   ReferenceStandardFormValues,
   ReferenceStandardRecord,
@@ -806,6 +809,12 @@ function toReferenceStandard(
     },
     etag
   );
+}
+
+function referenceCatalogPath(category: ReferenceCatalogKey): string {
+  return category === "standards"
+    ? "/api/v1/reference/standards"
+    : `/api/v1/reference/catalog/${category}`;
 }
 
 function toProduct(product: ApiProduct, etag: string | null = null): ProductRecord {
@@ -1790,6 +1799,65 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           toReferenceStandard(standard, response.etag)
         )
       };
+    },
+
+    async listReferenceCatalog(
+      category: ReferenceCatalogKey
+    ): Promise<ApiListResult<ReferenceCatalogRecord>> {
+      const response = await request<ApiReferenceStandardList>(
+        referenceCatalogPath(category)
+      );
+      return {
+        total: response.data.items.length,
+        etag: response.etag,
+        items: response.data.items.map((item) => toReferenceStandard(item, response.etag))
+      };
+    },
+
+    async createReferenceCatalogItem(
+      category: ReferenceCatalogKey,
+      values: ReferenceCatalogFormValues
+    ): Promise<ReferenceCatalogRecord> {
+      const response = await request<ApiReferenceStandard>(
+        referenceCatalogPath(category),
+        {
+          method: "POST",
+          body: JSON.stringify({
+            code: values.code,
+            name: values.name,
+            enabled: true
+          })
+        }
+      );
+      return toReferenceStandard(response.data, response.etag);
+    },
+
+    async updateReferenceCatalogItem(
+      category: ReferenceCatalogKey,
+      id: string,
+      values: ReferenceCatalogFormValues,
+      etag?: string | null
+    ): Promise<ReferenceCatalogRecord> {
+      const response = await request<ApiReferenceStandard>(
+        `${referenceCatalogPath(category)}/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          headers: ifMatchHeader(etag),
+          body: JSON.stringify({ code: values.code, name: values.name })
+        }
+      );
+      return toReferenceStandard(response.data, response.etag);
+    },
+
+    async archiveReferenceCatalogItem(
+      category: ReferenceCatalogKey,
+      id: string,
+      etag?: string | null
+    ): Promise<void> {
+      await request<void>(
+        `${referenceCatalogPath(category)}/${encodeURIComponent(id)}`,
+        { method: "DELETE", headers: ifMatchHeader(etag) }
+      );
     },
 
     async listAdminUsers(

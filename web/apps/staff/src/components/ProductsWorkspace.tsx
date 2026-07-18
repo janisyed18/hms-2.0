@@ -4,7 +4,11 @@ import { ProductForm } from "./ProductForm";
 import { useProductsWorkspace } from "../hooks/useProductsWorkspace";
 import type { ProductRecord } from "../domain/types";
 
-export function ProductsWorkspace() {
+interface ProductsWorkspaceProps {
+  canManage?: boolean;
+}
+
+export function ProductsWorkspace({ canManage = true }: ProductsWorkspaceProps) {
   const workspace = useProductsWorkspace();
   const productColumns: ModuleColumn<ProductRecord>[] = [
     {
@@ -29,7 +33,7 @@ export function ProductsWorkspace() {
     },
     {
       header: "Actions",
-      render: (product) => (
+      render: (product) => canManage ? (
         <span className="row-actions">
           <button type="button" onClick={() => workspace.openEdit(product)}>
             Edit
@@ -42,7 +46,7 @@ export function ProductsWorkspace() {
             Archive
           </button>
         </span>
-      )
+      ) : "Read only"
     }
   ];
 
@@ -51,7 +55,7 @@ export function ProductsWorkspace() {
       <div className={`inspection-layout${workspace.selectedProduct ? "" : " detail-closed"}`}>
         <div className="inspection-table-wrap">
           <ModuleTable
-            actionLabel="Add Product"
+            actionLabel={canManage ? "Add Product" : undefined}
             columns={productColumns}
             countLabel={`${workspace.products.length} products`}
             emptyLabel="No products match the current filters."
@@ -103,7 +107,7 @@ export function ProductsWorkspace() {
             }
             getRowKey={(product) => product.id}
             items={workspace.visibleProducts}
-            onAction={workspace.openCreate}
+            onAction={canManage ? workspace.openCreate : undefined}
             onQueryChange={workspace.setQuery}
             onRowSelect={workspace.openDetail}
             query={workspace.query}

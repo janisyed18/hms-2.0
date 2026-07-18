@@ -13,8 +13,9 @@ uv run hms-seed
 uv run uvicorn hms_backend.app.main:app --reload
 ```
 
-The seed command uses synthetic HMS-shaped records only. It is idempotent, so it
-can be run more than once against the same local database.
+The seed command uses synthetic HMS-shaped operational records plus approved
+reference catalogue values transcribed from supplied legacy metadata. It is
+idempotent, so it can be run more than once against the same local database.
 The seed includes customers, assets, products, retest schedules, inspections,
 pressure-test examples, an issued certificate, and synthetic staff/inspector
 users for local UI verification.
