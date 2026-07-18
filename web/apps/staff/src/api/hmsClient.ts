@@ -1395,6 +1395,13 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       };
     },
 
+    async getAsset(id: string): Promise<AssetRecord> {
+      const response = await request<ApiAsset>(
+        `/api/v1/assets/${encodeURIComponent(id)}`
+      );
+      return toAsset(response.data, response.etag);
+    },
+
     async createAsset(values: AssetFormValues): Promise<AssetRecord> {
       const response = await request<ApiAsset>(
         "/api/v1/assets",

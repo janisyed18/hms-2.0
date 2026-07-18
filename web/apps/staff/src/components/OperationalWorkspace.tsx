@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { m, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 
 import {
   createHmsClient,
@@ -33,6 +33,7 @@ export type OperationalModule = "dashboard" | "sync" | "audit";
 interface OperationalWorkspaceProps {
   canEscalate: boolean;
   module: OperationalModule;
+  onAssetOpen: (assetId: string) => void;
   onModuleChange: (module: AppModule, inspectionId?: string) => void;
   source: DataSource;
 }
@@ -48,6 +49,7 @@ const overduePageSizes = [5, 10, 25];
 export function OperationalWorkspace({
   canEscalate,
   module,
+  onAssetOpen,
   onModuleChange,
   source
 }: OperationalWorkspaceProps) {
@@ -201,10 +203,6 @@ export function OperationalWorkspace({
   const fleetHealth = healthTotal
     ? Math.round((dashboard.inServiceAssets / healthTotal) * 100)
     : 0;
-  const fleetRingStyle = {
-    background: `conic-gradient(var(--success) 0 ${fleetHealth}%, var(--warning) ${fleetHealth}% ${fleetHealth + (healthTotal ? Math.round((dashboard.dueSoonAssets / healthTotal) * 100) : 0)}%, var(--danger) 0 100%)`
-  };
-
   function exportOverdueRetests() {
     if (!dashboard) {
       return;
@@ -335,6 +333,8 @@ export function OperationalWorkspace({
                 ariaLabel="Overdue retests"
                 columns={["Asset", "Customer", "Product", "Due Date", "Days Overdue", "Status"]}
                 emptyMessage="No overdue retests in the backend data."
+                onFirstCellClick={(index) => onAssetOpen(dashboard.overdueRetests[index].assetId)}
+                firstCellActionLabel={(index) => `Open asset ${dashboard.overdueRetests[index].assetNumber}`}
                 rows={dashboard.overdueRetests.map((retest) => [
                   retest.assetNumber,
                   retest.customerName,
@@ -392,23 +392,11 @@ export function OperationalWorkspace({
         </div>
 
         <aside className="dashboard-side">
-          <m.section
-            className="data-panel health-panel"
-            transition={motionTokens.spring.gentle}
-            whileHover={reducedMotion ? undefined : { y: -2 }}
-          >
-            <div className="panel-heading compact">
-              <h2>Fleet Health</h2>
-            </div>
-            <div className="fleet-ring" aria-hidden="true" style={fleetRingStyle}>
-              <span className="fleet-ring-core" />
-            </div>
-            <div className="health-legend">
-              <div><span><i className="dot success-dot" />Active fleet</span><strong>{formatNumber(dashboard.inServiceAssets)}</strong></div>
-              <div><span><i className="dot warning-dot" />Due Soon</span><strong>{formatNumber(dashboard.dueSoonAssets)}</strong></div>
-              <div><span><i className="dot danger-dot" />Overdue</span><strong>{formatNumber(dashboard.overdueAssets)}</strong></div>
-            </div>
-          </m.section>
+          <FleetHealthPanel
+            dueSoonAssets={dashboard.dueSoonAssets}
+            inServiceAssets={dashboard.inServiceAssets}
+            overdueAssets={dashboard.overdueAssets}
+          />
 
           <section className="data-panel due-panel">
             <div className="panel-heading compact">
@@ -562,15 +550,143 @@ function MetricCard({
   );
 }
 
+function FleetHealthPanel({
+  dueSoonAssets,
+  inServiceAssets,
+  overdueAssets
+}: {
+  dueSoonAssets: number;
+  inServiceAssets: number;
+  overdueAssets: number;
+}) {
+  const reducedMotion = useReducedMotion();
+  const [selectedStatus, setSelectedStatus] = useState<FleetStatus>("active");
+  const total = inServiceAssets + dueSoonAssets + overdueAssets;
+  const segments: FleetSegment[] = [
+    { id: "active", label: "Active fleet", value: inServiceAssets },
+    { id: "due-soon", label: "Due soon", value: dueSoonAssets },
+    { id: "overdue", label: "Overdue", value: overdueAssets }
+  ];
+  const selectedSegment = segments.find((segment) => segment.id === selectedStatus) ?? segments[0];
+  const circumference = 2 * Math.PI * 48;
+  let offset = 0;
+
+  function selectSegment(status: FleetStatus) {
+    setSelectedStatus(status);
+  }
+
+  function selectWithKeyboard(event: KeyboardEvent<SVGCircleElement>, status: FleetStatus) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      selectSegment(status);
+    }
+  }
+
+  return (
+    <m.section
+      className="data-panel health-panel"
+      transition={motionTokens.spring.gentle}
+      whileHover={reducedMotion ? undefined : { y: -2 }}
+    >
+      <div className="panel-heading compact">
+        <div>
+          <h2>Fleet Health</h2>
+          <p>Inspect a segment for its current share.</p>
+        </div>
+      </div>
+      <div className="fleet-ring" aria-label="Fleet health distribution" role="group">
+        <svg className="fleet-ring-chart" viewBox="0 0 120 120">
+          <circle className="fleet-ring-track" cx="60" cy="60" r="48" />
+          <g transform="rotate(-90 60 60)">
+            {segments.map((segment) => {
+              const segmentLength = total ? (segment.value / total) * circumference : 0;
+              const dashOffset = -offset;
+              offset += segmentLength;
+              const percentage = total ? Math.round((segment.value / total) * 100) : 0;
+              const assetLabel = assetCountLabel(segment.value);
+              return segmentLength > 0 ? (
+                <circle
+                  aria-label={`${segment.label}: ${assetLabel}, ${percentage}% of fleet`}
+                  aria-pressed={selectedStatus === segment.id}
+                  className={`fleet-segment fleet-segment-${segment.id}${selectedStatus === segment.id ? " is-selected" : ""}`}
+                  cx="60"
+                  cy="60"
+                  key={segment.id}
+                  onClick={() => selectSegment(segment.id)}
+                  onFocus={() => selectSegment(segment.id)}
+                  onKeyDown={(event) => selectWithKeyboard(event, segment.id)}
+                  onPointerEnter={() => selectSegment(segment.id)}
+                  r="48"
+                  role="button"
+                  strokeDasharray={`${segmentLength} ${circumference - segmentLength}`}
+                  strokeDashoffset={dashOffset}
+                  tabIndex={0}
+                />
+              ) : null;
+            })}
+          </g>
+        </svg>
+        <div className="fleet-ring-core" aria-live="polite">
+          <span>{selectedSegment.label}</span>
+          <strong>{formatNumber(selectedSegment.value)}</strong>
+          <small>{total ? `${Math.round((selectedSegment.value / total) * 100)}% of fleet` : "No monitored assets"}</small>
+        </div>
+      </div>
+      <div className="health-legend">
+        {segments.map((segment) => {
+          const percentage = total ? Math.round((segment.value / total) * 100) : 0;
+          return (
+            <button
+              aria-pressed={selectedStatus === segment.id}
+              className={`fleet-legend-button fleet-legend-${segment.id}${selectedStatus === segment.id ? " is-selected" : ""}`}
+              key={segment.id}
+              onClick={() => selectSegment(segment.id)}
+              onFocus={() => selectSegment(segment.id)}
+              onPointerEnter={() => selectSegment(segment.id)}
+              type="button"
+            >
+              <span>
+                <i
+                  aria-hidden="true"
+                  className={`dot ${segment.id === "active" ? "success" : segment.id === "due-soon" ? "warning" : "danger"}-dot`}
+                />
+                {segment.label}
+                <small>{percentage}%</small>
+              </span>
+              <strong>{formatNumber(segment.value)}</strong>
+            </button>
+          );
+        })}
+      </div>
+    </m.section>
+  );
+}
+
+type FleetStatus = "active" | "due-soon" | "overdue";
+
+interface FleetSegment {
+  id: FleetStatus;
+  label: string;
+  value: number;
+}
+
+function assetCountLabel(value: number): string {
+  return `${formatNumber(value)} ${value === 1 ? "asset" : "assets"}`;
+}
+
 function OperationsTable({
   ariaLabel,
   columns,
   emptyMessage = "No records found.",
+  firstCellActionLabel,
+  onFirstCellClick,
   rows
 }: {
   ariaLabel: string;
   columns: string[];
   emptyMessage?: string;
+  firstCellActionLabel?: (index: number) => string;
+  onFirstCellClick?: (index: number) => void;
   rows: string[][];
 }) {
   return (
@@ -590,10 +706,21 @@ function OperationsTable({
                 <td colSpan={columns.length}>{emptyMessage}</td>
               </tr>
             ) : (
-              rows.map((row) => (
+              rows.map((row, rowIndex) => (
                 <tr key={row.join("-")}>
                   {row.map((cell, index) => (
-                    <td key={`${cell}-${index}`}>{index === 0 ? <strong>{cell}</strong> : cell}</td>
+                    <td key={`${cell}-${index}`}>
+                      {index === 0 && onFirstCellClick && firstCellActionLabel ? (
+                        <button
+                          aria-label={firstCellActionLabel(rowIndex)}
+                          className="dashboard-asset-link"
+                          onClick={() => onFirstCellClick(rowIndex)}
+                          type="button"
+                        >
+                          {cell}
+                        </button>
+                      ) : index === 0 ? <strong>{cell}</strong> : cell}
+                    </td>
                   ))}
                 </tr>
               ))

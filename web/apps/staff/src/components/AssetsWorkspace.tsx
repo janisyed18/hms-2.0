@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+
 import { AssetDetail } from "./AssetDetail";
 import { AssetForm } from "./AssetForm";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
@@ -49,8 +51,25 @@ function endLabel(asset: AssetRecord) {
   return `${assetEndLabel(asset.aEnd)} / ${assetEndLabel(asset.bEnd)}`;
 }
 
-export function AssetsWorkspace({ canWrite }: { canWrite: boolean }) {
+export function AssetsWorkspace({
+  canWrite,
+  initialAssetId,
+  onInitialAssetOpened
+}: {
+  canWrite: boolean;
+  initialAssetId?: string | null;
+  onInitialAssetOpened?: () => void;
+}) {
   const workspace = useAssetsWorkspace();
+  const { isLoading, openDetailById } = workspace;
+
+  useEffect(() => {
+    if (!initialAssetId || isLoading) {
+      return;
+    }
+    void openDetailById(initialAssetId).finally(onInitialAssetOpened);
+  }, [initialAssetId, isLoading, onInitialAssetOpened, openDetailById]);
+
   const assetColumns: ModuleColumn<AssetRecord>[] = [
     {
       header: "Asset ID",

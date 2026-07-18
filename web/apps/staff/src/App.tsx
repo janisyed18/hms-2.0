@@ -224,6 +224,7 @@ function AuthGate() {
 
 export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
   const [activeModule, setActiveModule] = useState<AppModule>("dashboard");
+  const [pendingAssetId, setPendingAssetId] = useState<string | null>(null);
   const [pendingInspectionId, setPendingInspectionId] = useState<string | null>(null);
   const [session, setSession] = useState<StaffSession>(
     normaliseSession(providedSession)
@@ -255,6 +256,14 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
     }
   }
 
+  function handleAssetOpen(assetId: string) {
+    if (!visibleModules.includes("assets")) {
+      return;
+    }
+    setPendingAssetId(assetId);
+    setActiveModule("assets");
+  }
+
   return (
     <AppShell
       activeModule={renderedActiveModule}
@@ -280,6 +289,7 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
                 <OperationalWorkspace
                   canEscalate={hasPermission(session, "asset:write")}
                   module={renderedActiveModule}
+                  onAssetOpen={handleAssetOpen}
                   onModuleChange={handleModuleChange}
                   source={workspace.source}
                 />
@@ -339,7 +349,11 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
             <main className="record-page">
               <div className="record-main">
                 {renderedActiveModule === "assets" ? (
-                  <AssetsWorkspace canWrite={hasPermission(session, "asset:write")} />
+                  <AssetsWorkspace
+                    canWrite={hasPermission(session, "asset:write")}
+                    initialAssetId={pendingAssetId}
+                    onInitialAssetOpened={() => setPendingAssetId(null)}
+                  />
                 ) : null}
                 {renderedActiveModule === "analytics" ? (
                   <AnalyticsWorkspace source={workspace.source} />

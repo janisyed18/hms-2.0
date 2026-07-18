@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   createHmsClient,
@@ -252,9 +252,25 @@ export function useAssetsWorkspace() {
     setFormOpen(true);
   }
 
-  function openDetail(asset: AssetRecord) {
+  const openDetail = useCallback((asset: AssetRecord) => {
     setViewingAsset(asset);
-  }
+  }, []);
+
+  const openDetailById = useCallback(async (assetId: string) => {
+    const loadedAsset = assets.find((asset) => asset.id === assetId);
+    if (loadedAsset) {
+      openDetail(loadedAsset);
+      return;
+    }
+
+    try {
+      const asset = await createHmsClient().getAsset(assetId);
+      setAssets((current) => uniqueById([asset, ...current]));
+      openDetail(asset);
+    } catch {
+      setError("The selected asset could not be opened.");
+    }
+  }, [assets, openDetail]);
 
   function closeDetail() {
     setViewingAsset(null);
@@ -332,6 +348,7 @@ export function useAssetsWorkspace() {
     locationOptions,
     openCreate,
     openDetail,
+    openDetailById,
     openEdit,
     productFilter,
     productOptions,

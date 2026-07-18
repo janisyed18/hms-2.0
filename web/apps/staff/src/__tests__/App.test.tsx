@@ -385,6 +385,49 @@ function dashboardActionsFetch() {
   });
 }
 
+function dashboardAssetOpenFetch() {
+  return vi.fn(async (url: string | URL | Request) => {
+    const requestUrl = new URL(String(url), "http://test");
+    if (requestUrl.pathname === "/api/v1/dashboard") {
+      return okJson({
+        total_assets: 1,
+        total_customers: 1,
+        in_service_assets: 0,
+        due_soon_assets: 0,
+        overdue_assets: 1,
+        awaiting_review_inspections: 0,
+        overdue_total: 1,
+        overdue_limit: 5,
+        overdue_offset: 0,
+        overdue_retests: [{
+          asset_id: apiAsset.id,
+          asset_number: apiAsset.asset_number,
+          customer_name: apiAsset.customer.name,
+          product_name: apiAsset.product.name,
+          due_at: apiAsset.next_retest_due_at,
+          days_overdue: 3,
+          status: "OVERDUE"
+        }],
+        due_this_week: [],
+        awaiting_review: []
+      });
+    }
+    if (requestUrl.pathname === "/api/v1/assets") {
+      return okJson({ total: 0, limit: 50, offset: 0, items: [] });
+    }
+    if (requestUrl.pathname === `/api/v1/assets/${apiAsset.id}`) {
+      return okJson(apiAsset);
+    }
+    if (requestUrl.pathname === "/api/v1/customers") {
+      return okJson({ total: 1, limit: 100, offset: 0, items: [apiCustomer] });
+    }
+    if (requestUrl.pathname === "/api/v1/products") {
+      return okJson({ total: 1, limit: 100, offset: 0, items: [apiProduct] });
+    }
+    throw new Error(`Unhandled URL: ${requestUrl.pathname}`);
+  });
+}
+
 function notificationFeedFetch() {
   const notification = {
     id: "notification-1",
@@ -784,6 +827,38 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Dashboard" }));
     await user.click(await screen.findByRole("button", { name: "Open inspection API-777" }));
     expect(await screen.findByRole("heading", { name: "Inspection API-777" })).toBeVisible();
+  });
+
+  it("opens the selected overdue asset by its backend id", async () => {
+    const fetchMock = dashboardAssetOpenFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App initialSession={adminSession} />);
+
+    await user.click(await screen.findByRole("button", { name: "Open asset API-777" }));
+
+    const detail = await screen.findByRole("complementary", { name: "Asset detail" });
+    expect(detail).toHaveTextContent("API-777");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`/api/v1/assets/${apiAsset.id}`))).toBe(true);
+
+    await user.click(within(detail).getByRole("button", { name: "Close asset detail" }));
+    expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
+  });
+
+  it("makes fleet-health segments interactive and announces the selected data", async () => {
+    vi.stubGlobal("fetch", dashboardFetch());
+    const user = userEvent.setup();
+
+    render(<App initialSession={adminSession} />);
+
+    const fleetHealth = await screen.findByRole("group", { name: "Fleet health distribution" });
+    await user.click(within(fleetHealth).getByRole("button", { name: "Overdue: 23 assets, 2% of fleet" }));
+
+    const selectedReadout = fleetHealth.querySelector(".fleet-ring-core");
+    expect(selectedReadout).toHaveTextContent("Overdue");
+    expect(selectedReadout).toHaveTextContent("23");
+    expect(selectedReadout).toHaveTextContent("2% of fleet");
   });
 
   it("paginates overdue retests and resets to the first page when the page size changes", async () => {
