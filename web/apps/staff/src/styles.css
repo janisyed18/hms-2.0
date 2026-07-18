@@ -1866,19 +1866,6 @@ tbody tr.is-selected {
   font-weight: 760;
 }
 
-.fleet-ring {
-  width: 156px;
-  aspect-ratio: 1;
-  margin: 20px auto 22px;
-  border-radius: 50%;
-  background:
-    conic-gradient(
-      var(--success) 0 82%,
-      var(--warning) 82% 94%,
-      var(--danger) 94% 100%
-    );
-}
-
 .health-legend {
   display: grid;
   gap: 12px;

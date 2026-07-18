@@ -26,6 +26,7 @@ import { motionTokens } from "../motion/motionTokens";
 import { formatDateTime } from "../utils/dateTime";
 import { WorkspaceState } from "./WorkspaceState";
 import { downloadCsv } from "./ModuleTable";
+import { PaginationControls, usePagination } from "./Pagination";
 import type { AppModule } from "./AppShell";
 
 export type OperationalModule = "dashboard" | "sync" | "audit";
@@ -689,6 +690,8 @@ function OperationsTable({
   onFirstCellClick?: (index: number) => void;
   rows: string[][];
 }) {
+  const pagination = usePagination(rows);
+
   return (
     <section className="operations-table-panel">
       <div className="table-frame">
@@ -706,15 +709,15 @@ function OperationsTable({
                 <td colSpan={columns.length}>{emptyMessage}</td>
               </tr>
             ) : (
-              rows.map((row, rowIndex) => (
+              pagination.items.map((row, rowIndex) => (
                 <tr key={row.join("-")}>
                   {row.map((cell, index) => (
                     <td key={`${cell}-${index}`}>
                       {index === 0 && onFirstCellClick && firstCellActionLabel ? (
                         <button
-                          aria-label={firstCellActionLabel(rowIndex)}
+                          aria-label={firstCellActionLabel(pagination.start + rowIndex)}
                           className="dashboard-asset-link"
-                          onClick={() => onFirstCellClick(rowIndex)}
+                          onClick={() => onFirstCellClick(pagination.start + rowIndex)}
                           type="button"
                         >
                           {cell}
@@ -728,6 +731,16 @@ function OperationsTable({
           </tbody>
         </table>
       </div>
+      <PaginationControls
+        label={ariaLabel}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        page={pagination.page}
+        pageCount={pagination.pageCount}
+        pageSize={pagination.pageSize}
+        start={pagination.start}
+        total={pagination.total}
+      />
     </section>
   );
 }

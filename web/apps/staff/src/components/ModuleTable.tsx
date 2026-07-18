@@ -8,6 +8,7 @@ import {
 
 import { WorkspaceState } from "./WorkspaceState";
 import { PresencePanel } from "../motion/MotionPrimitives";
+import { PaginationControls, usePagination } from "./Pagination";
 
 export interface ModuleColumn<TItem> {
   header: string;
@@ -86,6 +87,7 @@ export function ModuleTable<TItem>({
   tableLabel
 }: ModuleTableProps<TItem>) {
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const pagination = usePagination(items);
   const exportData = [columns.map((column) => column.header), ...items.map(exportRows)];
 
   function handleRowClick(event: MouseEvent<HTMLTableRowElement>, item: TItem) {
@@ -202,7 +204,7 @@ export function ModuleTable<TItem>({
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => {
+              {pagination.items.map((item) => {
                 const rowKey = getRowKey(item);
                 const isSelected = selectedRowKey === rowKey;
                 return (
@@ -231,11 +233,16 @@ export function ModuleTable<TItem>({
           </table>
         )}
       </div>
-      <div className="pagination">
-        <span>Rows per page</span>
-        <button type="button">25</button>
-        <span>1-{Math.max(items.length, 1)} of {items.length}</span>
-      </div>
+      <PaginationControls
+        label={tableLabel}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        page={pagination.page}
+        pageCount={pagination.pageCount}
+        pageSize={pagination.pageSize}
+        start={pagination.start}
+        total={pagination.total}
+      />
     </section>
   );
 }

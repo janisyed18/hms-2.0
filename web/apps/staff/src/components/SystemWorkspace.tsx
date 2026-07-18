@@ -34,6 +34,7 @@ import type {
 } from "../domain/types";
 import { formatDateTime } from "../utils/dateTime";
 import { OneTimeCredentialDialog, type OneTimeCredential } from "./OneTimeCredentialDialog";
+import { PaginationControls, usePagination } from "./Pagination";
 import {
   UserAdminDialog,
   type CustomerOption,
@@ -464,6 +465,8 @@ function UserTable({
   ) => void;
   users: AdminUserRecord[];
 }) {
+  const pagination = usePagination(users);
+
   return (
     <section className="operations-table-panel">
       <div className="table-frame">
@@ -481,7 +484,7 @@ function UserTable({
             </tr>
           </thead>
           <tbody>
-            {users.map((user) => (
+            {pagination.items.map((user) => (
               <tr key={user.id}>
                 <td><strong>{user.displayName}</strong></td>
                 <td>{user.email}</td>
@@ -539,6 +542,16 @@ function UserTable({
           </tbody>
         </table>
       </div>
+      <PaginationControls
+        label="User access records"
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        page={pagination.page}
+        pageCount={pagination.pageCount}
+        pageSize={pagination.pageSize}
+        start={pagination.start}
+        total={pagination.total}
+      />
     </section>
   );
 }
@@ -550,6 +563,8 @@ function DeviceTable({
   devices: DeviceRecord[];
   onToggleRevoke: (device: DeviceRecord) => void;
 }) {
+  const pagination = usePagination(devices);
+
   return (
     <section className="operations-table-panel">
       <div className="table-frame">
@@ -566,7 +581,7 @@ function DeviceTable({
             </tr>
           </thead>
           <tbody>
-            {devices.map((device) => (
+            {pagination.items.map((device) => (
               <tr key={device.deviceId}>
                 <td><strong>{device.displayName ?? device.deviceId}</strong></td>
                 <td>{device.platform}</td>
@@ -584,6 +599,16 @@ function DeviceTable({
           </tbody>
         </table>
       </div>
+      <PaginationControls
+        label="Device records"
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        page={pagination.page}
+        pageCount={pagination.pageCount}
+        pageSize={pagination.pageSize}
+        start={pagination.start}
+        total={pagination.total}
+      />
     </section>
   );
 }

@@ -316,36 +316,37 @@ function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOvervi
       <div className="fleet-ring">
         <svg className="fleet-ring-chart" viewBox="0 0 120 120" aria-label="Fleet posture breakdown" role="img">
           <circle className="fleet-ring-track" cx="60" cy="60" r="40" />
-          {segments.map((segment) => {
-            const length = total ? segment.value / total * 251.327 : 0;
-            const dashOffset = -offset;
-            offset += length;
-            return (
-              <circle
-                aria-label={`${fleetLabels[segment.key]}: ${segment.value}`}
-                className={`fleet-segment ${segment.className}${selected === segment.key ? " is-selected" : ""}`}
-                cx="60"
-                cy="60"
-                key={segment.key}
-                onBlur={() => setSelected("clear")}
-                onClick={() => setSelected(segment.key)}
-                onFocus={() => setSelected(segment.key)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    setSelected(segment.key);
-                  }
-                }}
-                onMouseEnter={() => setSelected(segment.key)}
-                r="40"
-                role="button"
-                strokeDasharray={`${length} ${251.327 - length}`}
-                strokeDashoffset={dashOffset}
-                tabIndex={0}
-                transform="rotate(-90 60 60)"
-              />
-            );
-          })}
+          <g transform="rotate(-90 60 60)">
+            {segments.map((segment) => {
+              const length = total ? segment.value / total * 251.327 : 0;
+              const dashOffset = -offset;
+              offset += length;
+              return (
+                <circle
+                  aria-label={`${fleetLabels[segment.key]}: ${segment.value}`}
+                  className={`fleet-segment ${segment.className}${selected === segment.key ? " is-selected" : ""}`}
+                  cx="60"
+                  cy="60"
+                  key={segment.key}
+                  onBlur={() => setSelected("clear")}
+                  onClick={() => setSelected(segment.key)}
+                  onFocus={() => setSelected(segment.key)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelected(segment.key);
+                    }
+                  }}
+                  onMouseEnter={() => setSelected(segment.key)}
+                  r="40"
+                  role="button"
+                  strokeDasharray={`${length} ${251.327 - length}`}
+                  strokeDashoffset={dashOffset}
+                  tabIndex={0}
+                />
+              );
+            })}
+          </g>
         </svg>
         <span className="fleet-ring-core">
           <span>{fleetLabels[selected]}</span>

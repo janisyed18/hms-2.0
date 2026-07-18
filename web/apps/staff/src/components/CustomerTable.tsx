@@ -2,6 +2,7 @@ import { CheckCircle2, ChevronDown, Download, Filter, Plus, Search } from "lucid
 import { useState } from "react";
 
 import { PresencePanel } from "../motion/MotionPrimitives";
+import { PaginationControls, usePagination } from "./Pagination";
 import { WorkspaceState } from "./WorkspaceState";
 import type { CustomerRecord } from "../domain/types";
 
@@ -84,6 +85,7 @@ export function CustomerTable({
   onAddCustomer
 }: CustomerTableProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const pagination = usePagination(customers);
   const exportRows = [
     [
       "Customer Name",
@@ -179,7 +181,7 @@ export function CustomerTable({
       </div>
 
       <div className="customer-card-grid">
-        {customers.map((customer) => (
+        {pagination.items.map((customer) => (
           <button
             aria-label={`Select customer ${customer.name}`}
             aria-pressed={customer.id === selectedId}
@@ -217,6 +219,16 @@ export function CustomerTable({
           </button>
         ))}
       </div>
+      <PaginationControls
+        label="Customer records"
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        page={pagination.page}
+        pageCount={pagination.pageCount}
+        pageSize={pagination.pageSize}
+        start={pagination.start}
+        total={pagination.total}
+      />
       {selectedId && selectedCustomerName ? (
         <div
           aria-label="Customer selection"
