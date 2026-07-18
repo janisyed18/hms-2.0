@@ -14,6 +14,8 @@ const apiCustomer = {
   notes: "Coordinate terminal access before field work.",
   retest_enabled: true,
   default_retest_months: 12,
+  ppe_requirements: [],
+  additional_requirements: [],
   locations: [
     {
       id: "loc-api-1",
@@ -34,6 +36,8 @@ const apiUnassignedCustomer = {
   name: "E2E API Customer",
   retest_enabled: true,
   default_retest_months: 12,
+  ppe_requirements: [],
+  additional_requirements: [],
   locations: [
     {
       id: "loc-api-2",
@@ -1111,12 +1115,10 @@ describe("App", () => {
 
     await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.click(await screen.findByRole("button", { name: /Add Customer/i }));
-    await user.type(screen.getByLabelText("Customer name"), "Summit Marine Group");
-    await user.type(screen.getByLabelText("Customer code"), "SMG");
-    await user.type(
-      screen.getByLabelText("Customer notes"),
-      "Call operations before scheduling the first retest."
-    );
+    await user.type(screen.getByLabelText("Name"), "Summit Marine Group");
+    await user.type(screen.getByLabelText("Location"), "Newcastle operations yard");
+    await user.type(screen.getByLabelText("Phone"), "+61 2 5555 0200");
+    await user.type(screen.getByLabelText("Email"), "operations@summit.example.test");
     await user.click(screen.getByRole("button", { name: "Save customer" }));
 
     expect(
@@ -1125,9 +1127,11 @@ describe("App", () => {
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
       "Summit Marine Group"
     );
-    await user.click(screen.getByRole("tab", { name: "Notes" }));
     expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
-      "Call operations before scheduling the first retest."
+      "Newcastle operations yard"
+    );
+    expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
+      "operations@summit.example.test"
     );
   });
 
@@ -1140,8 +1144,8 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.type(await screen.findByLabelText("Search customers"), "arctic");
     await user.click(screen.getByRole("button", { name: /Add Customer/i }));
-    await user.type(screen.getByLabelText("Customer name"), "Summit Marine Group");
-    await user.type(screen.getByLabelText("Customer code"), "SMG");
+    await user.type(screen.getByLabelText("Name"), "Summit Marine Group");
+    await user.type(screen.getByLabelText("Location"), "Newcastle operations yard");
     await user.click(screen.getByRole("button", { name: "Save customer" }));
 
     expect(

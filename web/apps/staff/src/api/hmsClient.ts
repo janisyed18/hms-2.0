@@ -98,8 +98,8 @@ interface ApiCustomer {
   notes: string | null;
   retest_enabled: boolean;
   default_retest_months: number | null;
-  ppe_requirements: string[];
-  additional_requirements: string[];
+  ppe_requirements?: string[];
+  additional_requirements?: string[];
   locations: ApiLocation[];
   contacts: ApiContact[];
 }
@@ -747,8 +747,8 @@ function toCustomer(customer: ApiCustomer, etag: string | null = null): Customer
         notes: customer.notes,
         retestEnabled: customer.retest_enabled,
         defaultRetestMonths: customer.default_retest_months,
-        ppeRequirements: customer.ppe_requirements,
-        additionalRequirements: customer.additional_requirements,
+        ppeRequirements: customer.ppe_requirements ?? [],
+        additionalRequirements: customer.additional_requirements ?? [],
         locations: customer.locations.map(toLocation),
         contacts: customer.contacts.map(toContact),
         status: "Active",
@@ -766,8 +766,8 @@ function toCustomer(customer: ApiCustomer, etag: string | null = null): Customer
           })),
           phone: customer.contacts[0]?.phone ?? "",
           email: customer.contacts[0]?.email ?? "",
-          ppeRequirements: customer.ppe_requirements,
-          additionalRequirements: customer.additional_requirements
+          ppeRequirements: customer.ppe_requirements ?? [],
+          additionalRequirements: customer.additional_requirements ?? []
         }).metrics
       },
       etag

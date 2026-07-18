@@ -15,10 +15,12 @@ interface CustomerDetailProps {
 
 const tabs = ["Overview", "Locations"];
 
-function RequirementList({ items, emptyLabel }: { items: string[]; emptyLabel: string }) {
-  return items.length ? (
+function RequirementList({ items, emptyLabel }: { items?: string[]; emptyLabel: string }) {
+  const requirements = items ?? [];
+
+  return requirements.length ? (
     <ul className="requirement-list">
-      {items.map((item) => <li key={item}><ShieldCheck aria-hidden="true" size={15} />{item}</li>)}
+      {requirements.map((item) => <li key={item}><ShieldCheck aria-hidden="true" size={15} />{item}</li>)}
     </ul>
   ) : <p className="empty-requirements">{emptyLabel}</p>;
 }
