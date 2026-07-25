@@ -231,13 +231,16 @@ function SidebarNavigation({
     <>
       <div className="brand">
         <div className="brand-lockup">
-          <div className="brand-shield">
-            <ShieldCheck aria-hidden="true" size={19} />
+          <div className="brand-logo-frame">
+            <img
+              alt="Momentum"
+              className="brand-logo"
+              height="500"
+              src="/brand/momentum-logo.png"
+              width="500"
+            />
           </div>
-          <div>
-            <strong>BAT HMS</strong>
-            <span>v2.0</span>
-          </div>
+          <span className="brand-product-label">Hose Management System</span>
         </div>
         <form className="sidebar-search" onSubmit={onSearch}>
           <Search aria-hidden="true" size={16} />

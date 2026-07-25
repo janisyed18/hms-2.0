@@ -176,7 +176,7 @@ function PasswordResetScreen({ message }: { message?: string }) {
   return (
     <AuthLayout
       title="Choose a new password"
-      subtitle="Create a strong password for your BAT HMS account."
+      subtitle="Create a strong password for your Momentum HMS account."
       error={message}
       backAction={showSignIn}
     >
@@ -229,7 +229,7 @@ function PasswordResetCompleteScreen({ message }: { message?: string }) {
         <span className="auth-success-mark" aria-hidden="true">✓</span>
         <div>
           <strong>You’re ready to sign in</strong>
-          <p>{message ?? "Use your new password to access BAT HMS."}</p>
+          <p>{message ?? "Use your new password to access Momentum HMS."}</p>
         </div>
       </div>
       <button type="button" className="primary-button auth-submit" onClick={showSignIn}>

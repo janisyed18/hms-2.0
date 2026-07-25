@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { Eye, EyeOff, LockKeyhole, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, LockKeyhole } from "lucide-react";
 import { ZxcvbnFactory } from "@zxcvbn-ts/core";
 import {
   adjacencyGraphs,
@@ -135,16 +135,19 @@ export function AuthLayout({
   return (
     <div className="auth-shell">
       <div className="auth-gateway">
-        <aside className="auth-trust" aria-label="BAT HMS security information">
+        <aside className="auth-trust" aria-label="Momentum HMS security information">
           <div>
             <div className="auth-brand auth-brand-inverted">
-              <span className="brand-shield">
-                <ShieldCheck aria-hidden="true" size={20} />
+              <span className="auth-brand-logo-frame">
+                <img
+                  alt="Momentum"
+                  className="auth-brand-logo"
+                  height="500"
+                  src="/brand/momentum-logo.png"
+                  width="500"
+                />
               </span>
-              <div>
-                <strong>BAT HMS</strong>
-                <span>v2.0</span>
-              </div>
+              <span className="auth-brand-product-label">Hose Management System</span>
             </div>
             <p className="auth-eyebrow">{eyebrow}</p>
             <h2 className="auth-trust-title">Confidence in every inspection.</h2>
@@ -164,13 +167,16 @@ export function AuthLayout({
             </button>
           ) : null}
           <div className="auth-mobile-brand auth-brand">
-            <span className="brand-shield">
-              <ShieldCheck aria-hidden="true" size={20} />
+            <span className="auth-brand-logo-frame">
+              <img
+                alt="Momentum"
+                className="auth-brand-logo"
+                height="500"
+                src="/brand/momentum-logo.png"
+                width="500"
+              />
             </span>
-            <div>
-              <strong>BAT HMS</strong>
-              <span>v2.0</span>
-            </div>
+            <span className="auth-brand-product-label">Hose Management System</span>
           </div>
           <div className="auth-heading">
             <h1 className="auth-title">{title}</h1>

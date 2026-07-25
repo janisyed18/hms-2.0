@@ -15,7 +15,7 @@ describe("Inspector app", () => {
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", { name: "BAT Inspector" })
+      await screen.findByRole("heading", { name: "Inspector" })
     ).toBeInTheDocument();
     expect(screen.getByText("Assigned")).toBeInTheDocument();
     expect(screen.getByText("Queued")).toBeInTheDocument();
@@ -61,7 +61,7 @@ describe("Inspector app", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await screen.findByRole("heading", { name: "BAT Inspector" });
+    await screen.findByRole("heading", { name: "Inspector" });
 
     await user.type(screen.getByLabelText("Search work"), "Pacific");
 

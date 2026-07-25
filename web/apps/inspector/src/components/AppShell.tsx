@@ -40,9 +40,20 @@ export function AppShell({
     <div className="inspector-stage">
       <div className="inspector-device">
         <header className="app-header">
-          <div>
-            <p className="eyebrow">BAT HMS</p>
-            <h1>BAT Inspector</h1>
+          <div className="app-header-brand">
+            <div className="inspector-logo-frame">
+              <img
+                alt="Momentum"
+                className="inspector-logo"
+                height="500"
+                src="/brand/momentum-logo.png"
+                width="500"
+              />
+            </div>
+            <div>
+              <p className="eyebrow">Hose Management System</p>
+              <h1>Inspector</h1>
+            </div>
           </div>
           <div className="header-status" aria-label="Sync status">
             <span className={isOnline ? "live-dot" : "live-dot live-dot--off"} />
