@@ -93,21 +93,21 @@ variable "api_desired_count" {
 }
 
 variable "worker_desired_count" {
-  description = "Desired count for the Celery worker ECS service."
+  description = "Desired count for the Celery worker ECS service. Zero keeps dev core records online without background delivery."
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "beat_desired_count" {
-  description = "Desired count for the Celery beat ECS service."
+  description = "Desired count for the Celery beat ECS service. Zero pauses scheduled dev jobs."
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "certificate_engine_desired_count" {
-  description = "Desired count for the certificate engine ECS service."
+  description = "Desired count for the certificate engine ECS service. Zero pauses certificate rendering in dev."
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "image_tag" {
