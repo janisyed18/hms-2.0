@@ -472,24 +472,45 @@ resource "aws_ecr_repository" "certificate_engine" {
   }
 }
 
+resource "aws_ecr_lifecycle_policy" "images" {
+  for_each = {
+    api                = aws_ecr_repository.api.name
+    certificate_engine = aws_ecr_repository.certificate_engine.name
+  }
+
+  repository = each.value
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "Keep the latest ten deployable images for dev rollback."
+      selection = {
+        tagStatus   = "any"
+        countType   = "imageCountMoreThan"
+        countNumber = 10
+      }
+      action = { type = "expire" }
+    }]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/ecs/${local.name}/api"
-  retention_in_days = 14
+  retention_in_days = 3
 }
 
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/ecs/${local.name}/worker"
-  retention_in_days = 14
+  retention_in_days = 3
 }
 
 resource "aws_cloudwatch_log_group" "beat" {
   name              = "/ecs/${local.name}/beat"
-  retention_in_days = 14
+  retention_in_days = 3
 }
 
 resource "aws_cloudwatch_log_group" "certificate_engine" {
   name              = "/ecs/${local.name}/certificate-engine"
-  retention_in_days = 14
+  retention_in_days = 3
 }
 
 resource "aws_secretsmanager_secret" "app" {
@@ -743,7 +764,7 @@ resource "aws_ecs_cluster" "this" {
 
   setting {
     name  = "containerInsights"
-    value = "enabled"
+    value = "disabled"
   }
 }
 
