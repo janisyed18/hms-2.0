@@ -22,6 +22,7 @@ from hms_backend.app.modules.assets import models as _assets  # noqa: F401
 from hms_backend.app.modules.certificates import models as _certs  # noqa: F401
 from hms_backend.app.modules.customers import models as _customers  # noqa: F401
 from hms_backend.app.modules.identity.browser_auth import (
+    AuthenticatedSession,
     BrowserAuthError,
     BrowserAuthService,
 )
@@ -49,6 +50,7 @@ def _auth_config(monkeypatch: pytest.MonkeyPatch) -> None:
     key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("ascii")
     monkeypatch.setattr(settings, "auth_mfa_encryption_key", key)
     monkeypatch.setattr(settings, "auth_recovery_code_pepper", "unit-test-pepper")
+    monkeypatch.setattr(settings, "auth_mfa_required", True, raising=False)
 
 
 @pytest_asyncio.fixture
@@ -120,6 +122,19 @@ async def test_login_routes_to_mfa_required(session: AsyncSession) -> None:
     await _make_user(session, totp_secret=pyotp.random_base32())
     challenge = await _service().login(session, email=EMAIL, password=PASSWORD)
     assert challenge.stage == BrowserAuthStage.MFA_REQUIRED.value
+
+
+@pytest.mark.asyncio
+async def test_login_bypasses_mfa_when_not_required(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _make_user(session, totp_secret=pyotp.random_base32())
+    monkeypatch.setattr(settings, "auth_mfa_required", False, raising=False)
+
+    result = await _service().login(session, email=EMAIL, password=PASSWORD)
+
+    assert isinstance(result, AuthenticatedSession)
+    assert result.access_token
 
 
 @pytest.mark.asyncio

@@ -45,6 +45,10 @@ function challengeState(response: BrowserChallengeResponse): AuthState {
   return { status: "mfa-challenge", challenge: response.challenge };
 }
 
+function isAuthenticated(response: BrowserChallengeResponse | { access_token: string }): response is { access_token: string } {
+  return "access_token" in response;
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof BrowserAuthError) {
     return error.message;
@@ -157,12 +161,17 @@ export function AuthProvider({ client, children }: AuthProviderProps) {
   const login = useCallback(
     async (email: string, password: string) => {
       try {
-        apply(challengeState(await authClient.login(email, password)));
+        const response = await authClient.login(email, password);
+        if (isAuthenticated(response)) {
+          await enterAuthenticated(response.access_token);
+          return;
+        }
+        apply(challengeState(response));
       } catch (error) {
         apply({ status: "signed-out", message: errorMessage(error) });
       }
     },
-    [authClient, apply]
+    [authClient, apply, enterAuthenticated]
   );
 
   const showForgotPassword = useCallback(() => {
@@ -215,12 +224,17 @@ export function AuthProvider({ client, children }: AuthProviderProps) {
         return;
       }
       try {
-        apply(challengeState(await authClient.changePassword(current.challenge, password)));
+        const response = await authClient.changePassword(current.challenge, password);
+        if (isAuthenticated(response)) {
+          await enterAuthenticated(response.access_token);
+          return;
+        }
+        apply(challengeState(response));
       } catch (error) {
         apply({ ...current, message: errorMessage(error) });
       }
     },
-    [authClient, apply]
+    [authClient, apply, enterAuthenticated]
   );
 
   const startMfaEnrollment = useCallback(async () => {

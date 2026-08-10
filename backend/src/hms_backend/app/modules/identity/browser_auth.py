@@ -104,7 +104,7 @@ class BrowserAuthService:
         password: str,
         user_agent: str | None = None,
         ip: str | None = None,
-    ) -> IssuedChallenge:
+    ) -> IssuedChallenge | AuthenticatedSession:
         user = await self._user_by_email(session, email)
         if (
             user is None
@@ -125,6 +125,11 @@ class BrowserAuthService:
 
         self._ensure_usable(user)
         user.failed_password_attempts = 0
+        if not user.must_change_password and not self._settings.auth_mfa_required:
+            await self._audit(
+                session, user, email=user.email, action="auth.login.password"
+            )
+            return await self._finalise(session, user, user_agent=user_agent, ip=ip)
         return await self._issue_challenge(session, user, self._initial_stage(user))
 
     async def change_password(
@@ -135,7 +140,7 @@ class BrowserAuthService:
         new_password: str,
         user_agent: str | None = None,
         ip: str | None = None,
-    ) -> IssuedChallenge:
+    ) -> IssuedChallenge | AuthenticatedSession:
         record, user = await self._consume_challenge(
             session, challenge, BrowserAuthStage.PASSWORD_CHANGE_REQUIRED
         )
@@ -153,6 +158,8 @@ class BrowserAuthService:
         await self._audit(
             session, user, email=user.email, action="auth.password.changed"
         )
+        if not self._settings.auth_mfa_required:
+            return await self._finalise(session, user, user_agent=user_agent, ip=ip)
         return await self._issue_challenge(
             session, user, self._post_password_stage(user)
         )

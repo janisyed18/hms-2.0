@@ -37,6 +37,7 @@ def _config(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     monkeypatch.setattr(settings, "auth_mode", "bearer")
     monkeypatch.setattr(settings, "auth_bearer_hmac_secret", "unit-test-secret")
     monkeypatch.setattr(settings, "auth_browser_login_enabled", True)
+    monkeypatch.setattr(settings, "auth_mfa_required", True, raising=False)
     monkeypatch.setattr(settings, "auth_browser_cookie_secure", False)
     monkeypatch.setattr(
         settings,
@@ -141,6 +142,25 @@ async def test_intermediate_steps_never_leak_tokens(
     assert body["next_step"] == "PASSWORD_CHANGE_REQUIRED"
     assert "access_token" not in body
     assert "set-cookie" not in {k.lower() for k in login.headers}
+
+
+@pytest.mark.asyncio
+async def test_login_authenticates_without_mfa_when_disabled(
+    client: httpx.AsyncClient,
+    session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _seed_user(session_factory, must_change=False)
+    monkeypatch.setattr(settings, "auth_mfa_required", False, raising=False)
+
+    response = await client.post(
+        "/api/v1/auth/browser/login", json={"email": EMAIL, "password": PW}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["next_step"] == "AUTHENTICATED"
+    assert response.json()["access_token"]
+    assert COOKIE in response.headers.get("set-cookie", "")
 
 
 @pytest.mark.asyncio

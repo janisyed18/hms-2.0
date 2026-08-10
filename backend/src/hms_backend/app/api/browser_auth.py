@@ -198,12 +198,15 @@ def _unauthorized(exc: BrowserAuthError) -> HTTPException:
 # --- endpoints ------------------------------------------------------------------
 
 
-@router.post("/login", response_model=BrowserChallengeResponse)
+@router.post(
+    "/login", response_model=BrowserChallengeResponse | BrowserAuthenticatedResponse
+)
 async def browser_login(
     payload: BrowserLoginRequest,
     request: Request,
     session: SessionDep,
-) -> BrowserChallengeResponse:
+    response: Response,
+) -> BrowserChallengeResponse | BrowserAuthenticatedResponse:
     _, ip = _client_meta(request)
     account_key = f"account:{payload.email.strip().lower()}"
     for key in (account_key, f"ip:{ip or 'unknown'}"):
@@ -215,7 +218,7 @@ async def browser_login(
                 headers={"Retry-After": str(decision.retry_after_seconds)},
             )
     try:
-        challenge = await _service.login(
+        result = await _service.login(
             session,
             email=payload.email,
             password=payload.password,
@@ -235,10 +238,12 @@ async def browser_login(
         raise _unauthorized(exc) from exc
     await _login_limiter.reset(account_key)
     await session.commit()
+    if isinstance(result, AuthenticatedSession):
+        return _authenticated_body(result, response)
     return BrowserChallengeResponse(
-        next_step=BrowserAuthNextStep(challenge.stage),
-        challenge=challenge.raw,
-        expires_in=challenge.expires_in,
+        next_step=BrowserAuthNextStep(result.stage),
+        challenge=result.raw,
+        expires_in=result.expires_in,
     )
 
 
@@ -294,15 +299,18 @@ async def browser_password_reset_confirm(
     return BrowserMessageResponse(message="Password reset. You can now sign in.")
 
 
-@router.post("/password", response_model=BrowserChallengeResponse)
+@router.post(
+    "/password", response_model=BrowserChallengeResponse | BrowserAuthenticatedResponse
+)
 async def browser_change_password(
     payload: BrowserPasswordChangeRequest,
     request: Request,
     session: SessionDep,
-) -> BrowserChallengeResponse:
+    response: Response,
+) -> BrowserChallengeResponse | BrowserAuthenticatedResponse:
     user_agent, ip = _client_meta(request)
     try:
-        challenge = await _service.change_password(
+        result = await _service.change_password(
             session,
             challenge=payload.challenge,
             new_password=payload.new_password,
@@ -317,10 +325,12 @@ async def browser_change_password(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
     await session.commit()
+    if isinstance(result, AuthenticatedSession):
+        return _authenticated_body(result, response)
     return BrowserChallengeResponse(
-        next_step=BrowserAuthNextStep(challenge.stage),
-        challenge=challenge.raw,
-        expires_in=challenge.expires_in,
+        next_step=BrowserAuthNextStep(result.stage),
+        challenge=result.raw,
+        expires_in=result.expires_in,
     )
 
 

@@ -130,6 +130,7 @@ class Settings(BaseSettings):
     # Separate contract from the native bearer login: multi-role browser sign-in
     # with forced password change, TOTP MFA, and rotating refresh cookies.
     auth_browser_login_enabled: bool = False
+    auth_mfa_required: bool = False
     # Password policy bounds (Unicode code points; no truncation).
     auth_password_min_length: int = 12
     auth_password_max_length: int = 128
@@ -186,25 +187,26 @@ class Settings(BaseSettings):
         errors: list[str] = []
         if not self.auth_bearer_hmac_secret:
             errors.append("AUTH_BEARER_HMAC_SECRET is required")
-        if (
-            not self.auth_mfa_encryption_key
-            and self.auth_mfa_key_version not in self.auth_mfa_encryption_keys
-        ):
-            errors.append("AUTH_MFA_ENCRYPTION_KEY is required")
-        elif not all(
-            _decodes_to_32_bytes(value)
-            for value in [
-                *self.auth_mfa_encryption_keys.values(),
-                *(
-                    [self.auth_mfa_encryption_key]
-                    if self.auth_mfa_encryption_key
-                    else []
-                ),
-            ]
-        ):
-            errors.append("AUTH_MFA_ENCRYPTION_KEY values must decode to 32 bytes")
-        if not self.auth_recovery_code_pepper:
-            errors.append("AUTH_RECOVERY_CODE_PEPPER is required")
+        if self.auth_mfa_required:
+            if (
+                not self.auth_mfa_encryption_key
+                and self.auth_mfa_key_version not in self.auth_mfa_encryption_keys
+            ):
+                errors.append("AUTH_MFA_ENCRYPTION_KEY is required")
+            elif not all(
+                _decodes_to_32_bytes(value)
+                for value in [
+                    *self.auth_mfa_encryption_keys.values(),
+                    *(
+                        [self.auth_mfa_encryption_key]
+                        if self.auth_mfa_encryption_key
+                        else []
+                    ),
+                ]
+            ):
+                errors.append("AUTH_MFA_ENCRYPTION_KEY values must decode to 32 bytes")
+            if not self.auth_recovery_code_pepper:
+                errors.append("AUTH_RECOVERY_CODE_PEPPER is required")
         if not self.auth_browser_allowed_origins:
             errors.append("AUTH_BROWSER_ALLOWED_ORIGINS must list the staff origin")
         if not self.auth_browser_staff_public_url:

@@ -142,6 +142,10 @@ locals {
       value = "true"
     },
     {
+      name  = "AUTH_MFA_REQUIRED"
+      value = "false"
+    },
+    {
       name  = "AUTH_BROWSER_ALLOWED_ORIGINS"
       value = jsonencode(["https://${aws_cloudfront_distribution.staff.domain_name}"])
     },

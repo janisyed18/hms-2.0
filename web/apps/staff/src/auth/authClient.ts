@@ -54,7 +54,7 @@ export function createBrowserAuthClient(options: BrowserAuthClientOptions = {}) 
   }
 
   return {
-    login(email: string, password: string): Promise<BrowserChallengeResponse> {
+    login(email: string, password: string): Promise<BrowserChallengeResponse | BrowserAuthenticatedResponse> {
       return post("/login", { email, password });
     },
     requestPasswordReset(email: string): Promise<BrowserMessageResponse> {
@@ -72,7 +72,7 @@ export function createBrowserAuthClient(options: BrowserAuthClientOptions = {}) 
     changePassword(
       challenge: string,
       newPassword: string
-    ): Promise<BrowserChallengeResponse> {
+    ): Promise<BrowserChallengeResponse | BrowserAuthenticatedResponse> {
       return post("/password", { challenge, new_password: newPassword });
     },
     startEnrollment(challenge: string): Promise<BrowserEnrollmentResponse> {

@@ -123,6 +123,28 @@ describe("AuthProvider", () => {
     expect(screen.getByTestId("token").textContent).toBe("none");
   });
 
+  it("enters the workspace directly when password login does not require MFA", async () => {
+    const client = fakeClient({
+      login: vi.fn().mockResolvedValue({
+        next_step: "AUTHENTICATED",
+        access_token: "password-only-access",
+        token_type: "bearer",
+        expires_in: 900
+      })
+    });
+    renderWith(client);
+    await waitFor(() =>
+      expect(screen.getByTestId("status").textContent).toBe("signed-out")
+    );
+
+    fireEvent.click(screen.getByText("login"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("status").textContent).toBe("authenticated")
+    );
+    expect(screen.getByTestId("token").textContent).toBe("password-only-access");
+  });
+
   it("finishes session restore under React Strict Mode", async () => {
     renderWithStrictMode(fakeClient());
     await waitFor(() =>
