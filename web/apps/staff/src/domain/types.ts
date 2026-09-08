@@ -297,6 +297,24 @@ export interface AssetLocationSummary {
   country: string | null;
 }
 
+export interface AssetInspectionHistoryRecord {
+  id: string;
+  inspectionType: string;
+  status: string;
+  result: string | null;
+  submittedAt: string | null;
+  approvedAt: string | null;
+}
+
+export interface AssetCertificateHistoryRecord {
+  id: string;
+  number: string;
+  certificateVersion: number;
+  status: string;
+  issuedAt: string;
+  validUntil: string | null;
+}
+
 export interface AssetRetestSummary {
   dueAt: string;
   status: string;
@@ -324,6 +342,8 @@ export interface AssetRecord {
   retestSchedule: AssetRetestSummary | null;
   aEnd: AssetEndValues;
   bEnd: AssetEndValues;
+  inspectionHistory: AssetInspectionHistoryRecord[];
+  certificateHistory: AssetCertificateHistoryRecord[];
   etag?: string | null;
 }
 

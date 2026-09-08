@@ -1,4 +1,4 @@
-import { ArrowLeft, Edit3, X } from "lucide-react";
+import { ArrowLeft, ClipboardCheck, FileCheck2, Edit3, X } from "lucide-react";
 
 import type { AssetRecord } from "../domain/types";
 
@@ -42,8 +42,17 @@ function boreLabel(asset: AssetRecord) {
   return asset.aEnd.nominalBore?.name ?? asset.bEnd.nominalBore?.name ?? "—";
 }
 
+function historyDate(value: string | null) {
+  return value ? new Date(value).toLocaleDateString() : "Not recorded";
+}
+
+function historyStatus(status: string) {
+  return `mini-status ${status.toLowerCase().replaceAll("_", "-")}`;
+}
+
 export function AssetDetail({ asset, canWrite, onBack, onEdit }: AssetDetailProps) {
   const assetName = asset.assetName || asset.assetNumber;
+  const { inspectionHistory, certificateHistory } = asset;
 
   return (
     <section className="detail-page" role="complementary" aria-label="Asset detail">
@@ -139,6 +148,43 @@ export function AssetDetail({ asset, canWrite, onBack, onEdit }: AssetDetailProp
             <dd>{boreLabel(asset)}</dd>
           </div>
         </dl>
+      </section>
+
+      <section className="detail-section asset-history-section">
+        <div className="asset-history-heading">
+          <div>
+            <h3>Record history</h3>
+            <p>Inspection and certificate records linked to this asset.</p>
+          </div>
+        </div>
+        <div className="asset-history-grid">
+          <div className="asset-history-column">
+            <h4><ClipboardCheck aria-hidden="true" size={16} /> Inspections</h4>
+            {inspectionHistory.length ? (
+              <ul className="asset-history-list">
+                {inspectionHistory.map((inspection) => (
+                  <li key={inspection.id}>
+                    <div><strong>{inspection.inspectionType.replaceAll("_", " ")}</strong><span>{inspection.result ?? "Result pending"}</span></div>
+                    <div><time>{historyDate(inspection.submittedAt ?? inspection.approvedAt)}</time><span className={historyStatus(inspection.status)}>{inspection.status}</span></div>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="history-empty">No inspections recorded.</p>}
+          </div>
+          <div className="asset-history-column">
+            <h4><FileCheck2 aria-hidden="true" size={16} /> Certificates</h4>
+            {certificateHistory.length ? (
+              <ul className="asset-history-list">
+                {certificateHistory.map((certificate) => (
+                  <li key={certificate.id}>
+                    <div><strong>{certificate.number}</strong><span>Version {certificate.certificateVersion}</span></div>
+                    <div><time>{historyDate(certificate.issuedAt)}</time><span className={historyStatus(certificate.status)}>{certificate.status}</span></div>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="history-empty">No certificates recorded.</p>}
+          </div>
+        </div>
       </section>
 
       <section className="detail-section">

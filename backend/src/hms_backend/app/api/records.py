@@ -17,10 +17,12 @@ from hms_backend.app.api.schemas import (
     AnalyticsFleetPostureRead,
     AnalyticsInspectionOutcomeRead,
     AnalyticsOverviewRead,
+    AssetCertificateHistoryRead,
     AssetConfigurationLookupsRead,
     AssetCreate,
     AssetEndRead,
     AssetEndWrite,
+    AssetInspectionHistoryRead,
     AssetListResponse,
     AssetRead,
     AssetUpdate,
@@ -3740,4 +3742,34 @@ def _asset_read(asset: Asset) -> AssetRead:
         ),
         a_end=_asset_end_read(ends.get("A")),
         b_end=_asset_end_read(ends.get("B")),
+        inspection_history=[
+            AssetInspectionHistoryRead(
+                id=inspection.id,
+                inspection_type=inspection.inspection_type,
+                status=inspection.status,
+                result=inspection.result,
+                submitted_at=inspection.submitted_at,
+                approved_at=inspection.approved_at,
+            )
+            for inspection in sorted(
+                (item for item in asset.inspections if item.deleted_at is None),
+                key=lambda item: item.created_at,
+                reverse=True,
+            )[:10]
+        ],
+        certificate_history=[
+            AssetCertificateHistoryRead(
+                id=certificate.id,
+                number=certificate.number,
+                certificate_version=certificate.certificate_version,
+                status=certificate.status,
+                issued_at=certificate.issued_at,
+                valid_until=certificate.valid_until,
+            )
+            for certificate in sorted(
+                (item for item in asset.certificates if item.deleted_at is None),
+                key=lambda item: item.issued_at,
+                reverse=True,
+            )[:10]
+        ],
     )

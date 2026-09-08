@@ -6,6 +6,8 @@ import type {
   AnalyticsOverview,
   AdminUserUpdateValues,
   AssetConfigurationOptions,
+  AssetCertificateHistoryRecord,
+  AssetInspectionHistoryRecord,
   TemporaryPasswordResult,
   AssetEndValues,
   AssetLocationSummary,
@@ -283,6 +285,22 @@ interface ApiAsset {
   retest_schedule: ApiAssetRetestSchedule | null;
   a_end?: ApiAssetEnd | null;
   b_end?: ApiAssetEnd | null;
+  inspection_history?: Array<{
+    id: string;
+    inspection_type: string;
+    status: string;
+    result: string | null;
+    submitted_at: string | null;
+    approved_at: string | null;
+  }>;
+  certificate_history?: Array<{
+    id: string;
+    number: string;
+    certificate_version: number;
+    status: string;
+    issued_at: string;
+    valid_until: string | null;
+  }>;
 }
 
 interface ApiAssetList {
@@ -925,7 +943,23 @@ function toAsset(asset: ApiAsset, etag: string | null = null): AssetRecord {
       location: toLocationSummary(asset.location),
       retestSchedule: toAssetRetestSummary(asset.retest_schedule),
       aEnd: toAssetEnd(asset.a_end),
-      bEnd: toAssetEnd(asset.b_end)
+      bEnd: toAssetEnd(asset.b_end),
+      inspectionHistory: (asset.inspection_history ?? []).map((item): AssetInspectionHistoryRecord => ({
+        id: item.id,
+        inspectionType: item.inspection_type,
+        status: item.status,
+        result: item.result,
+        submittedAt: item.submitted_at,
+        approvedAt: item.approved_at
+      })),
+      certificateHistory: (asset.certificate_history ?? []).map((item): AssetCertificateHistoryRecord => ({
+        id: item.id,
+        number: item.number,
+        certificateVersion: item.certificate_version,
+        status: item.status,
+        issuedAt: item.issued_at,
+        validUntil: item.valid_until
+      }))
     },
     etag
   );

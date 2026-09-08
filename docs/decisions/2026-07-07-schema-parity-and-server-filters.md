@@ -51,8 +51,8 @@ but are not complete enough to treat as migrated:
 - Customer portal users are still not modeled as a real identity/user linkage;
   the current user/devices UI is administrative scaffolding.
 - Asset copy is not implemented yet.
-- Asset inspection/certificate history is not yet exposed as a dedicated asset
-  detail history view.
+- Asset inspection/certificate history is exposed from the existing asset
+  relationships and shown in the staff asset detail view.
 - The asset end model has controlled-list foreign keys, but the staff asset form
   still primarily edits the fallback fitting/size text values.
 - Location fields such as suburb, postcode, or site code should only be added if

@@ -885,6 +885,32 @@ async def test_asset_detail_includes_customer_product_location_and_retest_status
         customer_ids=frozenset(),
     )
 
+    async with session_factory() as session:
+        asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        assert asset is not None
+        inspection = Inspection(
+            asset=asset,
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-1",
+        )
+        session.add(inspection)
+        await session.flush()
+        session.add(
+            Certificate(
+                inspection_id=inspection.id,
+                asset_id=asset.id,
+                number="CERT-ASSET-DETAIL-1",
+                pdf_object_key="certificates/asset-detail-test.pdf",
+                verification_hash="asset-detail-test-hash",
+                public_token="asset-detail-test-token",
+                issued_by_user_id="admin-1",
+                status=CertificateStatus.ISSUED.value,
+            )
+        )
+        await session.commit()
+
     async with api_client(session_factory, principal) as client:
         response = await client.get(
             f"/api/v1/assets/{seeded_session['vopak_asset_id']}"
@@ -899,6 +925,9 @@ async def test_asset_detail_includes_customer_product_location_and_retest_status
     assert body["location"]["address_1"] == "1 Friendship Road"
     assert body["location"]["address_2"] == "Bay 3"
     assert body["retest_schedule"]["status"] == "OVERDUE"
+    assert body["inspection_history"][0]["inspection_type"] == "SERVICE"
+    assert body["inspection_history"][0]["result"] == "PASS"
+    assert body["certificate_history"][0]["number"] == "CERT-ASSET-DETAIL-1"
 
 
 @pytest.mark.asyncio

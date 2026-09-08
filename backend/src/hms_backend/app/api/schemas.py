@@ -266,6 +266,24 @@ class AssetEndWrite(BaseModel):
     attach_method_id: str | None = None
 
 
+class AssetInspectionHistoryRead(BaseModel):
+    id: str
+    inspection_type: str
+    status: str
+    result: str | None
+    submitted_at: datetime | None
+    approved_at: datetime | None
+
+
+class AssetCertificateHistoryRead(BaseModel):
+    id: str
+    number: str
+    certificate_version: int
+    status: str
+    issued_at: datetime
+    valid_until: date | None
+
+
 class AssetRead(BaseModel):
     id: str
     asset_number: str
@@ -288,6 +306,8 @@ class AssetRead(BaseModel):
     retest_schedule: RetestScheduleSummary | None
     a_end: AssetEndRead | None
     b_end: AssetEndRead | None
+    inspection_history: list[AssetInspectionHistoryRead] = Field(default_factory=list)
+    certificate_history: list[AssetCertificateHistoryRead] = Field(default_factory=list)
 
 
 class AssetListResponse(BaseModel):

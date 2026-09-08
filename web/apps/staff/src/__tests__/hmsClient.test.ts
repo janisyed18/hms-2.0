@@ -89,7 +89,27 @@ const apiAsset = {
   b_end: {
     fitting: "Flange W",
     size: "2 inch"
-  }
+  },
+  inspection_history: [
+    {
+      id: "inspection-history-1",
+      inspection_type: "PRESSURE_TEST",
+      status: "APPROVED",
+      result: "PASS",
+      submitted_at: "2026-06-29T10:00:00Z",
+      approved_at: "2026-06-29T11:00:00Z"
+    }
+  ],
+  certificate_history: [
+    {
+      id: "certificate-history-1",
+      number: "CERT-997950-1",
+      certificate_version: 1,
+      status: "ACTIVE",
+      issued_at: "2026-06-29T12:00:00Z",
+      valid_until: "2027-06-29"
+    }
+  ]
 };
 
 const apiInspection = {
@@ -525,6 +545,8 @@ describe("hmsClient", () => {
       assetNumber: "997950",
       lifecycleStatus: "OVERDUE",
       notes: "Stored in Bay 3 for scheduled retest.",
+      inspectionHistory: [expect.objectContaining({ inspectionType: "PRESSURE_TEST" })],
+      certificateHistory: [expect.objectContaining({ number: "CERT-997950-1" })],
       customer: expect.objectContaining({ code: "VOPA" }),
       product: expect.objectContaining({ code: "1000GY" }),
       retestSchedule: expect.objectContaining({ status: "OVERDUE" })
