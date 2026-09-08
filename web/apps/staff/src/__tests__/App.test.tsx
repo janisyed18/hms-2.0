@@ -1082,6 +1082,21 @@ describe("App", () => {
     expect(await screen.findByRole("row", { name: /CERT-API-777-1/i })).toBeVisible();
   });
 
+  it("opens a copied asset as a create draft with its identity cleared", async () => {
+    vi.stubGlobal("fetch", routeFetch());
+    const user = userEvent.setup();
+
+    render(<App initialSession={adminSession} />);
+
+    await user.click(await screen.findByRole("button", { name: "Assets" }));
+    await user.click(await screen.findByRole("row", { name: /API-777/i }));
+    await user.click(await screen.findByRole("button", { name: "Copy" }));
+
+    expect(await screen.findByRole("heading", { name: "Copy Asset" })).toBeVisible();
+    expect(screen.getByLabelText("Asset Name")).toHaveValue("API-777 copy");
+    expect(screen.getByLabelText("Serial Number")).toHaveValue("");
+  });
+
   it("uses full backend customer and product lists when adding assets", async () => {
     vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();

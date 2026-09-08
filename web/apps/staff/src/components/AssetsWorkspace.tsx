@@ -145,6 +145,7 @@ export function AssetsWorkspace({
         asset={workspace.viewingAsset}
         canWrite={canWrite}
         onBack={workspace.closeDetail}
+        onCopy={workspace.copyAsset}
         onEdit={workspace.openEdit}
       />
     );
@@ -253,7 +254,8 @@ export function AssetsWorkspace({
       />
       {canWrite ? (
         <AssetForm
-          asset={workspace.editingAsset}
+          asset={workspace.formAsset}
+          isCopy={workspace.isCopy}
           configurationOptions={workspace.configurationOptions}
           customerOptions={workspace.customerOptions}
           locationOptions={workspace.locationOptions}

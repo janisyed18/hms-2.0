@@ -25,6 +25,8 @@ export function useAssetsWorkspace() {
   const [dueFrom, setDueFrom] = useState("");
   const [dueTo, setDueTo] = useState("");
   const [editingAsset, setEditingAsset] = useState<AssetRecord | null>(null);
+  const [formAsset, setFormAsset] = useState<AssetRecord | null>(null);
+  const [isCopy, setIsCopy] = useState(false);
   const [isFormOpen, setFormOpen] = useState(false);
   const [viewingAsset, setViewingAsset] = useState<AssetRecord | null>(null);
 
@@ -67,8 +69,15 @@ export function useAssetsWorkspace() {
   const customerOptions = useMemo(() => customers.length ? customers.map(customerSummary) : uniqueById(assets.map((asset) => asset.customer)), [assets, customers]);
   const locationOptions = useMemo(() => customers.map((customer) => ({ customerId: customer.id, locations: (customer.locations ?? []).filter((location): location is CustomerLocation => Boolean(location)) })), [customers]);
   const productOptions = useMemo(() => products.length ? products : uniqueById(assets.map((asset) => asset.product)), [assets, products]);
-  function openCreate() { setEditingAsset(null); setFormOpen(true); }
-  function openEdit(asset: AssetRecord) { setEditingAsset(asset); setFormOpen(true); }
+  function openCreate() { setEditingAsset(null); setFormAsset(null); setIsCopy(false); setFormOpen(true); }
+  function openEdit(asset: AssetRecord) { setViewingAsset(null); setEditingAsset(asset); setFormAsset(asset); setIsCopy(false); setFormOpen(true); }
+  function copyAsset(asset: AssetRecord) {
+    setViewingAsset(null);
+    setEditingAsset(null);
+    setFormAsset({ ...asset, assetName: `${asset.assetName || asset.assetNumber} copy`, customerSerialNo: "", etag: null });
+    setIsCopy(true);
+    setFormOpen(true);
+  }
   const openDetail = useCallback((asset: AssetRecord) => { setViewingAsset(asset); }, []);
   const openDetailById = useCallback(async (assetId: string) => {
     const loadedAsset = assets.find((asset) => asset.id === assetId);
@@ -82,7 +91,7 @@ export function useAssetsWorkspace() {
     const saved = editingAsset ? await client.updateAsset(editingAsset.id, values, editingAsset.etag) : await client.createAsset(values);
     setAssets((current) => editingAsset ? current.map((asset) => asset.id === editingAsset.id ? saved : asset) : [saved, ...current]);
     setViewingAsset((current) => current?.id === saved.id ? saved : current);
-    setFormOpen(false); setEditingAsset(null);
+    setFormOpen(false); setEditingAsset(null); setFormAsset(null); setIsCopy(false);
   }
   async function archiveAsset(asset: AssetRecord) {
     if (!window.confirm(`Archive ${asset.assetNumber}?`)) return;
@@ -92,5 +101,5 @@ export function useAssetsWorkspace() {
   }
   function clearAssetFilters() { setCustomerFilter("ALL"); setProductFilter("ALL"); setLifecycleFilter("ALL"); setDueFrom(""); setDueTo(""); }
   const activeFilterCount = [customerFilter !== "ALL", productFilter !== "ALL", lifecycleFilter !== "ALL", Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
-  return { activeFilterCount, archiveAsset, assets, clearAssetFilters, closeDetail, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openDetailById, openEdit, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, setFormOpen, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
+  return { activeFilterCount, archiveAsset, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openDetailById, openEdit, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, setFormOpen, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
 }

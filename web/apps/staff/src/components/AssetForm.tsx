@@ -22,6 +22,7 @@ interface AssetFormProps {
   }>;
   productOptions: AssetProductSummary[];
   open: boolean;
+  isCopy?: boolean;
   onClose: () => void;
   onSubmit: (values: AssetFormValues) => Promise<void>;
 }
@@ -43,6 +44,7 @@ export function AssetForm({
   locationOptions,
   productOptions,
   open,
+  isCopy = false,
   onClose,
   onSubmit
 }: AssetFormProps) {
@@ -146,7 +148,7 @@ export function AssetForm({
     <div className="drawer-backdrop">
       <form className="customer-drawer asset-profile-form" onSubmit={handleSubmit}>
         <div className="drawer-header">
-          <h2>{asset ? "Edit Asset" : "Add Asset"}</h2>
+          <h2>{isCopy ? "Copy Asset" : asset ? "Edit Asset" : "Add Asset"}</h2>
           <button className="icon-button light" type="button" aria-label="Close form" onClick={onClose}>
             <X size={18} />
           </button>

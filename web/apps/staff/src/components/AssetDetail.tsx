@@ -1,4 +1,4 @@
-import { ArrowLeft, ClipboardCheck, FileCheck2, Edit3, X } from "lucide-react";
+import { ArrowLeft, ClipboardCheck, Copy, FileCheck2, Edit3, X } from "lucide-react";
 
 import type { AssetRecord } from "../domain/types";
 
@@ -6,6 +6,7 @@ interface AssetDetailProps {
   asset: AssetRecord;
   canWrite: boolean;
   onBack: () => void;
+  onCopy: (asset: AssetRecord) => void;
   onEdit: (asset: AssetRecord) => void;
 }
 
@@ -50,7 +51,7 @@ function historyStatus(status: string) {
   return `mini-status ${status.toLowerCase().replaceAll("_", "-")}`;
 }
 
-export function AssetDetail({ asset, canWrite, onBack, onEdit }: AssetDetailProps) {
+export function AssetDetail({ asset, canWrite, onBack, onCopy, onEdit }: AssetDetailProps) {
   const assetName = asset.assetName || asset.assetNumber;
   const { inspectionHistory, certificateHistory } = asset;
 
@@ -71,10 +72,16 @@ export function AssetDetail({ asset, canWrite, onBack, onEdit }: AssetDetailProp
             <X aria-hidden="true" size={16} />
           </button>
           {canWrite ? (
-            <button className="primary-button" onClick={() => onEdit(asset)} type="button">
-              <Edit3 aria-hidden="true" size={16} />
-              Edit
-            </button>
+            <>
+              <button className="secondary-button" onClick={() => onCopy(asset)} type="button">
+                <Copy aria-hidden="true" size={16} />
+                Copy
+              </button>
+              <button className="primary-button" onClick={() => onEdit(asset)} type="button">
+                <Edit3 aria-hidden="true" size={16} />
+                Edit
+              </button>
+            </>
           ) : null}
         </div>
       </div>

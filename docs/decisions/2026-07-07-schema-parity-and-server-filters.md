@@ -50,7 +50,8 @@ but are not complete enough to treat as migrated:
   editable/viewable in the staff form and asset detail.
 - Customer portal users are still not modeled as a real identity/user linkage;
   the current user/devices UI is administrative scaffolding.
-- Asset copy is not implemented yet.
+- Asset copy reuses the existing create endpoint from the asset detail view,
+  preserving configuration while requiring a fresh serial number.
 - Asset inspection/certificate history is exposed from the existing asset
   relationships and shown in the staff asset detail view.
 - The asset end model has controlled-list foreign keys, but the staff asset form
