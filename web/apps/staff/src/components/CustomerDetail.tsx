@@ -222,6 +222,10 @@ export function CustomerDetail({
                     <RequirementList emptyLabel="No additional requirements recorded." items={customer.additionalRequirements} />
                   </div>
                 </section>
+                <section className="detail-section customer-notes-section">
+                  <h3>Notes</h3>
+                  <p className="record-notes">{customer.notes?.trim() || "No notes recorded."}</p>
+                </section>
               </div>
             ) : null}
 

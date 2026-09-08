@@ -31,6 +31,7 @@ interface CustomerFormProps {
 function emptyValues(): CustomerFormValues {
   return {
     name: "",
+    notes: "",
     locations: [{ name: "", siteContactName: "", siteContactMobile: "", siteContactEmail: "" }],
     phone: "",
     email: "",
@@ -46,6 +47,7 @@ function valuesFor(customer: CustomerRecord | null): CustomerFormValues {
   const primaryContact = customer.contacts[0];
   return {
     name: customer.name,
+    notes: customer.notes ?? "",
     locations: customer.locations.length
       ? customer.locations.map((location) => ({
         id: location.id,
@@ -98,6 +100,7 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
       await onSubmit({
         ...values,
         name: values.name.trim(),
+        notes: values.notes.trim(),
         locations: values.locations.map((location) => ({
           ...(location.id ? { id: location.id } : {}),
           name: location.name.trim(),
@@ -203,6 +206,16 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
             type="email"
             value={values.email}
             onChange={(event) => setValues((current) => ({ ...current, email: event.target.value }))}
+          />
+        </label>
+
+        <label>
+          <span>Notes</span>
+          <textarea
+            aria-label="Notes"
+            rows={3}
+            value={values.notes}
+            onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))}
           />
         </label>
 

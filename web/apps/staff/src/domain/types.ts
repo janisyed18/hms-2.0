@@ -212,6 +212,7 @@ export interface CustomerRecord {
 
 export interface CustomerFormValues {
   name: string;
+  notes: string;
   locations: Array<{
     id?: string;
     name: string;
@@ -350,7 +351,7 @@ export interface AssetFormValues {
   productId: string;
   assetName: string;
   serialNumber: string;
-  description: string;
+  notes: string;
   purchaseOrderNumber: string;
   installationDate: string | null;
   graveDate: string | null;

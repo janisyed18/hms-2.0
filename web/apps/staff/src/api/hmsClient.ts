@@ -1170,7 +1170,7 @@ function assetPayload(values: AssetFormValues) {
     product_id: values.productId,
     asset_name: values.assetName,
     serial_number: values.serialNumber,
-    description: values.description,
+    notes: values.notes,
     purchase_order_number: values.purchaseOrderNumber || null,
     installation_date: values.installationDate,
     grave_date: values.graveDate,
@@ -1278,6 +1278,7 @@ function ifMatchHeader(etag?: string | null): Record<string, string> {
 function customerPayload(values: CustomerFormValues) {
   return {
     name: values.name.trim(),
+    notes: values.notes.trim() || null,
     locations: values.locations.map((location) => ({
       ...(location.id ? { id: location.id } : {}),
       name: location.name.trim(),

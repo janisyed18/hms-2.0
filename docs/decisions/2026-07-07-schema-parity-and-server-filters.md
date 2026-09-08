@@ -44,10 +44,10 @@ The current schema and APIs cover these core records:
 These items are visible in the HMS 2.0 docs or expected by the migration path,
 but are not complete enough to treat as migrated:
 
-- Customer notes are mentioned in the functional specification but are not in the
-  current customer model, API schema, or staff form.
-- Asset notes are mentioned in the functional specification/mobile addendum but
-  are not in the current asset model, API schema, staff form, or sync payload.
+- Customer notes are stored in the customer model, exposed by the API, and
+  editable/viewable in the staff form and customer detail.
+- Asset notes are stored in the asset model, exposed by the API, and
+  editable/viewable in the staff form and asset detail.
 - Customer portal users are still not modeled as a real identity/user linkage;
   the current user/devices UI is administrative scaffolding.
 - Asset copy is not implemented yet.

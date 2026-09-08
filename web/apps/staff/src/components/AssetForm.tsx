@@ -48,7 +48,7 @@ export function AssetForm({
 }: AssetFormProps) {
   const [assetName, setAssetName] = useState("");
   const [serialNumber, setSerialNumber] = useState("");
-  const [description, setDescription] = useState("");
+  const [notes, setNotes] = useState("");
   const [purchaseOrderNumber, setPurchaseOrderNumber] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [locationId, setLocationId] = useState("");
@@ -69,7 +69,7 @@ export function AssetForm({
     }
     setAssetName(asset?.assetName ?? asset?.assetNumber ?? "");
     setSerialNumber(asset?.customerSerialNo ?? "");
-    setDescription(asset?.description ?? asset?.notes ?? "");
+    setNotes(asset?.notes ?? asset?.description ?? "");
     setPurchaseOrderNumber(asset?.purchaseOrderNumber ?? "");
     setCustomerId(asset?.customer.id ?? "");
     setLocationId(asset?.location?.id ?? "");
@@ -126,7 +126,7 @@ export function AssetForm({
         productId,
         assetName: assetName.trim(),
         serialNumber: serialNumber.trim(),
-        description: description.trim(),
+        notes: notes.trim(),
         purchaseOrderNumber: purchaseOrderNumber.trim(),
         installationDate: installationDate || null,
         graveDate: graveDate || null,
@@ -174,8 +174,8 @@ export function AssetForm({
           <input aria-label="Serial Number" required value={serialNumber} onChange={(event) => setSerialNumber(event.target.value)} />
         </label>
         <label>
-          <span>Description</span>
-          <textarea aria-label="Description" rows={3} value={description} onChange={(event) => setDescription(event.target.value)} />
+          <span>Notes</span>
+          <textarea aria-label="Notes" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
         </label>
         <label>
           <span>Purchase Order Number</span>

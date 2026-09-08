@@ -669,6 +669,7 @@ describe("hmsClient", () => {
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
     const created = await client.createCustomer({
       name: "Summit Marine Group",
+      notes: "Coordinate access with the terminal team.",
       locations: [{
         name: "Newcastle operations yard",
         siteContactName: "Alex Nguyen",
@@ -687,6 +688,7 @@ describe("hmsClient", () => {
         method: "POST",
         body: JSON.stringify({
           name: "Summit Marine Group",
+          notes: "Coordinate access with the terminal team.",
           locations: [
             {
               name: "Newcastle operations yard",
@@ -719,6 +721,7 @@ describe("hmsClient", () => {
 
     await client.updateCustomer("customer-api-1", {
       name: "Summit Marine Services",
+      notes: "Confirm the annual service window.",
       locations: [{ id: "location-api-1", name: "Newcastle workshop" }],
       phone: "+61 2 5555 0300",
       email: "service@summit.example.test",
@@ -733,6 +736,7 @@ describe("hmsClient", () => {
         headers: expect.objectContaining({ "If-Match": '"3"' }),
         body: JSON.stringify({
           name: "Summit Marine Services",
+          notes: "Confirm the annual service window.",
           locations: [{ id: "location-api-1", name: "Newcastle workshop" }],
           phone: "+61 2 5555 0300",
           email: "service@summit.example.test",
@@ -753,7 +757,7 @@ describe("hmsClient", () => {
         installation_date: "2026-01-15",
         grave_date: "2031-01-15",
         next_retest_due_at: "2026-09-15",
-        description: "Install after pressure test approval.",
+        notes: "Install after pressure test approval.",
         retest_schedule: {
           due_at: "2026-09-15",
           status: "UPCOMING"
@@ -786,7 +790,7 @@ describe("hmsClient", () => {
       productId: "product-api-1",
       assetName: "Bay transfer hose",
       serialNumber: "SER-E2E-001",
-      description: "Install after pressure test approval.",
+      notes: "Install after pressure test approval.",
       purchaseOrderNumber: "PO-E2E-001",
       installationDate: "2026-01-15",
       graveDate: "2031-01-15",
@@ -824,7 +828,7 @@ describe("hmsClient", () => {
           product_id: "product-api-1",
           asset_name: "Bay transfer hose",
           serial_number: "SER-E2E-001",
-          description: "Install after pressure test approval.",
+          notes: "Install after pressure test approval.",
           purchase_order_number: "PO-E2E-001",
           installation_date: "2026-01-15",
           grave_date: "2031-01-15",

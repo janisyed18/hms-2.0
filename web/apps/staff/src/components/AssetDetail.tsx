@@ -101,8 +101,8 @@ export function AssetDetail({ asset, canWrite, onBack, onEdit }: AssetDetailProp
             <dd>{orDash(asset.purchaseOrderNumber)}</dd>
           </div>
           <div>
-            <dt>Description</dt>
-            <dd>{orDash(asset.description)}</dd>
+            <dt>Notes</dt>
+            <dd>{orDash(asset.notes ?? asset.description)}</dd>
           </div>
         </dl>
       </section>
