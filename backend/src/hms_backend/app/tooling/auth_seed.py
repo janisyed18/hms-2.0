@@ -1,9 +1,9 @@
 """Development-only seeding of one login account per HMS role (Task 6).
 
 Creates the six approved role accounts with unique, hashed temporary passwords so
-a developer can exercise the full browser auth flow (forced password change + MFA
-enrollment) end to end. Refuses to run against production-like environments and
-never writes credentials to a file — the caller prints them once to the terminal.
+a developer can exercise the browser auth flow end to end. Refuses to run against
+production-like environments and never writes credentials to a file — the caller
+prints them once to the terminal.
 """
 
 from __future__ import annotations
@@ -82,12 +82,20 @@ async def seed_auth_test_accounts(
     for email, role in AUTH_TEST_ACCOUNTS:
         normalised = email.strip().lower()
         scoped_customer = customer_id if role is Role.CUSTOMER_USER else None
+        seed_subject = f"seed:{role.value.lower()}"
         user = await session.scalar(select(User).where(User.email == normalised))
+        if user is None:
+            # Keep renamed local accounts tied to their stable seed identity.
+            user = await session.scalar(
+                select(User).where(User.oidc_subject == seed_subject)
+            )
+            if user is not None:
+                user.email = normalised
         if user is None:
             temporary_password = generate_temporary_password()
             session.add(
                 User(
-                    oidc_subject=f"seed:{role.value.lower()}",
+                    oidc_subject=seed_subject,
                     email=normalised,
                     role=role.value,
                     customer_id=scoped_customer,
@@ -161,7 +169,6 @@ def format_credentials_table(accounts: list[SeededAccount]) -> str:
             separator,
             *(_line(row) for row in rows),
             "",
-            "Each account must complete a real password change and MFA enrollment "
-            "on first sign-in.",
+            "Each account must complete a real password change on first sign-in.",
         ]
     )

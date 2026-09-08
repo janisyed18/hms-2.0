@@ -1,335 +1,93 @@
 import { useEffect, useMemo, useState } from "react";
 
-import {
-  createHmsClient,
-  loadAssetsWithFallback,
-  loadInspectionsWithFallback
-} from "../api/hmsClient";
-import type {
-  AssetRecord,
-  DataSource,
-  InspectionCreateValues,
-  InspectionRecord,
-  InspectionStatus,
-  InspectionType,
-  InspectionUpdateValues,
-  PressureTestValues
-} from "../domain/types";
+import { createHmsClient } from "../api/hmsClient";
+import type { AssetRecord, InspectionBookingCreateValues, InspectionBookingRecord, InspectionCreateValues, InspectionRecord, InspectionStatus, InspectionType, InspectionUpdateValues } from "../domain/types";
 
 export type InspectionStatusFilter = "ALL" | InspectionStatus;
 export type InspectionTypeFilter = "ALL" | InspectionType;
 
-function localPressureTest(
-  values: PressureTestValues | null,
-  current?: InspectionRecord | null
-): InspectionRecord["pressureTest"] {
-  if (values === null) {
-    return null;
-  }
-  return {
-    id: current?.pressureTest?.id ?? `pressure-${Date.now()}`,
-    appliedPressureKpa: values.appliedPressureKpa,
-    holdTimeSeconds: values.holdTimeSeconds,
-    passed: values.passed,
-    measurements: values.measurements
-  };
-}
-
-function localInspection(
-  values: InspectionCreateValues,
-  assets: AssetRecord[],
-  current?: InspectionRecord | null
-): InspectionRecord {
-  const asset =
-    assets.find((item) => item.id === values.assetId) ??
-    assets[0] ??
-    null;
-  const assetSummary = asset
-    ? {
-        id: asset.id,
-        assetNumber: asset.assetNumber,
-        tag: asset.tag,
-        lifecycleStatus: asset.lifecycleStatus
-      }
-    : current?.asset;
-  const customer = asset?.customer ?? current?.customer;
-  const product = asset?.product ?? current?.product;
-
-  if (!assetSummary || !customer || !product) {
-    throw new Error("Inspection requires an asset, customer, and product");
-  }
-
-  return {
-    id: current?.id ?? `inspection-${Date.now()}`,
-    assetId: values.assetId,
-    inspectionType: values.inspectionType,
-    status: current?.status ?? "DRAFT",
-    result: values.result,
-    inspectorUserId: current?.inspectorUserId ?? "staff-ui-dev",
-    reviewerUserId: current?.reviewerUserId ?? null,
-    submittedAt: current?.submittedAt ?? null,
-    approvedAt: current?.approvedAt ?? null,
-    rejectedAt: current?.rejectedAt ?? null,
-    asset: assetSummary,
-    customer,
-    product,
-    pressureTest: localPressureTest(values.pressureTest, current),
-    etag: current?.etag ?? null
-  };
-}
-
-function localInspectionUpdate(
-  inspection: InspectionRecord,
-  values: InspectionUpdateValues
-): InspectionRecord {
-  return {
-    ...inspection,
-    result: values.result,
-    pressureTest: localPressureTest(values.pressureTest, inspection)
-  };
-}
-
-export function useInspectionsWorkspace(
-  initialInspectionId?: string | null,
-  onInitialInspectionOpened?: () => void
-) {
+export function useInspectionsWorkspace(initialInspectionId?: string | null, onInitialInspectionOpened?: () => void) {
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
-  const [source, setSource] = useState<DataSource>("mock");
+  const [bookings, setBookings] = useState<InspectionBookingRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] =
-    useState<InspectionStatusFilter>("ALL");
+  const [statusFilter, setStatusFilter] = useState<InspectionStatusFilter>("ALL");
   const [typeFilter, setTypeFilter] = useState<InspectionTypeFilter>("ALL");
   const [resultFilter, setResultFilter] = useState("ALL");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
+  const [isBookingFormOpen, setBookingFormOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
-    setIsLoading(true);
-    setError(null);
-    Promise.all([
-      loadInspectionsWithFallback({ sort: "-created_at" }),
-      loadAssetsWithFallback({ sort: "asset_number" })
-    ]).then(([inspectionResult, assetResult]) => {
-      if (!active) {
-        return;
-      }
-      setInspections(inspectionResult.items);
-      setAssets(assetResult.items);
-      setSource(inspectionResult.source);
-      setIsLoading(false);
-    }).catch((reason: unknown) => {
-      if (!active) {
-        return;
-      }
-      setError(reason instanceof Error ? reason.message : "Inspection records could not be loaded.");
-      setIsLoading(false);
-    });
-    return () => {
-      active = false;
-    };
+    const client = createHmsClient();
+    setIsLoading(true); setError(null);
+    void Promise.all([client.listInspections({ sort: "-created_at" }), client.listAssets({ sort: "asset_number" }), client.listInspectionBookings()])
+      .then(([inspectionResult, assetResult, bookingResult]) => {
+        if (!active) return;
+        setInspections(inspectionResult.items); setAssets(assetResult.items); setBookings(bookingResult.items);
+      })
+      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Inspection records could not be loaded."); })
+      .finally(() => { if (active) setIsLoading(false); });
+    return () => { active = false; };
   }, []);
 
   const visibleInspections = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return inspections.filter((inspection) => {
-      const matchesStatus =
-        statusFilter === "ALL" || inspection.status === statusFilter;
-      const matchesType =
-        typeFilter === "ALL" || inspection.inspectionType === typeFilter;
-      const matchesResult =
-        resultFilter === "ALL" || (inspection.result ?? "PENDING") === resultFilter;
-      const matchesSearch =
-        !normalized ||
-        [
-          inspection.asset.assetNumber,
-          inspection.asset.tag,
-          inspection.customer.code,
-          inspection.customer.name,
-          inspection.product.code,
-          inspection.product.name,
-          inspection.inspectionType,
-          inspection.status,
-          inspection.result
-        ]
-          .filter(Boolean)
-          .some((value) => value?.toLowerCase().includes(normalized));
-      return matchesStatus && matchesType && matchesResult && matchesSearch;
-    });
+    return inspections.filter((inspection) => (
+      (statusFilter === "ALL" || inspection.status === statusFilter) &&
+      (typeFilter === "ALL" || inspection.inspectionType === typeFilter) &&
+      (resultFilter === "ALL" || (inspection.result ?? "PENDING") === resultFilter) &&
+      (!normalized || [inspection.asset.assetNumber, inspection.asset.tag, inspection.customer.code, inspection.customer.name, inspection.product.code, inspection.product.name, inspection.inspectionType, inspection.status, inspection.result].filter(Boolean).some((value) => value?.toLowerCase().includes(normalized)))
+    ));
   }, [inspections, query, resultFilter, statusFilter, typeFilter]);
-
-  const resultOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(inspections.map((inspection) => inspection.result ?? "PENDING"))
-      ).sort(),
-    [inspections]
-  );
-
-  const selectedInspection = useMemo(
-    () => inspections.find((inspection) => inspection.id === selectedId) ?? null,
-    [inspections, selectedId]
-  );
+  const resultOptions = useMemo(() => Array.from(new Set(inspections.map((inspection) => inspection.result ?? "PENDING"))).sort(), [inspections]);
+  const selectedInspection = useMemo(() => inspections.find((inspection) => inspection.id === selectedId) ?? null, [inspections, selectedId]);
 
   useEffect(() => {
-    if (!initialInspectionId || !inspections.some((inspection) => inspection.id === initialInspectionId)) {
-      return;
-    }
-    setSelectedId(initialInspectionId);
-    onInitialInspectionOpened?.();
+    if (!initialInspectionId || !inspections.some((inspection) => inspection.id === initialInspectionId)) return;
+    setSelectedId(initialInspectionId); onInitialInspectionOpened?.();
   }, [initialInspectionId, inspections, onInitialInspectionOpened]);
 
-  function openCreate() {
-    setFormOpen(true);
-  }
-
-  function openDetail(inspection: InspectionRecord) {
-    setSelectedId(inspection.id);
-  }
-
-  function closeDetail() {
-    setSelectedId(null);
-  }
-
-  function replaceInspection(updated: InspectionRecord) {
-    setInspections((current) =>
-      current.map((inspection) =>
-        inspection.id === updated.id ? updated : inspection
-      )
-    );
-    setSelectedId(updated.id);
-  }
-
+  function openCreate() { setFormOpen(true); }
+  function openBooking() { setBookingFormOpen(true); }
+  function openDetail(inspection: InspectionRecord) { setSelectedId(inspection.id); }
+  function closeDetail() { setSelectedId(null); }
+  function replaceInspection(updated: InspectionRecord) { setInspections((current) => current.map((inspection) => inspection.id === updated.id ? updated : inspection)); setSelectedId(updated.id); }
   async function saveInspection(values: InspectionCreateValues) {
-    let saved = localInspection(values, assets);
-    if (source === "api") {
-      try {
-        saved = await createHmsClient().createInspection(values);
-      } catch {
-        saved = localInspection(values, assets);
-      }
-    }
-    setInspections((current) => [saved, ...current]);
-    setSelectedId(saved.id);
-    setFormOpen(false);
-    setQuery("");
-    setStatusFilter("ALL");
-    setTypeFilter("ALL");
-    setResultFilter("ALL");
+    const saved = await createHmsClient().createInspection(values);
+    setInspections((current) => [saved, ...current]); setSelectedId(saved.id); setFormOpen(false); setQuery(""); setStatusFilter("ALL"); setTypeFilter("ALL"); setResultFilter("ALL");
   }
-
+  async function saveInspectionBooking(values: InspectionBookingCreateValues) {
+    const saved = await createHmsClient().createInspectionBooking(values);
+    setBookings((current) => [saved, ...current]);
+    setBookingFormOpen(false);
+  }
+  async function approveInspectionBooking(id: string) {
+    const saved = await createHmsClient().approveInspectionBooking(id);
+    setBookings((current) => current.map((booking) => booking.id === saved.id ? saved : booking));
+    const inspections = await createHmsClient().listInspections({ sort: "-created_at" });
+    setInspections(inspections.items);
+  }
+  async function rejectInspectionBooking(id: string) {
+    const saved = await createHmsClient().rejectInspectionBooking(id);
+    setBookings((current) => current.map((booking) => booking.id === saved.id ? saved : booking));
+  }
   async function saveInspectionUpdate(values: InspectionUpdateValues) {
-    if (!selectedInspection) {
-      return;
-    }
-    let saved = localInspectionUpdate(selectedInspection, values);
-    if (source === "api") {
-      try {
-        saved = await createHmsClient().updateInspection(
-          selectedInspection.id,
-          values
-        );
-      } catch {
-        saved = localInspectionUpdate(selectedInspection, values);
-      }
-    }
-    replaceInspection(saved);
+    if (selectedInspection) replaceInspection(await createHmsClient().updateInspection(selectedInspection.id, values));
   }
-
   async function submitInspection(values?: InspectionUpdateValues) {
-    if (!selectedInspection) {
-      return;
-    }
-    const draftSnapshot = values
-      ? localInspectionUpdate(selectedInspection, values)
-      : selectedInspection;
-    let saved: InspectionRecord = {
-      ...draftSnapshot,
-      status: "SUBMITTED",
-      submittedAt: new Date().toISOString()
-    };
-    if (source === "api") {
-      try {
-        if (values) {
-          await createHmsClient().updateInspection(selectedInspection.id, values);
-        }
-        saved = await createHmsClient().submitInspection(selectedInspection.id);
-      } catch {
-        saved = {
-          ...draftSnapshot,
-          status: "SUBMITTED",
-          submittedAt: new Date().toISOString()
-        };
-      }
-    }
-    replaceInspection(saved);
+    if (!selectedInspection) return;
+    const client = createHmsClient();
+    if (values) await client.updateInspection(selectedInspection.id, values);
+    replaceInspection(await client.submitInspection(selectedInspection.id));
   }
-
   async function approveInspection() {
-    if (!selectedInspection) {
-      return;
-    }
-    let saved: InspectionRecord = {
-      ...selectedInspection,
-      status: "APPROVED",
-      reviewerUserId: "staff-ui-dev",
-      approvedAt: new Date().toISOString()
-    };
-    if (source === "api") {
-      try {
-        saved = await createHmsClient().approveInspection(selectedInspection.id);
-      } catch {
-        saved = {
-          ...selectedInspection,
-          status: "APPROVED",
-          reviewerUserId: "staff-ui-dev",
-          approvedAt: new Date().toISOString()
-        };
-      }
-    }
-    replaceInspection(saved);
+    if (selectedInspection) replaceInspection(await createHmsClient().approveInspection(selectedInspection.id));
   }
-
-  function clearInspectionFilters() {
-    setTypeFilter("ALL");
-    setResultFilter("ALL");
-  }
-
-  const activeFilterCount = [
-    typeFilter !== "ALL",
-    resultFilter !== "ALL"
-  ].filter(Boolean).length;
-
-  return {
-    activeFilterCount,
-    approveInspection,
-    assetOptions: assets,
-    clearInspectionFilters,
-    closeDetail,
-    inspections,
-    isFormOpen,
-    openCreate,
-    openDetail,
-    query,
-    resultFilter,
-    resultOptions,
-    saveInspection,
-    saveInspectionUpdate,
-    selectedInspection,
-    setFormOpen,
-    setQuery,
-    setResultFilter,
-    setStatusFilter,
-    setTypeFilter,
-    source,
-    isLoading,
-    error,
-    statusFilter,
-    submitInspection,
-    typeFilter,
-    visibleInspections
-  };
+  function clearInspectionFilters() { setTypeFilter("ALL"); setResultFilter("ALL"); }
+  const activeFilterCount = [typeFilter !== "ALL", resultFilter !== "ALL"].filter(Boolean).length;
+  return { activeFilterCount, approveInspection, approveInspectionBooking, assetOptions: assets, bookings, clearInspectionFilters, closeDetail, error, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, query, rejectInspectionBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
 }

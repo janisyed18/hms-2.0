@@ -1,6 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
-import { ActivityFeed } from "./components/ActivityFeed";
 import { AppShell, type AppModule } from "./components/AppShell";
 import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
@@ -121,6 +120,7 @@ const allPermissions: StaffPermission[] = [
   "customer:write",
   "asset:read",
   "asset:write",
+  "inspection:book",
   "inspection:write",
   "certificate:approve",
   "reference:admin",
@@ -136,6 +136,7 @@ const rolePermissions: Record<StaffRole, StaffPermission[]> = {
     "customer:write",
     "asset:read",
     "asset:write",
+    "inspection:book",
     "reference:admin",
     "user:admin",
     "device:admin",
@@ -144,7 +145,7 @@ const rolePermissions: Record<StaffRole, StaffPermission[]> = {
   INSPECTOR: ["customer:read", "asset:read", "inspection:write"],
   ASSEMBLY: ["customer:read", "asset:read", "asset:write"],
   REVIEWER: ["customer:read", "asset:read", "certificate:approve"],
-  CUSTOMER_USER: ["customer:read", "asset:read"]
+  CUSTOMER_USER: ["customer:read", "asset:read", "inspection:book"]
 };
 
 const allModules: AppModule[] = [
@@ -291,13 +292,12 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
                   module={renderedActiveModule}
                   onAssetOpen={handleAssetOpen}
                   onModuleChange={handleModuleChange}
-                  source={workspace.source}
                 />
               </div>
             </main>
           ) : renderedActiveModule === "customers" ? (
             <>
-              <main className={`customer-page${workspace.selectedCustomer ? "" : " detail-closed"}`}>
+              <main className="customer-page">
                 <div className="customer-main">
                   {workspace.isLoading ? (
                     <WorkspaceState title="Loading customers" tone="loading">
@@ -323,23 +323,23 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
                         onSelectCustomer={workspace.selectCustomer}
                         onAddCustomer={workspace.openCreateCustomer}
                       />
-                      {workspace.selectedCustomer ? (
-                        <div className="customer-detail-stack">
-                          <CustomerDetail
-                            customer={workspace.selectedCustomer}
-                            activeTab={workspace.activeTab}
-                            canWrite={hasPermission(session, "customer:write")}
-                            onClose={workspace.closeDetail}
-                            onEdit={() => workspace.openEditCustomer(workspace.selectedCustomer!)}
-                            onTabChange={workspace.setActiveTab}
-                          />
-                          <ActivityFeed items={workspace.selectedCustomer.metrics.activity} />
-                        </div>
-                      ) : null}
                     </>
                   )}
                 </div>
               </main>
+              <CustomerDetail
+                customer={workspace.selectedCustomer}
+                activeTab={workspace.activeTab}
+                canWrite={hasPermission(session, "customer:write")}
+                onClose={workspace.closeDetail}
+                onEdit={() => {
+                  if (!workspace.selectedCustomer) return;
+                  const customer = workspace.selectedCustomer;
+                  workspace.closeDetail();
+                  workspace.openEditCustomer(customer);
+                }}
+                onTabChange={workspace.setActiveTab}
+              />
               <CustomerForm
                 open={workspace.isFormOpen}
                 customer={workspace.editingCustomer}
@@ -368,7 +368,11 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
                 ) : null}
                 {renderedActiveModule === "inspections" ? (
                   <InspectionsWorkspace
+                    canBook={hasPermission(session, "inspection:book")}
                     canApprove={hasPermission(session, "certificate:approve")}
+                    canApproveBookings={session.roles.some((role) =>
+                      role === "SUPER_ADMIN" || role === "HMS_ADMIN"
+                    )}
                     canWrite={hasPermission(session, "inspection:write")}
                     initialInspectionId={pendingInspectionId}
                     onInitialInspectionOpened={() => setPendingInspectionId(null)}
@@ -392,7 +396,6 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
                       name: customer.name
                     }))}
                     module={renderedActiveModule}
-                    source={workspace.source}
                   />
                 ) : null}
               </div>

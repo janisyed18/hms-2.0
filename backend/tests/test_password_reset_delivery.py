@@ -4,6 +4,7 @@ import base64
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
+import fakeredis.aioredis
 import pytest
 import pytest_asyncio
 from sqlalchemy import event, select
@@ -69,7 +70,7 @@ def config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "notification_sender_name", "BAT Engineering")
     monkeypatch.setattr(settings, "issuer_identifier", "ABN TEST")
     monkeypatch.setattr(settings, "notification_max_attempts", 1)
-    set_redis_client(None)
+    set_redis_client(fakeredis.aioredis.FakeRedis(decode_responses=True))
 
 
 @pytest_asyncio.fixture

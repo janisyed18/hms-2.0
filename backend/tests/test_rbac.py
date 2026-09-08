@@ -81,6 +81,7 @@ def test_role_permissions_reject_customer_write_for_customer_user() -> None:
                     Permission.CUSTOMER_WRITE,
                     Permission.ASSET_READ,
                     Permission.ASSET_WRITE,
+                    Permission.INSPECTION_BOOK,
                     Permission.REFERENCE_ADMIN,
                     Permission.USER_ADMIN,
                     Permission.DEVICE_ADMIN,
@@ -120,7 +121,13 @@ def test_role_permissions_reject_customer_write_for_customer_user() -> None:
         ),
         (
             Role.CUSTOMER_USER,
-            frozenset({Permission.CUSTOMER_READ, Permission.ASSET_READ}),
+            frozenset(
+                {
+                    Permission.CUSTOMER_READ,
+                    Permission.ASSET_READ,
+                    Permission.INSPECTION_BOOK,
+                }
+            ),
         ),
     ],
 )

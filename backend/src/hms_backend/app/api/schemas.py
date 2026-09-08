@@ -96,6 +96,9 @@ class CustomerLocationRead(BaseModel):
     city: str | None
     state: str | None
     country: str | None
+    site_contact_name: str | None
+    site_contact_mobile: str | None
+    site_contact_email: str | None
 
 
 class CustomerContactRead(BaseModel):
@@ -130,6 +133,9 @@ class CustomerListResponse(BaseModel):
 class CustomerLocationWrite(BaseModel):
     id: str | None = None
     name: str = Field(min_length=1, max_length=160)
+    site_contact_name: str | None = None
+    site_contact_mobile: str | None = None
+    site_contact_email: str | None = None
 
 
 class CustomerCreate(BaseModel):
@@ -165,6 +171,9 @@ class CustomerLocationCreate(BaseModel):
     city: str | None = None
     state: str | None = None
     country: str | None = None
+    site_contact_name: str | None = None
+    site_contact_mobile: str | None = None
+    site_contact_email: str | None = None
 
 
 class CustomerLocationUpdate(BaseModel):
@@ -174,6 +183,9 @@ class CustomerLocationUpdate(BaseModel):
     city: str | None = None
     state: str | None = None
     country: str | None = None
+    site_contact_name: str | None = None
+    site_contact_mobile: str | None = None
+    site_contact_email: str | None = None
 
 
 class CustomerContactCreate(BaseModel):
@@ -369,11 +381,45 @@ class InspectionRejectRequest(BaseModel):
     reason: str | None = None
 
 
+class InspectionBookingCreate(BaseModel):
+    customer_id: str
+    location_id: str
+    asset_ids: list[str] = Field(min_length=1)
+    scheduled_at: datetime
+    additional_information: str | None = None
+
+
+class InspectionBookingRejectRequest(BaseModel):
+    reason: str | None = None
+
+
 class InspectionAssetSummary(BaseModel):
     id: str
     asset_number: str
     tag: str | None
     lifecycle_status: str
+
+
+class InspectionBookingRead(BaseModel):
+    id: str
+    customer: CustomerSummary
+    location: LocationSummary
+    assets: list[InspectionAssetSummary]
+    scheduled_at: datetime
+    additional_information: str | None
+    status: str
+    requested_by_user_id: str
+    reviewed_by_user_id: str | None
+    reviewed_at: datetime | None
+    rejection_reason: str | None
+    created_at: datetime
+
+
+class InspectionBookingListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[InspectionBookingRead]
 
 
 class RetestScheduleRead(BaseModel):
@@ -492,7 +538,7 @@ class InspectionRead(BaseModel):
     inspection_type: str
     status: str
     result: str | None
-    inspector_user_id: str
+    inspector_user_id: str | None
     reviewer_user_id: str | None
     submitted_at: datetime | None
     approved_at: datetime | None

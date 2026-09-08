@@ -4,6 +4,7 @@ import base64
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
+import fakeredis.aioredis
 import pytest
 import pytest_asyncio
 from sqlalchemy import event, func, select
@@ -55,7 +56,7 @@ def reset_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_password_reset_ttl_seconds", 900)
     monkeypatch.setattr(settings, "auth_password_reset_rate_limit_max_attempts", 3)
     monkeypatch.setattr(settings, "auth_password_reset_rate_limit_window_seconds", 900)
-    set_redis_client(None)
+    set_redis_client(fakeredis.aioredis.FakeRedis(decode_responses=True))
 
 
 @pytest_asyncio.fixture

@@ -211,6 +211,76 @@ async def test_relay_resolves_user_recipients_from_oidc_subject(
     assert {n.recipient_id for n in notifications} == {reviewer_id}
 
 
+@pytest.mark.asyncio
+async def test_booking_notifications_route_to_admin_or_requester(
+    session_factory: SessionFactory,
+) -> None:
+    async with session_factory() as session:
+        admin = User(
+            oidc_subject="admin-oidc",
+            email="admin@example.com",
+            role="HMS_ADMIN",
+            email_verified=True,
+        )
+        requester = User(
+            oidc_subject="requester-oidc",
+            email="requester@example.com",
+            role="CUSTOMER_USER",
+            email_verified=True,
+        )
+        session.add_all([admin, requester])
+        await session.flush()
+        payload = {
+            "booking_id": "booking-1",
+            "customer_id": "customer-1",
+            "customer_name": "Acme",
+            "location_name": "Main Depot",
+            "scheduled_at": "2026-10-02T10:30:00+00:00",
+            "asset_count": 2,
+            "requested_by_user_id": "requester-oidc",
+            "reason": "The selected date is unavailable.",
+            "link": "https://hms.example/inspections",
+        }
+        for category in (
+            NotificationCategory.INSPECTION_BOOKING_REQUESTED,
+            NotificationCategory.INSPECTION_BOOKING_APPROVED,
+            NotificationCategory.INSPECTION_BOOKING_REJECTED,
+        ):
+            await emit_event(
+                session,
+                category=category,
+                aggregate_type="inspection_booking",
+                aggregate_id=f"booking-{category.value}",
+                payload=payload,
+            )
+        await session.commit()
+
+    result = await relay_outbox(session_factory)
+    assert result["created"] == 6
+
+    async with session_factory() as session:
+        notifications = (await session.scalars(select(Notification))).all()
+
+    recipients_by_category = {
+        category: {
+            item.recipient_id for item in notifications if item.category == category
+        }
+        for category in (
+            NotificationCategory.INSPECTION_BOOKING_REQUESTED.value,
+            NotificationCategory.INSPECTION_BOOKING_APPROVED.value,
+            NotificationCategory.INSPECTION_BOOKING_REJECTED.value,
+        )
+    }
+    assert recipients_by_category == {
+        NotificationCategory.INSPECTION_BOOKING_REQUESTED.value: {admin.id},
+        NotificationCategory.INSPECTION_BOOKING_APPROVED.value: {requester.id},
+        NotificationCategory.INSPECTION_BOOKING_REJECTED.value: {requester.id},
+    }
+    assert {
+        item.channel for item in notifications
+    } == {NotificationChannel.EMAIL.value, NotificationChannel.IN_APP.value}
+
+
 # --- N-06: dispatch, retry, dead-letter ------------------------------------------
 
 

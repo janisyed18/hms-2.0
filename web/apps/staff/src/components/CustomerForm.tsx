@@ -31,7 +31,7 @@ interface CustomerFormProps {
 function emptyValues(): CustomerFormValues {
   return {
     name: "",
-    locations: [{ name: "" }],
+    locations: [{ name: "", siteContactName: "", siteContactMobile: "", siteContactEmail: "" }],
     phone: "",
     email: "",
     ppeRequirements: [],
@@ -47,8 +47,14 @@ function valuesFor(customer: CustomerRecord | null): CustomerFormValues {
   return {
     name: customer.name,
     locations: customer.locations.length
-      ? customer.locations.map((location) => ({ id: location.id, name: location.name }))
-      : [{ name: "" }],
+      ? customer.locations.map((location) => ({
+        id: location.id,
+        name: location.name,
+        siteContactName: location.siteContactName ?? "",
+        siteContactMobile: location.siteContactMobile ?? "",
+        siteContactEmail: location.siteContactEmail ?? ""
+      }))
+      : [{ name: "", siteContactName: "", siteContactMobile: "", siteContactEmail: "" }],
     phone: primaryContact?.phone ?? "",
     email: primaryContact?.email ?? "",
     ppeRequirements: customer.ppeRequirements,
@@ -94,7 +100,10 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
         name: values.name.trim(),
         locations: values.locations.map((location) => ({
           ...(location.id ? { id: location.id } : {}),
-          name: location.name.trim()
+          name: location.name.trim(),
+          siteContactName: location.siteContactName?.trim() ?? "",
+          siteContactMobile: location.siteContactMobile?.trim() ?? "",
+          siteContactEmail: location.siteContactEmail?.trim() ?? ""
         })),
         phone: values.phone.trim(),
         email: values.email.trim()
@@ -130,28 +139,46 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
         </label>
 
         <div className="customer-location-fields">
-          {values.locations.map((location, index) => (
-            <label key={location.id ?? `location-${index}`}>
-              <span>{index === 0 ? "Location" : `Location ${index + 1}`}</span>
-              <input
-                aria-label={index === 0 ? "Location" : `Location ${index + 1}`}
-                required={index === 0}
-                value={location.name}
-                onChange={(event) => setValues((current) => ({
-                  ...current,
-                  locations: current.locations.map((item, itemIndex) => itemIndex === index
-                    ? { ...item, name: event.target.value }
-                    : item)
-                }))}
-              />
-            </label>
-          ))}
+          {values.locations.map((location, index) => {
+            const label = index === 0 ? "Location" : `Location ${index + 1}`;
+            const updateLocation = (field: "name" | "siteContactName" | "siteContactMobile" | "siteContactEmail", value: string) => {
+              setValues((current) => ({
+                ...current,
+                locations: current.locations.map((item, itemIndex) => itemIndex === index
+                  ? { ...item, [field]: value }
+                  : item)
+              }));
+            };
+            return (
+              <fieldset className="customer-location-entry" key={location.id ?? `location-${index}`}>
+                <legend>{label}</legend>
+                <label>
+                  <span>Location name</span>
+                  <input aria-label={label} required value={location.name} onChange={(event) => updateLocation("name", event.target.value)} />
+                </label>
+                <div className="site-contact-fields">
+                  <label>
+                    <span>Site contact name</span>
+                    <input aria-label="Site contact name" required value={location.siteContactName ?? ""} onChange={(event) => updateLocation("siteContactName", event.target.value)} />
+                  </label>
+                  <label>
+                    <span>Site contact mobile</span>
+                    <input aria-label="Site contact mobile" inputMode="tel" required type="tel" value={location.siteContactMobile ?? ""} onChange={(event) => updateLocation("siteContactMobile", event.target.value)} />
+                  </label>
+                  <label>
+                    <span>Site contact email</span>
+                    <input aria-label="Site contact email" required type="email" value={location.siteContactEmail ?? ""} onChange={(event) => updateLocation("siteContactEmail", event.target.value)} />
+                  </label>
+                </div>
+              </fieldset>
+            );
+          })}
           <button
             className="customer-add-location"
             type="button"
             onClick={() => setValues((current) => ({
               ...current,
-              locations: [...current.locations, { name: "" }]
+              locations: [...current.locations, { name: "", siteContactName: "", siteContactMobile: "", siteContactEmail: "" }]
             }))}
           >
             <Plus aria-hidden="true" size={16} />

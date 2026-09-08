@@ -27,13 +27,7 @@ const client = {
 };
 
 vi.mock("../api/hmsClient", () => ({
-  createHmsClient: () => client,
-  loadReferenceStandardsWithFallback: () =>
-    Promise.resolve({
-      source: "api",
-      total: 1,
-      items: [{ id: "standard-1", code: "AS2683", name: "AS 2683", etag: '"catalog-1"' }]
-    })
+  createHmsClient: () => client
 }));
 
 describe("ReferenceWorkspace", () => {

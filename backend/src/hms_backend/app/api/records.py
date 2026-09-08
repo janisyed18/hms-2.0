@@ -44,6 +44,10 @@ from hms_backend.app.api.schemas import (
     DashboardRetestRead,
     DashboardReviewRead,
     InspectionAssetSummary,
+    InspectionBookingCreate,
+    InspectionBookingListResponse,
+    InspectionBookingRead,
+    InspectionBookingRejectRequest,
     InspectionCreate,
     InspectionListResponse,
     InspectionRead,
@@ -107,6 +111,9 @@ from hms_backend.app.modules.customers.models import (
 )
 from hms_backend.app.modules.inspections.models import (
     Inspection,
+    InspectionBooking,
+    InspectionBookingAsset,
+    InspectionBookingStatus,
     InspectionStatus,
     PressureTestResult,
 )
@@ -191,6 +198,16 @@ def _require_asset_write(principal: Principal) -> None:
 def _require_inspection_write(principal: Principal) -> None:
     try:
         require_permission(principal, Permission.INSPECTION_WRITE)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+
+def _require_inspection_booking(principal: Principal) -> None:
+    try:
+        require_permission(principal, Permission.INSPECTION_BOOK)
     except PermissionError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -289,6 +306,7 @@ async def create_standard(
 _STANDARDS_CACHE_PREFIX = "reference:standards:"
 
 _REFERENCE_CATALOGS: dict[str, tuple[type[Any], str]] = {
+    "standards": (Standard, "name"),
     "couplings": (Coupling, "name"),
     "coupling-add-ons": (CouplingAddOn, "name"),
     "attach-methods": (AttachMethod, "name"),
@@ -616,6 +634,9 @@ async def create_customer(
         location = CustomerLocation(
             customer=customer,
             name=location_payload.name.strip(),
+            site_contact_name=_clean_optional(location_payload.site_contact_name),
+            site_contact_mobile=_clean_optional(location_payload.site_contact_mobile),
+            site_contact_email=_clean_optional(location_payload.site_contact_email),
         )
         session.add(location)
         await record_create(
@@ -702,6 +723,9 @@ async def create_customer_location(
         city=_clean_optional(payload.city),
         state=_clean_optional(payload.state),
         country=_clean_optional(payload.country),
+        site_contact_name=_clean_optional(payload.site_contact_name),
+        site_contact_mobile=_clean_optional(payload.site_contact_mobile),
+        site_contact_email=_clean_optional(payload.site_contact_email),
     )
     session.add(location)
     await record_create(
@@ -746,6 +770,12 @@ async def update_customer_location(
         location.state = _clean_optional(payload.state)
     if "country" in updates:
         location.country = _clean_optional(payload.country)
+    if "site_contact_name" in updates:
+        location.site_contact_name = _clean_optional(payload.site_contact_name)
+    if "site_contact_mobile" in updates:
+        location.site_contact_mobile = _clean_optional(payload.site_contact_mobile)
+    if "site_contact_email" in updates:
+        location.site_contact_email = _clean_optional(payload.site_contact_email)
 
     await record_update(
         session,
@@ -939,6 +969,15 @@ async def update_customer(
                 location = CustomerLocation(
                     customer=customer,
                     name=location_payload.name.strip(),
+                    site_contact_name=_clean_optional(
+                        location_payload.site_contact_name
+                    ),
+                    site_contact_mobile=_clean_optional(
+                        location_payload.site_contact_mobile
+                    ),
+                    site_contact_email=_clean_optional(
+                        location_payload.site_contact_email
+                    ),
                 )
                 session.add(location)
                 await record_create(
@@ -956,6 +995,15 @@ async def update_customer(
                 )
             location_before = location.to_audit_dict()
             location.name = location_payload.name.strip()
+            location.site_contact_name = _clean_optional(
+                location_payload.site_contact_name
+            )
+            location.site_contact_mobile = _clean_optional(
+                location_payload.site_contact_mobile
+            )
+            location.site_contact_email = _clean_optional(
+                location_payload.site_contact_email
+            )
             await record_update(
                 session,
                 location,
@@ -1695,6 +1743,239 @@ async def list_inspections(
     )
 
 
+@router.get("/inspection-bookings", response_model=InspectionBookingListResponse)
+async def list_inspection_bookings(
+    session: SessionDep,
+    principal: PrincipalDep,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    customer_id: str | None = None,
+    limit: LimitParam = 50,
+    offset: OffsetParam = 0,
+) -> InspectionBookingListResponse:
+    _require_asset_read(principal)
+    statement = _apply_customer_scope(_inspection_booking_statement(), principal)
+    if status_filter:
+        statement = statement.where(InspectionBooking.status == status_filter)
+    if customer_id:
+        statement = statement.where(InspectionBooking.customer_id == customer_id)
+    total = await _count(session, statement)
+    bookings = (
+        await session.scalars(
+            statement.order_by(
+                InspectionBooking.scheduled_at, InspectionBooking.created_at
+            )
+            .offset(offset)
+            .limit(limit)
+        )
+    ).all()
+    return InspectionBookingListResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=[_inspection_booking_read(booking) for booking in bookings],
+    )
+
+
+@router.post(
+    "/inspection-bookings",
+    response_model=InspectionBookingRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_inspection_booking(
+    payload: InspectionBookingCreate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionBookingRead:
+    _require_inspection_booking(principal)
+    customer = await _get_visible_customer_or_404(
+        session, payload.customer_id, principal
+    )
+    location = await _get_visible_customer_location_or_404(
+        session, customer.id, payload.location_id, principal
+    )
+    asset_ids = list(dict.fromkeys(payload.asset_ids))
+    if len(asset_ids) != len(payload.asset_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Booking asset ids must be unique",
+        )
+    assets = (
+        await session.scalars(
+            _apply_asset_scope(_asset_statement(), principal).where(
+                Asset.id.in_(asset_ids),
+                Asset.customer_id == customer.id,
+                Asset.location_id == location.id,
+                Asset.deleted_at.is_(None),
+            )
+        )
+    ).all()
+    assets_by_id = {asset.id: asset for asset in assets}
+    if len(assets_by_id) != len(asset_ids):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="All booking assets must belong to the selected location",
+        )
+
+    requested_by_customer = is_customer_scoped(principal)
+    booking = InspectionBooking(
+        customer=customer,
+        location=location,
+        scheduled_at=payload.scheduled_at,
+        additional_information=_clean_optional(payload.additional_information),
+        status=(
+            InspectionBookingStatus.PENDING_APPROVAL.value
+            if requested_by_customer
+            else InspectionBookingStatus.APPROVED.value
+        ),
+        requested_by_user_id=principal.user_id,
+        reviewed_by_user_id=None if requested_by_customer else principal.user_id,
+        reviewed_at=None if requested_by_customer else utc_now(),
+    )
+    session.add(booking)
+    await record_create(
+        session,
+        booking,
+        actor_id=principal.user_id,
+        action="inspection_booking.requested"
+        if requested_by_customer
+        else "inspection_booking.created",
+    )
+    for asset_id in asset_ids:
+        booking_asset = InspectionBookingAsset(
+            booking=booking, asset=assets_by_id[asset_id]
+        )
+        session.add(booking_asset)
+        await record_create(
+            session,
+            booking_asset,
+            actor_id=principal.user_id,
+            action="inspection_booking_asset.created",
+        )
+
+    if requested_by_customer:
+        await emit_event(
+            session,
+            category=NotificationCategory.INSPECTION_BOOKING_REQUESTED,
+            aggregate_type="inspection_booking",
+            aggregate_id=booking.id,
+            payload=_inspection_booking_event_payload(
+                booking, asset_count=len(asset_ids)
+            ),
+        )
+    if not requested_by_customer:
+        await _create_booking_inspections(session, booking, actor_id=principal.user_id)
+    await session.commit()
+    loaded = await _get_visible_inspection_booking_or_404(
+        session, booking.id, principal
+    )
+    return _inspection_booking_read(loaded)
+
+
+@router.post(
+    "/inspection-bookings/{booking_id}/approve",
+    response_model=InspectionBookingRead,
+)
+async def approve_inspection_booking(
+    booking_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionBookingRead:
+    _require_inspection_booking(principal)
+    if is_customer_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin can approve inspection bookings",
+        )
+    booking = await _get_visible_inspection_booking_or_404(
+        session, booking_id, principal
+    )
+    if booking.status != InspectionBookingStatus.PENDING_APPROVAL.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only pending inspection bookings can be approved",
+        )
+    before = booking.to_audit_dict()
+    booking.status = InspectionBookingStatus.APPROVED.value
+    booking.reviewed_by_user_id = principal.user_id
+    booking.reviewed_at = utc_now()
+    await record_update(
+        session,
+        booking,
+        actor_id=principal.user_id,
+        action="inspection_booking.approved",
+        before=before,
+    )
+    await _create_booking_inspections(session, booking, actor_id=principal.user_id)
+    await emit_event(
+        session,
+        category=NotificationCategory.INSPECTION_BOOKING_APPROVED,
+        aggregate_type="inspection_booking",
+        aggregate_id=booking.id,
+        payload=_inspection_booking_event_payload(
+            booking, asset_count=len(booking.assets)
+        ),
+    )
+    await session.commit()
+    loaded = await _get_visible_inspection_booking_or_404(
+        session, booking.id, principal
+    )
+    return _inspection_booking_read(loaded)
+
+
+@router.post(
+    "/inspection-bookings/{booking_id}/reject",
+    response_model=InspectionBookingRead,
+)
+async def reject_inspection_booking(
+    booking_id: str,
+    payload: InspectionBookingRejectRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionBookingRead:
+    _require_inspection_booking(principal)
+    if is_customer_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin can reject inspection bookings",
+        )
+    booking = await _get_visible_inspection_booking_or_404(
+        session, booking_id, principal
+    )
+    if booking.status != InspectionBookingStatus.PENDING_APPROVAL.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only pending inspection bookings can be rejected",
+        )
+    before = booking.to_audit_dict()
+    booking.status = InspectionBookingStatus.REJECTED.value
+    booking.reviewed_by_user_id = principal.user_id
+    booking.reviewed_at = utc_now()
+    booking.rejection_reason = _clean_optional(payload.reason)
+    await record_update(
+        session,
+        booking,
+        actor_id=principal.user_id,
+        action="inspection_booking.rejected",
+        before=before,
+    )
+    await emit_event(
+        session,
+        category=NotificationCategory.INSPECTION_BOOKING_REJECTED,
+        aggregate_type="inspection_booking",
+        aggregate_id=booking.id,
+        payload=_inspection_booking_event_payload(
+            booking,
+            asset_count=len(booking.assets),
+            reason=booking.rejection_reason or "No reason provided.",
+        ),
+    )
+    await session.commit()
+    loaded = await _get_visible_inspection_booking_or_404(
+        session, booking.id, principal
+    )
+    return _inspection_booking_read(loaded)
+
+
 @router.get("/inspections/{inspection_id}", response_model=InspectionRead)
 async def get_inspection(
     inspection_id: str,
@@ -1929,6 +2210,25 @@ def _inspection_event_payload(inspection: Inspection) -> dict[str, object]:
         "customer_id": asset.customer_id if asset else None,
         "inspector_user_id": inspection.inspector_user_id,
         "reviewer_user_id": inspection.reviewer_user_id,
+        "link": settings.public_base_url.rstrip("/"),
+    }
+
+
+def _inspection_booking_event_payload(
+    booking: InspectionBooking,
+    *,
+    asset_count: int,
+    reason: str | None = None,
+) -> dict[str, object]:
+    return {
+        "booking_id": booking.id,
+        "customer_id": booking.customer_id,
+        "customer_name": booking.customer.name,
+        "location_name": booking.location.name,
+        "scheduled_at": booking.scheduled_at.isoformat(),
+        "asset_count": asset_count,
+        "requested_by_user_id": booking.requested_by_user_id,
+        "reason": reason or "",
         "link": settings.public_base_url.rstrip("/"),
     }
 
@@ -2378,6 +2678,12 @@ async def update_asset(
             payload.location_id,
             customer_id=target_customer.id,
         )
+    elif "customer_id" in updates:
+        if asset.location is None or asset.location.customer_id != target_customer.id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Asset location must belong to customer",
+            )
     if "asset_number" in updates and payload.asset_number is not None:
         asset.asset_number = payload.asset_number.strip()
     if "asset_name" in updates:
@@ -2552,6 +2858,24 @@ def _inspection_statement() -> Select[tuple[Inspection]]:
     )
 
 
+def _inspection_booking_statement() -> Select[tuple[InspectionBooking]]:
+    return (
+        select(InspectionBooking)
+        .join(InspectionBooking.customer)
+        .options(
+            selectinload(InspectionBooking.customer),
+            selectinload(InspectionBooking.location),
+            selectinload(InspectionBooking.assets).selectinload(
+                InspectionBookingAsset.asset
+            ),
+        )
+        .where(
+            InspectionBooking.deleted_at.is_(None),
+            Customer.deleted_at.is_(None),
+        )
+    )
+
+
 def _retest_schedule_statement() -> Select[tuple[RetestSchedule]]:
     return (
         select(RetestSchedule)
@@ -2628,6 +2952,9 @@ def _customer_location_read(location: CustomerLocation) -> CustomerLocationRead:
         city=location.city,
         state=location.state,
         country=location.country,
+        site_contact_name=location.site_contact_name,
+        site_contact_mobile=location.site_contact_mobile,
+        site_contact_email=location.site_contact_email,
     )
 
 
@@ -2732,7 +3059,7 @@ async def _get_visible_customer_location_or_404(
     customer_id: str,
     location_id: str,
     principal: Principal,
-) -> CustomerLocation:
+) -> CustomerLocation | None:
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
     location = await session.get(CustomerLocation, location_id)
     if (
@@ -2782,9 +3109,12 @@ async def _get_location_or_400(
     location_id: str | None,
     *,
     customer_id: str,
-) -> CustomerLocation | None:
+) -> CustomerLocation:
     if location_id is None:
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Asset location is required",
+        )
     location = await session.get(CustomerLocation, location_id)
     if location is None or location.deleted_at is not None:
         raise HTTPException(
@@ -2857,6 +3187,24 @@ async def _get_visible_asset_or_404(
             detail="Asset not found",
         )
     return asset
+
+
+async def _get_visible_inspection_booking_or_404(
+    session: AsyncSession,
+    booking_id: str,
+    principal: Principal,
+) -> InspectionBooking:
+    statement = _apply_customer_scope(
+        _inspection_booking_statement().where(InspectionBooking.id == booking_id),
+        principal,
+    )
+    booking = (await session.scalars(statement)).first()
+    if booking is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inspection booking not found",
+        )
+    return booking
 
 
 async def _get_retest_schedule_or_404(
@@ -3205,6 +3553,68 @@ def _inspection_read(inspection: Inspection) -> InspectionRead:
             else None
         ),
     )
+
+
+def _inspection_booking_read(booking: InspectionBooking) -> InspectionBookingRead:
+    return InspectionBookingRead(
+        id=booking.id,
+        customer=CustomerSummary(
+            id=booking.customer.id,
+            code=booking.customer.code,
+            name=booking.customer.name,
+        ),
+        location=LocationSummary(
+            id=booking.location.id,
+            name=booking.location.name,
+            address_1=booking.location.address_1,
+            address_2=booking.location.address_2,
+            city=booking.location.city,
+            state=booking.location.state,
+            country=booking.location.country,
+        ),
+        assets=[
+            InspectionAssetSummary(
+                id=booking_asset.asset.id,
+                asset_number=booking_asset.asset.asset_number,
+                tag=booking_asset.asset.tag,
+                lifecycle_status=booking_asset.asset.lifecycle_status,
+            )
+            for booking_asset in booking.assets
+            if booking_asset.deleted_at is None
+            and booking_asset.asset.deleted_at is None
+        ],
+        scheduled_at=booking.scheduled_at,
+        additional_information=booking.additional_information,
+        status=booking.status,
+        requested_by_user_id=booking.requested_by_user_id,
+        reviewed_by_user_id=booking.reviewed_by_user_id,
+        reviewed_at=booking.reviewed_at,
+        rejection_reason=booking.rejection_reason,
+        created_at=booking.created_at,
+    )
+
+
+async def _create_booking_inspections(
+    session: AsyncSession,
+    booking: InspectionBooking,
+    *,
+    actor_id: str,
+) -> None:
+    for booking_asset in booking.assets:
+        inspection = Inspection(
+            booking=booking,
+            asset=booking_asset.asset,
+            inspection_type="SERVICE",
+            status=InspectionStatus.DRAFT.value,
+            inspector_user_id=None,
+        )
+        session.add(inspection)
+        await record_create(
+            session,
+            inspection,
+            actor_id=actor_id,
+            action="inspection.created_from_booking",
+        )
 
 
 def _certificate_read(certificate: Certificate) -> CertificateRead:

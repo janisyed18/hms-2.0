@@ -1,26 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  configureHmsRuntimeAuth,
-  createHmsClient,
-  loadAdminUsersWithFallback,
-  loadAssetsWithFallback,
-  loadAuditEventsWithFallback,
-  loadCertificatesWithFallback,
-  loadCustomersWithFallback,
-  loadDevicesWithFallback,
-  loadInspectionsWithFallback,
-  loadProductsWithFallback,
-  loadReferenceStandardsWithFallback,
-  loadRetestSchedulesWithFallback
-} from "../api/hmsClient";
-import { mockAssets } from "../data/mockAssets";
-import { mockCertificates } from "../data/mockCertificates";
-import { mockCustomers } from "../data/mockCustomers";
-import { mockInspections } from "../data/mockInspections";
-import { mockProducts } from "../data/mockProducts";
-import { mockReferenceStandards } from "../data/mockReferenceData";
-import { mockRetestSchedules } from "../data/mockRetestSchedules";
+import { configureHmsRuntimeAuth, createHmsClient } from "../api/hmsClient";
 
 const apiCustomer = {
   id: "cust-api-1",
@@ -150,6 +130,40 @@ const apiInspection = {
       visual: "ok"
     }
   }
+};
+
+const apiInspectionBooking = {
+  id: "booking-api-1",
+  customer: {
+    id: "cust-api-1",
+    code: "VOPA",
+    name: "Vopak"
+  },
+  location: {
+    id: "loc-api-1",
+    name: "Site A",
+    address_1: "1 Friendship Road",
+    address_2: "Bay 3",
+    city: "Port Botany",
+    state: "NSW",
+    country: "AU"
+  },
+  assets: [
+    {
+      id: "asset-api-1",
+      asset_number: "997950",
+      tag: "HMS-997950",
+      lifecycle_status: "OVERDUE"
+    }
+  ],
+  scheduled_at: "2026-10-02T10:30:00Z",
+  additional_information: "Access via gate three.",
+  status: "PENDING_APPROVAL",
+  requested_by_user_id: "customer-user-1",
+  reviewed_by_user_id: null,
+  reviewed_at: null,
+  rejection_reason: null,
+  created_at: "2026-09-08T10:00:00Z"
 };
 
 const apiCertificate = {
@@ -337,9 +351,9 @@ describe("hmsClient", () => {
 
     try {
       await expect(
-        loadAssetsWithFallback({
+        createHmsClient({
           fetcher: vi.fn().mockRejectedValue(new TypeError("Network unavailable"))
-        })
+        }).listAssets()
       ).rejects.toThrow("Network unavailable");
     } finally {
       clearRuntimeAuth();
@@ -481,7 +495,7 @@ describe("hmsClient", () => {
       dueTo: "2023-11-30",
       sort: "asset_number"
     });
-    const standards = await client.listReferenceStandards({ sort: "code" });
+    const standards = await client.listReferenceCatalog("standards");
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -495,7 +509,7 @@ describe("hmsClient", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
-      "/api/v1/reference/standards?sort=code",
+      "/api/v1/reference/catalog/standards",
       expect.any(Object)
     );
     expect(products.etag).toBe('"products-1"');
@@ -536,7 +550,7 @@ describe("hmsClient", () => {
     await client.archiveCustomer("cust-api-1", '"2"');
     await client.archiveProduct("product-api-1", '"3"');
     await client.archiveAsset("asset-api-1", '"4"');
-    await client.archiveReferenceStandard("standard-api-1", '"5"');
+    await client.archiveReferenceCatalogItem("standards", "standard-api-1", '"5"');
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -564,7 +578,7 @@ describe("hmsClient", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
-      "/api/v1/reference/standards/standard-api-1",
+      "/api/v1/reference/catalog/standards/standard-api-1",
       expect.objectContaining({
         method: "DELETE",
         headers: expect.objectContaining({ "If-Match": '"5"' })
@@ -655,7 +669,12 @@ describe("hmsClient", () => {
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
     const created = await client.createCustomer({
       name: "Summit Marine Group",
-      locations: [{ name: "Newcastle operations yard" }, { name: "Kooragang workshop" }],
+      locations: [{
+        name: "Newcastle operations yard",
+        siteContactName: "Alex Nguyen",
+        siteContactMobile: "+61 412 345 678",
+        siteContactEmail: "alex.nguyen@example.test"
+      }, { name: "Kooragang workshop" }],
       phone: "+61 2 5555 0200",
       email: "operations@summit.example.test",
       ppeRequirements: ["High Vis", "Safety Boots"],
@@ -669,7 +688,12 @@ describe("hmsClient", () => {
         body: JSON.stringify({
           name: "Summit Marine Group",
           locations: [
-            { name: "Newcastle operations yard" },
+            {
+              name: "Newcastle operations yard",
+              site_contact_name: "Alex Nguyen",
+              site_contact_mobile: "+61 412 345 678",
+              site_contact_email: "alex.nguyen@example.test"
+            },
             { name: "Kooragang workshop" }
           ],
           phone: "+61 2 5555 0200",
@@ -954,6 +978,60 @@ describe("hmsClient", () => {
     expect(updated.pressureTest?.measurements).toMatchObject({ visual: "ok" });
     expect(submitted.status).toBe("SUBMITTED");
     expect(approved.reviewerUserId).toBe("staff-ui-dev");
+  });
+
+  it("maps inspection booking requests and approval", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        okJson({ total: 1, limit: 50, offset: 0, items: [apiInspectionBooking] })
+      )
+      .mockResolvedValueOnce(okJson(apiInspectionBooking))
+      .mockResolvedValueOnce(
+        okJson({ ...apiInspectionBooking, status: "APPROVED", reviewed_by_user_id: "admin-1" })
+      );
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    const bookings = await client.listInspectionBookings({ status: "PENDING_APPROVAL" });
+    const created = await client.createInspectionBooking({
+      customerId: "cust-api-1",
+      locationId: "loc-api-1",
+      assetIds: ["asset-api-1"],
+      scheduledAt: "2026-10-02T10:30:00Z",
+      additionalInformation: "Access via gate three."
+    });
+    const approved = await client.approveInspectionBooking("booking-api-1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "/api/v1/inspection-bookings?limit=50&offset=0&status=PENDING_APPROVAL",
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "/api/v1/inspection-bookings",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          customer_id: "cust-api-1",
+          location_id: "loc-api-1",
+          asset_ids: ["asset-api-1"],
+          scheduled_at: "2026-10-02T10:30:00Z",
+          additional_information: "Access via gate three."
+        })
+      })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "/api/v1/inspection-bookings/booking-api-1/approve",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(bookings.items[0]).toMatchObject({
+      status: "PENDING_APPROVAL",
+      assets: [expect.objectContaining({ assetNumber: "997950" })]
+    });
+    expect(created.location.name).toBe("Site A");
+    expect(approved.status).toBe("APPROVED");
   });
 
   it("maps certificate list responses and issue mutations", async () => {
@@ -1394,94 +1472,4 @@ describe("hmsClient", () => {
     });
   });
 
-  it("uses mock fallback only when list requests reject or return non-OK", async () => {
-    const apiFetch = vi.fn().mockResolvedValue(
-      okJson({
-        total: 1,
-        limit: 50,
-        offset: 0,
-        items: [apiProduct]
-      })
-    );
-    const nonOkFetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 503,
-      headers: new Headers(),
-      json: async () => ({ detail: "unavailable" })
-    });
-    const rejectedFetch = vi.fn().mockRejectedValue(new Error("offline"));
-
-    const apiProducts = await loadProductsWithFallback({
-      fetcher: apiFetch,
-      baseUrl: ""
-    });
-    const fallbackProducts = await loadProductsWithFallback({
-      fetcher: nonOkFetch,
-      baseUrl: ""
-    });
-    const fallbackAssets = await loadAssetsWithFallback({
-      fetcher: rejectedFetch,
-      baseUrl: ""
-    });
-    const fallbackStandards = await loadReferenceStandardsWithFallback({
-      fetcher: rejectedFetch,
-      baseUrl: ""
-    });
-    const fallbackInspections = await loadInspectionsWithFallback({
-      fetcher: rejectedFetch,
-      baseUrl: ""
-    });
-    const fallbackCertificates = await loadCertificatesWithFallback({
-      fetcher: rejectedFetch,
-      baseUrl: ""
-    });
-    const fallbackRetestSchedules = await loadRetestSchedulesWithFallback({
-      fetcher: rejectedFetch,
-      baseUrl: ""
-    });
-    const fallbackUsers = await loadAdminUsersWithFallback({
-      fetcher: rejectedFetch,
-      baseUrl: ""
-    });
-    const fallbackDevices = await loadDevicesWithFallback({
-      fetcher: rejectedFetch,
-      baseUrl: ""
-    });
-    const fallbackAuditEvents = await loadAuditEventsWithFallback({
-      fetcher: rejectedFetch,
-      baseUrl: ""
-    });
-    expect(apiProducts.source).toBe("api");
-    expect(apiProducts.items[0].code).toBe("1000GY");
-    expect(fallbackProducts.source).toBe("mock");
-    expect(fallbackProducts.items).toHaveLength(mockProducts.length);
-    expect(fallbackAssets.source).toBe("mock");
-    expect(fallbackAssets.items).toHaveLength(mockAssets.length);
-    expect(fallbackStandards.source).toBe("mock");
-    expect(fallbackStandards.items).toHaveLength(mockReferenceStandards.length);
-    expect(fallbackInspections.source).toBe("mock");
-    expect(fallbackInspections.items).toHaveLength(mockInspections.length);
-    expect(fallbackCertificates.source).toBe("mock");
-    expect(fallbackCertificates.items).toHaveLength(mockCertificates.length);
-    expect(fallbackRetestSchedules.source).toBe("mock");
-    expect(fallbackRetestSchedules.items).toHaveLength(mockRetestSchedules.length);
-    expect(fallbackUsers.source).toBe("mock");
-    expect(fallbackUsers.items[0].role).toBe("HMS_ADMIN");
-    expect(fallbackDevices.source).toBe("mock");
-    expect(fallbackDevices.items[0].deviceId).toBe("field-tablet-01");
-    expect(fallbackAuditEvents.source).toBe("mock");
-    expect(fallbackAuditEvents.items[0].entity).toBe("Inspection");
-  });
-
-  it("falls back to mock customer data when the backend is unavailable", async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new Error("offline"));
-    const result = await loadCustomersWithFallback({
-      fetcher: fetchMock,
-      baseUrl: ""
-    });
-
-    expect(result.source).toBe("mock");
-    expect(result.items).toHaveLength(mockCustomers.length);
-    expect(result.items[0].name).toBe("North Sea Drilling Ltd.");
-  });
 });

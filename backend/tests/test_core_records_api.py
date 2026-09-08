@@ -204,8 +204,11 @@ async def test_reference_standards_endpoint_returns_enabled_standards_only(
 
     async with api_client(session_factory, principal) as client:
         response = await client.get("/api/v1/reference/standards")
+        catalog_response = await client.get("/api/v1/reference/catalog/standards")
 
     assert response.status_code == 200
+    assert catalog_response.status_code == 200
+    assert catalog_response.json() == response.json()
     assert response.json() == {
         "items": [
             {
@@ -1380,7 +1383,103 @@ async def test_create_and_update_customer_location_writes_audit_and_sync(
         assert audit_events[1].before["city"] == "Newcastle"
         assert audit_events[1].after is not None
         assert audit_events[1].after["city"] == "Carrington"
-        assert await verify_audit_chain(session)
+    assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_customer_location_returns_site_contact_details(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            f"/api/v1/customers/{seeded_session['vopak_id']}/locations",
+            json={
+                "name": "Newcastle Depot",
+                "site_contact_name": "Alex Nguyen",
+                "site_contact_mobile": "+61 412 345 678",
+                "site_contact_email": "alex.nguyen@example.test",
+            },
+        )
+
+    assert response.status_code == 201
+    assert response.json()["site_contact_name"] == "Alex Nguyen"
+    assert response.json()["site_contact_mobile"] == "+61 412 345 678"
+    assert response.json()["site_contact_email"] == "alex.nguyen@example.test"
+
+    async with api_client(session_factory, principal) as client:
+        update_response = await client.patch(
+            f"/api/v1/customers/{seeded_session['vopak_id']}",
+            json={
+                "locations": [{
+                    "id": response.json()["id"],
+                    "name": "Newcastle Depot",
+                    "site_contact_name": "Morgan Lee",
+                    "site_contact_mobile": "+61 401 222 333",
+                    "site_contact_email": "morgan.lee@example.test",
+                }],
+            },
+    )
+
+    assert update_response.status_code == 200
+    updated_location = next(
+        location
+        for location in update_response.json()["locations"]
+        if location["id"] == response.json()["id"]
+    )
+    assert updated_location["site_contact_name"] == "Morgan Lee"
+
+
+@pytest.mark.asyncio
+async def test_create_asset_requires_a_customer_location(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            "/api/v1/assets",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "product_id": seeded_session["product_id"],
+                "asset_number": "NO-LOCATION",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Asset location is required"
+
+
+@pytest.mark.asyncio
+async def test_update_asset_cannot_clear_its_location(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/assets/{seeded_session['vopak_asset_id']}",
+            json={"location_id": None},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Asset location is required"
 
 
 @pytest.mark.asyncio
@@ -2499,6 +2598,182 @@ async def test_create_service_inspection_with_pressure_test_writes_audit_and_syn
         assert audit_events[0].after is not None
         assert audit_events[0].after["status"] == InspectionStatus.DRAFT.value
         assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_customer_booking_approval_creates_per_asset_drafts(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        first_asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        assert first_asset is not None
+        second_asset = Asset(
+            customer_id=first_asset.customer_id,
+            location_id=first_asset.location_id,
+            product_id=first_asset.product_id,
+            asset_number="997951",
+            lifecycle_status=AssetLifecycleStatus.IN_SERVICE.value,
+        )
+        session.add(second_asset)
+        await session.commit()
+        second_asset_id = second_asset.id
+
+    customer = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    payload = {
+        "customer_id": seeded_session["vopak_id"],
+        "location_id": seeded_session["vopak_location_id"],
+        "asset_ids": [seeded_session["vopak_asset_id"], second_asset_id],
+        "scheduled_at": "2026-10-02T10:30:00Z",
+        "additional_information": "Access via gate three.",
+    }
+
+    async with api_client(session_factory, customer) as client:
+        request_response = await client.post(
+            "/api/v1/inspection-bookings", json=payload
+        )
+
+    assert request_response.status_code == 201
+    booking = request_response.json()
+    assert booking["status"] == "PENDING_APPROVAL"
+    assert [asset["asset_number"] for asset in booking["assets"]] == [
+        "997950",
+        "997951",
+    ]
+    async with session_factory() as session:
+        request_events = (
+            await session.scalars(
+                select(OutboxEvent).where(OutboxEvent.aggregate_id == booking["id"])
+            )
+        ).all()
+    assert [event.event_type for event in request_events] == [
+        "INSPECTION_BOOKING_REQUESTED"
+    ]
+
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with api_client(session_factory, admin) as client:
+        approval_response = await client.post(
+            f"/api/v1/inspection-bookings/{booking['id']}/approve"
+        )
+
+    assert approval_response.status_code == 200
+    assert approval_response.json()["status"] == "APPROVED"
+
+    async with api_client(session_factory, admin) as client:
+        inspections_response = await client.get("/api/v1/inspections")
+
+    assert inspections_response.status_code == 200
+    inspection_items = inspections_response.json()["items"]
+    assert {item["inspector_user_id"] for item in inspection_items} == {None}
+
+    async with session_factory() as session:
+        inspections = (
+            await session.scalars(
+                select(Inspection)
+                .where(Inspection.booking_id == booking["id"])
+                .order_by(Inspection.asset_id)
+            )
+        ).all()
+        assert len(inspections) == 2
+        assert {inspection.status for inspection in inspections} == {
+            InspectionStatus.DRAFT.value
+        }
+        assert {inspection.inspector_user_id for inspection in inspections} == {None}
+        events = (
+            await session.scalars(
+                select(OutboxEvent)
+                .where(OutboxEvent.aggregate_id == booking["id"])
+                .order_by(OutboxEvent.occurred_at)
+            )
+        ).all()
+        assert [event.event_type for event in events] == [
+            "INSPECTION_BOOKING_REQUESTED",
+            "INSPECTION_BOOKING_APPROVED",
+        ]
+        assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_inspection_booking_rejects_assets_outside_the_selected_location(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, admin) as client:
+        response = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["orica_asset_id"]],
+                "scheduled_at": "2026-10-02T10:30:00Z",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "All booking assets must belong to the selected location"
+    )
+
+
+@pytest.mark.asyncio
+async def test_rejecting_an_inspection_booking_stages_a_requester_notification(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    customer = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    payload = {
+        "customer_id": seeded_session["vopak_id"],
+        "location_id": seeded_session["vopak_location_id"],
+        "asset_ids": [seeded_session["vopak_asset_id"]],
+        "scheduled_at": "2026-10-02T10:30:00Z",
+    }
+    async with api_client(session_factory, customer) as client:
+        created = await client.post("/api/v1/inspection-bookings", json=payload)
+    assert created.status_code == 201
+
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with api_client(session_factory, admin) as client:
+        rejected = await client.post(
+            f"/api/v1/inspection-bookings/{created.json()['id']}/reject",
+            json={"reason": "The selected date is unavailable."},
+        )
+    assert rejected.status_code == 200
+
+    async with session_factory() as session:
+        events = (
+            await session.scalars(
+                select(OutboxEvent)
+                .where(OutboxEvent.aggregate_id == created.json()["id"])
+                .order_by(OutboxEvent.occurred_at)
+            )
+        ).all()
+    assert [event.event_type for event in events] == [
+        "INSPECTION_BOOKING_REQUESTED",
+        "INSPECTION_BOOKING_REJECTED",
+    ]
+    assert events[-1].payload["reason"] == "The selected date is unavailable."
 
 
 @pytest.mark.asyncio

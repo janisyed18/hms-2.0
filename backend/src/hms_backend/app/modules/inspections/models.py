@@ -6,7 +6,16 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hms_backend.app.models.base import Base, SyncableMixin
@@ -14,6 +23,7 @@ from hms_backend.app.models.base import Base, SyncableMixin
 if TYPE_CHECKING:
     from hms_backend.app.modules.assets.models import Asset
     from hms_backend.app.modules.certificates.models import Certificate
+    from hms_backend.app.modules.customers.models import Customer, CustomerLocation
 
 
 class InspectionType(StrEnum):
@@ -26,6 +36,66 @@ class InspectionStatus(StrEnum):
     SUBMITTED = "SUBMITTED"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+
+
+class InspectionBookingStatus(StrEnum):
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
+class InspectionBooking(SyncableMixin, Base):
+    __tablename__ = "inspection_bookings"
+
+    customer_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("customers.id"), nullable=False, index=True
+    )
+    location_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("customer_locations.id"), nullable=False, index=True
+    )
+    scheduled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    additional_information: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        default=InspectionBookingStatus.PENDING_APPROVAL.value,
+    )
+    requested_by_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    customer: Mapped[Customer] = relationship(lazy="selectin")
+    location: Mapped[CustomerLocation] = relationship(lazy="selectin")
+    assets: Mapped[list[InspectionBookingAsset]] = relationship(
+        back_populates="booking", cascade="all, delete-orphan", lazy="selectin"
+    )
+    inspections: Mapped[list[Inspection]] = relationship(
+        back_populates="booking", lazy="selectin"
+    )
+
+
+class InspectionBookingAsset(SyncableMixin, Base):
+    __tablename__ = "inspection_booking_assets"
+    __table_args__ = (
+        UniqueConstraint("booking_id", "asset_id", name="uq_inspection_booking_asset"),
+    )
+
+    booking_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("inspection_bookings.id"), nullable=False, index=True
+    )
+    asset_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("assets.id"), nullable=False, index=True
+    )
+
+    booking: Mapped[InspectionBooking] = relationship(
+        back_populates="assets", lazy="selectin"
+    )
+    asset: Mapped[Asset] = relationship(lazy="selectin")
 
 
 class InspectionTemplate(SyncableMixin, Base):
@@ -76,6 +146,9 @@ class Inspection(SyncableMixin, Base):
         nullable=False,
         index=True,
     )
+    booking_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("inspection_bookings.id"), nullable=True, index=True
+    )
     inspection_type: Mapped[str] = mapped_column(String(40), nullable=False)
     status: Mapped[str] = mapped_column(
         String(40),
@@ -83,7 +156,7 @@ class Inspection(SyncableMixin, Base):
         default=InspectionStatus.DRAFT.value,
     )
     result: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    inspector_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    inspector_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     reviewer_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     submitted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
@@ -99,6 +172,9 @@ class Inspection(SyncableMixin, Base):
     )
 
     asset: Mapped[Asset] = relationship(back_populates="inspections", lazy="selectin")
+    booking: Mapped[InspectionBooking | None] = relationship(
+        back_populates="inspections", lazy="selectin"
+    )
     answers: Mapped[list[InspectionAnswer]] = relationship(
         back_populates="inspection",
         cascade="all, delete-orphan",

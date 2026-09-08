@@ -71,7 +71,7 @@ describe("Command Centre shell", () => {
   it("shows only the modules authorized by visibleModules", async () => {
     renderShell();
 
-    await screen.findByRole("heading", { name: "Overdue Retests" });
+    await screen.findByRole("button", { name: "Dashboard" });
 
     expect(screen.getByRole("button", { name: "Dashboard" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Assets" })).toBeVisible();

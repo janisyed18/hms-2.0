@@ -18,6 +18,9 @@ describe("CustomerForm", () => {
 
     expect(screen.getByRole("textbox", { name: "Name" })).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Location" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Site contact name" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Site contact mobile" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Site contact email" })).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Phone" })).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Email" })).toBeVisible();
     expect(screen.getByText("PPE Requirements")).toBeVisible();

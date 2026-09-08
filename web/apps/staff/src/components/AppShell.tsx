@@ -433,7 +433,9 @@ export function AppShell({
     }
 
     setOpenMenu(null);
-    if (notification.assetId) {
+    if (notification.category.includes("INSPECTION_BOOKING")) {
+      handleModuleChange("inspections");
+    } else if (notification.assetId) {
       handleModuleChange("assets");
     } else if (notification.customerId) {
       handleModuleChange("customers");

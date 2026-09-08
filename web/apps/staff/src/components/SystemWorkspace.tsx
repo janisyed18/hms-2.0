@@ -22,13 +22,10 @@ import type { ReactNode } from "react";
 
 import {
   createHmsClient,
-  HmsApiError,
-  loadAdminUsersWithFallback,
-  loadDevicesWithFallback
+  HmsApiError
 } from "../api/hmsClient";
 import type {
   AdminUserRecord,
-  DataSource,
   DeviceRecord,
   StaffRole
 } from "../domain/types";
@@ -47,7 +44,6 @@ export type SystemModule = "users" | "devices";
 
 interface SystemWorkspaceProps {
   module: SystemModule;
-  source: DataSource;
   actorRoles: StaffRole[];
   customerOptions: CustomerOption[];
 }
@@ -63,13 +59,11 @@ const roles: StaffRole[] = [
 
 export function SystemWorkspace({
   module,
-  source,
   actorRoles,
   customerOptions
 }: SystemWorkspaceProps) {
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
-  const [dataSource, setDataSource] = useState<DataSource>(source);
   const [error, setError] = useState<string | null>(null);
   const [userDialog, setUserDialog] = useState<{
     mode: "create" | "edit";
@@ -82,13 +76,12 @@ export function SystemWorkspace({
     let active = true;
     setError(null);
     if (module === "users") {
-      loadAdminUsersWithFallback({ sort: "email" })
+      createHmsClient().listAdminUsers({ sort: "email" })
         .then((result) => {
           if (!active) {
             return;
           }
           setUsers(result.items);
-          setDataSource(result.source);
         })
         .catch((loadError: unknown) => {
           if (active) {
@@ -97,13 +90,12 @@ export function SystemWorkspace({
         });
     }
     if (module === "devices") {
-      loadDevicesWithFallback({ sort: "device_id" })
+      createHmsClient().listDevices({ sort: "device_id" })
         .then((result) => {
           if (!active) {
             return;
           }
           setDevices(result.items);
-          setDataSource(result.source);
         })
         .catch((loadError: unknown) => {
           if (active) {
@@ -114,7 +106,7 @@ export function SystemWorkspace({
     return () => {
       active = false;
     };
-  }, [module, source]);
+  }, [module]);
 
   const roleRows = useMemo(() => roleSummary(users), [users]);
 
@@ -122,37 +114,22 @@ export function SystemWorkspace({
     setError(null);
     try {
       if (userDialog?.mode === "edit" && userDialog.user) {
-        const updated =
-          dataSource === "api"
-            ? await createHmsClient().updateAdminUser(userDialog.user.id, {
-                email: values.email,
-                firstName: values.firstName || null,
-                lastName: values.lastName || null,
-                role: values.role,
-                customerId: values.customerId
-              })
-            : {
-                ...userDialog.user,
-                email: values.email,
-                firstName: values.firstName || null,
-                lastName: values.lastName || null,
-                displayName: displayNameFor(values),
-                role: values.role,
-                customerId: values.customerId,
-                updatedAt: new Date().toISOString()
-              };
+        const updated = await createHmsClient().updateAdminUser(userDialog.user.id, {
+          email: values.email,
+          firstName: values.firstName || null,
+          lastName: values.lastName || null,
+          role: values.role,
+          customerId: values.customerId
+        });
         replaceUser(updated);
       } else {
-        const result =
-          dataSource === "api"
-            ? await createHmsClient().createAdminUser({
-                email: values.email,
-                firstName: values.firstName || null,
-                lastName: values.lastName || null,
-                role: values.role,
-                customerId: values.customerId
-              })
-            : localUser(values);
+        const result = await createHmsClient().createAdminUser({
+          email: values.email,
+          firstName: values.firstName || null,
+          lastName: values.lastName || null,
+          role: values.role,
+          customerId: values.customerId
+        });
         setUsers((current) => [result.user, ...current]);
         setCredential({
           title: "Temporary password",
@@ -191,10 +168,7 @@ export function SystemWorkspace({
     }
     try {
       if (action === "password") {
-        const result =
-          dataSource === "api"
-            ? await createHmsClient().resetAdminUserPassword(user.id)
-            : { userId: user.id, temporaryPassword: mockTemporaryPassword() };
+        const result = await createHmsClient().resetAdminUserPassword(user.id);
         setCredential({
           title: "Password reset",
           label: "Temporary password",
@@ -205,15 +179,13 @@ export function SystemWorkspace({
       }
       const client = createHmsClient();
       const updated =
-        dataSource === "api"
-          ? action === "disable"
-            ? await client.disableAdminUser(user.id)
-            : action === "enable"
-              ? await client.enableAdminUser(user.id)
-              : action === "unlock"
-                ? await client.unlockAdminUser(user.id)
-                : await client.resetAdminUserMfa(user.id)
-          : localLifecycleUpdate(user, action);
+        action === "disable"
+          ? await client.disableAdminUser(user.id)
+          : action === "enable"
+            ? await client.enableAdminUser(user.id)
+            : action === "unlock"
+              ? await client.unlockAdminUser(user.id)
+              : await client.resetAdminUserMfa(user.id);
       replaceUser(updated);
     } catch (actionError) {
       setError(errorMessage(actionError));
@@ -223,12 +195,9 @@ export function SystemWorkspace({
   async function revokeDevice(device: DeviceRecord) {
     setError(null);
     try {
-      const updated =
-        dataSource === "api"
-          ? await createHmsClient().updateDevice(device.deviceId, {
-              revoked: !device.revoked
-            })
-          : { ...device, revoked: !device.revoked, state: device.revoked ? "Active" : "Revoked" };
+      const updated = await createHmsClient().updateDevice(device.deviceId, {
+        revoked: !device.revoked
+      });
       setDevices((current) =>
         current.map((item) => (item.deviceId === device.deviceId ? updated : item))
       );
@@ -617,56 +586,6 @@ function roleSummary(users: AdminUserRecord[]) {
               ? "Maintain asset and assembly records"
               : "Read assigned customer records"
   }));
-}
-
-function localUser(values: UserAdminValues): {
-  user: AdminUserRecord;
-  temporaryPassword: string;
-} {
-  const now = new Date().toISOString();
-  return {
-    user: {
-      id: `local-user-${Date.now()}`,
-      oidcSubject: `local:${Date.now()}`,
-      email: values.email,
-      firstName: values.firstName || null,
-      lastName: values.lastName || null,
-      displayName: displayNameFor(values),
-      role: values.role,
-      customerId: values.customerId,
-      accountStatus: "ACTIVE",
-      mustChangePassword: true,
-      mfaEnabled: false,
-      lockedUntil: null,
-      lastLoginAt: null,
-      createdAt: now,
-      updatedAt: now
-    },
-    temporaryPassword: mockTemporaryPassword()
-  };
-}
-
-function displayNameFor(values: UserAdminValues): string {
-  return [values.firstName, values.lastName].filter(Boolean).join(" ") || values.email;
-}
-
-function mockTemporaryPassword(): string {
-  const bytes = new Uint32Array(3);
-  crypto.getRandomValues(bytes);
-  return `Demo-${Array.from(bytes, (value) => value.toString(36)).join("-")}`;
-}
-
-function localLifecycleUpdate(
-  user: AdminUserRecord,
-  action: "disable" | "enable" | "unlock" | "mfa"
-): AdminUserRecord {
-  if (action === "disable") {
-    return { ...user, accountStatus: "DISABLED" };
-  }
-  if (action === "enable" || action === "unlock") {
-    return { ...user, accountStatus: "ACTIVE", lockedUntil: null };
-  }
-  return { ...user, mfaEnabled: false };
 }
 
 function syncHealth(devices: DeviceRecord[]): number {

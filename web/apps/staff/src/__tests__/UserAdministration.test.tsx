@@ -245,7 +245,6 @@ describe("SystemWorkspace user lifecycle", () => {
     render(
       <SystemWorkspace
         module="users"
-        source="api"
         actorRoles={["HMS_ADMIN"]}
         customerOptions={customers}
       />
@@ -315,7 +314,6 @@ describe("SystemWorkspace user lifecycle", () => {
     render(
       <SystemWorkspace
         module="users"
-        source="api"
         actorRoles={["HMS_ADMIN"]}
         customerOptions={customers}
       />

@@ -1,5 +1,3 @@
-export type DataSource = "api" | "mock";
-
 export interface DashboardRetestRecord {
   assetId: string;
   assetNumber: string;
@@ -115,6 +113,7 @@ export type StaffPermission =
   | "customer:write"
   | "asset:read"
   | "asset:write"
+  | "inspection:book"
   | "inspection:write"
   | "certificate:approve"
   | "reference:admin"
@@ -129,7 +128,7 @@ export interface StaffSession {
   roles: StaffRole[];
   permissions: StaffPermission[];
   customerIds: string[];
-  authMode: "dev" | "bearer" | "mock" | string;
+  authMode: "dev" | "bearer" | string;
 }
 
 export type RiskLevel = "High" | "Medium" | "Low";
@@ -146,6 +145,9 @@ export interface CustomerLocation {
   city: string | null;
   state: string | null;
   country: string | null;
+  siteContactName: string | null;
+  siteContactMobile: string | null;
+  siteContactEmail: string | null;
 }
 
 export interface CustomerContact {
@@ -208,16 +210,15 @@ export interface CustomerRecord {
   metrics: CustomerMetrics;
 }
 
-export interface CustomerListResult {
-  source: DataSource;
-  total: number;
-  etag?: string | null;
-  items: CustomerRecord[];
-}
-
 export interface CustomerFormValues {
   name: string;
-  locations: Array<{ id?: string; name: string }>;
+  locations: Array<{
+    id?: string;
+    name: string;
+    siteContactName?: string;
+    siteContactMobile?: string;
+    siteContactEmail?: string;
+  }>;
   phone: string;
   email: string;
   ppeRequirements: string[];
@@ -228,25 +229,6 @@ export interface ApiListResult<TItem> {
   total: number;
   etag: string | null;
   items: TItem[];
-}
-
-export interface ReferenceStandardRecord {
-  id: string;
-  code: string;
-  name: string;
-  etag?: string | null;
-}
-
-export interface ReferenceStandardListResult {
-  source: DataSource;
-  total: number;
-  etag?: string | null;
-  items: ReferenceStandardRecord[];
-}
-
-export interface ReferenceStandardFormValues {
-  code: string;
-  name: string;
 }
 
 export type ReferenceCatalogKey =
@@ -277,13 +259,6 @@ export interface ProductRecord {
   subCategory: string | null;
   standardCode: string | null;
   etag?: string | null;
-}
-
-export interface ProductListResult {
-  source: DataSource;
-  total: number;
-  etag?: string | null;
-  items: ProductRecord[];
 }
 
 export interface PressureRatingRecord {
@@ -351,13 +326,6 @@ export interface AssetRecord {
   etag?: string | null;
 }
 
-export interface AssetListResult {
-  source: DataSource;
-  total: number;
-  etag?: string | null;
-  items: AssetRecord[];
-}
-
 export interface AssetEndValues {
   fitting: string;
   size: string;
@@ -396,6 +364,11 @@ export interface AssetFormValues {
 
 export type InspectionStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
 
+export type InspectionBookingStatus =
+  | "PENDING_APPROVAL"
+  | "APPROVED"
+  | "REJECTED";
+
 export type InspectionType = "NEW_ASSET" | "SERVICE";
 
 export interface InspectionAssetSummary {
@@ -421,13 +394,6 @@ export interface RetestScheduleRecord {
   customer: RecordSummary;
   product: AssetProductSummary;
   etag?: string | null;
-}
-
-export interface RetestScheduleListResult {
-  source: DataSource;
-  total: number;
-  etag?: string | null;
-  items: RetestScheduleRecord[];
 }
 
 export interface RetestScheduleUpdateValues {
@@ -483,13 +449,6 @@ export interface AdminUserUpdateValues {
   customerId?: string | null;
 }
 
-export interface AdminUserListResult {
-  source: DataSource;
-  total: number;
-  etag?: string | null;
-  items: AdminUserRecord[];
-}
-
 export interface DeviceRecord {
   deviceId: string;
   displayName?: string;
@@ -508,13 +467,6 @@ export interface DeviceUpdateValues {
   revoked?: boolean;
 }
 
-export interface DeviceListResult {
-  source: DataSource;
-  total: number;
-  etag?: string | null;
-  items: DeviceRecord[];
-}
-
 export interface AuditEventRecord {
   sequence: number;
   actorId: string;
@@ -525,13 +477,6 @@ export interface AuditEventRecord {
   after: Record<string, unknown> | null;
   timestamp: string;
   hash: string;
-}
-
-export interface AuditEventListResult {
-  source: DataSource;
-  total: number;
-  etag?: string | null;
-  items: AuditEventRecord[];
 }
 
 export interface PressureTestRecord {
@@ -555,7 +500,7 @@ export interface InspectionRecord {
   inspectionType: InspectionType;
   status: InspectionStatus;
   result: string | null;
-  inspectorUserId: string;
+  inspectorUserId: string | null;
   reviewerUserId: string | null;
   submittedAt: string | null;
   approvedAt: string | null;
@@ -567,11 +512,27 @@ export interface InspectionRecord {
   etag?: string | null;
 }
 
-export interface InspectionListResult {
-  source: DataSource;
-  total: number;
-  etag?: string | null;
-  items: InspectionRecord[];
+export interface InspectionBookingRecord {
+  id: string;
+  customer: RecordSummary;
+  location: AssetLocationSummary;
+  assets: InspectionAssetSummary[];
+  scheduledAt: string;
+  additionalInformation: string | null;
+  status: InspectionBookingStatus;
+  requestedByUserId: string;
+  reviewedByUserId: string | null;
+  reviewedAt: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+}
+
+export interface InspectionBookingCreateValues {
+  customerId: string;
+  locationId: string;
+  assetIds: string[];
+  scheduledAt: string;
+  additionalInformation: string | null;
 }
 
 export interface InspectionCreateValues {
@@ -614,13 +575,6 @@ export interface CertificateRecord {
   product: AssetProductSummary;
   inspection: CertificateInspectionSummary;
   etag?: string | null;
-}
-
-export interface CertificateListResult {
-  source: DataSource;
-  total: number;
-  etag?: string | null;
-  items: CertificateRecord[];
 }
 
 export interface CertificateIssueValues {

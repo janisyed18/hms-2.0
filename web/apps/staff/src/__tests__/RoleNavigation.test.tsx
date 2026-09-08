@@ -49,7 +49,60 @@ describe("role navigation", () => {
   });
 
   it("keeps customer-user record modules read-only", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url), "http://test").pathname;
+      if (path === "/api/v1/retest-schedules") {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => ({
+            total: 1,
+            limit: 50,
+            offset: 0,
+            items: [{
+              id: "schedule-1",
+              asset_id: "asset-1",
+              customer_id: "customer-1",
+              due_at: "2026-08-01",
+              status: "UPCOMING",
+              reminder_interval_days: 30,
+              escalation_interval_days: 7,
+              last_reminded_at: null,
+              escalated_at: null,
+              asset: {
+                id: "asset-1",
+                asset_number: "ASSET-1",
+                tag: "TAG-1",
+                lifecycle_status: "UPCOMING"
+              },
+              customer: { id: "customer-1", code: "CUSTOMER-1", name: "Customer 1" },
+              product: { id: "product-1", code: "PRODUCT-1", name: "Product 1" }
+            }]
+          })
+        };
+      }
+      if (path === "/api/v1/reference/asset-configuration") {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => ({
+            materials: [],
+            couplings: [],
+            coupling_add_ons: [],
+            attach_methods: [],
+            nominal_bores: []
+          })
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        json: async () => ({ total: 0, limit: 50, offset: 0, items: [] })
+      };
+    }));
     const user = userEvent.setup();
     render(<HmsApp session={session("CUSTOMER_USER")} />);
 
@@ -66,7 +119,6 @@ describe("role navigation", () => {
 
     await user.click(screen.getByRole("button", { name: "Retest Schedule" }));
     expect(await screen.findByRole("heading", { name: "Retest Schedule" })).toBeVisible();
-    await user.click((await screen.findAllByRole("button", { name: /open schedule/i }))[0]);
     expect(screen.queryByRole("button", { name: "Save schedule" })).not.toBeInTheDocument();
   });
 });

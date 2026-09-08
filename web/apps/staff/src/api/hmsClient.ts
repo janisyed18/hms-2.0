@@ -1,61 +1,39 @@
-import { mockAssets } from "../data/mockAssets";
-import {
-  mockAdminUsers,
-  mockAuditEvents,
-  mockDevices
-} from "../data/mockAdmin";
-import { mockCertificates } from "../data/mockCertificates";
-import {
-  makeLocalCustomer,
-  mergeMockMetrics,
-  mockCustomers,
-  mockTotalCustomers
-} from "../data/mockCustomers";
-import { mockInspections } from "../data/mockInspections";
-import { mockProducts } from "../data/mockProducts";
-import { mockReferenceStandards } from "../data/mockReferenceData";
-import { mockRetestSchedules } from "../data/mockRetestSchedules";
 import type {
   ApiListResult,
   AdminUserFormValues,
   AdminUserCreateResult,
-  AdminUserListResult,
   AdminUserRecord,
   AnalyticsOverview,
   AdminUserUpdateValues,
   AssetConfigurationOptions,
   TemporaryPasswordResult,
   AssetEndValues,
-  AssetListResult,
   AssetLocationSummary,
   AssetFormValues,
   AssetRecord,
   AssetRetestSummary,
   AssetProductSummary,
-  AuditEventListResult,
   AuditEventRecord,
   CertificateIssueValues,
-  CertificateListResult,
   CertificateRecord,
   CertificateStatus,
   CustomerContact,
   CustomerFormValues,
-  CustomerListResult,
   CustomerLocation,
   CustomerRecord,
   DashboardRecord,
-  DeviceListResult,
   DeviceRecord,
   DeviceUpdateValues,
   InspectionCreateValues,
-  InspectionListResult,
+  InspectionBookingCreateValues,
+  InspectionBookingRecord,
+  InspectionBookingStatus,
   InspectionRecord,
   InspectionStatus,
   InspectionType,
   InspectionUpdateValues,
   NotificationFeedResult,
   NotificationRecord,
-  ProductListResult,
   ProductFormValues,
   ProductRecord,
   PressureTestRecord,
@@ -64,10 +42,6 @@ import type {
   ReferenceCatalogFormValues,
   ReferenceCatalogKey,
   ReferenceCatalogRecord,
-  ReferenceStandardListResult,
-  ReferenceStandardFormValues,
-  ReferenceStandardRecord,
-  RetestScheduleListResult,
   RetestScheduleRecord,
   RetestScheduleStatus,
   RetestScheduleUpdateValues,
@@ -84,6 +58,9 @@ interface ApiLocation {
   city: string | null;
   state: string | null;
   country: string | null;
+  site_contact_name: string | null;
+  site_contact_mobile: string | null;
+  site_contact_email: string | null;
 }
 
 interface ApiContact {
@@ -336,7 +313,7 @@ interface ApiInspection {
   inspection_type: InspectionType;
   status: InspectionStatus;
   result: string | null;
-  inspector_user_id: string;
+  inspector_user_id: string | null;
   reviewer_user_id: string | null;
   submitted_at: string | null;
   approved_at: string | null;
@@ -352,6 +329,28 @@ interface ApiInspectionList {
   limit: number;
   offset: number;
   items: ApiInspection[];
+}
+
+interface ApiInspectionBooking {
+  id: string;
+  customer: ApiSummary;
+  location: ApiLocationSummary;
+  assets: ApiInspectionAssetSummary[];
+  scheduled_at: string;
+  additional_information: string | null;
+  status: InspectionBookingStatus;
+  requested_by_user_id: string;
+  reviewed_by_user_id: string | null;
+  reviewed_at: string | null;
+  rejection_reason: string | null;
+  created_at: string;
+}
+
+interface ApiInspectionBookingList {
+  total: number;
+  limit: number;
+  offset: number;
+  items: ApiInspectionBooking[];
 }
 
 interface ApiRetestSchedule {
@@ -559,6 +558,13 @@ interface ListInspectionOptions {
   offset?: number;
 }
 
+interface ListInspectionBookingOptions {
+  status?: InspectionBookingStatus;
+  customerId?: string;
+  limit?: number;
+  offset?: number;
+}
+
 interface ListRetestScheduleOptions {
   search?: string;
   status?: RetestScheduleStatus;
@@ -610,10 +616,6 @@ interface ListAuditEventOptions {
   offset?: number;
 }
 
-interface ListReferenceStandardOptions {
-  sort?: string;
-}
-
 interface HmsApiResponse<T> {
   data: T;
   etag: string | null;
@@ -656,7 +658,10 @@ function toLocation(location: ApiLocation): CustomerLocation {
     address2: location.address_2,
     city: location.city,
     state: location.state,
-    country: location.country
+    country: location.country,
+    siteContactName: location.site_contact_name,
+    siteContactMobile: location.site_contact_mobile,
+    siteContactEmail: location.site_contact_email
   };
 }
 
@@ -760,9 +765,8 @@ function toNotification(notification: ApiNotification): NotificationRecord {
 }
 
 function toCustomer(customer: ApiCustomer, etag: string | null = null): CustomerRecord {
-  return mergeMockMetrics(
-    withEtag(
-      {
+  return withEtag(
+    {
         id: customer.id,
         code: customer.code,
         name: customer.name,
@@ -780,27 +784,26 @@ function toCustomer(customer: ApiCustomer, etag: string | null = null): Customer
         contractStart: "Not set",
         contractEnd: "Not set",
         lastActivity: "Synced",
-        metrics: makeLocalCustomer({
-          name: customer.name,
-          locations: customer.locations.map((location) => ({
-            id: location.id,
-            name: location.name
-          })),
-          phone: customer.contacts[0]?.phone ?? "",
-          email: customer.contacts[0]?.email ?? "",
-          ppeRequirements: customer.ppe_requirements ?? [],
-          additionalRequirements: customer.additional_requirements ?? []
-        }).metrics
+        metrics: {
+          assetCount: 0,
+          inServiceCount: 0,
+          outOfServiceCount: 0,
+          inspectionDueCount: 0,
+          inspectionDueLabel: "Not available",
+          certificateValidPercent: 0,
+          certificateStatusLabel: "Not available",
+          recentInspections: [],
+          activity: []
+        }
       },
       etag
     )
-  );
 }
 
-function toReferenceStandard(
+function toReferenceCatalog(
   standard: ApiReferenceStandard,
   etag: string | null = null
-): ReferenceStandardRecord {
+): ReferenceCatalogRecord {
   return withEtag(
     {
       id: standard.id,
@@ -812,9 +815,7 @@ function toReferenceStandard(
 }
 
 function referenceCatalogPath(category: ReferenceCatalogKey): string {
-  return category === "standards"
-    ? "/api/v1/reference/standards"
-    : `/api/v1/reference/catalog/${category}`;
+  return `/api/v1/reference/catalog/${category}`;
 }
 
 function toProduct(product: ApiProduct, etag: string | null = null): ProductRecord {
@@ -973,6 +974,23 @@ function toInspection(
     },
     etag
   );
+}
+
+function toInspectionBooking(booking: ApiInspectionBooking): InspectionBookingRecord {
+  return {
+    id: booking.id,
+    customer: toSummary(booking.customer),
+    location: toLocationSummary(booking.location)!,
+    assets: booking.assets.map(toInspectionAssetSummary),
+    scheduledAt: booking.scheduled_at,
+    additionalInformation: booking.additional_information,
+    status: booking.status,
+    requestedByUserId: booking.requested_by_user_id,
+    reviewedByUserId: booking.reviewed_by_user_id,
+    reviewedAt: booking.reviewed_at,
+    rejectionReason: booking.rejection_reason,
+    createdAt: booking.created_at
+  };
 }
 
 function toInspectionAssetSummary(
@@ -1262,7 +1280,10 @@ function customerPayload(values: CustomerFormValues) {
     name: values.name.trim(),
     locations: values.locations.map((location) => ({
       ...(location.id ? { id: location.id } : {}),
-      name: location.name.trim()
+      name: location.name.trim(),
+      ...(location.siteContactName ? { site_contact_name: location.siteContactName.trim() } : {}),
+      ...(location.siteContactMobile ? { site_contact_mobile: location.siteContactMobile.trim() } : {}),
+      ...(location.siteContactEmail ? { site_contact_email: location.siteContactEmail.trim() } : {})
     })),
     phone: values.phone.trim() || null,
     email: values.email.trim() || null,
@@ -1436,42 +1457,6 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toCustomer(response.data, response.etag);
     },
 
-    async createReferenceStandard(
-      values: ReferenceStandardFormValues
-    ): Promise<ReferenceStandardRecord> {
-      const response = await request<ApiReferenceStandard>(
-        "/api/v1/reference/standards",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            code: values.code,
-            name: values.name,
-            enabled: true
-          })
-        }
-      );
-      return toReferenceStandard(response.data, response.etag);
-    },
-
-    async updateReferenceStandard(
-      id: string,
-      values: ReferenceStandardFormValues,
-      etag?: string | null
-    ): Promise<ReferenceStandardRecord> {
-      const response = await request<ApiReferenceStandard>(
-        `/api/v1/reference/standards/${encodeURIComponent(id)}`,
-        {
-          method: "PATCH",
-          headers: ifMatchHeader(etag),
-          body: JSON.stringify({
-            code: values.code,
-            name: values.name
-          })
-        }
-      );
-      return toReferenceStandard(response.data, response.etag);
-    },
-
     async listProducts(
       listOptions: ListProductOptions = {}
     ): Promise<ApiListResult<ProductRecord>> {
@@ -1619,6 +1604,67 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           toInspection(inspection, response.etag)
         )
       };
+    },
+
+    async listInspectionBookings(
+      listOptions: ListInspectionBookingOptions = {}
+    ): Promise<ApiListResult<InspectionBookingRecord>> {
+      const response = await request<ApiInspectionBookingList>(
+        "/api/v1/inspection-bookings",
+        {},
+        {
+          limit: listOptions.limit ?? 50,
+          offset: listOptions.offset ?? 0,
+          status: listOptions.status,
+          customer_id: listOptions.customerId
+        }
+      );
+      return {
+        total: response.data.total,
+        etag: response.etag,
+        items: response.data.items.map(toInspectionBooking)
+      };
+    },
+
+    async createInspectionBooking(
+      values: InspectionBookingCreateValues
+    ): Promise<InspectionBookingRecord> {
+      const response = await request<ApiInspectionBooking>(
+        "/api/v1/inspection-bookings",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            customer_id: values.customerId,
+            location_id: values.locationId,
+            asset_ids: values.assetIds,
+            scheduled_at: values.scheduledAt,
+            additional_information: values.additionalInformation
+          })
+        }
+      );
+      return toInspectionBooking(response.data);
+    },
+
+    async approveInspectionBooking(id: string): Promise<InspectionBookingRecord> {
+      const response = await request<ApiInspectionBooking>(
+        `/api/v1/inspection-bookings/${encodeURIComponent(id)}/approve`,
+        { method: "POST" }
+      );
+      return toInspectionBooking(response.data);
+    },
+
+    async rejectInspectionBooking(
+      id: string,
+      reason: string | null = null
+    ): Promise<InspectionBookingRecord> {
+      const response = await request<ApiInspectionBooking>(
+        `/api/v1/inspection-bookings/${encodeURIComponent(id)}/reject`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason })
+        }
+      );
+      return toInspectionBooking(response.data);
     },
 
     async createInspection(
@@ -1782,25 +1828,6 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toCertificate(response.data, response.etag);
     },
 
-    async listReferenceStandards(
-      listOptions: ListReferenceStandardOptions = {}
-    ): Promise<ApiListResult<ReferenceStandardRecord>> {
-      const response = await request<ApiReferenceStandardList>(
-        "/api/v1/reference/standards",
-        {},
-        {
-          sort: listOptions.sort
-        }
-      );
-      return {
-        total: response.data.items.length,
-        etag: response.etag,
-        items: response.data.items.map((standard) =>
-          toReferenceStandard(standard, response.etag)
-        )
-      };
-    },
-
     async listReferenceCatalog(
       category: ReferenceCatalogKey
     ): Promise<ApiListResult<ReferenceCatalogRecord>> {
@@ -1810,7 +1837,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return {
         total: response.data.items.length,
         etag: response.etag,
-        items: response.data.items.map((item) => toReferenceStandard(item, response.etag))
+        items: response.data.items.map((item) => toReferenceCatalog(item, response.etag))
       };
     },
 
@@ -1829,7 +1856,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           })
         }
       );
-      return toReferenceStandard(response.data, response.etag);
+      return toReferenceCatalog(response.data, response.etag);
     },
 
     async updateReferenceCatalogItem(
@@ -1846,7 +1873,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           body: JSON.stringify({ code: values.code, name: values.name })
         }
       );
-      return toReferenceStandard(response.data, response.etag);
+      return toReferenceCatalog(response.data, response.etag);
     },
 
     async archiveReferenceCatalogItem(
@@ -2029,577 +2056,6 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       });
     },
 
-    async archiveReferenceStandard(
-      id: string,
-      etag?: string | null
-    ): Promise<void> {
-      await request<void>(
-        `/api/v1/reference/standards/${encodeURIComponent(id)}`,
-        {
-          method: "DELETE",
-          headers: ifMatchHeader(etag)
-        }
-      );
-    }
+
   };
-}
-
-function mockFallbackAllowed(options: HmsClientOptions): boolean {
-  return runtimeAuth === null && options.identity?.accessToken === undefined;
-}
-
-function filterMockCustomers(search?: string): CustomerRecord[] {
-  const normalized = search?.trim().toLowerCase();
-  if (!normalized) {
-    return mockCustomers;
-  }
-  return mockCustomers.filter((customer) =>
-    [
-      customer.name,
-      customer.code,
-      customer.notes,
-      customer.locations[0]?.city,
-      customer.locations[0]?.country
-    ]
-      .filter(Boolean)
-      .some((value) => value?.toLowerCase().includes(normalized))
-  );
-}
-
-function filterMockProducts(options: ListProductOptions = {}): ProductRecord[] {
-  const normalized = options.search?.trim().toLowerCase();
-  return mockProducts.filter((product) => {
-    const matchesEnabled = options.enabled !== false;
-    const matchesCategory =
-      !options.category ||
-      product.category.toLowerCase() === options.category.toLowerCase();
-    const matchesStandard =
-      !options.standardCode ||
-      product.standardCode?.toLowerCase() === options.standardCode.toLowerCase();
-    const matchesSearch =
-      !normalized ||
-      [product.code, product.name, product.category, product.subCategory]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(normalized));
-    return matchesEnabled && matchesCategory && matchesStandard && matchesSearch;
-  });
-}
-
-function filterMockAssets(options: ListAssetOptions = {}): AssetRecord[] {
-  const normalized = options.search?.trim().toLowerCase();
-  return mockAssets.filter((asset) => {
-    const matchesStatus =
-      !options.status || asset.lifecycleStatus === options.status;
-    const matchesCustomer =
-      !options.customerId || asset.customer.id === options.customerId;
-    const matchesProduct =
-      !options.productId || asset.product.id === options.productId;
-    const matchesLocation =
-      !options.locationId || asset.location?.id === options.locationId;
-    const dueAt = asset.nextRetestDueAt ?? "";
-    const matchesDueFrom = !options.dueFrom || (dueAt && dueAt >= options.dueFrom);
-    const matchesDueTo = !options.dueTo || (dueAt && dueAt <= options.dueTo);
-    const matchesSearch =
-      !normalized ||
-      [
-        asset.assetNumber,
-        asset.customerSerialNo,
-        asset.tag,
-        asset.customer.code,
-        asset.customer.name,
-        asset.product.code,
-        asset.product.name,
-        asset.notes
-      ]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(normalized));
-    return (
-      matchesStatus &&
-      matchesCustomer &&
-      matchesProduct &&
-      matchesLocation &&
-      matchesDueFrom &&
-      matchesDueTo &&
-      matchesSearch
-    );
-  });
-}
-
-function filterMockInspections(
-  options: ListInspectionOptions = {}
-): InspectionRecord[] {
-  const normalized = options.search?.trim().toLowerCase();
-  return mockInspections.filter((inspection) => {
-    const matchesStatus =
-      !options.status || inspection.status === options.status;
-    const matchesType =
-      !options.inspectionType ||
-      inspection.inspectionType === options.inspectionType;
-    const matchesAsset =
-      !options.assetId || inspection.assetId === options.assetId;
-    const matchesCustomer =
-      !options.customerId || inspection.customer.id === options.customerId;
-    const matchesProduct =
-      !options.productId || inspection.product.id === options.productId;
-    const matchesResult =
-      !options.result || inspection.result === options.result;
-    const matchesSearch =
-      !normalized ||
-      [
-        inspection.asset.assetNumber,
-        inspection.asset.tag,
-        inspection.customer.code,
-        inspection.customer.name,
-        inspection.product.code,
-        inspection.product.name,
-        inspection.inspectorUserId,
-        inspection.reviewerUserId,
-        inspection.result,
-        inspection.status
-      ]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(normalized));
-    return (
-      matchesStatus &&
-      matchesType &&
-      matchesAsset &&
-      matchesCustomer &&
-      matchesProduct &&
-      matchesResult &&
-      matchesSearch
-    );
-  });
-}
-
-function filterMockRetestSchedules(
-  options: ListRetestScheduleOptions = {}
-): RetestScheduleRecord[] {
-  const normalized = options.search?.trim().toLowerCase();
-  const filtered = mockRetestSchedules.filter((schedule) => {
-    const matchesStatus =
-      !options.status || schedule.status === options.status;
-    const matchesAsset =
-      !options.assetId || schedule.assetId === options.assetId;
-    const matchesCustomer =
-      !options.customerId || schedule.customerId === options.customerId;
-    const matchesProduct =
-      !options.productId || schedule.product.id === options.productId;
-    const matchesDueFrom = !options.dueFrom || schedule.dueAt >= options.dueFrom;
-    const matchesDueTo = !options.dueTo || schedule.dueAt <= options.dueTo;
-    const matchesSearch =
-      !normalized ||
-      [
-        schedule.asset.assetNumber,
-        schedule.asset.tag,
-        schedule.customer.code,
-        schedule.customer.name,
-        schedule.product.code,
-        schedule.product.name,
-        schedule.status,
-        schedule.dueAt
-      ]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(normalized));
-    return (
-      matchesStatus &&
-      matchesAsset &&
-      matchesCustomer &&
-      matchesProduct &&
-      matchesDueFrom &&
-      matchesDueTo &&
-      matchesSearch
-    );
-  });
-  const sorted = [...filtered].sort((left, right) =>
-    left.dueAt.localeCompare(right.dueAt)
-  );
-  return options.sort?.startsWith("-") ? sorted.reverse() : sorted;
-}
-
-function filterMockCertificates(
-  options: ListCertificateOptions = {}
-): CertificateRecord[] {
-  const normalized = options.search?.trim().toLowerCase();
-  const filtered = mockCertificates.filter((certificate) => {
-    const matchesStatus =
-      !options.status || certificate.status === options.status;
-    const matchesAsset =
-      !options.assetId || certificate.assetId === options.assetId;
-    const matchesCustomer =
-      !options.customerId || certificate.customer.id === options.customerId;
-    const matchesInspection =
-      !options.inspectionId || certificate.inspectionId === options.inspectionId;
-    const matchesProduct =
-      !options.productId || certificate.product.id === options.productId;
-    const validUntil = certificate.validUntil ?? "";
-    const matchesValidFrom =
-      !options.validFrom || (validUntil && validUntil >= options.validFrom);
-    const matchesValidTo =
-      !options.validTo || (validUntil && validUntil <= options.validTo);
-    const matchesSearch =
-      !normalized ||
-      [
-        certificate.number,
-        certificate.asset.assetNumber,
-        certificate.asset.tag,
-        certificate.customer.code,
-        certificate.customer.name,
-        certificate.product.code,
-        certificate.product.name,
-        certificate.publicToken,
-        certificate.status,
-        certificate.issuedByUserId
-      ]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(normalized));
-    return (
-      matchesStatus &&
-      matchesAsset &&
-      matchesCustomer &&
-      matchesInspection &&
-      matchesProduct &&
-      matchesValidFrom &&
-      matchesValidTo &&
-      matchesSearch
-    );
-  });
-  if (options.sort === "number" || options.sort === "-number") {
-    const sorted = [...filtered].sort((left, right) =>
-      left.number.localeCompare(right.number)
-    );
-    return options.sort.startsWith("-") ? sorted.reverse() : sorted;
-  }
-  return [...filtered].sort((left, right) =>
-    right.issuedAt.localeCompare(left.issuedAt)
-  );
-}
-
-function filterMockReferenceStandards(
-  options: ListReferenceStandardOptions = {}
-): ReferenceStandardRecord[] {
-  const descending = options.sort?.startsWith("-") ?? false;
-  const fieldName = options.sort?.replace(/^-/, "") ?? "code";
-  const sorted = [...mockReferenceStandards];
-  if (fieldName === "name") {
-    sorted.sort((left, right) => left.name.localeCompare(right.name));
-  } else {
-    sorted.sort((left, right) => left.code.localeCompare(right.code));
-  }
-  return descending ? sorted.reverse() : sorted;
-}
-
-function filterMockAdminUsers(
-  options: ListAdminUserOptions = {}
-): AdminUserRecord[] {
-  const normalized = options.search?.trim().toLowerCase();
-  const filtered = mockAdminUsers.filter(
-    (user) =>
-      !normalized ||
-      [
-        user.oidcSubject,
-        user.email,
-        user.displayName,
-        user.role,
-        user.customerId
-      ]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(normalized))
-  );
-  if (!options.sort) {
-    return filtered;
-  }
-  const sorted = [...filtered].sort((left, right) =>
-    left.email.localeCompare(right.email)
-  );
-  return options.sort.startsWith("-") ? sorted.reverse() : sorted;
-}
-
-function filterMockDevices(options: ListDeviceOptions = {}): DeviceRecord[] {
-  const normalized = options.search?.trim().toLowerCase();
-  const filtered = mockDevices.filter(
-    (device) =>
-      !normalized ||
-      [
-        device.deviceId,
-        device.userId,
-        device.platform,
-        device.appVersion,
-        device.state
-      ]
-        .filter(Boolean)
-        .some((value) => value?.toLowerCase().includes(normalized))
-  );
-  const sorted = [...filtered].sort((left, right) =>
-    left.deviceId.localeCompare(right.deviceId)
-  );
-  return options.sort?.startsWith("-") ? sorted.reverse() : sorted;
-}
-
-function filterMockAuditEvents(
-  options: ListAuditEventOptions = {}
-): AuditEventRecord[] {
-  const normalized = options.search?.trim().toLowerCase();
-  const filtered = mockAuditEvents.filter((event) => {
-    const matchesEntity = !options.entity || event.entity === options.entity;
-    const matchesActor = !options.actorId || event.actorId === options.actorId;
-    const matchesAction = !options.action || event.action === options.action;
-    const matchesSearch =
-      !normalized ||
-      [event.action, event.actorId, event.entity, event.entityId]
-        .filter(Boolean)
-        .some((value) => value.toLowerCase().includes(normalized));
-    return matchesEntity && matchesActor && matchesAction && matchesSearch;
-  });
-  const sorted = [...filtered].sort((left, right) => right.sequence - left.sequence);
-  return options.sort === "sequence" ? sorted.reverse() : sorted;
-}
-
-export async function loadCustomersWithFallback(
-  options: HmsClientOptions & ListCustomerOptions = {}
-): Promise<CustomerListResult> {
-  try {
-    const client = createHmsClient(options);
-    const response = await client.listCustomers(options);
-    return {
-      source: "api",
-      total: response.total,
-      etag: response.etag,
-      items: response.items
-    };
-  } catch (error) {
-    if (!mockFallbackAllowed(options)) {
-      throw error;
-    }
-    const items = filterMockCustomers(options.search);
-    return {
-      source: "mock",
-      total: mockTotalCustomers,
-      items
-    };
-  }
-}
-
-export async function loadProductsWithFallback(
-  options: HmsClientOptions & ListProductOptions = {}
-): Promise<ProductListResult> {
-  try {
-    const client = createHmsClient(options);
-    const response = await client.listProducts(options);
-    return {
-      source: "api",
-      total: response.total,
-      etag: response.etag,
-      items: response.items
-    };
-  } catch (error) {
-    if (!mockFallbackAllowed(options)) {
-      throw error;
-    }
-    const items = filterMockProducts(options);
-    return {
-      source: "mock",
-      total: mockProducts.length,
-      items
-    };
-  }
-}
-
-export async function loadAssetsWithFallback(
-  options: HmsClientOptions & ListAssetOptions = {}
-): Promise<AssetListResult> {
-  try {
-    const client = createHmsClient(options);
-    const response = await client.listAssets(options);
-    return {
-      source: "api",
-      total: response.total,
-      etag: response.etag,
-      items: response.items
-    };
-  } catch (error) {
-    if (!mockFallbackAllowed(options)) {
-      throw error;
-    }
-    const items = filterMockAssets(options);
-    return {
-      source: "mock",
-      total: mockAssets.length,
-      items
-    };
-  }
-}
-
-export async function loadInspectionsWithFallback(
-  options: HmsClientOptions & ListInspectionOptions = {}
-): Promise<InspectionListResult> {
-  try {
-    const client = createHmsClient(options);
-    const response = await client.listInspections(options);
-    return {
-      source: "api",
-      total: response.total,
-      etag: response.etag,
-      items: response.items
-    };
-  } catch (error) {
-    if (!mockFallbackAllowed(options)) {
-      throw error;
-    }
-    const items = filterMockInspections(options);
-    return {
-      source: "mock",
-      total: mockInspections.length,
-      items
-    };
-  }
-}
-
-export async function loadRetestSchedulesWithFallback(
-  options: HmsClientOptions & ListRetestScheduleOptions = {}
-): Promise<RetestScheduleListResult> {
-  try {
-    const client = createHmsClient(options);
-    const response = await client.listRetestSchedules(options);
-    return {
-      source: "api",
-      total: response.total,
-      etag: response.etag,
-      items: response.items
-    };
-  } catch (error) {
-    if (!mockFallbackAllowed(options)) {
-      throw error;
-    }
-    const items = filterMockRetestSchedules(options);
-    return {
-      source: "mock",
-      total: mockRetestSchedules.length,
-      items
-    };
-  }
-}
-
-export async function loadCertificatesWithFallback(
-  options: HmsClientOptions & ListCertificateOptions = {}
-): Promise<CertificateListResult> {
-  try {
-    const client = createHmsClient(options);
-    const response = await client.listCertificates(options);
-    return {
-      source: "api",
-      total: response.total,
-      etag: response.etag,
-      items: response.items
-    };
-  } catch (error) {
-    if (!mockFallbackAllowed(options)) {
-      throw error;
-    }
-    const items = filterMockCertificates(options);
-    return {
-      source: "mock",
-      total: mockCertificates.length,
-      items
-    };
-  }
-}
-
-export async function loadReferenceStandardsWithFallback(
-  options: HmsClientOptions & ListReferenceStandardOptions = {}
-): Promise<ReferenceStandardListResult> {
-  try {
-    const client = createHmsClient(options);
-    const response = await client.listReferenceStandards(options);
-    return {
-      source: "api",
-      total: response.total,
-      etag: response.etag,
-      items: response.items
-    };
-  } catch (error) {
-    if (!mockFallbackAllowed(options)) {
-      throw error;
-    }
-    const items = filterMockReferenceStandards(options);
-    return {
-      source: "mock",
-      total: mockReferenceStandards.length,
-      items
-    };
-  }
-}
-
-export async function loadAdminUsersWithFallback(
-  options: HmsClientOptions & ListAdminUserOptions = {}
-): Promise<AdminUserListResult> {
-  try {
-    const client = createHmsClient(options);
-    const response = await client.listAdminUsers(options);
-    return {
-      source: "api",
-      total: response.total,
-      etag: response.etag,
-      items: response.items
-    };
-  } catch (error) {
-    if (error instanceof HmsApiError || !mockFallbackAllowed(options)) {
-      throw error;
-    }
-    const items = filterMockAdminUsers(options);
-    return {
-      source: "mock",
-      total: mockAdminUsers.length,
-      items
-    };
-  }
-}
-
-export async function loadDevicesWithFallback(
-  options: HmsClientOptions & ListDeviceOptions = {}
-): Promise<DeviceListResult> {
-  try {
-    const client = createHmsClient(options);
-    const response = await client.listDevices(options);
-    return {
-      source: "api",
-      total: response.total,
-      etag: response.etag,
-      items: response.items
-    };
-  } catch (error) {
-    if (error instanceof HmsApiError || !mockFallbackAllowed(options)) {
-      throw error;
-    }
-    const items = filterMockDevices(options);
-    return {
-      source: "mock",
-      total: mockDevices.length,
-      items
-    };
-  }
-}
-
-export async function loadAuditEventsWithFallback(
-  options: HmsClientOptions & ListAuditEventOptions = {}
-): Promise<AuditEventListResult> {
-  try {
-    const client = createHmsClient(options);
-    const response = await client.listAuditEvents(options);
-    return {
-      source: "api",
-      total: response.total,
-      etag: response.etag,
-      items: response.items
-    };
-  } catch (error) {
-    if (error instanceof HmsApiError || !mockFallbackAllowed(options)) {
-      throw error;
-    }
-    const items = filterMockAuditEvents(options);
-    return {
-      source: "mock",
-      total: mockAuditEvents.length,
-      items
-    };
-  }
 }

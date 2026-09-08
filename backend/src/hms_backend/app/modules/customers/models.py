@@ -68,6 +68,9 @@ class CustomerLocation(SyncableMixin, Base):
     city: Mapped[str | None] = mapped_column(String(120), nullable=True)
     state: Mapped[str | None] = mapped_column(String(80), nullable=True)
     country: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    site_contact_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    site_contact_mobile: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    site_contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
 
     customer: Mapped[Customer] = relationship(
         back_populates="locations",

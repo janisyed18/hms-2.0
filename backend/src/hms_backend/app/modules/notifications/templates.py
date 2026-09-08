@@ -73,6 +73,34 @@ _TEMPLATES: dict[tuple[NotificationCategory, NotificationChannel], _Template] = 
         "HMS SAFETY: asset {asset_number} FAILED inspection. "
         "Remove from service. {link}",
     ),
+    (_Cat.INSPECTION_BOOKING_REQUESTED, _Ch.EMAIL): _Template(
+        "Inspection booking awaiting approval",
+        "{customer_name} requested an inspection at {location_name} on "
+        "{scheduled_at} for {asset_count} asset(s).\n\nOpen HMS to approve or "
+        "decline the request.",
+    ),
+    (_Cat.INSPECTION_BOOKING_REQUESTED, _Ch.IN_APP): _Template(
+        "Inspection booking awaiting approval",
+        "{customer_name} requested {asset_count} asset(s) at {location_name}.",
+    ),
+    (_Cat.INSPECTION_BOOKING_APPROVED, _Ch.EMAIL): _Template(
+        "Inspection booking approved",
+        "Your inspection booking at {location_name} on {scheduled_at} has been "
+        "approved for {asset_count} asset(s).",
+    ),
+    (_Cat.INSPECTION_BOOKING_APPROVED, _Ch.IN_APP): _Template(
+        "Inspection booking approved",
+        "Your booking for {asset_count} asset(s) at {location_name} is approved.",
+    ),
+    (_Cat.INSPECTION_BOOKING_REJECTED, _Ch.EMAIL): _Template(
+        "Inspection booking needs a new date",
+        "Your inspection booking at {location_name} on {scheduled_at} was "
+        "declined.\n\nReason: {reason}",
+    ),
+    (_Cat.INSPECTION_BOOKING_REJECTED, _Ch.IN_APP): _Template(
+        "Inspection booking declined",
+        "{reason}",
+    ),
     (_Cat.CERTIFICATE_ISSUED, _Ch.EMAIL): _Template(
         "Certificate {certificate_number} issued for asset {asset_number}",
         "A test certificate has been issued for asset {asset_number} "

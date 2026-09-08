@@ -390,6 +390,17 @@ function analyticsFetch() {
   });
 }
 
+function analyticsRouteFetch() {
+  const analytics = analyticsFetch();
+  const routes = routeFetch();
+  return vi.fn((url: string | URL | Request, init?: RequestInit) => {
+    const requestUrl = new URL(String(url), "http://test");
+    return requestUrl.pathname === "/api/v1/analytics/overview"
+      ? analytics(url)
+      : routes(url, init);
+  });
+}
+
 function dashboardActionsFetch() {
   return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const requestUrl = new URL(String(url), "http://test");
@@ -424,6 +435,9 @@ function dashboardActionsFetch() {
     }
     if (requestUrl.pathname === "/api/v1/inspections") {
       return okJson({ total: 1, limit: 50, offset: 0, items: [apiInspection] });
+    }
+    if (requestUrl.pathname === "/api/v1/inspection-bookings") {
+      return okJson({ total: 0, limit: 50, offset: 0, items: [] });
     }
     if (requestUrl.pathname === "/api/v1/assets") {
       return okJson({ total: 1, limit: 50, offset: 0, items: [apiAsset] });
@@ -564,6 +578,15 @@ function routeFetch() {
         items: [apiAsset]
       });
     }
+    if (path.startsWith("/api/v1/reference/asset-configuration")) {
+      return okJson({
+        materials: [{ id: "material-api-1", code: "SS", name: "Stainless steel" }],
+        couplings: [{ id: "coupling-api-1", code: "CAM-M", name: "Camlock male" }],
+        coupling_add_ons: [{ id: "addon-api-1", code: "NONE", name: "No additional" }],
+        attach_methods: [{ id: "attach-api-1", code: "CRIMP", name: "Crimped" }],
+        nominal_bores: [{ id: "bore-api-1", code: "2IN", name: "2 inch" }]
+      });
+    }
     if (path.startsWith("/api/v1/retest-schedules")) {
       if (init?.method === "PATCH") {
         return okJson({
@@ -580,6 +603,9 @@ function routeFetch() {
         offset: 0,
         items: [apiRetestSchedule]
       });
+    }
+    if (path.startsWith("/api/v1/inspection-bookings")) {
+      return okJson({ total: 0, limit: 50, offset: 0, items: [] });
     }
     if (path.startsWith("/api/v1/inspections")) {
       if (init?.method === "POST" && path.includes("/certificate")) {
@@ -611,8 +637,11 @@ function routeFetch() {
         items: [apiCertificate]
       });
     }
-    if (path.startsWith("/api/v1/reference/standards")) {
+    if (path.startsWith("/api/v1/reference/catalog/standards")) {
       return okJson({
+        total: 1,
+        limit: 50,
+        offset: 0,
         items: [apiStandard]
       });
     }
@@ -770,7 +799,7 @@ describe("App", () => {
   });
 
   it("renders the operations dashboard first and keeps the customer workspace reachable", async () => {
-    vi.stubGlobal("fetch", dashboardFetch());
+    vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);
@@ -791,18 +820,30 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Customers" }));
 
     expect(await screen.findByRole("heading", { name: "Customer Management" })).toBeVisible();
-    expect(screen.getByText("45 customers")).toBeVisible();
+    expect(screen.getByText("2 customers")).toBeVisible();
     expect(
-      screen.getByRole("button", { name: /Select customer North Sea Drilling Ltd./i })
+      screen.getByRole("button", { name: /Select customer Vopak API/i })
     ).toBeVisible();
-    expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
-      "North Sea Drilling Ltd."
-    );
+    expect(screen.queryByRole("dialog", { name: /Vopak API/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Select customer Vopak API/i }));
+    expect(screen.getByRole("dialog", { name: /Vopak API/i })).toHaveTextContent("Vopak API");
     expect(
-      screen.getByRole("button", { name: /Select customer North Sea Drilling Ltd./i })
+      screen.getByRole("button", { name: /Select customer Vopak API/i })
     ).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText("Customer selected")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Recent Activity" })).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: /Locations/i }));
+    expect(screen.getByText("Asset locations")).toBeInTheDocument();
+    expect(await screen.findByText("API Terminal")).toBeVisible();
+    expect(screen.getByText("API-777")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Close customer detail" }));
+    expect(screen.queryByRole("dialog", { name: /Vopak API/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Select customer Vopak API/i }));
+    await user.click(screen.getByRole("button", { name: "Edit customer" }));
+    expect(screen.getByRole("heading", { name: "Edit Customer" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Close form" }));
+    await user.click(screen.getByRole("button", { name: /Select customer Vopak API/i }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: /Vopak API/i })).not.toBeInTheDocument();
   });
 
   it("keeps the command centre hierarchy and dashboard order explicit", async () => {
@@ -966,26 +1007,6 @@ describe("App", () => {
     );
   });
 
-  it("updates the selected customer from the table", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Customers" }));
-    await user.click(
-      await screen.findByRole("button", { name: /Select customer Bluewater Energy/i })
-    );
-
-    expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
-      "Bluewater Energy"
-    );
-    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
-      "aria-selected",
-      "true"
-    );
-  });
-
   it("closes the notification popover from its close control", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     const user = userEvent.setup();
@@ -1027,179 +1048,6 @@ describe("App", () => {
     expect(screen.queryByRole("dialog", { name: "Notifications" })).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
     expect(notificationButton).not.toHaveTextContent("1");
-  });
-
-  it("opens and closes selected record details across core modules", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Customers" }));
-    await user.click(
-      await screen.findByRole("button", { name: /Select customer Bluewater Energy/i })
-    );
-    expect(screen.getByRole("complementary", { name: "Customer detail" })).toHaveTextContent(
-      "Bluewater Energy"
-    );
-    await user.click(screen.getByRole("button", { name: "Close customer detail" }));
-    expect(screen.queryByRole("complementary", { name: "Customer detail" })).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /Select customer Bluewater Energy/i })
-    ).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "Assets" }));
-    await user.click(await screen.findByRole("row", { name: /997950/i }));
-    expect(screen.getByRole("complementary", { name: "Asset detail" })).toHaveTextContent(
-      "997950"
-    );
-    expect(screen.getByRole("complementary", { name: "Asset detail" })).toHaveTextContent(
-      "FUELFLEX GREEN"
-    );
-    await user.click(screen.getByRole("button", { name: "Close asset detail" }));
-    expect(screen.queryByRole("complementary", { name: "Asset detail" })).not.toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Asset records" })).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "Products" }));
-    await user.click(await screen.findByRole("row", { name: /FUELFLEX GREEN/i }));
-    expect(screen.getByRole("complementary", { name: "Product detail" })).toHaveTextContent(
-      "FUELFLEX GREEN"
-    );
-    await user.click(screen.getByRole("button", { name: "Close product detail" }));
-    expect(screen.queryByRole("complementary", { name: "Product detail" })).not.toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Product records" })).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "Inspections" }));
-    await user.click((await screen.findAllByRole("row", { name: /997950/i }))[0]);
-    expect(screen.getByRole("complementary", { name: "Inspection detail" })).toHaveTextContent(
-      "Inspection 997950"
-    );
-    await user.click(screen.getByRole("button", { name: "Close inspection detail" }));
-    expect(screen.queryByRole("complementary", { name: "Inspection detail" })).not.toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Inspection records" })).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "Certificates" }));
-    await user.click(await screen.findByRole("row", { name: /CERT-VOPA-NEW-1/i }));
-    expect(screen.getByRole("complementary", { name: "Certificate detail" })).toHaveTextContent(
-      "CERT-VOPA-NEW-1"
-    );
-    await user.click(screen.getByRole("button", { name: "Close certificate detail" }));
-    expect(screen.queryByRole("complementary", { name: "Certificate detail" })).not.toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Certificate records" })).toBeVisible();
-  });
-
-  it("filters customer rows from the toolbar search", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Customers" }));
-    await user.type(await screen.findByLabelText("Search customers"), "arctic");
-
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /Select customer Arctic Offshore AS/i })
-      ).toBeVisible();
-      expect(
-        screen.queryByRole("button", { name: /Select customer North Sea Drilling Ltd./i })
-      ).not.toBeInTheDocument();
-    });
-  });
-
-  it("creates a local customer record when using mock data", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Customers" }));
-    await user.click(await screen.findByRole("button", { name: /Add Customer/i }));
-    await user.type(screen.getByLabelText("Name"), "Summit Marine Group");
-    await user.type(screen.getByLabelText("Location"), "Newcastle operations yard");
-    await user.type(screen.getByLabelText("Phone"), "+61 2 5555 0200");
-    await user.type(screen.getByLabelText("Email"), "operations@summit.example.test");
-    await user.click(screen.getByRole("button", { name: "Save customer" }));
-
-    expect(
-      await screen.findByRole("button", { name: /Select customer Summit Marine Group/i })
-    ).toBeVisible();
-    expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
-      "Summit Marine Group"
-    );
-    expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
-      "Newcastle operations yard"
-    );
-    expect(screen.getByRole("complementary", { name: /Customer detail/i })).toHaveTextContent(
-      "operations@summit.example.test"
-    );
-  });
-
-  it("clears the customer filter when a local customer is created", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Customers" }));
-    await user.type(await screen.findByLabelText("Search customers"), "arctic");
-    await user.click(screen.getByRole("button", { name: /Add Customer/i }));
-    await user.type(screen.getByLabelText("Name"), "Summit Marine Group");
-    await user.type(screen.getByLabelText("Location"), "Newcastle operations yard");
-    await user.click(screen.getByRole("button", { name: "Save customer" }));
-
-    expect(
-      await screen.findByRole("button", { name: /Select customer Summit Marine Group/i })
-    ).toBeVisible();
-    expect(screen.getByLabelText("Search customers")).toHaveValue("");
-  });
-
-  it("navigates to asset, product, and reference-data modules with mock fallback rows", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Customers" }));
-    await screen.findByRole("heading", { name: "Customer Management" });
-    await user.click(screen.getByRole("button", { name: "Assets" }));
-    expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
-    expect(screen.getByRole("table", { name: "Asset records" })).toHaveTextContent(
-      "Asset"
-    );
-    expect(screen.getByRole("table", { name: "Asset records" })).toHaveTextContent(
-      "End A / End B"
-    );
-    expect(screen.getByRole("table", { name: "Asset records" })).toHaveTextContent(
-      "997950"
-    );
-
-    await user.click(screen.getByRole("button", { name: "Products" }));
-    expect(await screen.findByRole("heading", { name: "Products" })).toBeVisible();
-    expect(screen.getByRole("table", { name: "Product records" })).toHaveTextContent(
-      "FUELFLEX GREEN"
-    );
-
-    await user.click(screen.getByRole("button", { name: "Reference Data" }));
-    expect(await screen.findByRole("heading", { name: "Reference Data" })).toBeVisible();
-    expect(await screen.findByText("AS2683")).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "Inspections" }));
-    expect(await screen.findByRole("heading", { name: "Inspection Management" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: /Submitted/i })).toBeVisible();
-    expect(screen.getByRole("table", { name: "Inspection records" })).toHaveTextContent(
-      "997950"
-    );
-    expect(screen.getByRole("table", { name: "Inspection records" })).toHaveTextContent(
-      "Pressure Test"
-    );
-
-    await user.click(screen.getByRole("button", { name: "Certificates" }));
-    expect(await screen.findByRole("heading", { name: "Certificate Management" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "All Certificates" })).toBeVisible();
-    expect(screen.getByRole("table", { name: "Certificate records" })).toHaveTextContent(
-      "CERT-VOPA-NEW-1"
-    );
   });
 
   it("shows backend-backed rows inside each core-record module", async () => {
@@ -1312,283 +1160,6 @@ describe("App", () => {
     expect(screen.getByLabelText("Serial Number")).toHaveValue("SERIAL-ASYNC");
   });
 
-  it("issues a certificate from an approved inspection in the staff UI", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Certificates" }));
-    await user.click(screen.getByRole("button", { name: "Issue Certificate" }));
-    await user.selectOptions(screen.getByLabelText("Approved inspection"), "inspection-1003");
-    await user.clear(screen.getByLabelText("Certificate number"));
-    await user.type(screen.getByLabelText("Certificate number"), "CERT-VOPA-NEW-2");
-    await user.clear(screen.getByLabelText("Valid until"));
-    await user.type(screen.getByLabelText("Valid until"), "2027-06-29");
-    await user.click(screen.getByRole("button", { name: "Issue certificate" }));
-
-    expect(await screen.findByRole("row", { name: /CERT-VOPA-NEW-2/i })).toBeVisible();
-    expect(screen.getByRole("complementary", { name: "Certificate detail" })).toHaveTextContent(
-      "CERT-VOPA-NEW-2"
-    );
-    expect(screen.getByRole("complementary", { name: "Certificate detail" })).toHaveTextContent(
-      "Valid until 2027-06-29"
-    );
-  });
-
-  it("updates certificate lifecycle from the certificate detail panel", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Certificates" }));
-    await user.click(await screen.findByRole("button", { name: "Open certificate CERT-VOPA-NEW-1" }));
-    expect(screen.getByRole("button", { name: "Mark superseded" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Revoke certificate" })).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "Mark superseded" }));
-
-    expect(screen.getByRole("complementary", { name: "Certificate detail" })).toHaveTextContent(
-      "SUPERSEDED"
-    );
-  });
-
-  it("creates a draft inspection from the staff UI", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Inspections" }));
-    await user.click(screen.getByRole("button", { name: "Add Inspection" }));
-    await user.selectOptions(screen.getByLabelText("Inspection asset"), "asset-1002");
-    await user.selectOptions(screen.getByLabelText("Inspection type"), "NEW_ASSET");
-    await user.selectOptions(screen.getByLabelText("Inspection result"), "PASS");
-    await user.clear(screen.getByLabelText("Applied pressure kPa"));
-    await user.type(screen.getByLabelText("Applied pressure kPa"), "900");
-    await user.clear(screen.getByLabelText("Hold time seconds"));
-    await user.type(screen.getByLabelText("Hold time seconds"), "180");
-    await user.type(screen.getByLabelText("Measurement notes"), "visual=ok");
-    await user.click(screen.getByRole("button", { name: "Save inspection" }));
-
-    expect(screen.getByRole("complementary", { name: "Inspection detail" })).toHaveTextContent(
-      "DRAFT"
-    );
-    await user.click(screen.getByRole("button", { name: "Close inspection detail" }));
-
-    const oricRows = await screen.findAllByRole("row", { name: /ORIC-100/i });
-    expect(oricRows[0]).toHaveTextContent("DRAFT");
-  });
-
-  it("edits and submits a draft inspection", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Inspections" }));
-    await user.click(await screen.findByRole("button", { name: "Open inspection 997950" }));
-    await user.clear(screen.getByLabelText("Detail applied pressure kPa"));
-    await user.type(screen.getByLabelText("Detail applied pressure kPa"), "1800");
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
-    await user.click(screen.getByRole("button", { name: "Submit inspection" }));
-
-    await waitFor(() => {
-      expect(
-        within(screen.getByRole("complementary", { name: "Inspection detail" })).getByText(
-          "SUBMITTED"
-        )
-      ).toBeVisible();
-    });
-  });
-
-  it("opens a draft inspection in a focused record view and returns to the list", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Inspections" }));
-    await user.click(await screen.findByRole("button", { name: "Open inspection 997950" }));
-
-    expect(screen.queryByRole("table", { name: "Inspection records" })).not.toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "Inspection detail" })).toHaveTextContent(
-      "Inspection 997950"
-    );
-
-    await user.click(screen.getByRole("button", { name: "Close inspection detail" }));
-
-    expect(await screen.findByRole("table", { name: "Inspection records" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Open inspection 997950" })).toBeVisible();
-  });
-
-  it("submits the current draft inspection values without requiring a separate save", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Inspections" }));
-    await user.click(await screen.findByRole("button", { name: "Open inspection 997950" }));
-    await user.clear(screen.getByLabelText("Detail applied pressure kPa"));
-    await user.type(screen.getByLabelText("Detail applied pressure kPa"), "1800");
-    await user.click(screen.getByRole("button", { name: "Submit inspection" }));
-
-    await waitFor(() => {
-      expect(
-        within(screen.getByRole("complementary", { name: "Inspection detail" })).getByText(
-          "SUBMITTED"
-        )
-      ).toBeVisible();
-    });
-    expect(screen.getByLabelText("Detail applied pressure kPa")).toHaveValue(1800);
-  });
-
-  it("approves a submitted inspection from the detail panel", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Inspections" }));
-    await user.click(await screen.findByRole("button", { name: "Open inspection ORIC-100" }));
-    await user.click(screen.getByRole("button", { name: "Approve inspection" }));
-
-    await waitFor(() => {
-      expect(
-        within(screen.getByRole("complementary", { name: "Inspection detail" })).getByText(
-          "APPROVED"
-        )
-      ).toBeVisible();
-    });
-  });
-
-  it("opens the reference standard drawer and saves a standard", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Reference Data" }));
-    await user.click(screen.getByRole("button", { name: "Add Standard" }));
-    await user.type(screen.getByLabelText("Standard code"), "EN857");
-    await user.type(screen.getByLabelText("Standard name"), "EN 857");
-    await user.click(screen.getByRole("button", { name: "Save standard" }));
-
-    expect(await screen.findByRole("row", { name: /EN 857/i })).toBeVisible();
-  });
-
-  it("opens the product drawer, adds a pressure rating row, and saves a product", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Products" }));
-    await user.click(screen.getByRole("button", { name: "Add Product" }));
-    await user.type(screen.getByLabelText("Product code"), "API-HOSE");
-    await user.type(screen.getByLabelText("Product name"), "API Demo Hose");
-    await user.type(screen.getByLabelText("Category"), "Composite");
-    await user.click(screen.getByRole("button", { name: "Add pressure rating" }));
-
-    expect(screen.getByText("Rating 1")).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "Save product" }));
-
-    expect(await screen.findByRole("row", { name: /API Demo Hose/i })).toBeVisible();
-  });
-
-  it("opens the asset drawer and saves an asset profile", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Assets" }));
-    await user.click(screen.getByRole("button", { name: "Add Asset" }));
-    await user.type(screen.getByLabelText("Asset Name"), "Bay transfer hose");
-    await user.type(screen.getByLabelText("Serial Number"), "SER-200");
-    await user.type(screen.getByLabelText("Next Inspection Date"), "2026-09-15");
-    await user.type(screen.getByLabelText("Description"), "Keep capped until install.");
-
-    await user.click(screen.getByRole("button", { name: "Save asset" }));
-
-    const assetRow = await screen.findByRole("row", { name: /Bay transfer hose/i });
-    expect(assetRow).toBeVisible();
-    expect(assetRow).toHaveTextContent("2026-09-15");
-    expect(assetRow).toHaveTextContent("SER-200");
-  });
-
-  it("filters asset and product records from the filter panel", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Assets" }));
-    await user.click(screen.getByRole("button", { name: "Filters" }));
-    await user.selectOptions(screen.getByLabelText("Asset lifecycle filter"), "OVERDUE");
-    await user.selectOptions(screen.getByLabelText("Asset customer filter"), "cust-1005");
-    await user.selectOptions(screen.getByLabelText("Asset product filter"), "product-1001");
-    await user.type(screen.getByLabelText("Asset due from"), "2023-11-01");
-    await user.type(screen.getByLabelText("Asset due to"), "2023-11-30");
-
-    const assetTable = screen.getByRole("table", { name: "Asset records" });
-    expect(assetTable).toHaveTextContent("997950");
-    expect(assetTable).not.toHaveTextContent("ORIC-100");
-
-    await user.click(screen.getByRole("button", { name: "Clear asset filters" }));
-    expect(assetTable).toHaveTextContent("ORIC-100");
-
-    await user.click(screen.getByRole("button", { name: "Products" }));
-    await user.click(screen.getByRole("button", { name: "Filters" }));
-    await user.selectOptions(screen.getByLabelText("Product category filter"), "Composite");
-    await user.selectOptions(screen.getByLabelText("Product standard filter"), "AS2683");
-
-    const productTable = screen.getByRole("table", { name: "Product records" });
-    expect(productTable).toHaveTextContent("FUELFLEX GREEN");
-    expect(productTable).not.toHaveTextContent("SS1 CONV");
-    expect(productTable).not.toHaveTextContent("Rubber Water Hose");
-  });
-
-  it("filters retest schedules by due-date range", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: /Retest Schedule/i }));
-    await user.click(screen.getByRole("button", { name: "Filters" }));
-    await user.type(screen.getByLabelText("Retest due from"), "2026-07-20");
-    await user.type(screen.getByLabelText("Retest due to"), "2026-08-01");
-
-    const scheduleTable = screen.getByRole("table", { name: "Retest schedule records" });
-    expect(scheduleTable).toHaveTextContent("ORIC-100");
-    expect(scheduleTable).not.toHaveTextContent("997950");
-    expect(scheduleTable).not.toHaveTextContent("VOPA-NEW");
-  });
-
-  it("uses date picker controls for user-entered dates", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    const user = userEvent.setup();
-
-    render(<App initialSession={adminSession} />);
-
-    await user.click(await screen.findByRole("button", { name: "Assets" }));
-    await user.click(screen.getByRole("button", { name: "Add Asset" }));
-    expect(screen.getByLabelText("Next Inspection Date")).toHaveAttribute("type", "date");
-    await user.click(screen.getByRole("button", { name: "Close form" }));
-
-    await user.click(screen.getByRole("button", { name: /Retest Schedule/i }));
-    await user.click(screen.getByRole("button", { name: "Open schedule 997950" }));
-    expect(screen.getByLabelText("Retest due date")).toHaveAttribute("type", "date");
-
-    await user.click(screen.getByRole("button", { name: "Certificates" }));
-    await user.click(screen.getByRole("button", { name: "Issue Certificate" }));
-    expect(screen.getByLabelText("Valid until")).toHaveAttribute("type", "date");
-  });
-
   it("confirms archive actions and calls soft-delete endpoints", async () => {
     const fetchMock = routeFetch();
     const confirmMock = vi.fn().mockReturnValue(true);
@@ -1611,7 +1182,7 @@ describe("App", () => {
   });
 
   it("opens dashboard, sync queue, and audit as real shell workspaces", async () => {
-    vi.stubGlobal("fetch", dashboardFetch());
+    vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);
@@ -1629,12 +1200,12 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Audit Log" }));
     expect(await screen.findByRole("heading", { name: "Audit Trail" })).toBeVisible();
     expect(screen.getByRole("table", { name: "Audit trail events" })).toHaveTextContent(
-      "Inspection approved"
+      "User created"
     );
   });
 
   it("opens and updates the retest schedule workspace", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);
@@ -1643,10 +1214,10 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { name: "Retest Schedule" })).toBeVisible();
     expect(screen.getByRole("table", { name: "Retest schedule records" })).toHaveTextContent(
-      "997950"
+      "API-777"
     );
 
-    await user.click(screen.getByRole("button", { name: "Open schedule 997950" }));
+    await user.click(screen.getByRole("button", { name: "Open schedule API-777" }));
     await user.clear(screen.getByLabelText("Retest due date"));
     await user.type(screen.getByLabelText("Retest due date"), "2026-09-15");
     await user.selectOptions(screen.getByLabelText("Retest status"), "UPCOMING");
@@ -1660,11 +1231,11 @@ describe("App", () => {
     expect(screen.getByRole("complementary", { name: "Retest schedule detail" })).toHaveTextContent(
       "Due 2026-09-15"
     );
-    expect(screen.getByRole("row", { name: /997950/i })).toHaveTextContent("2026-09-15");
+    expect(screen.getByRole("row", { name: /API-777/i })).toHaveTextContent("2026-09-15");
   });
 
   it("opens live analytics and the implemented system console workspaces", async () => {
-    vi.stubGlobal("fetch", analyticsFetch());
+    vi.stubGlobal("fetch", analyticsRouteFetch());
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);
@@ -1680,23 +1251,21 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Users & Roles" }));
     expect(await screen.findByRole("heading", { name: "Users & Roles" })).toBeVisible();
     expect(await screen.findByText("Role Matrix")).toBeVisible();
-    expect(await screen.findByText("James Mitchell")).toBeVisible();
+    expect(await screen.findByText("Alex Williams")).toBeVisible();
     expect(screen.getByRole("table", { name: "User access records" })).toHaveTextContent(
-      "James Mitchell"
+      "Alex Williams"
     );
     expect(screen.getByRole("table", { name: "User access records" })).toHaveTextContent(
-      "HMS Admin"
+      "HMS_ADMIN"
     );
 
     await user.click(screen.getByRole("button", { name: "Devices" }));
     expect(await screen.findByRole("heading", { name: "Devices" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Registered Devices" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Sync Health" })).toBeVisible();
+    expect(screen.getByRole("table", { name: "Device records" })).toHaveTextContent("field-tablet-01");
     expect(screen.getByRole("table", { name: "Device records" })).toHaveTextContent(
-      "Field Tablet 01"
-    );
-    expect(screen.getByRole("table", { name: "Device records" })).toHaveTextContent(
-      "Offline Ready"
+      "Active"
     );
   });
 
@@ -1792,7 +1361,7 @@ describe("App", () => {
   });
 
   it("opens remaining topbar menus and applies global search navigation", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);
@@ -1839,7 +1408,7 @@ describe("App", () => {
   });
 
   it("uses working filter summaries and download actions", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+    vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();
     const objectUrl = "blob:hms-export";
     const createObjectURL = vi.fn().mockReturnValue(objectUrl);

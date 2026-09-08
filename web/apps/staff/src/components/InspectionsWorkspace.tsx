@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 
 import { InspectionDetail } from "./InspectionDetail";
+import { InspectionBookingForm } from "./InspectionBookingForm";
 import { InspectionForm } from "./InspectionForm";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
 import {
@@ -50,11 +51,15 @@ function countByStatus(inspections: InspectionRecord[], status: string) {
 
 export function InspectionsWorkspace({
   canApprove,
+  canApproveBookings,
+  canBook,
   canWrite,
   initialInspectionId,
   onInitialInspectionOpened
 }: {
   canApprove: boolean;
+  canApproveBookings: boolean;
+  canBook: boolean;
   canWrite: boolean;
   initialInspectionId?: string | null;
   onInitialInspectionOpened?: () => void;
@@ -143,6 +148,50 @@ export function InspectionsWorkspace({
             <strong>{attentionCount}</strong>
           </div>
         </div>
+        <div className="inspection-bookings-heading">
+          <div>
+            <h3>Inspection bookings</h3>
+            <p>Schedule site visits before the per-asset inspection work begins.</p>
+          </div>
+          {canBook ? (
+            <button className="secondary-button" onClick={workspace.openBooking} type="button">
+              Book inspection
+            </button>
+          ) : null}
+        </div>
+        {workspace.bookings.length ? (
+          <div className="inspection-booking-list" aria-label="Inspection bookings">
+            {workspace.bookings.slice(0, 4).map((booking) => (
+              <article className="inspection-booking-card" key={booking.id}>
+                <div>
+                  <strong>{booking.location.name}</strong>
+                  <span>{booking.customer.name}</span>
+                </div>
+                <div>
+                  <span>{booking.assets.map((asset) => asset.assetNumber).join(", ")}</span>
+                  <time dateTime={booking.scheduledAt}>
+                    {new Date(booking.scheduledAt).toLocaleString()}
+                  </time>
+                </div>
+                <span className={statusClass(booking.status)}>
+                  {booking.status.replace("_", " ")}
+                </span>
+                {canApproveBookings && booking.status === "PENDING_APPROVAL" ? (
+                  <span className="row-actions">
+                    <button onClick={() => void workspace.approveInspectionBooking(booking.id)} type="button">
+                      Approve
+                    </button>
+                    <button onClick={() => void workspace.rejectInspectionBooking(booking.id)} type="button">
+                      Decline
+                    </button>
+                  </span>
+                ) : null}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="inspection-booking-empty">No inspection bookings are scheduled.</p>
+        )}
         <div className="inspection-filter-tabs" role="tablist" aria-label="Inspection status filters">
           {statusFilters.map((filter) => (
             <button
@@ -247,6 +296,14 @@ export function InspectionsWorkspace({
           open={workspace.isFormOpen}
           onClose={() => workspace.setFormOpen(false)}
           onSubmit={workspace.saveInspection}
+        />
+      ) : null}
+      {canBook ? (
+        <InspectionBookingForm
+          assetOptions={workspace.assetOptions}
+          open={workspace.isBookingFormOpen}
+          onClose={() => workspace.setBookingFormOpen(false)}
+          onSubmit={workspace.saveInspectionBooking}
         />
       ) : null}
     </section>

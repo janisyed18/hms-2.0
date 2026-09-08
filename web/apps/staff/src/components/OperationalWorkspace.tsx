@@ -17,10 +17,9 @@ import type { KeyboardEvent, ReactNode } from "react";
 
 import {
   createHmsClient,
-  HmsApiError,
-  loadAuditEventsWithFallback
+  HmsApiError
 } from "../api/hmsClient";
-import type { AuditEventRecord, DashboardRecord, DataSource } from "../domain/types";
+import type { AuditEventRecord, DashboardRecord } from "../domain/types";
 import { PresencePanel, StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { motionTokens } from "../motion/motionTokens";
 import { formatDateTime } from "../utils/dateTime";
@@ -36,7 +35,6 @@ interface OperationalWorkspaceProps {
   module: OperationalModule;
   onAssetOpen: (assetId: string) => void;
   onModuleChange: (module: AppModule, inspectionId?: string) => void;
-  source: DataSource;
 }
 
 const syncRows = [
@@ -51,11 +49,9 @@ export function OperationalWorkspace({
   canEscalate,
   module,
   onAssetOpen,
-  onModuleChange,
-  source
+  onModuleChange
 }: OperationalWorkspaceProps) {
   const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>([]);
-  const [auditSource, setAuditSource] = useState<DataSource>(source);
   const [auditError, setAuditError] = useState<string | null>(null);
   const [overduePage, setOverduePage] = useState(1);
   const [overduePageSize, setOverduePageSize] = useState(overduePageSizes[0]);
@@ -75,13 +71,12 @@ export function OperationalWorkspace({
 
     let active = true;
     setAuditError(null);
-    loadAuditEventsWithFallback({ sort: "-sequence" })
+    createHmsClient().listAuditEvents({ sort: "-sequence" })
       .then((result) => {
         if (!active) {
           return;
         }
         setAuditEvents(result.items);
-        setAuditSource(result.source);
       })
       .catch((error: unknown) => {
         if (active) {
@@ -148,7 +143,7 @@ export function OperationalWorkspace({
 
   if (module === "audit") {
     const auditRows = auditEvents.map((event) => [
-      auditSource === "mock" ? formatAuditAction(event.action) : event.action,
+      formatAuditAction(event.action),
       event.actorId,
       `${event.entity}:${event.entityId}`,
       formatDateTime(event.timestamp)

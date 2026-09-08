@@ -22,6 +22,7 @@ class Permission(StrEnum):
     CUSTOMER_WRITE = "customer:write"
     ASSET_READ = "asset:read"
     ASSET_WRITE = "asset:write"
+    INSPECTION_BOOK = "inspection:book"
     INSPECTION_WRITE = "inspection:write"
     CERTIFICATE_APPROVE = "certificate:approve"
     REFERENCE_ADMIN = "reference:admin"
@@ -38,6 +39,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.CUSTOMER_WRITE,
             Permission.ASSET_READ,
             Permission.ASSET_WRITE,
+            Permission.INSPECTION_BOOK,
             Permission.REFERENCE_ADMIN,
             Permission.USER_ADMIN,
             Permission.DEVICE_ADMIN,
@@ -69,6 +71,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         {
             Permission.CUSTOMER_READ,
             Permission.ASSET_READ,
+            Permission.INSPECTION_BOOK,
         }
     ),
 }

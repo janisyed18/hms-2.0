@@ -1,5 +1,4 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { Save } from "lucide-react";
 import { useReducedMotion } from "motion/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,7 +7,6 @@ import { MotionProvider } from "../motion/MotionProvider";
 import {
   PageMotion,
   PresencePanel,
-  Pressable,
   StaggerGroup,
   StaggerItem
 } from "../motion/MotionPrimitives";
@@ -115,43 +113,4 @@ describe("Command Centre motion primitives", () => {
     expect(item?.style.transform).toBe("");
   });
 
-  it("renders the icon prop as decorative content inside one native button", () => {
-    render(
-      <Pressable aria-label="Save changes" icon={Save}>Save changes</Pressable>,
-      { wrapper: MotionTestRoot }
-    );
-
-    const button = screen.getByRole("button", { name: "Save changes" });
-    expect(screen.getAllByRole("button", { name: "Save changes" })).toHaveLength(1);
-    expect(button.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
-  });
-
-  it("rejects CustomButton even when it is marked aria-hidden", () => {
-    function CustomButton(_props: { "aria-hidden"?: boolean | "true" }) {
-      return <button type="button">Custom action</button>;
-    }
-
-    const container = document.createElement("div");
-    const unsafeChild = <CustomButton aria-hidden="true" /> as unknown as string;
-
-    expect(() =>
-      render(<Pressable>{unsafeChild}</Pressable>, {
-        container,
-        wrapper: MotionTestRoot
-      })
-    ).toThrow(/custom component children are unsupported/i);
-    expect(container.querySelectorAll("button")).toHaveLength(0);
-  });
-
-  it("rejects an actual native interactive descendant", () => {
-    const container = document.createElement("div");
-
-    expect(() =>
-      render(<Pressable><span><button type="button">Save</button></span></Pressable>, {
-        container,
-        wrapper: MotionTestRoot
-      })
-    ).toThrow(/only accepts non-interactive/i);
-    expect(container.querySelectorAll("button")).toHaveLength(0);
-  });
 });

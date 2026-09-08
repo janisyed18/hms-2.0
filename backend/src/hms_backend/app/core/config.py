@@ -8,7 +8,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
-    app_name: str = "BAT Engineering HMS 2.0 API"
     environment: str = "local"
     database_url: str = "sqlite+aiosqlite:///./hms_dev.db"
 
@@ -62,7 +61,6 @@ class Settings(BaseSettings):
     bulk_certificate_max_items: int = 1000
 
     # --- Notifications (spec: Notifications & Alerting) ---
-    notifications_enabled: bool = True
     # "console" logs messages (dev default); "live" uses email + Twilio.
     notification_channel_mode: str = "console"
     notification_sender_name: str = "BAT Engineering"
@@ -74,7 +72,6 @@ class Settings(BaseSettings):
     retest_overdue_escalation_days: list[int] = Field(
         default_factory=lambda: [7, 14, 30]
     )
-    condemnation_advance_days: list[int] = Field(default_factory=lambda: [60, 30])
     phone_verification_ttl_seconds: int = 600
     phone_verification_max_attempts: int = 5
     # Shared secret gating provider delivery webhooks (Twilio status callbacks,
@@ -114,7 +111,6 @@ class Settings(BaseSettings):
     auth_bearer_audience: str | None = None
     auth_access_token_ttl_seconds: int = 3600
     auth_password_login_enabled: bool = True
-    staff_web_public_url: str = "http://127.0.0.1:8080"
 
     # External OIDC provider (oidc mode). JWKS is discovered from the issuer's
     # ``/.well-known/openid-configuration`` unless a JWKS URL is given directly.

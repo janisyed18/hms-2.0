@@ -132,6 +132,35 @@ async def test_idempotent_without_reset_and_rotates_with_reset(
 
 
 @pytest.mark.asyncio
+async def test_reuses_seed_identity_when_email_was_renamed(
+    session: AsyncSession,
+) -> None:
+    session.add(
+        User(
+            oidc_subject="seed:super_admin",
+            email="renamed-super-admin@example.test",
+            role=Role.SUPER_ADMIN.value,
+            password_hash="existing-hash",
+            must_change_password=False,
+            account_status="ACTIVE",
+            email_verified=True,
+        )
+    )
+    await session.flush()
+
+    accounts = await seed_auth_test_accounts(session, environment="local")
+
+    renamed = await session.scalar(
+        select(User).where(User.email == "super.admin@example.test")
+    )
+    assert renamed is not None
+    assert renamed.oidc_subject == "seed:super_admin"
+    assert renamed.password_hash == "existing-hash"
+    assert accounts[0].created is False
+    assert accounts[0].temporary_password is None
+
+
+@pytest.mark.asyncio
 async def test_credentials_table_lists_every_account_and_never_writes_a_file(
     session: AsyncSession,
 ) -> None:
@@ -141,4 +170,4 @@ async def test_credentials_table_lists_every_account_and_never_writes_a_file(
         assert account.email in table
         assert account.temporary_password is not None
         assert account.temporary_password in table
-    assert "MFA enrollment" in table
+    assert "password change" in table
