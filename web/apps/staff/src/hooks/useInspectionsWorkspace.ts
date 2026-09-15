@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
-import type { AssetRecord, InspectionBookingCreateValues, InspectionBookingRecord, InspectionCreateValues, InspectionRecord, InspectionStatus, InspectionType, InspectionUpdateValues } from "../domain/types";
+import type { AdminUserRecord, AssetRecord, InspectionBookingCreateValues, InspectionBookingRecord, InspectionCreateValues, InspectionRecord, InspectionStatus, InspectionType, InspectionUpdateValues } from "../domain/types";
 
 export type InspectionStatusFilter = "ALL" | InspectionStatus;
 export type InspectionTypeFilter = "ALL" | InspectionType;
 
-export function useInspectionsWorkspace(initialInspectionId?: string | null, onInitialInspectionOpened?: () => void) {
+export function useInspectionsWorkspace(
+  canApproveBookings: boolean,
+  initialInspectionId?: string | null,
+  onInitialInspectionOpened?: () => void
+) {
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [bookings, setBookings] = useState<InspectionBookingRecord[]>([]);
+  const [inspectors, setInspectors] = useState<AdminUserRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -24,15 +29,24 @@ export function useInspectionsWorkspace(initialInspectionId?: string | null, onI
     let active = true;
     const client = createHmsClient();
     setIsLoading(true); setError(null);
-    void Promise.all([client.listInspections({ sort: "-created_at" }), client.listAssets({ sort: "asset_number" }), client.listInspectionBookings()])
-      .then(([inspectionResult, assetResult, bookingResult]) => {
+    void Promise.all([
+      client.listInspections({ sort: "-created_at" }),
+      client.listAssets({ sort: "asset_number" }),
+      client.listInspectionBookings()
+    ])
+      .then(async ([inspectionResult, assetResult, bookingResult]) => {
+        const userResult = canApproveBookings
+          && bookingResult.items.some((booking) => booking.status === "PENDING_APPROVAL")
+            ? await client.listAdminUsers({ sort: "email", limit: 100 })
+            : { items: [] as AdminUserRecord[] };
         if (!active) return;
         setInspections(inspectionResult.items); setAssets(assetResult.items); setBookings(bookingResult.items);
+        setInspectors(userResult.items.filter((user) => user.role === "INSPECTOR" && user.accountStatus === "ACTIVE"));
       })
       .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Inspection records could not be loaded."); })
       .finally(() => { if (active) setIsLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [canApproveBookings]);
 
   const visibleInspections = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -52,7 +66,18 @@ export function useInspectionsWorkspace(initialInspectionId?: string | null, onI
   }, [initialInspectionId, inspections, onInitialInspectionOpened]);
 
   function openCreate() { setFormOpen(true); }
-  function openBooking() { setBookingFormOpen(true); }
+  async function openBooking() {
+    if (canApproveBookings && inspectors.length === 0) {
+      try {
+        const users = await createHmsClient().listAdminUsers({ sort: "email", limit: 100 });
+        setInspectors(users.items.filter((user) => user.role === "INSPECTOR" && user.accountStatus === "ACTIVE"));
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "Inspectors could not be loaded.");
+        return;
+      }
+    }
+    setBookingFormOpen(true);
+  }
   function openDetail(inspection: InspectionRecord) { setSelectedId(inspection.id); }
   function closeDetail() { setSelectedId(null); }
   function replaceInspection(updated: InspectionRecord) { setInspections((current) => current.map((inspection) => inspection.id === updated.id ? updated : inspection)); setSelectedId(updated.id); }
@@ -65,8 +90,8 @@ export function useInspectionsWorkspace(initialInspectionId?: string | null, onI
     setBookings((current) => [saved, ...current]);
     setBookingFormOpen(false);
   }
-  async function approveInspectionBooking(id: string) {
-    const saved = await createHmsClient().approveInspectionBooking(id);
+  async function approveInspectionBooking(id: string, inspectorUserId: string) {
+    const saved = await createHmsClient().approveInspectionBooking(id, inspectorUserId);
     setBookings((current) => current.map((booking) => booking.id === saved.id ? saved : booking));
     const inspections = await createHmsClient().listInspections({ sort: "-created_at" });
     setInspections(inspections.items);
@@ -89,5 +114,5 @@ export function useInspectionsWorkspace(initialInspectionId?: string | null, onI
   }
   function clearInspectionFilters() { setTypeFilter("ALL"); setResultFilter("ALL"); }
   const activeFilterCount = [typeFilter !== "ALL", resultFilter !== "ALL"].filter(Boolean).length;
-  return { activeFilterCount, approveInspection, approveInspectionBooking, assetOptions: assets, bookings, clearInspectionFilters, closeDetail, error, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, query, rejectInspectionBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
+  return { activeFilterCount, approveInspection, approveInspectionBooking, assetOptions: assets, bookings, clearInspectionFilters, closeDetail, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, query, rejectInspectionBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
 }

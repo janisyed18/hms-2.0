@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useReducedMotionConfig } from "motion/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import App from "../App";
+import App, { CustomerPortalApp } from "../App";
 import type { BrowserAuthClient } from "../auth/authClient";
 import { BrowserAuthError } from "../auth/authTypes";
 import { MotionProvider } from "../motion/MotionProvider";
@@ -15,6 +15,16 @@ const ME = {
   roles: ["SUPER_ADMIN"],
   permissions: ["asset:read", "user:admin"],
   customer_ids: []
+};
+
+const CUSTOMER_ME = {
+  ...ME,
+  user_id: "customer-1",
+  email: "customer@example.com",
+  display_name: "Customer User",
+  roles: ["CUSTOMER_USER"],
+  permissions: ["customer:read", "asset:read", "inspection:book"],
+  customer_ids: ["customer-1"]
 };
 
 function fakeClient(overrides: Partial<BrowserAuthClient> = {}): BrowserAuthClient {
@@ -116,5 +126,28 @@ describe("App auth gating", () => {
       expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument()
     );
     expect(client.logout).toHaveBeenCalled();
+  });
+
+  it("allows customer users into the portal and rejects staff-only sessions", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Backend unavailable")));
+    const authenticated = {
+      next_step: "AUTHENTICATED" as const,
+      access_token: "access-1",
+      token_type: "bearer" as const,
+      expires_in: 900
+    };
+    const customerClient = fakeClient({
+      refresh: vi.fn().mockResolvedValue(authenticated),
+      me: vi.fn().mockResolvedValue(CUSTOMER_ME)
+    });
+    const { unmount } = render(<MotionProvider><CustomerPortalApp authClient={customerClient} /></MotionProvider>);
+    expect(await screen.findByRole("heading", { name: "Customer Portal" })).toBeVisible();
+    unmount();
+
+    const staffClient = fakeClient({
+      refresh: vi.fn().mockResolvedValue(authenticated)
+    });
+    render(<MotionProvider><CustomerPortalApp authClient={staffClient} /></MotionProvider>);
+    expect(await screen.findByText("Customer portal access required")).toBeVisible();
   });
 });

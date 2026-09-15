@@ -48,8 +48,9 @@ but are not complete enough to treat as migrated:
   editable/viewable in the staff form and customer detail.
 - Asset notes are stored in the asset model, exposed by the API, and
   editable/viewable in the staff form and asset detail.
-- Customer portal users are still not modeled as a real identity/user linkage;
-  the current user/devices UI is administrative scaffolding.
+- Customer portal access uses the existing customer-scoped identity linkage and
+  role-enforced API filters. The portal is served as a dedicated `/portal/`
+  entry point within the staff distribution.
 - Asset copy reuses the existing create endpoint from the asset detail view,
   preserving configuration while requiring a fresh serial number.
 - Asset inspection/certificate history is exposed from the existing asset

@@ -12,6 +12,7 @@ __pycache__/
 *.sqlite
 *.db
 dist/
+dist-portal/
 build/
 node_modules/
 .superpowers/

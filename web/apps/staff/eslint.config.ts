@@ -2,7 +2,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "node_modules/**", "coverage/**", "vite.config.ts"] },
+  { ignores: ["dist/**", "dist-portal/**", "node_modules/**", "coverage/**", "vite.config.ts"] },
   ...tseslint.configs.recommended,
   reactHooks.configs.flat.recommended,
   {

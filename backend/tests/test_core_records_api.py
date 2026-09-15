@@ -25,6 +25,7 @@ from hms_backend.app.modules.customers.models import (
     CustomerContact,
     CustomerLocation,
 )
+from hms_backend.app.modules.identity.models import AccountStatus, User
 from hms_backend.app.modules.inspections.models import (
     Inspection,
     InspectionStatus,
@@ -2645,6 +2646,14 @@ async def test_customer_booking_approval_creates_per_asset_drafts(
             lifecycle_status=AssetLifecycleStatus.IN_SERVICE.value,
         )
         session.add(second_asset)
+        inspector = User(
+            id="inspector-1",
+            oidc_subject="local:inspector-1",
+            email="inspector@example.test",
+            role=Role.INSPECTOR.value,
+            account_status=AccountStatus.ACTIVE.value,
+        )
+        session.add(inspector)
         await session.commit()
         second_asset_id = second_asset.id
 
@@ -2690,18 +2699,20 @@ async def test_customer_booking_approval_creates_per_asset_drafts(
     )
     async with api_client(session_factory, admin) as client:
         approval_response = await client.post(
-            f"/api/v1/inspection-bookings/{booking['id']}/approve"
+            f"/api/v1/inspection-bookings/{booking['id']}/approve",
+            json={"inspector_user_id": "inspector-1"},
         )
 
     assert approval_response.status_code == 200
     assert approval_response.json()["status"] == "APPROVED"
+    assert approval_response.json()["inspector_user_id"] == "inspector-1"
 
     async with api_client(session_factory, admin) as client:
         inspections_response = await client.get("/api/v1/inspections")
 
     assert inspections_response.status_code == 200
     inspection_items = inspections_response.json()["items"]
-    assert {item["inspector_user_id"] for item in inspection_items} == {None}
+    assert {item["inspector_user_id"] for item in inspection_items} == {"inspector-1"}
 
     async with session_factory() as session:
         inspections = (
@@ -2715,7 +2726,9 @@ async def test_customer_booking_approval_creates_per_asset_drafts(
         assert {inspection.status for inspection in inspections} == {
             InspectionStatus.DRAFT.value
         }
-        assert {inspection.inspector_user_id for inspection in inspections} == {None}
+        assert {inspection.inspector_user_id for inspection in inspections} == {
+            "inspector-1"
+        }
         events = (
             await session.scalars(
                 select(OutboxEvent)

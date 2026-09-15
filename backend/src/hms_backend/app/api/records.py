@@ -46,6 +46,7 @@ from hms_backend.app.api.schemas import (
     DashboardRetestRead,
     DashboardReviewRead,
     InspectionAssetSummary,
+    InspectionBookingApproval,
     InspectionBookingCreate,
     InspectionBookingListResponse,
     InspectionBookingRead,
@@ -111,6 +112,7 @@ from hms_backend.app.modules.customers.models import (
     CustomerContact,
     CustomerLocation,
 )
+from hms_backend.app.modules.identity.models import AccountStatus, User
 from hms_backend.app.modules.inspections.models import (
     Inspection,
     InspectionBooking,
@@ -1819,6 +1821,21 @@ async def create_inspection_booking(
         )
 
     requested_by_customer = is_customer_scoped(principal)
+    if requested_by_customer and payload.inspector_user_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Customers cannot assign an inspector",
+        )
+    if not requested_by_customer and not payload.inspector_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="An active inspector is required for an approved booking",
+        )
+    inspector = (
+        await _get_active_inspector_or_422(session, payload.inspector_user_id)
+        if payload.inspector_user_id
+        else None
+    )
     booking = InspectionBooking(
         customer=customer,
         location=location,
@@ -1830,6 +1847,7 @@ async def create_inspection_booking(
             else InspectionBookingStatus.APPROVED.value
         ),
         requested_by_user_id=principal.user_id,
+        inspector_user_id=inspector.id if inspector else None,
         reviewed_by_user_id=None if requested_by_customer else principal.user_id,
         reviewed_at=None if requested_by_customer else utc_now(),
     )
@@ -1879,6 +1897,7 @@ async def create_inspection_booking(
 )
 async def approve_inspection_booking(
     booking_id: str,
+    payload: InspectionBookingApproval,
     session: SessionDep,
     principal: PrincipalDep,
 ) -> InspectionBookingRead:
@@ -1896,8 +1915,10 @@ async def approve_inspection_booking(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only pending inspection bookings can be approved",
         )
+    inspector = await _get_active_inspector_or_422(session, payload.inspector_user_id)
     before = booking.to_audit_dict()
     booking.status = InspectionBookingStatus.APPROVED.value
+    booking.inspector_user_id = inspector.id
     booking.reviewed_by_user_id = principal.user_id
     booking.reviewed_at = utc_now()
     await record_update(
@@ -3056,6 +3077,23 @@ async def _get_visible_customer_or_404(
     return customer
 
 
+async def _get_active_inspector_or_422(
+    session: AsyncSession, inspector_user_id: str
+) -> User:
+    inspector = await session.get(User, inspector_user_id)
+    if (
+        inspector is None
+        or inspector.deleted_at is not None
+        or inspector.role != "INSPECTOR"
+        or inspector.account_status != AccountStatus.ACTIVE.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Inspector must be an active Inspector account",
+        )
+    return inspector
+
+
 async def _get_visible_customer_location_or_404(
     session: AsyncSession,
     customer_id: str,
@@ -3589,6 +3627,7 @@ def _inspection_booking_read(booking: InspectionBooking) -> InspectionBookingRea
         additional_information=booking.additional_information,
         status=booking.status,
         requested_by_user_id=booking.requested_by_user_id,
+        inspector_user_id=booking.inspector_user_id,
         reviewed_by_user_id=booking.reviewed_by_user_id,
         reviewed_at=booking.reviewed_at,
         rejection_reason=booking.rejection_reason,
@@ -3608,7 +3647,7 @@ async def _create_booking_inspections(
             asset=booking_asset.asset,
             inspection_type="SERVICE",
             status=InspectionStatus.DRAFT.value,
-            inspector_user_id=None,
+            inspector_user_id=booking.inspector_user_id,
         )
         session.add(inspection)
         await record_create(

@@ -1133,6 +1133,15 @@ function handler(event) {
   var request = event.request;
   var uri = request.uri;
 
+  if (uri === '/portal' || uri === '/portal/') {
+    request.uri = '/portal/index.html';
+    return request;
+  }
+  if (uri.startsWith('/portal/') && !uri.substring('/portal/'.length).includes('.')) {
+    request.uri = '/portal/index.html';
+    return request;
+  }
+
   if (uri.startsWith('/api/') || uri.startsWith('/health')) {
     return request;
   }

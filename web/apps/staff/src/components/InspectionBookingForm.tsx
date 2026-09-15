@@ -2,12 +2,15 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 
 import type {
+  AdminUserRecord,
   AssetRecord,
   InspectionBookingCreateValues
 } from "../domain/types";
 
 interface InspectionBookingFormProps {
   assetOptions: AssetRecord[];
+  inspectors: AdminUserRecord[];
+  requiresInspector: boolean;
   open: boolean;
   onClose: () => void;
   onSubmit: (values: InspectionBookingCreateValues) => Promise<void>;
@@ -15,6 +18,8 @@ interface InspectionBookingFormProps {
 
 export function InspectionBookingForm({
   assetOptions,
+  inspectors,
+  requiresInspector,
   open,
   onClose,
   onSubmit
@@ -36,6 +41,7 @@ export function InspectionBookingForm({
   const [assetIds, setAssetIds] = useState<string[]>([]);
   const [scheduledAt, setScheduledAt] = useState("");
   const [additionalInformation, setAdditionalInformation] = useState("");
+  const [inspectorUserId, setInspectorUserId] = useState("");
   const [isSubmitting, setSubmitting] = useState(false);
   const availableAssets = useMemo(
     () => assetOptions.filter((asset) => asset.location?.id === locationId),
@@ -54,6 +60,7 @@ export function InspectionBookingForm({
     );
     setScheduledAt("");
     setAdditionalInformation("");
+    setInspectorUserId("");
   }, [assetOptions, locations, open]);
 
   if (!open) return null;
@@ -87,7 +94,8 @@ export function InspectionBookingForm({
         locationId,
         assetIds,
         scheduledAt: new Date(scheduledAt).toISOString(),
-        additionalInformation: additionalInformation.trim() || null
+        additionalInformation: additionalInformation.trim() || null,
+        inspectorUserId: requiresInspector ? inspectorUserId : null
       });
     } finally {
       setSubmitting(false);
@@ -126,6 +134,24 @@ export function InspectionBookingForm({
             ))}
           </select>
         </label>
+        {requiresInspector ? (
+          <label>
+            <span>Assigned inspector</span>
+            <select
+              aria-label="Assigned inspector"
+              required
+              value={inspectorUserId}
+              onChange={(event) => setInspectorUserId(event.target.value)}
+            >
+              <option value="">Select an inspector</option>
+              {inspectors.map((inspector) => (
+                <option key={inspector.id} value={inspector.id}>
+                  {inspector.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <fieldset className="booking-asset-list">
           <legend>Assets</legend>
           {availableAssets.map((asset) => (
@@ -164,7 +190,7 @@ export function InspectionBookingForm({
           </button>
           <button
             className="primary-button"
-            disabled={isSubmitting || assetIds.length === 0}
+            disabled={isSubmitting || assetIds.length === 0 || (requiresInspector && !inspectorUserId)}
             type="submit"
           >
             {isSubmitting ? "Saving..." : "Create booking"}

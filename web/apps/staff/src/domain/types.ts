@@ -542,6 +542,7 @@ export interface InspectionBookingRecord {
   additionalInformation: string | null;
   status: InspectionBookingStatus;
   requestedByUserId: string;
+  inspectorUserId: string | null;
   reviewedByUserId: string | null;
   reviewedAt: string | null;
   rejectionReason: string | null;
@@ -554,6 +555,7 @@ export interface InspectionBookingCreateValues {
   assetIds: string[];
   scheduledAt: string;
   additionalInformation: string | null;
+  inspectorUserId?: string | null;
 }
 
 export interface InspectionCreateValues {

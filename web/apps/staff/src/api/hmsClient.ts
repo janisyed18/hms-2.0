@@ -358,6 +358,7 @@ interface ApiInspectionBooking {
   additional_information: string | null;
   status: InspectionBookingStatus;
   requested_by_user_id: string;
+  inspector_user_id: string | null;
   reviewed_by_user_id: string | null;
   reviewed_at: string | null;
   rejection_reason: string | null;
@@ -1020,6 +1021,7 @@ function toInspectionBooking(booking: ApiInspectionBooking): InspectionBookingRe
     additionalInformation: booking.additional_information,
     status: booking.status,
     requestedByUserId: booking.requested_by_user_id,
+    inspectorUserId: booking.inspector_user_id,
     reviewedByUserId: booking.reviewed_by_user_id,
     reviewedAt: booking.reviewed_at,
     rejectionReason: booking.rejection_reason,
@@ -1673,17 +1675,21 @@ export function createHmsClient(options: HmsClientOptions = {}) {
             location_id: values.locationId,
             asset_ids: values.assetIds,
             scheduled_at: values.scheduledAt,
-            additional_information: values.additionalInformation
+            additional_information: values.additionalInformation,
+            ...(values.inspectorUserId ? { inspector_user_id: values.inspectorUserId } : {})
           })
         }
       );
       return toInspectionBooking(response.data);
     },
 
-    async approveInspectionBooking(id: string): Promise<InspectionBookingRecord> {
+    async approveInspectionBooking(
+      id: string,
+      inspectorUserId: string
+    ): Promise<InspectionBookingRecord> {
       const response = await request<ApiInspectionBooking>(
         `/api/v1/inspection-bookings/${encodeURIComponent(id)}/approve`,
-        { method: "POST" }
+        { method: "POST", body: JSON.stringify({ inspector_user_id: inspectorUserId }) }
       );
       return toInspectionBooking(response.data);
     },

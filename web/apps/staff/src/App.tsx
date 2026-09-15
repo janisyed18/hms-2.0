@@ -183,6 +183,7 @@ interface AppProps {
 interface HmsAppProps {
   session: StaffSession;
   onLogout?: () => void;
+  portalMode?: boolean;
 }
 
 function isOperationalModule(module: AppModule): module is OperationalModule {
@@ -223,7 +224,34 @@ function AuthGate() {
   );
 }
 
-export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
+export function CustomerPortalApp({ authClient }: Pick<AppProps, "authClient">) {
+  return (
+    <AuthProvider client={authClient}>
+      <Suspense fallback={<WorkspaceState title="Loading portal" tone="loading">Preparing your customer workspace.</WorkspaceState>}>
+        <CustomerPortalGate />
+      </Suspense>
+    </AuthProvider>
+  );
+}
+
+function CustomerPortalGate() {
+  const { state, logout } = useAuth();
+  return (
+    <AuthFlow>
+      {state.status === "authenticated" ? (
+        state.session.roles.includes("CUSTOMER_USER") ? (
+          <HmsApp portalMode session={state.session} onLogout={() => void logout()} />
+        ) : (
+          <WorkspaceState title="Customer portal access required" tone="error">
+            This account is not assigned to a customer portal workspace.
+          </WorkspaceState>
+        )
+      ) : null}
+    </AuthFlow>
+  );
+}
+
+export function HmsApp({ session: providedSession, onLogout, portalMode = false }: HmsAppProps) {
   const [activeModule, setActiveModule] = useState<AppModule>("dashboard");
   const [pendingAssetId, setPendingAssetId] = useState<string | null>(null);
   const [pendingInspectionId, setPendingInspectionId] = useState<string | null>(null);
@@ -235,7 +263,9 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
   const renderedActiveModule = visibleModules.includes(activeModule)
     ? activeModule
     : visibleModules[0] ?? "dashboard";
-  const activeCopy = moduleCopy[renderedActiveModule];
+  const activeCopy = portalMode
+    ? customerPortalCopy[renderedActiveModule] ?? moduleCopy[renderedActiveModule]
+    : moduleCopy[renderedActiveModule];
   const canCreateAsset = hasPermission(session, "asset:write");
 
   useEffect(() => {
@@ -406,6 +436,33 @@ export function HmsApp({ session: providedSession, onLogout }: HmsAppProps) {
     </AppShell>
   );
 }
+
+const customerPortalCopy: Partial<Record<AppModule, { title: string; description: string }>> = {
+  dashboard: {
+    title: "Customer Portal",
+    description: "Your fleet status, upcoming work, and service activity"
+  },
+  customers: {
+    title: "Your Organisation",
+    description: "Your approved locations, contacts, and site requirements"
+  },
+  assets: {
+    title: "Asset Register",
+    description: "Hose assemblies assigned to your organisation"
+  },
+  inspections: {
+    title: "Inspections",
+    description: "Request site inspections and follow their progress"
+  },
+  certificates: {
+    title: "Certificates",
+    description: "View certificates issued for your fleet"
+  },
+  retest: {
+    title: "Retest Schedule",
+    description: "Plan work around upcoming retest due dates"
+  }
+};
 
 function normaliseSession(session: StaffSession): StaffSession {
   const permissions = new Set<StaffPermission>(session.permissions);

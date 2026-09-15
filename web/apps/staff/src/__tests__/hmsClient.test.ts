@@ -180,6 +180,7 @@ const apiInspectionBooking = {
   additional_information: "Access via gate three.",
   status: "PENDING_APPROVAL",
   requested_by_user_id: "customer-user-1",
+  inspector_user_id: null,
   reviewed_by_user_id: null,
   reviewed_at: null,
   rejection_reason: null,
@@ -1026,7 +1027,7 @@ describe("hmsClient", () => {
       scheduledAt: "2026-10-02T10:30:00Z",
       additionalInformation: "Access via gate three."
     });
-    const approved = await client.approveInspectionBooking("booking-api-1");
+    const approved = await client.approveInspectionBooking("booking-api-1", "inspector-api-1");
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -1050,7 +1051,10 @@ describe("hmsClient", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
       "/api/v1/inspection-bookings/booking-api-1/approve",
-      expect.objectContaining({ method: "POST" })
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ inspector_user_id: "inspector-api-1" })
+      })
     );
     expect(bookings.items[0]).toMatchObject({
       status: "PENDING_APPROVAL",

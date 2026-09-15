@@ -63,6 +63,9 @@ class InspectionBooking(SyncableMixin, Base):
         default=InspectionBookingStatus.PENDING_APPROVAL.value,
     )
     requested_by_user_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    inspector_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=True, index=True
+    )
     reviewed_by_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

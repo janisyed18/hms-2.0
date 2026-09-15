@@ -407,6 +407,11 @@ class InspectionBookingCreate(BaseModel):
     asset_ids: list[str] = Field(min_length=1)
     scheduled_at: datetime
     additional_information: str | None = None
+    inspector_user_id: str | None = None
+
+
+class InspectionBookingApproval(BaseModel):
+    inspector_user_id: str
 
 
 class InspectionBookingRejectRequest(BaseModel):
@@ -429,6 +434,7 @@ class InspectionBookingRead(BaseModel):
     additional_information: str | None
     status: str
     requested_by_user_id: str
+    inspector_user_id: str | None
     reviewed_by_user_id: str | None
     reviewed_at: datetime | None
     rejection_reason: str | None

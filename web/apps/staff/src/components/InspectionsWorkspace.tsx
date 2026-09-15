@@ -4,6 +4,7 @@ import {
   ClipboardCheck,
   Clock3
 } from "lucide-react";
+import { useState } from "react";
 
 import { InspectionDetail } from "./InspectionDetail";
 import { InspectionBookingForm } from "./InspectionBookingForm";
@@ -64,7 +65,8 @@ export function InspectionsWorkspace({
   initialInspectionId?: string | null;
   onInitialInspectionOpened?: () => void;
 }) {
-  const workspace = useInspectionsWorkspace(initialInspectionId, onInitialInspectionOpened);
+  const workspace = useInspectionsWorkspace(canApproveBookings, initialInspectionId, onInitialInspectionOpened);
+  const [inspectorByBooking, setInspectorByBooking] = useState<Record<string, string>>({});
   const draftCount = countByStatus(workspace.inspections, "DRAFT");
   const submittedCount = countByStatus(workspace.inspections, "SUBMITTED");
   const approvedCount = countByStatus(workspace.inspections, "APPROVED");
@@ -178,8 +180,22 @@ export function InspectionsWorkspace({
                 </span>
                 {canApproveBookings && booking.status === "PENDING_APPROVAL" ? (
                   <span className="row-actions">
-                    <button onClick={() => void workspace.approveInspectionBooking(booking.id)} type="button">
-                      Approve
+                    <select
+                      aria-label={`Assign inspector for ${booking.location.name}`}
+                      value={inspectorByBooking[booking.id] ?? ""}
+                      onChange={(event) => setInspectorByBooking((current) => ({ ...current, [booking.id]: event.target.value }))}
+                    >
+                      <option value="">Assign inspector</option>
+                      {workspace.inspectors.map((inspector) => (
+                        <option key={inspector.id} value={inspector.id}>{inspector.displayName}</option>
+                      ))}
+                    </select>
+                    <button
+                      disabled={!inspectorByBooking[booking.id]}
+                      onClick={() => void workspace.approveInspectionBooking(booking.id, inspectorByBooking[booking.id])}
+                      type="button"
+                    >
+                      Assign & approve
                     </button>
                     <button onClick={() => void workspace.rejectInspectionBooking(booking.id)} type="button">
                       Decline
@@ -301,6 +317,8 @@ export function InspectionsWorkspace({
       {canBook ? (
         <InspectionBookingForm
           assetOptions={workspace.assetOptions}
+          inspectors={workspace.inspectors}
+          requiresInspector={canApproveBookings}
           open={workspace.isBookingFormOpen}
           onClose={() => workspace.setBookingFormOpen(false)}
           onSubmit={workspace.saveInspectionBooking}

@@ -197,6 +197,7 @@ jobs:
           npm ci
           npm test -- --run
           npm run build
+          npm run build:portal
 
       - name: Build inspector app
         working-directory: web/apps/inspector
@@ -212,8 +213,20 @@ jobs:
           aws s3 sync web/apps/staff/dist "s3://$STAFF_BUCKET" \
             --delete \
             --exclude "index.html" \
+            --exclude "portal/*" \
             --cache-control "public,max-age=31536000,immutable"
           aws s3 cp web/apps/staff/dist/index.html "s3://$STAFF_BUCKET/index.html" \
+            --cache-control "no-cache"
+
+      - name: Upload customer portal to S3
+        env:
+          STAFF_BUCKET: ${{ vars.AWS_DEV_STAFF_BUCKET }}
+        run: |
+          aws s3 sync web/apps/staff/dist-portal "s3://$STAFF_BUCKET/portal" \
+            --delete \
+            --exclude "index.html" \
+            --cache-control "public,max-age=31536000,immutable"
+          aws s3 cp web/apps/staff/dist-portal/portal.html "s3://$STAFF_BUCKET/portal/index.html" \
             --cache-control "no-cache"
 
       - name: Upload inspector app to S3

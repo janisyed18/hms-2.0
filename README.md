@@ -83,7 +83,7 @@ services/certificate/     gRPC certificate engine (ReportLab render + pyHanko si
 services/rules/           Rules/standards engine (placeholder)
 web/apps/staff/           React/Vite staff operations console
 web/apps/inspector/       React/Vite field inspector app with local outbox
-web/apps/portal/          Customer portal (placeholder)
+web/apps/staff/portal     Customer portal entry point (customer-scoped staff build)
 infra/                    Terraform + Helm skeletons (placeholder)
 tooling/                  Migration and synthetic-data utilities
 docs/                     Design notes, implementation plans, and decisions
@@ -309,7 +309,6 @@ Not yet built (planned):
 
 - Native Capacitor mobile packaging with encrypted offline storage, biometric
   unlock, and QR/camera capture.
-- Customer portal UI (`web/apps/portal` is a placeholder).
 - Cloud IaC (Terraform/Helm are skeletons) and the OpenTelemetry → Grafana stack.
 - Rules/standards gRPC engine; notification quiet-hours/digest batching (N-08);
   provider delivery webhooks.
