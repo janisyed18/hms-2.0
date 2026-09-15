@@ -2,12 +2,6 @@ name: Deploy AWS Dev
 
 on:
   workflow_dispatch:
-    inputs:
-      apply_spa_routing:
-        description: Apply the CloudFront SPA routing function only
-        required: false
-        type: boolean
-        default: false
   push:
     branches:
       - main
@@ -82,17 +76,6 @@ jobs:
         run: |
           terraform init -backend=false -input=false
           terraform validate
-
-      - name: Apply CloudFront SPA routing
-        if: ${{ inputs.apply_spa_routing }}
-        working-directory: infra/terraform/envs/dev
-        run: |
-          terraform init -reconfigure -input=false
-          terraform apply \
-            -auto-approve \
-            -input=false \
-            -var="aws_profile=" \
-            -target=aws_cloudfront_function.spa_rewrite
 
       - name: Build ECS network configuration
         env:
