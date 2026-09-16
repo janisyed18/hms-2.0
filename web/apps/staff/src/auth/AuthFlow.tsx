@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { QRCodeSVG } from "qrcode.react";
+import { ArrowRight } from "lucide-react";
 
 import { useAuth } from "./AuthProvider";
 import type { AuthState } from "./authTypes";
@@ -17,7 +18,7 @@ function messageOf(state: AuthState): string | undefined {
 
 // --- Sign in --------------------------------------------------------------------
 
-function LoginScreen({ message }: { message?: string }) {
+function LoginScreen({ message, audience }: { message?: string; audience: "staff" | "customer" }) {
   const { login, showForgotPassword } = useAuth();
   const { pending, run } = useAsyncAction();
   const [email, setEmail] = useState("");
@@ -31,9 +32,9 @@ function LoginScreen({ message }: { message?: string }) {
   return (
     <AuthLayout
       title="Welcome back"
-      subtitle="Sign in to continue to your operations workspace."
+      subtitle={audience === "customer" ? "Sign in to your customer workspace." : "Sign in to your operations workspace."}
       error={message}
-      eyebrow="Secure staff sign-in"
+      eyebrow={audience === "customer" ? "Customer portal" : "Staff workspace"}
     >
       <form className="auth-form" onSubmit={submit}>
         <label className="auth-field">
@@ -42,6 +43,9 @@ function LoginScreen({ message }: { message?: string }) {
             type="email"
             name="email"
             autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder="you@company.com"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
             required
@@ -55,7 +59,6 @@ function LoginScreen({ message }: { message?: string }) {
           onChange={setPassword}
         />
         <div className="auth-inline-row">
-          <span className="auth-hint">Use your authorised HMS account.</span>
           <button type="button" className="auth-link" onClick={showForgotPassword}>
             Forgot password?
           </button>
@@ -64,8 +67,10 @@ function LoginScreen({ message }: { message?: string }) {
           className="primary-button auth-submit"
           type="submit"
           disabled={pending || !email.trim() || !password}
+          aria-busy={pending}
         >
           {pending ? "Signing in…" : "Sign in securely"}
+          <ArrowRight aria-hidden="true" size={18} />
         </button>
       </form>
     </AuthLayout>
@@ -488,7 +493,7 @@ function RecoveryCodesScreen({ codes }: { codes: string[] }) {
 
 // --- Router ---------------------------------------------------------------------
 
-export function AuthFlow({ children }: { children?: ReactNode }) {
+export function AuthFlow({ children, audience = "staff" }: { children?: ReactNode; audience?: "staff" | "customer" }) {
   const { state } = useAuth();
   const reducedMotion = useReducedMotion();
   let screen: ReactNode;
@@ -536,11 +541,11 @@ export function AuthFlow({ children }: { children?: ReactNode }) {
       screen = <RecoveryCodesScreen codes={state.recoveryCodes} />;
       break;
     case "expired":
-      screen = <LoginScreen message={state.message} />;
+      screen = <LoginScreen message={state.message} audience={audience} />;
       break;
     case "signed-out":
     default:
-      screen = <LoginScreen message={messageOf(state)} />;
+      screen = <LoginScreen message={messageOf(state)} audience={audience} />;
   }
 
   return (

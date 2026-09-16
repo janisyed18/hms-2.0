@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { Eye, EyeOff, LockKeyhole } from "lucide-react";
+import { ArrowLeft, Eye, EyeOff, LockKeyhole } from "lucide-react";
 import { ZxcvbnFactory } from "@zxcvbn-ts/core";
 import {
   adjacencyGraphs,
@@ -25,12 +25,12 @@ export function useAsyncAction(): {
 } {
   const [pending, setPending] = useState(false);
   const mounted = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
       mounted.current = false;
-    },
-    []
-  );
+    };
+  }, []);
   const run = useCallback(async (fn: () => Promise<void>) => {
     setPending(true);
     try {
@@ -113,6 +113,7 @@ export function PasswordField({
           type="button"
           className="auth-password-toggle"
           aria-label={visible ? "Hide password" : "Show password"}
+          aria-pressed={visible}
           onClick={() => setVisible((current) => !current)}
         >
           {visible ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
@@ -134,51 +135,22 @@ export function AuthLayout({
 }: AuthLayoutProps) {
   return (
     <div className="auth-shell">
+      <header className="auth-brand">
+        <span className="auth-brand-logo-frame">
+          <img alt="Momentum" className="auth-brand-logo" height="500" width="500"
+            src={`${import.meta.env.BASE_URL}brand/momentum-logo.png`} />
+        </span>
+        <span className="auth-brand-product-label">Hose Management System</span>
+      </header>
       <div className="auth-gateway">
-        <aside className="auth-trust" aria-label="Momentum HMS security information">
-          <div>
-            <div className="auth-brand auth-brand-inverted">
-              <span className="auth-brand-logo-frame">
-                <img
-                  alt="Momentum"
-                  className="auth-brand-logo"
-                  height="500"
-                  src="/brand/momentum-logo.png"
-                  width="500"
-                />
-              </span>
-              <span className="auth-brand-product-label">Hose Management System</span>
-            </div>
-            <p className="auth-eyebrow">{eyebrow}</p>
-            <h2 className="auth-trust-title">Confidence in every inspection.</h2>
-            <p className="auth-trust-copy">
-              Manage equipment, inspections, certificates, and customer records from one controlled workspace.
-            </p>
-          </div>
-          <div className="auth-trust-note">
-            <LockKeyhole aria-hidden="true" size={16} />
-            <span>Protected access for authorised HMS teams</span>
-          </div>
-        </aside>
         <main className="auth-card">
           {backAction ? (
             <button type="button" className="auth-back" onClick={backAction}>
-              <span aria-hidden="true">←</span> {backLabel}
+              <ArrowLeft aria-hidden="true" size={16} /> {backLabel}
             </button>
           ) : null}
-          <div className="auth-mobile-brand auth-brand">
-            <span className="auth-brand-logo-frame">
-              <img
-                alt="Momentum"
-                className="auth-brand-logo"
-                height="500"
-                src="/brand/momentum-logo.png"
-                width="500"
-              />
-            </span>
-            <span className="auth-brand-product-label">Hose Management System</span>
-          </div>
           <div className="auth-heading">
+            <p className="auth-eyebrow">{eyebrow}</p>
             <h1 className="auth-title">{title}</h1>
             {subtitle ? <p className="auth-subtitle">{subtitle}</p> : null}
           </div>
@@ -191,6 +163,10 @@ export function AuthLayout({
           {footer ? <div className="auth-footer">{footer}</div> : null}
         </main>
       </div>
+      <footer className="auth-trust-note">
+        <LockKeyhole aria-hidden="true" size={14} />
+        <span>Authorised access only</span>
+      </footer>
     </div>
   );
 }

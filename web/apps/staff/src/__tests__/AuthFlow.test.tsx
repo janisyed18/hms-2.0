@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { AuthFlow } from "../auth/AuthFlow";
@@ -34,13 +35,15 @@ function fakeClient(overrides: Partial<BrowserAuthClient> = {}): BrowserAuthClie
   } as unknown as BrowserAuthClient;
 }
 
-function renderFlow(client: BrowserAuthClient) {
+function renderFlow(client: BrowserAuthClient, audience: "staff" | "customer" = "staff") {
   return render(
-    <AuthProvider client={client}>
-      <AuthFlow>
-        <div data-testid="app">HMS App</div>
-      </AuthFlow>
-    </AuthProvider>
+    <StrictMode>
+      <AuthProvider client={client}>
+        <AuthFlow audience={audience}>
+          <div data-testid="app">HMS App</div>
+        </AuthFlow>
+      </AuthProvider>
+    </StrictMode>
   );
 }
 
@@ -55,6 +58,13 @@ async function typeInto(label: RegExp, value: string) {
 }
 
 describe("AuthFlow", () => {
+  it("identifies the customer portal without duplicating the brand", async () => {
+    renderFlow(fakeClient(), "customer");
+    await screen.findByRole("button", { name: /sign in/i });
+    expect(screen.getByText("Customer portal")).toBeInTheDocument();
+    expect(screen.getAllByAltText("Momentum")).toHaveLength(1);
+    expect(screen.queryByText(/staff sign-in/i)).not.toBeInTheDocument();
+  });
   it("does not rate a long repeated common password as strong", () => {
     expect(estimatePasswordStrength("Password123!Password123!").score).toBeLessThanOrEqual(1);
   });
@@ -119,6 +129,7 @@ describe("AuthFlow", () => {
       "Invalid email or password"
     );
     expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /sign in/i })).not.toBeDisabled();
   });
 
   it("renders a QR code and manual key during MFA enrollment", async () => {

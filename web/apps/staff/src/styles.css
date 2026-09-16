@@ -2863,83 +2863,47 @@ tbody tr.is-selected {
   font-size: 12px;
 }
 
-/* Staff authentication screens */
+/* Shared staff and customer authentication */
 .auth-shell {
   min-height: 100dvh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: clamp(16px, 4vw, 48px);
-  background: #edf3f9;
-}
-
-.auth-gateway {
-  width: min(980px, 100%);
   display: grid;
-  grid-template-columns: minmax(250px, 0.82fr) minmax(360px, 1.18fr);
-  overflow: hidden;
-  border: 1px solid #d7e1ed;
-  border-radius: 18px;
-  background: #ffffff;
-  box-shadow: 0 24px 60px rgba(23, 42, 70, 0.14);
-}
-
-.auth-trust {
-  min-height: 540px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 36px;
-  color: #e7f0ff;
-  background: #0d1b35;
-}
-
-.auth-eyebrow {
-  margin: 72px 0 12px;
-  color: #8fbaff;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.auth-trust-title {
-  max-width: 240px;
-  margin: 0;
-  color: #ffffff;
-  font-size: clamp(28px, 4vw, 38px);
-  line-height: 1.08;
+  grid-template-rows: auto 1fr auto;
+  padding: 0 40px;
+  border-top: 3px solid #f58a45;
+  background: linear-gradient(135deg, #f2f5f7, #ffffff 55%, #f4f7fa);
   letter-spacing: 0;
 }
 
-.auth-trust-copy {
-  max-width: 270px;
-  margin: 18px 0 0;
-  color: #a9bad3;
-  font-size: 14px;
-  line-height: 1.65;
+.auth-gateway {
+  width: min(420px, 100%);
+  min-width: 0;
+  justify-self: center;
+  align-self: center;
+  padding: 56px 0 72px;
+}
+
+.auth-eyebrow {
+  margin: 0 0 8px;
+  color: #1f5fbf;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
 }
 
 .auth-trust-note {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
-  color: #a9bad3;
+  padding: 24px 0;
+  color: #5f6f86;
   font-size: 12px;
 }
 
 .auth-card {
-  width: auto;
   min-width: 0;
-  padding: clamp(28px, 5vw, 56px);
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  background: #ffffff;
-}
-
-.auth-mobile-brand {
-  display: none;
+  display: grid;
+  gap: 28px;
 }
 
 .auth-heading {
@@ -2951,19 +2915,22 @@ tbody tr.is-selected {
 .auth-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 24px;
+  width: min(1160px, 100%);
+  min-height: 96px;
+  justify-self: center;
+  border-bottom: 1px solid #dfe7ed;
 }
 
 .auth-brand-logo-frame {
   display: block;
-  width: 144px;
-  height: 44px;
+  width: 180px;
+  height: 52px;
   overflow: hidden;
   flex: 0 0 auto;
-  border: 1px solid #d6e0eb;
-  border-radius: 8px;
   background: #ffffff;
-  box-shadow: 0 5px 14px rgba(15, 23, 42, 0.1);
+  mix-blend-mode: multiply;
 }
 
 .auth-brand-logo {
@@ -2977,28 +2944,23 @@ tbody tr.is-selected {
 .auth-brand-product-label {
   color: var(--muted, #667085);
   font-size: 12px;
-  font-weight: 700;
-}
-
-.auth-brand-inverted .auth-brand-logo-frame {
-  border-color: rgb(255 255 255 / 18%);
-}
-
-.auth-brand-inverted .auth-brand-product-label {
-  color: #9bb0cf;
+  font-weight: 500;
 }
 
 .auth-title {
   margin: 0;
-  font-size: clamp(24px, 3vw, 30px);
-  line-height: 1.15;
+  font-size: 34px;
+  font-weight: 650;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
   color: var(--ink, #101828);
 }
 
 .auth-subtitle {
   margin: 0;
   color: var(--muted, #667085);
-  font-size: 13px;
+  font-size: 15px;
+  line-height: 1.6;
 }
 
 .auth-error {
@@ -3015,28 +2977,29 @@ tbody tr.is-selected {
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 20px;
 }
 
 .auth-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .auth-field span {
   font-size: 13px;
+  font-weight: 550;
   color: var(--ink, #101828);
 }
 
 .auth-field input {
   width: 100%;
-  min-height: 46px;
+  min-height: 52px;
   box-sizing: border-box;
   padding: 11px 13px;
-  border: 1px solid var(--border, #d9e2ef);
-  border-radius: 9px;
-  font-size: 14px;
+  border: 1px solid #bac6d3;
+  border-radius: 6px;
+  font-size: 16px;
   color: var(--ink, #101828);
   background: #ffffff;
   transition: border-color 140ms ease, box-shadow 140ms ease;
@@ -3064,15 +3027,15 @@ tbody tr.is-selected {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   border: 0;
   border-radius: 7px;
   color: #667085;
   background: transparent;
   cursor: pointer;
-  transform: translateY(-50%);
+  translate: 0 -50%;
 }
 
 .auth-password-toggle:hover,
@@ -3082,9 +3045,38 @@ tbody tr.is-selected {
   outline: none;
 }
 
-.auth-submit {
+.auth-shell .auth-submit {
   margin-top: 4px;
+  min-height: 52px;
+  width: 100%;
+  padding: 12px 18px;
   justify-content: center;
+  font-size: 15px;
+  border-radius: 6px;
+  background: #1f5fbf;
+  color: #ffffff;
+  box-shadow: 0 4px 10px rgb(31 95 191 / 12%);
+}
+
+.auth-shell .auth-submit:disabled {
+  background: #496b9b;
+  border-color: #496b9b;
+  color: #ffffff;
+  box-shadow: none;
+  opacity: 1;
+}
+
+.auth-shell .auth-submit:hover:not(:disabled) {
+  background: #174b9a;
+}
+
+.auth-shell button:focus-visible {
+  outline: 2px solid #1f5fbf;
+  outline-offset: 3px;
+}
+
+.auth-shell button:hover:not(:disabled) {
+  transform: none;
 }
 
 .auth-strength {
@@ -3111,8 +3103,9 @@ tbody tr.is-selected {
 .auth-inline-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
+  margin-top: -8px;
 }
 
 .auth-hint {
@@ -3169,6 +3162,10 @@ tbody tr.is-selected {
 }
 
 .auth-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
   align-self: flex-start;
   margin: -4px 0 4px;
   padding: 0;
@@ -3236,6 +3233,7 @@ tbody tr.is-selected {
   font-size: 13px;
   padding: 0;
   white-space: nowrap;
+  min-height: 44px;
 }
 
 .auth-footer {
@@ -3255,6 +3253,10 @@ tbody tr.is-selected {
   .auth-loading {
     animation: none;
   }
+  .auth-shell button,
+  .auth-shell input {
+    transition: none;
+  }
 }
 
 @keyframes auth-shimmer {
@@ -3268,45 +3270,32 @@ tbody tr.is-selected {
 
 @media (max-width: 760px) {
   .auth-shell {
-    align-items: stretch;
-    padding: 0;
+    padding: 0 24px;
   }
 
   .auth-gateway {
-    display: block;
-    min-height: 100dvh;
-    border: 0;
-    border-radius: 0;
+    padding: 40px 0;
   }
 
-  .auth-trust {
-    min-height: auto;
-    padding: 22px 22px 20px;
+  .auth-brand {
+    min-height: 88px;
+    gap: 12px;
   }
 
-  .auth-eyebrow,
-  .auth-trust-title,
-  .auth-trust-copy,
-  .auth-trust-note {
-    display: none;
+  .auth-brand-logo-frame {
+    width: 148px;
+    height: 44px;
   }
 
-  .auth-mobile-brand {
-    display: flex;
+  .auth-brand-product-label {
+    max-width: 100px;
+    font-size: 11px;
+    line-height: 1.5;
+    text-align: right;
   }
 
-  .auth-card {
-    padding: 30px 22px 36px;
-  }
-
-  .auth-inline-row {
-    align-items: flex-start;
-    flex-direction: column-reverse;
-    gap: 8px;
-  }
-
-  .auth-hint {
-    display: none;
+  .auth-title {
+    font-size: 30px;
   }
 }
 

@@ -237,7 +237,7 @@ export function CustomerPortalApp({ authClient }: Pick<AppProps, "authClient">) 
 function CustomerPortalGate() {
   const { state, logout } = useAuth();
   return (
-    <AuthFlow>
+    <AuthFlow audience="customer">
       {state.status === "authenticated" ? (
         state.session.roles.includes("CUSTOMER_USER") ? (
           <HmsApp portalMode session={state.session} onLogout={() => void logout()} />
