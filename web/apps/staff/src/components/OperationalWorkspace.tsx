@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CalendarClock,
   CheckCircle2,
+  ClipboardCheck,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -245,9 +246,13 @@ export function OperationalWorkspace({
 
   return (
     <section className="console-dashboard" aria-label="Dashboard workspace">
-      <div className="dashboard-source-row">
-        <span className="dashboard-context">Operational overview</span>
-      </div>
+      <header className="dashboard-source-row">
+        <div>
+          <span className="dashboard-context">Fleet operations</span>
+          <h2>Operational overview</h2>
+          <p>Retest priorities and inspection reviews.</p>
+        </div>
+      </header>
       <div className="kpi-grid" aria-label="Operational highlights" role="group">
         <StaggerGroup className="kpi-grid-motion">
           <StaggerItem>
@@ -303,7 +308,7 @@ export function OperationalWorkspace({
             <div className="panel-heading">
               <div>
                 <h2>Overdue Retests</h2>
-                <p>{dashboard.overdueTotal} assets past their retest due date</p>
+                <p>{assetCountLabel(dashboard.overdueTotal)} past {dashboard.overdueTotal === 1 ? "its" : "their"} retest due date</p>
               </div>
               <div className="panel-actions">
                 <button className="secondary-button" onClick={exportOverdueRetests} type="button">
@@ -326,7 +331,7 @@ export function OperationalWorkspace({
               <OperationsTable
                 ariaLabel="Overdue retests"
                 columns={["Asset", "Customer", "Product", "Due Date", "Days Overdue", "Status"]}
-                emptyMessage="No overdue retests in the backend data."
+                emptyMessage="No overdue retests. Your retest schedule is up to date."
                 onFirstCellClick={(index) => onAssetOpen(dashboard.overdueRetests[index].assetId)}
                 firstCellActionLabel={(index) => `Open asset ${dashboard.overdueRetests[index].assetNumber}`}
                 paginate={false}
@@ -358,7 +363,7 @@ export function OperationalWorkspace({
             <div className="panel-heading">
               <div>
                 <h2>Awaiting Review</h2>
-                <p>{dashboard.awaitingReviewInspections} inspections submitted, pending reviewer approval</p>
+                <p>{dashboard.awaitingReviewInspections} {dashboard.awaitingReviewInspections === 1 ? "inspection" : "inspections"} pending reviewer approval</p>
               </div>
               <button className="secondary-button" onClick={() => onModuleChange("inspections")} type="button">Review All</button>
             </div>
@@ -371,13 +376,16 @@ export function OperationalWorkspace({
                   onClick={() => onModuleChange("inspections", inspection.inspectionId)}
                   transition={motionTokens.spring.gentle}
                   type="button"
-                  whileHover={reducedMotion ? undefined : { y: -3 }}
+                  whileHover={reducedMotion ? undefined : { x: 2 }}
                   whileTap={reducedMotion ? undefined : { scale: 0.985 }}
                 >
-                  <span className="asset-code">{inspection.inspectionId}</span>
-                  <strong>{inspection.assetNumber}</strong>
-                  <span className={`mini-status ${inspection.status.toLowerCase()}`}>{inspection.status}</span>
-                  <span className="review-card-result">{inspection.result ?? inspection.inspectionType}</span>
+                  <span className="review-icon"><ClipboardCheck aria-hidden="true" size={20} /></span>
+                  <span className="review-identity">
+                    <strong>{inspection.assetNumber}</strong>
+                    <span>{inspection.inspectionType.replaceAll("_", " ").toLowerCase()}</span>
+                  </span>
+                  <span className="review-card-result">{inspection.result ?? "Not assessed"}</span>
+                  <span className="mini-status submitted">{inspection.status.replaceAll("_", " ").toLowerCase()}</span>
                   <span className="review-card-action">Open review <ArrowUpRight aria-hidden="true" size={14} /></span>
                 </m.button>
               ))}
@@ -396,19 +404,20 @@ export function OperationalWorkspace({
           <section className="data-panel due-panel">
             <div className="panel-heading compact">
               <h2>Due This Week</h2>
+              <CalendarClock aria-hidden="true" size={18} />
             </div>
             <div className="due-list">
               {dashboard.dueThisWeek.map((item) => (
-                <article key={item.assetId}>
+                <button className="due-item" aria-label={`Open scheduled asset ${item.assetNumber}`} key={item.assetId} onClick={() => onAssetOpen(item.assetId)} type="button">
                   <CalendarClock aria-hidden="true" size={15} />
-                  <div>
+                  <span>
                     <strong>{item.assetNumber}</strong>
                     <span>{item.customerName}</span>
-                  </div>
+                  </span>
                   <time>{item.dueAt}</time>
-                </article>
+                </button>
               ))}
-              {dashboard.dueThisWeek.length === 0 ? <p className="dashboard-empty">No retests due this week.</p> : null}
+              {dashboard.dueThisWeek.length === 0 ? <div className="schedule-empty"><CheckCircle2 aria-hidden="true" size={20} /><p>No retests due this week.</p></div> : null}
             </div>
           </section>
         </aside>
@@ -525,7 +534,7 @@ function MetricCard({
       onClick={onClick}
       transition={motionTokens.spring.gentle}
       type="button"
-      whileHover={reducedMotion ? undefined : { y: -4 }}
+      whileHover={reducedMotion ? undefined : { y: -1 }}
       whileTap={reducedMotion ? undefined : { scale: 0.985 }}
     >
       <div className="kpi-icon">{icon}</div>
@@ -549,8 +558,8 @@ function FleetHealthPanel({
   inServiceAssets: number;
   overdueAssets: number;
 }) {
-  const reducedMotion = useReducedMotion();
-  const [selectedStatus, setSelectedStatus] = useState<FleetStatus>("active");
+  const [selection, setSelectedStatus] = useState<FleetStatus | null>(null);
+  const selectedStatus = selection ?? (overdueAssets > 0 ? "overdue" : dueSoonAssets > 0 ? "due-soon" : "active");
   const total = inServiceAssets + dueSoonAssets + overdueAssets;
   const segments: FleetSegment[] = [
     { id: "active", label: "Active fleet", value: inServiceAssets },
@@ -573,15 +582,11 @@ function FleetHealthPanel({
   }
 
   return (
-    <m.section
-      className="data-panel health-panel"
-      transition={motionTokens.spring.gentle}
-      whileHover={reducedMotion ? undefined : { y: -2 }}
-    >
+    <section className="data-panel health-panel">
       <div className="panel-heading compact">
         <div>
           <h2>Fleet Health</h2>
-          <p>Inspect a segment for its current share.</p>
+          <p>{assetCountLabel(total)} monitored for retest</p>
         </div>
       </div>
       <div className="fleet-ring" aria-label="Fleet health distribution" role="group">
@@ -648,7 +653,7 @@ function FleetHealthPanel({
           );
         })}
       </div>
-    </m.section>
+    </section>
   );
 }
 

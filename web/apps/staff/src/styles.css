@@ -2005,8 +2005,8 @@ tbody tr.is-selected {
 }
 
 .overdue-panel .console-table {
-  min-width: 0;
-  table-layout: fixed;
+  min-width: 680px;
+  table-layout: auto;
 }
 
 .overdue-panel .console-table th,
@@ -2016,22 +2016,22 @@ tbody tr.is-selected {
 
 .overdue-panel .console-table th:nth-child(1),
 .overdue-panel .console-table td:nth-child(1) {
-  width: 18.5%;
+  width: 16%;
 }
 
 .overdue-panel .console-table th:nth-child(2),
 .overdue-panel .console-table td:nth-child(2) {
-  width: 19.2%;
+  width: 18%;
 }
 
 .overdue-panel .console-table th:nth-child(3),
 .overdue-panel .console-table td:nth-child(3) {
-  width: 20.6%;
+  width: 22%;
 }
 
 .overdue-panel .console-table th:nth-child(4),
 .overdue-panel .console-table td:nth-child(4) {
-  width: 13.7%;
+  width: 112px;
 }
 
 .overdue-panel .console-table th:nth-child(5),

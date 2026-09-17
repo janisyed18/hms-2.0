@@ -24,16 +24,16 @@
   --color-danger-soft: #fee4e2;
 
   --bg: var(--color-white);
-  --workspace: #f3f6fa;
+  --workspace: #ffffff;
   --panel: var(--color-white);
-  --panel-subtle: #f8fafc;
+  --panel-subtle: #f6f7f9;
   --ink: var(--color-neutral-950);
   --muted: var(--color-neutral-600);
-  --soft: var(--color-neutral-500);
-  --border: #dfe7f1;
+  --soft: #647084;
+  --border: #e5e7eb;
   --border-strong: var(--color-neutral-300);
-  --nav: var(--color-navy-900);
-  --nav-2: var(--color-navy-800);
+  --nav: #f7f8fa;
+  --nav-2: #edf0f4;
   --accent: var(--color-cobalt-600);
   --accent-2: var(--color-cobalt-500);
   --success: var(--color-success);
@@ -53,9 +53,9 @@
   --shadow: 0 16px 38px rgb(15 23 42 / 12%);
   --focus: 0 0 0 3px rgb(47 111 218 / 22%);
 
-  --sidebar-width: 240px;
+  --sidebar-width: 224px;
   --sidebar-compact-width: 72px;
-  --topbar-height: 72px;
+  --topbar-height: 64px;
   --toolbar-height: 56px;
   --control-height: 42px;
   --control-height-mobile: 44px;

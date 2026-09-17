@@ -76,6 +76,7 @@ describe("Command Centre shell", () => {
     expect(screen.getByRole("button", { name: "Dashboard" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Assets" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Inspections" })).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "Primary navigation" }).querySelector(".nav-badge")).toBeNull();
     expect(screen.queryByRole("button", { name: "Analytics" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Users & Roles" })).not.toBeInTheDocument();
   });

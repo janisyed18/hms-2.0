@@ -50,7 +50,6 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   module: AppModule;
-  badge?: string;
 }
 
 interface AppShellProps {
@@ -76,11 +75,11 @@ const navGroups: Array<{ label: string; items: NavItem[] }> = [
   {
     label: "Operations",
     items: [
-      { label: "Assets", icon: Database, module: "assets", badge: "1,247" },
-      { label: "Inspections", icon: ClipboardCheck, module: "inspections", badge: "8" },
+      { label: "Assets", icon: Database, module: "assets" },
+      { label: "Inspections", icon: ClipboardCheck, module: "inspections" },
       { label: "Certificates", icon: FileCheck2, module: "certificates" },
-      { label: "Retest Schedule", icon: CalendarClock, module: "retest", badge: "23" },
-      { label: "Sync Queue", icon: RefreshCcw, module: "sync", badge: "7" }
+      { label: "Retest Schedule", icon: CalendarClock, module: "retest" },
+      { label: "Sync Queue", icon: RefreshCcw, module: "sync" }
     ]
   },
   {
@@ -281,11 +280,6 @@ function SidebarNavigation({
                   ) : null}
                   <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
                   <span>{item.label}</span>
-                  {item.badge ? (
-                    <span aria-hidden="true" className="nav-badge">
-                      {item.badge}
-                    </span>
-                  ) : null}
                 </button>
               );
             })}

@@ -19,17 +19,17 @@
   width: var(--sidebar-width);
   height: 100dvh;
   overflow: hidden auto;
-  border-right: 1px solid rgb(255 255 255 / 8%);
+  border-right: 1px solid var(--border);
   background: var(--nav);
-  color: #e8eef7;
+  color: var(--ink);
 }
 
 .brand {
   display: grid;
   gap: var(--space-2);
-  min-height: 136px;
-  padding: 18px;
-  border-bottom: 1px solid rgb(255 255 255 / 8%);
+  min-height: 128px;
+  padding: 20px 16px 16px;
+  border-bottom: 1px solid var(--border);
 }
 
 .brand-lockup {
@@ -38,12 +38,12 @@
 }
 
 .brand-logo-frame {
-  height: 48px;
+  height: 44px;
   overflow: hidden;
-  border: 1px solid rgb(255 255 255 / 18%);
+  border: 0;
   border-radius: var(--radius-sm);
   background: var(--color-white);
-  box-shadow: 0 8px 18px rgb(0 0 0 / 16%);
+  box-shadow: none;
 }
 
 .brand-logo {
@@ -55,7 +55,7 @@
 }
 
 .brand-product-label {
-  color: #91a0b5;
+  color: var(--muted);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0;
@@ -72,12 +72,12 @@
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-1);
-  height: 42px;
+  height: 36px;
   padding: 0 10px;
-  border: 1px solid rgb(255 255 255 / 10%);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--nav-2);
-  color: #91a0b5;
+  background: var(--panel);
+  color: var(--muted);
 }
 
 .sidebar-search:focus-within {
@@ -91,12 +91,12 @@
   border: 0;
   outline: 0;
   background: transparent;
-  color: #f4f7fb;
+  color: var(--ink);
   font-size: 12px;
 }
 
 .sidebar-search input::placeholder {
-  color: #8291a7;
+  color: var(--muted);
 }
 
 .sidebar-search kbd {
@@ -105,15 +105,15 @@
   height: 24px;
   place-items: center;
   border-radius: var(--radius-sm);
-  background: rgb(255 255 255 / 8%);
-  color: #aab7c8;
+  background: var(--nav-2);
+  color: var(--muted);
   font-size: 10px;
 }
 
 .nav-list {
   display: grid;
-  gap: 20px;
-  padding: 20px 10px var(--space-3);
+  gap: 24px;
+  padding: 24px 12px var(--space-3);
 }
 
 .nav-group {
@@ -123,10 +123,10 @@
 
 .nav-group-label {
   padding: 0 var(--space-1) 4px;
-  color: #718198;
+  color: var(--muted);
   font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  font-weight: 600;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
@@ -137,15 +137,15 @@
   grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  min-height: 42px;
+  min-height: 38px;
   width: 100%;
   padding: 0 10px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: #aab7c8;
+  color: var(--muted);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   text-align: left;
 }
 
@@ -154,7 +154,7 @@
 .collapse-button:hover,
 .collapse-button:focus-visible {
   background: var(--nav-2);
-  color: #f4f7fb;
+  color: var(--ink);
   transform: none;
 }
 
@@ -164,8 +164,9 @@
 }
 
 .nav-item.is-active {
-  background: var(--color-cobalt-700);
-  color: var(--color-white);
+  background: #e7edf7;
+  color: #174ea6;
+  font-weight: 650;
 }
 
 .nav-active-indicator {
@@ -175,7 +176,7 @@
   bottom: 8px;
   width: 3px;
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  background: #79a7ef;
+  background: var(--accent);
 }
 
 .nav-badge {
@@ -199,8 +200,8 @@
   min-height: 72px;
   margin-top: auto;
   padding: var(--space-1) var(--space-2);
-  border-top: 1px solid rgb(255 255 255 / 8%);
-  color: #d8e2ef;
+  border-top: 1px solid var(--border);
+  color: var(--ink);
 }
 
 .sidebar-user strong,
@@ -212,14 +213,14 @@
 }
 
 .sidebar-user strong {
-  color: var(--color-white);
+  color: var(--ink);
   font-size: 12px;
   font-weight: 700;
 }
 
 .sidebar-user span {
   margin-top: 2px;
-  color: #8998ad;
+  color: var(--muted);
   font-size: 10px;
 }
 
@@ -248,13 +249,13 @@
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: #aab7c8;
+  color: var(--muted);
 }
 
 .sidebar-logout:hover,
 .sidebar-logout:focus-visible {
   background: var(--nav-2);
-  color: var(--color-white);
+  color: var(--ink);
   transform: none;
 }
 
@@ -267,7 +268,7 @@
   justify-content: space-between;
   gap: var(--space-3);
   min-height: var(--topbar-height);
-  padding: 0 28px;
+  padding: 0 32px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
@@ -275,9 +276,9 @@
 .topbar h1 {
   margin: 0;
   color: var(--ink);
-  font-size: 20px;
+  font-size: 15px;
   line-height: 1.2;
-  font-weight: 750;
+  font-weight: 650;
 }
 
 .topbar p {
@@ -363,8 +364,8 @@
   position: relative;
   width: var(--icon-control-size);
   height: var(--icon-control-size);
-  border: 1px solid var(--border);
-  background: var(--panel);
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--muted);
 }
 

@@ -446,7 +446,7 @@ function dashboardActionsFetch() {
   });
 }
 
-function dashboardAssetOpenFetch() {
+function dashboardAssetOpenFetch(includeUpcoming = false) {
   return vi.fn(async (url: string | URL | Request) => {
     const requestUrl = new URL(String(url), "http://test");
     if (requestUrl.pathname === "/api/v1/dashboard") {
@@ -469,7 +469,12 @@ function dashboardAssetOpenFetch() {
           days_overdue: 3,
           status: "OVERDUE"
         }],
-        due_this_week: [],
+        due_this_week: includeUpcoming ? [{
+          asset_id: apiAsset.id,
+          asset_number: apiAsset.asset_number,
+          customer_name: apiAsset.customer.name,
+          due_at: "2026-09-18"
+        }] : [],
         awaiting_review: []
       });
     }
@@ -856,7 +861,7 @@ describe("App", () => {
       within(dashboard)
         .getAllByRole("heading", { level: 2 })
         .map((heading) => heading.textContent)
-    ).toEqual(["Overdue Retests", "Awaiting Review", "Fleet Health", "Due This Week"]);
+    ).toEqual(["Operational overview", "Overdue Retests", "Awaiting Review", "Fleet Health", "Due This Week"]);
 
     expect(
       [...within(dashboard).getByLabelText("Operational highlights").querySelectorAll(".kpi-label")]
@@ -923,6 +928,9 @@ describe("App", () => {
 
     render(<App initialSession={adminSession} />);
 
+    const distribution = await screen.findByRole("group", { name: "Fleet health distribution" });
+    expect(distribution.querySelector(".fleet-ring-core")).toHaveTextContent("Overdue1100% of fleet");
+
     await user.click(await screen.findByRole("button", { name: "Open asset API-777" }));
 
     const detail = await screen.findByRole("complementary", { name: "Asset detail" });
@@ -946,6 +954,14 @@ describe("App", () => {
     expect(selectedReadout).toHaveTextContent("Overdue");
     expect(selectedReadout).toHaveTextContent("23");
     expect(selectedReadout).toHaveTextContent("2% of fleet");
+  });
+
+  it("opens an upcoming retest's asset from the weekly schedule", async () => {
+    vi.stubGlobal("fetch", dashboardAssetOpenFetch(true));
+    const user = userEvent.setup();
+    render(<App initialSession={adminSession} />);
+    await user.click(await screen.findByRole("button", { name: "Open scheduled asset API-777" }));
+    expect(await screen.findByRole("complementary", { name: "Asset detail" })).toHaveTextContent("API-777");
   });
 
   it("paginates overdue retests and resets to the first page when the page size changes", async () => {
