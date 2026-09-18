@@ -2865,12 +2865,25 @@ tbody tr.is-selected {
 
 /* Shared staff and customer authentication */
 .auth-shell {
+  /* Authentication is a deliberately light surface before the workspace theme is restored. */
+  --ink: #101828;
+  --muted: #475467;
+  --soft: #5f6f86;
+  --panel: #ffffff;
+  --panel-subtle: #f5f8fc;
+  --border: #d0dae6;
+  --border-strong: #98a7b9;
+  --accent: #1f5fbf;
+  --success: #087f5b;
+  --warning: #9a5a08;
+  --danger: #b42318;
   min-height: 100dvh;
   display: grid;
   grid-template-rows: auto 1fr auto;
   padding: 0 40px;
   border-top: 3px solid #f58a45;
   background: linear-gradient(135deg, #f2f5f7, #ffffff 55%, #f4f7fa);
+  color-scheme: light;
   letter-spacing: 0;
 }
 
@@ -3003,6 +3016,11 @@ tbody tr.is-selected {
   color: var(--ink, #101828);
   background: #ffffff;
   transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.auth-field input::placeholder {
+  color: #667085;
+  opacity: 1;
 }
 
 .auth-field input:focus {

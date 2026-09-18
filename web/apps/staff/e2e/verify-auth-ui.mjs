@@ -40,6 +40,8 @@ try {
       await expect(submit).toBeEnabled();
       await expect(submit).toHaveCSS("background-color", "rgb(31, 95, 191)");
       await expect(submit).toHaveCSS("color", "rgb(255, 255, 255)");
+      await expect(page.getByRole("heading", { name: "Welcome back" })).toHaveCSS("color", "rgb(16, 24, 40)");
+      await expect(email).toHaveCSS("color", "rgb(16, 24, 40)");
       await expect(page.locator(".auth-shell")).not.toHaveCSS("font-family", /Times/);
       for (const control of [email, password, submit]) {
         const box = await control.boundingBox();
