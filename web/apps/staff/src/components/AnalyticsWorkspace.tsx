@@ -1,13 +1,14 @@
 import {
   AlertTriangle,
   ArrowUpRight,
+  BarChart3,
   BadgeCheck,
-  CheckCircle2,
-  CircleAlert,
+  CalendarClock,
   ClipboardCheck,
   FileCheck2,
   RefreshCcw,
-  ShieldCheck
+  ShieldCheck,
+  UsersRound
 } from "lucide-react";
 import { m, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
@@ -18,7 +19,10 @@ import type { AnalyticsOverview } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { motionTokens } from "../motion/motionTokens";
 import { formatDateTime } from "../utils/dateTime";
+import { reportingPeriodForPreset } from "../utils/reportingPeriod";
+import type { ReportingPeriod } from "../utils/reportingPeriod";
 import type { AppModule } from "./AppShell";
+import { ReportingPeriodControl } from "./ReportingPeriodControl";
 import { WorkspaceState } from "./WorkspaceState";
 
 interface AnalyticsWorkspaceProps {
@@ -38,6 +42,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>(() => reportingPeriodForPreset("last_month"));
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
@@ -46,7 +51,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
     setError(null);
 
     createHmsClient()
-      .getAnalyticsOverview()
+      .getAnalyticsOverview(reportingPeriod)
       .then((result) => {
         if (!active) return;
         setOverview(result);
@@ -61,7 +66,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
     return () => {
       active = false;
     };
-  }, [refreshKey]);
+  }, [refreshKey, reportingPeriod]);
 
   if (loading && overview === null) {
     return (
@@ -98,6 +103,15 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
       0
     )
   );
+  const inspectionTotals = overview.inspectionOutcomes.reduce(
+    (totals, outcome) => ({
+      submitted: totals.submitted + outcome.submitted,
+      approved: totals.approved + outcome.approved,
+      rejected: totals.rejected + outcome.rejected
+    }),
+    { submitted: 0, approved: 0, rejected: 0 }
+  );
+  const inspectionRecordCount = inspectionTotals.submitted + inspectionTotals.approved + inspectionTotals.rejected;
 
   return (
     <section className="analytics-workspace analytics-command" aria-label="Operational analytics">
@@ -105,18 +119,25 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
         <div>
           <span className="analytics-eyebrow">Operational intelligence</span>
           <h2>Fleet performance at a glance</h2>
-          <p>Updated {formatDateTime(overview.generatedAt)}</p>
+          <p>Operational health, risk exposure, inspection throughput, and certificate coverage for {reportingPeriod.label.toLowerCase()}.</p>
+          <span className="analytics-updated">
+            <CalendarClock aria-hidden="true" size={14} />
+            Last updated {formatDateTime(overview.generatedAt)}
+          </span>
         </div>
-        <button
-          aria-label="Refresh analytics"
-          className="analytics-refresh"
-          disabled={loading}
-          onClick={() => setRefreshKey((value) => value + 1)}
-          type="button"
-        >
-          <RefreshCcw aria-hidden="true" className={loading ? "is-spinning" : ""} size={16} />
-          Refresh
-        </button>
+        <div className="analytics-header-actions">
+          <ReportingPeriodControl onChange={setReportingPeriod} period={reportingPeriod} />
+          <button
+            aria-label="Refresh analytics"
+            className="analytics-refresh"
+            disabled={loading}
+            onClick={() => setRefreshKey((value) => value + 1)}
+            type="button"
+          >
+            <RefreshCcw aria-hidden="true" className={loading ? "is-spinning" : ""} size={16} />
+            Refresh
+          </button>
+        </div>
       </header>
 
       {error ? <p className="analytics-inline-error" role="status">Showing the most recently loaded results. {error}</p> : null}
@@ -183,10 +204,17 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
                 <h2>Retest attention by customer</h2>
                 <p>Customers ranked by work that needs action in the next seven days.</p>
               </div>
-              <CircleAlert aria-hidden="true" size={19} />
+              <UsersRound aria-hidden="true" size={19} />
             </div>
             {overview.customerRisk.length ? (
               <div className="analytics-risk-list">
+                <div className="analytics-risk-labels" aria-hidden="true">
+                  <span>Customer</span>
+                  <span>Overdue</span>
+                  <span>Due this week</span>
+                  <span>Total</span>
+                  <span>Risk</span>
+                </div>
                 {overview.customerRisk.map((customer) => (
                   <m.button
                     className="analytics-risk-row"
@@ -197,12 +225,19 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
                     whileHover={reducedMotion ? undefined : { x: 3 }}
                     whileTap={reducedMotion ? undefined : { scale: 0.995 }}
                   >
-                    <span className={`analytics-risk-marker risk-${customer.risk.toLowerCase()}`} aria-hidden="true" />
                     <span className="analytics-risk-customer">
+                      <i
+                        className={`analytics-risk-marker risk-${customer.risk.toLowerCase()}`}
+                        aria-hidden="true"
+                      />
                       <strong>{customer.customerName}</strong>
-                      <small>{customer.overdue} overdue · {customer.dueSoon} due this week</small>
                     </span>
-                    <span className={`analytics-risk-badge risk-${customer.risk.toLowerCase()}`}>{customer.risk}</span>
+                    <strong className="analytics-risk-value is-overdue">{customer.overdue}</strong>
+                    <strong className="analytics-risk-value">{customer.dueSoon}</strong>
+                    <strong className="analytics-risk-value">{customer.overdue + customer.dueSoon}</strong>
+                    <span className={`analytics-risk-badge risk-${customer.risk.toLowerCase()}`}>
+                      {customer.risk}
+                    </span>
                     <ArrowUpRight aria-hidden="true" size={16} />
                   </m.button>
                 ))}
@@ -223,32 +258,30 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
               <BadgeCheck aria-hidden="true" size={19} />
             </div>
             {overview.inspectionOutcomes.length ? (
-              <div className="analytics-outcomes-list">
-                {overview.inspectionOutcomes.map((outcome) => {
-                  const total = outcome.submitted + outcome.approved + outcome.rejected;
-                  return (
-                    <m.button
-                      className="analytics-outcome"
-                      key={outcome.inspectionType}
-                      onClick={() => onModuleChange("inspections")}
-                      transition={motionTokens.spring.gentle}
-                      type="button"
-                      whileHover={reducedMotion ? undefined : { y: -2 }}
-                      whileTap={reducedMotion ? undefined : { scale: 0.99 }}
-                    >
-                      <span>
-                        <strong>{formatInspectionType(outcome.inspectionType)}</strong>
-                        <small>{total} current records</small>
-                      </span>
-                      <span className="analytics-outcome-totals">
-                        <b>{outcome.submitted}<small>Submitted</small></b>
-                        <b>{outcome.approved}<small>Approved</small></b>
-                        <b>{outcome.rejected}<small>Rejected</small></b>
-                      </span>
-                    </m.button>
-                  );
-                })}
-              </div>
+              <m.button
+                aria-label="View inspection records"
+                className="analytics-outcome-summary"
+                onClick={() => onModuleChange("inspections")}
+                transition={motionTokens.spring.gentle}
+                type="button"
+                whileHover={reducedMotion ? undefined : { y: -2 }}
+                whileTap={reducedMotion ? undefined : { scale: 0.99 }}
+              >
+                <span className="analytics-outcome-totals">
+                  <b>{inspectionTotals.submitted}<small>Submitted</small></b>
+                  <b>{inspectionTotals.approved}<small>Approved</small></b>
+                  <b>{inspectionTotals.rejected}<small>Rejected</small></b>
+                </span>
+                <span className="analytics-outcome-footer">
+                  <span>
+                    <ClipboardCheck aria-hidden="true" size={16} />
+                    {inspectionRecordCount} current records
+                  </span>
+                  <span>
+                    View inspection records <ArrowUpRight aria-hidden="true" size={14} />
+                  </span>
+                </span>
+              </m.button>
             ) : (
               <EmptyPanel message="No submitted, approved, or rejected inspections are visible." />
             )}
@@ -294,9 +327,10 @@ function AnalyticsMetric({
 }
 
 function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOverview; onNavigate: () => void }) {
-  const [selected, setSelected] = useState<FleetPosture>("clear");
+  const [selected, setSelected] = useState<FleetPosture | null>(null);
   const posture = overview.fleetPosture;
   const total = fleetPostureTotal(overview);
+  const activePosture = selected ?? initialFleetPosture(posture);
   const segments: Array<{ key: FleetPosture; value: number; className: string }> = [
     { key: "clear", value: posture.clear, className: "fleet-segment-active" },
     { key: "dueSoon", value: posture.dueSoon, className: "fleet-segment-due-soon" },
@@ -311,7 +345,7 @@ function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOvervi
           <h2>Fleet posture</h2>
           <p>Serviceable assets classified by current retest position.</p>
         </div>
-        <GaugeIcon />
+        <BarChart3 aria-hidden="true" size={19} />
       </div>
       <div className="fleet-ring">
         <svg className="fleet-ring-chart" viewBox="0 0 120 120" aria-label="Fleet posture breakdown" role="img">
@@ -324,11 +358,11 @@ function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOvervi
               return (
                 <circle
                   aria-label={`${fleetLabels[segment.key]}: ${segment.value}`}
-                  className={`fleet-segment ${segment.className}${selected === segment.key ? " is-selected" : ""}`}
+                  className={`fleet-segment ${segment.className}${activePosture === segment.key ? " is-selected" : ""}`}
                   cx="60"
                   cy="60"
                   key={segment.key}
-                  onBlur={() => setSelected("clear")}
+                  onBlur={() => setSelected(null)}
                   onClick={() => setSelected(segment.key)}
                   onFocus={() => setSelected(segment.key)}
                   onKeyDown={(event) => {
@@ -337,7 +371,7 @@ function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOvervi
                       setSelected(segment.key);
                     }
                   }}
-                  onMouseEnter={() => setSelected(segment.key)}
+                  onPointerEnter={() => setSelected(segment.key)}
                   r="40"
                   role="button"
                   strokeDasharray={`${length} ${251.327 - length}`}
@@ -349,25 +383,37 @@ function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOvervi
           </g>
         </svg>
         <span className="fleet-ring-core">
-          <span>{fleetLabels[selected]}</span>
-          <strong>{posture[selected]}</strong>
-          <small>assets</small>
+          <span>{fleetLabels[activePosture]}</span>
+          <strong>{posture[activePosture]}</strong>
+          <small>{total} total assets</small>
         </span>
       </div>
       <div className="health-legend">
         {segments.map((segment) => (
           <button
-            className={`fleet-legend-button${selected === segment.key ? " is-selected" : ""}`}
+            className={`fleet-legend-button${activePosture === segment.key ? " is-selected" : ""}`}
             key={segment.key}
             onClick={() => setSelected(segment.key)}
-            onMouseEnter={() => setSelected(segment.key)}
+            onPointerEnter={() => setSelected(segment.key)}
             type="button"
           >
-            <span><i className={segment.className} aria-hidden="true" />{fleetLabels[segment.key]}</span>
+            <span>
+              <i className={segment.className} aria-hidden="true" />
+              {fleetLabels[segment.key]}
+            </span>
             <strong>{segment.value}</strong>
           </button>
         ))}
       </div>
+      {posture.overdue > 0 ? (
+        <div className="analytics-posture-alert">
+          <AlertTriangle aria-hidden="true" size={18} />
+          <span>
+            <strong>{percentage(posture.overdue, total)}% of assets are overdue</strong>
+            {posture.overdue} asset{posture.overdue === 1 ? "" : "s"} require immediate attention.
+          </span>
+        </div>
+      ) : null}
       <button className="analytics-panel-link" onClick={onNavigate} type="button">
         Open asset register <ArrowUpRight aria-hidden="true" size={14} />
       </button>
@@ -395,6 +441,7 @@ function CertificateCoveragePanel({ overview, onNavigate }: { overview: Analytic
       <div className="analytics-coverage-score">
         <strong>{coverage.coveragePercent}%</strong>
         <span>{coverage.coveredAssets} of {overview.inServiceAssets} in-service assets covered</span>
+        <i style={{ "--coverage": `${coverage.coveragePercent}%` } as CSSProperties} />
       </div>
       <div className="analytics-coverage-bars">
         {rows.map((row) => (
@@ -416,19 +463,17 @@ function EmptyPanel({ message }: { message: string }) {
   return <p className="analytics-empty">{message}</p>;
 }
 
-function GaugeIcon() {
-  return <CheckCircle2 aria-hidden="true" size={19} />;
-}
-
 function fleetPostureTotal(overview: AnalyticsOverview) {
   const posture = overview.fleetPosture;
   return posture.clear + posture.dueSoon + posture.overdue;
 }
 
-function percentage(value: number, total: number) {
-  return total ? Math.round(value / total * 100) : 0;
+function initialFleetPosture(posture: AnalyticsOverview["fleetPosture"]): FleetPosture {
+  if (posture.overdue > 0) return "overdue";
+  if (posture.dueSoon > 0) return "dueSoon";
+  return "clear";
 }
 
-function formatInspectionType(value: string) {
-  return value.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+function percentage(value: number, total: number) {
+  return total ? Math.round(value / total * 100) : 0;
 }

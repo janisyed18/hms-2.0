@@ -588,6 +588,44 @@ async def test_analytics_overview_uses_live_records_and_respects_customer_scope(
 
 
 @pytest.mark.asyncio
+async def test_dashboard_and_analytics_filter_to_the_requested_reporting_window(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    future_window = {
+        "start_at": "2099-01-01T00:00:00Z",
+        "end_at": "2099-01-02T00:00:00Z",
+    }
+
+    async with api_client(session_factory, admin) as client:
+        dashboard_response = await client.get("/api/v1/dashboard", params=future_window)
+        analytics_response = await client.get(
+            "/api/v1/analytics/overview", params=future_window
+        )
+        invalid_response = await client.get(
+            "/api/v1/dashboard",
+            params={
+                "start_at": "2099-01-02T00:00:00Z",
+                "end_at": "2099-01-01T00:00:00Z",
+            },
+        )
+
+    assert dashboard_response.status_code == 200
+    assert dashboard_response.json()["total_assets"] == 0
+    assert dashboard_response.json()["overdue_retests"] == []
+    assert dashboard_response.json()["awaiting_review"] == []
+    assert analytics_response.status_code == 200
+    assert analytics_response.json()["total_assets"] == 0
+    assert analytics_response.json()["inspection_outcomes"] == []
+    assert invalid_response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_manual_overdue_escalation_queues_one_event_per_schedule_per_day(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],

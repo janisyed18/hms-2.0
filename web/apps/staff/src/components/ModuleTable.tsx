@@ -17,6 +17,8 @@ export interface ModuleColumn<TItem> {
 
 interface ModuleTableProps<TItem> {
   actionLabel?: string;
+  actionsInToolbar?: boolean;
+  className?: string;
   columns: ModuleColumn<TItem>[];
   countLabel: string;
   emptyLabel: string;
@@ -24,6 +26,7 @@ interface ModuleTableProps<TItem> {
   filterControls?: ReactNode;
   activeFilterCount?: number;
   error?: string | null;
+  filtersInitiallyOpen?: boolean;
   getRowKey: (item: TItem) => string;
   items: TItem[];
   loading?: boolean;
@@ -65,6 +68,8 @@ function isInteractiveTarget(target: EventTarget | null) {
 
 export function ModuleTable<TItem>({
   actionLabel,
+  actionsInToolbar = false,
+  className,
   columns,
   countLabel,
   emptyLabel,
@@ -72,6 +77,7 @@ export function ModuleTable<TItem>({
   filterControls,
   activeFilterCount = 0,
   error = null,
+  filtersInitiallyOpen = false,
   getRowKey,
   items,
   loading = false,
@@ -84,9 +90,32 @@ export function ModuleTable<TItem>({
   selectedRowKey = null,
   tableLabel
 }: ModuleTableProps<TItem>) {
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(filtersInitiallyOpen);
   const pagination = usePagination(items);
   const exportData = [columns.map((column) => column.header), ...items.map(exportRows)];
+  const tableActions = (
+    <>
+      {actionLabel && onAction ? (
+        <button className="primary-button" type="button" onClick={onAction}>
+          <Plus aria-hidden="true" size={17} />
+          {actionLabel}
+        </button>
+      ) : null}
+      <button
+        className="icon-button light"
+        aria-label={`Download ${tableLabel}`}
+        onClick={() =>
+          downloadCsv(
+            `${tableLabel.toLowerCase().replaceAll(" ", "-")}.csv`,
+            exportData
+          )
+        }
+        type="button"
+      >
+        <Download size={17} />
+      </button>
+    </>
+  );
 
   function handleRowClick(event: MouseEvent<HTMLTableRowElement>, item: TItem) {
     if (!onRowSelect || isInteractiveTarget(event.target)) {
@@ -106,8 +135,8 @@ export function ModuleTable<TItem>({
   }
 
   return (
-    <section className="table-panel module-panel" aria-label={tableLabel}>
-      <div className="toolbar module-toolbar">
+    <section className={`table-panel module-panel${className ? ` ${className}` : ""}`} aria-label={tableLabel}>
+      <div className={`toolbar module-toolbar${actionsInToolbar ? " module-toolbar--inline-actions" : ""}`}>
         <label className="field search-field">
           <Search aria-hidden="true" size={17} />
           <span className="sr-only">{searchLabel}</span>
@@ -118,16 +147,19 @@ export function ModuleTable<TItem>({
             onChange={(event) => onQueryChange(event.target.value)}
           />
         </label>
-        <button
-          aria-expanded={filtersOpen}
-          className="secondary-button"
-          onClick={() => setFiltersOpen((current) => !current)}
-          type="button"
-        >
-          <Filter aria-hidden="true" size={16} />
-          Filters
-          {activeFilterCount > 0 ? <span className="button-count">{activeFilterCount}</span> : null}
-        </button>
+        <div className="module-toolbar-actions">
+          <button
+            aria-expanded={filtersOpen}
+            className="secondary-button"
+            onClick={() => setFiltersOpen((current) => !current)}
+            type="button"
+          >
+            <Filter aria-hidden="true" size={16} />
+            Filters
+            {activeFilterCount > 0 ? <span className="button-count">{activeFilterCount}</span> : null}
+          </button>
+          {actionsInToolbar ? tableActions : null}
+        </div>
       </div>
 
       {filtersOpen ? (
@@ -145,27 +177,7 @@ export function ModuleTable<TItem>({
 
       <div className="table-actions">
         <span>{countLabel}</span>
-        <div>
-          {actionLabel && onAction ? (
-            <button className="primary-button" type="button" onClick={onAction}>
-              <Plus aria-hidden="true" size={17} />
-              {actionLabel}
-            </button>
-          ) : null}
-          <button
-            className="icon-button light"
-            aria-label={`Download ${tableLabel}`}
-            onClick={() =>
-              downloadCsv(
-                `${tableLabel.toLowerCase().replaceAll(" ", "-")}.csv`,
-                exportData
-              )
-            }
-            type="button"
-          >
-            <Download size={17} />
-          </button>
-        </div>
+        {!actionsInToolbar ? <div>{tableActions}</div> : null}
       </div>
 
       <div className="table-frame">

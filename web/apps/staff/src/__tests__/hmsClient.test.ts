@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { configureHmsRuntimeAuth, createHmsClient } from "../api/hmsClient";
+import { reportingPeriodForPreset } from "../utils/reportingPeriod";
 
 const apiCustomer = {
   id: "cust-api-1",
@@ -416,6 +417,61 @@ describe("hmsClient", () => {
         expect.objectContaining({ name: "Aberdeen Yard" })
       ])
     });
+  });
+
+  it("passes a selected reporting period to dashboard and analytics endpoints", async () => {
+    const requestUrl = (input: RequestInfo | URL) =>
+      typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const fetchMock = vi.fn((input: RequestInfo | URL): Promise<Response> => {
+      const url = requestUrl(input);
+      const path = new URL(url, "http://test").pathname;
+      const payload = path === "/api/v1/dashboard"
+        ? {
+            total_assets: 0,
+            total_customers: 0,
+            in_service_assets: 0,
+            due_soon_assets: 0,
+            overdue_assets: 0,
+            awaiting_review_inspections: 0,
+            overdue_total: 0,
+            overdue_limit: 5,
+            overdue_offset: 0,
+            overdue_retests: [],
+            due_this_week: [],
+            awaiting_review: []
+          }
+        : {
+            generated_at: "2026-09-18T12:00:00Z",
+            total_assets: 0,
+            in_service_assets: 0,
+            due_soon_assets: 0,
+            overdue_assets: 0,
+            awaiting_review_inspections: 0,
+            fleet_posture: { clear: 0, due_soon: 0, overdue: 0 },
+            certificate_coverage: {
+              covered_assets: 0,
+              coverage_percent: 0,
+              expiring_soon: 0,
+              expired: 0,
+              issued: 0,
+              missing_assets: 0
+            },
+            customer_risk: [],
+            inspection_outcomes: []
+          };
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }));
+    });
+    const period = reportingPeriodForPreset("last_hour", new Date("2026-09-18T12:00:00Z"));
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    await client.getDashboard(5, 0, period);
+    await client.getAnalyticsOverview(period);
+
+    for (const [url] of fetchMock.mock.calls) {
+      const params = new URL(requestUrl(url), "http://test").searchParams;
+      expect(params.get("start_at")).toBe(period.startAt);
+      expect(params.get("end_at")).toBe(period.endAt);
+    }
   });
 
   it("uses bearer authorization without dev identity headers", async () => {

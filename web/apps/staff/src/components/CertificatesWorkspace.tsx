@@ -1,4 +1,4 @@
-import { AlertTriangle, FileCheck2, KeyRound, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CalendarDays, FileCheck2, KeyRound, ShieldCheck } from "lucide-react";
 
 import { CertificateDetail } from "./CertificateDetail";
 import { CertificateForm } from "./CertificateForm";
@@ -8,6 +8,7 @@ import {
   useCertificatesWorkspace
 } from "../hooks/useCertificatesWorkspace";
 import type { CertificateRecord } from "../domain/types";
+import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 
 const statusFilters: Array<{ label: string; value: CertificateStatusFilter }> = [
   { label: "All Certificates", value: "ALL" },
@@ -21,7 +22,7 @@ function statusClass(status: string) {
   if (status === "REVOKED") {
     return "mini-status overdue";
   }
-  if (status === "SUPERSEDED") {
+  if (status === "SUPERSEDED" || status === "DRAFT") {
     return "mini-status due-soon";
   }
   return "mini-status current";
@@ -33,13 +34,14 @@ function countByStatus(certificates: CertificateRecord[], status: string) {
 
 function expiringSoonCount(certificates: CertificateRecord[]) {
   const now = new Date();
-  const threshold = new Date();
+  now.setHours(0, 0, 0, 0);
+  const threshold = new Date(now);
   threshold.setDate(threshold.getDate() + 60);
   return certificates.filter((certificate) => {
-    if (!certificate.validUntil) {
+    if (certificate.status !== "ISSUED" || !certificate.validUntil) {
       return false;
     }
-    const validUntil = new Date(certificate.validUntil);
+    const validUntil = new Date(`${certificate.validUntil}T00:00:00`);
     return validUntil >= now && validUntil <= threshold;
   }).length;
 }
@@ -64,7 +66,12 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
     },
     {
       header: "Certificate",
-      render: (certificate) => <strong>{certificate.number}</strong>
+      render: (certificate) => (
+        <span className="certificate-number-cell">
+          <strong>{certificate.number}</strong>
+          <small>Version {certificate.certificateVersion}</small>
+        </span>
+      )
     },
     {
       header: "Asset",
@@ -75,12 +82,35 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
       render: (certificate) => certificate.customer.name
     },
     {
-      header: "Valid Until",
-      render: (certificate) => certificate.validUntil ?? "Not set"
+      header: "Source inspection",
+      render: (certificate) => (
+        <span className="certificate-inspection-cell">
+          <strong>{certificate.inspection.inspectionType.replace("_", " ")}</strong>
+          <small>{certificate.inspection.result ?? "Pending"}</small>
+        </span>
+      )
+    },
+    {
+      header: "Issued",
+      render: (certificate) => certificate.issuedAt.slice(0, 10)
+    },
+    {
+      header: "Valid until",
+      render: (certificate) => (
+        <span className="certificate-validity-cell">
+          <strong>{certificate.validUntil ?? "Not set"}</strong>
+          <small>{validityLabel(certificate.validUntil)}</small>
+        </span>
+      )
     },
     {
       header: "Verification",
-      render: (certificate) => certificate.publicToken
+      render: (certificate) => (
+        <span className="certificate-token-cell">
+          <KeyRound aria-hidden="true" size={14} />
+          {certificate.publicToken ? "Token active" : "No public token"}
+        </span>
+      )
     },
     {
       header: "Actions",
@@ -99,56 +129,52 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
   ];
 
   return (
-    <section className="inspection-workspace" aria-label="Certificate workspace">
-      <div className="inspection-dashboard">
-        <div className="inspection-dashboard-heading">
-          <div>
-            <h2>Certificate Queue</h2>
-            <p>Issue and review versioned certificates for approved inspections.</p>
-          </div>
+    <section className="asset-register-workspace certificate-workspace" aria-labelledby="certificate-workspace-heading">
+      <header className="asset-register-header certificate-command-header">
+        <div>
+          <span className="asset-register-eyebrow certificate-command-eyebrow">Certificate management</span>
+          <h2 id="certificate-workspace-heading">Certificates</h2>
+          <p>Issue and review versioned certificates for approved inspections.</p>
         </div>
-        <div className="inspection-metrics" aria-label="Certificate metrics">
-          <div>
-            <FileCheck2 aria-hidden="true" size={18} />
-            <span>Issued</span>
-            <strong>{issuedCount}</strong>
-          </div>
-          <div>
-            <AlertTriangle aria-hidden="true" size={18} />
-            <span>Expiring</span>
-            <strong>{soonCount}</strong>
-          </div>
-          <div>
-            <ShieldCheck aria-hidden="true" size={18} />
-            <span>Revoked</span>
-            <strong>{revokedCount}</strong>
-          </div>
-          <div>
-            <KeyRound aria-hidden="true" size={18} />
-            <span>Tokens</span>
-            <strong>{tokenCount}</strong>
-          </div>
+        <div className="asset-register-context certificate-command-context" aria-label="Current certificate scope">
+          <FileCheck2 aria-hidden="true" size={23} />
+          <span>
+            <strong>{workspace.certificates.length} certificate{workspace.certificates.length === 1 ? "" : "s"}</strong>
+            <small>{workspace.visibleCertificates.length} matching the current view</small>
+          </span>
         </div>
-        <div className="inspection-filter-tabs" role="tablist" aria-label="Certificate status filters">
-          {statusFilters.map((filter) => (
-            <button
-              aria-selected={workspace.statusFilter === filter.value}
-              className={workspace.statusFilter === filter.value ? "is-active" : ""}
-              key={filter.value}
-              onClick={() => workspace.setStatusFilter(filter.value)}
-              role="tab"
-              type="button"
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
+      </header>
+
+      <section aria-label="Certificate overview">
+        <StaggerGroup className="asset-register-metrics certificate-command-metrics">
+          <CertificateMetric icon={FileCheck2} label="Issued" value={issuedCount} detail="Active certificate records" tone="green" />
+          <CertificateMetric icon={AlertTriangle} label="Expiring" value={soonCount} detail="Within the next 60 days" tone="amber" />
+          <CertificateMetric icon={ShieldCheck} label="Revoked" value={revokedCount} detail="No longer valid for use" tone="red" />
+          <CertificateMetric icon={KeyRound} label="Verification tokens" value={tokenCount} detail="Public record verification" tone="blue" />
+        </StaggerGroup>
+      </section>
+
+      <div className="inspection-filter-tabs certificate-filter-tabs" role="tablist" aria-label="Certificate status filters">
+        {statusFilters.map((filter) => (
+          <button
+            aria-selected={workspace.statusFilter === filter.value}
+            className={workspace.statusFilter === filter.value ? "is-active" : ""}
+            key={filter.value}
+            onClick={() => workspace.setStatusFilter(filter.value)}
+            role="tab"
+            type="button"
+          >
+            {filter.label}
+          </button>
+        ))}
       </div>
 
-      <div className={`inspection-layout${workspace.selectedCertificate ? "" : " detail-closed"}`}>
-        <div className="inspection-table-wrap">
+      <div className={`inspection-layout certificate-layout${workspace.selectedCertificate ? "" : " detail-closed"}`}>
+        <div className="inspection-table-wrap certificate-table-wrap">
           <ModuleTable
             actionLabel={canManage ? "Issue Certificate" : undefined}
+            actionsInToolbar
+            className="asset-register-table certificate-register-table"
             columns={columns}
             countLabel={`${workspace.visibleCertificates.length} certificates`}
             emptyLabel="No certificates match the current filters."
@@ -157,6 +183,8 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
               certificate.number,
               certificate.asset.assetNumber,
               certificate.customer.name,
+              certificate.inspection.inspectionType,
+              certificate.issuedAt,
               certificate.validUntil ?? "",
               certificate.publicToken,
               ""
@@ -166,27 +194,36 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
               <>
                 <label className="filter-field">
                   <span>Valid from</span>
-                  <input
-                    aria-label="Certificate valid from"
-                    type="date"
-                    value={workspace.validFrom}
-                    onChange={(event) => workspace.setValidFrom(event.target.value)}
-                  />
+                  <span className="date-input-shell">
+                    <input
+                      aria-label="Certificate valid from"
+                      type="date"
+                      value={workspace.validFrom}
+                      onChange={(event) => workspace.setValidFrom(event.target.value)}
+                    />
+                    {!workspace.validFrom ? <span aria-hidden="true" className="date-input-placeholder">Select date</span> : null}
+                    <CalendarDays aria-hidden="true" size={17} />
+                  </span>
                 </label>
                 <label className="filter-field">
                   <span>Valid to</span>
-                  <input
-                    aria-label="Certificate valid to"
-                    type="date"
-                    value={workspace.validTo}
-                    onChange={(event) => workspace.setValidTo(event.target.value)}
-                  />
+                  <span className="date-input-shell">
+                    <input
+                      aria-label="Certificate valid to"
+                      type="date"
+                      value={workspace.validTo}
+                      onChange={(event) => workspace.setValidTo(event.target.value)}
+                    />
+                    {!workspace.validTo ? <span aria-hidden="true" className="date-input-placeholder">Select date</span> : null}
+                    <CalendarDays aria-hidden="true" size={17} />
+                  </span>
                 </label>
                 <button className="secondary-button filter-clear" type="button" onClick={workspace.clearCertificateFilters}>
                   Clear certificate filters
                 </button>
               </>
             }
+            filtersInitiallyOpen
             getRowKey={(certificate) => certificate.id}
             items={workspace.visibleCertificates}
             onAction={canManage ? workspace.openCreate : undefined}
@@ -194,7 +231,7 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
             onRowSelect={workspace.openDetail}
             query={workspace.query}
             searchLabel="Search certificates"
-            searchPlaceholder="Search certificates..."
+            searchPlaceholder="Search certificates, assets, customers..."
             selectedRowKey={workspace.selectedCertificate?.id ?? null}
             tableLabel="Certificate records"
           />
@@ -210,6 +247,18 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
         ) : null}
       </div>
 
+      <section className="certificate-verification-panel" aria-label="Certificate verification">
+        <span className="certificate-verification-icon"><KeyRound aria-hidden="true" size={20} /></span>
+        <div>
+          <h3>Certificate verification</h3>
+          <p>
+            {tokenCount
+              ? `${tokenCount} certificate${tokenCount === 1 ? " has" : "s have"} a public verification token.`
+              : "No certificates currently have a public verification token."}
+          </p>
+        </div>
+      </section>
+
       {canManage ? (
         <CertificateForm
           inspectionOptions={workspace.eligibleInspections}
@@ -219,5 +268,44 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
         />
       ) : null}
     </section>
+  );
+}
+
+function validityLabel(validUntil: string | null) {
+  if (!validUntil) {
+    return "No expiry recorded";
+  }
+  const days = Math.ceil((new Date(`${validUntil}T00:00:00`).getTime() - Date.now()) / 86_400_000);
+  if (days < 0) {
+    return `${Math.abs(days)} days expired`;
+  }
+  if (days === 0) {
+    return "Expires today";
+  }
+  return `${days} days remaining`;
+}
+
+function CertificateMetric({
+  detail,
+  icon: Icon,
+  label,
+  tone,
+  value
+}: {
+  detail: string;
+  icon: typeof FileCheck2;
+  label: string;
+  tone: "amber" | "blue" | "green" | "red";
+  value: number;
+}) {
+  return (
+    <StaggerItem className={`asset-register-metric certificate-command-metric tone-${tone}`}>
+      <Icon aria-hidden="true" size={21} />
+      <span>
+        <small>{label}</small>
+        <strong>{value}</strong>
+        <em>{detail}</em>
+      </span>
+    </StaggerItem>
   );
 }

@@ -322,6 +322,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                   module={renderedActiveModule}
                   onAssetOpen={handleAssetOpen}
                   onModuleChange={handleModuleChange}
+                  userName={session.displayName}
                 />
               </div>
             </main>

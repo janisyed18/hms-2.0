@@ -817,7 +817,7 @@ describe("App", () => {
     expect(screen.queryByText("Live Environment")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New Asset" })).toBeVisible();
     expect(await screen.findByText("Total Assets")).toBeVisible();
-    expect(await screen.findByText("In Service")).toBeVisible();
+    expect(await screen.findByText("Healthy Fleet")).toBeVisible();
     expect(await screen.findByText("Overdue Retests")).toBeVisible();
     expect(await screen.findByText("Fleet Health")).toBeVisible();
     expect(await screen.findByText("Due This Week")).toBeVisible();
@@ -851,26 +851,37 @@ describe("App", () => {
     expect(screen.queryByRole("dialog", { name: /Vopak API/i })).not.toBeInTheDocument();
   });
 
-  it("keeps the command centre hierarchy and dashboard order explicit", async () => {
+  it("keeps the operational dashboard hierarchy and shortcuts explicit", async () => {
     vi.stubGlobal("fetch", dashboardFetch());
 
     render(<App initialSession={adminSession} />);
 
     const dashboard = await screen.findByRole("region", { name: "Dashboard workspace" });
-    expect(
-      within(dashboard)
-        .getAllByRole("heading", { level: 2 })
-        .map((heading) => heading.textContent)
-    ).toEqual(["Operational overview", "Overdue Retests", "Awaiting Review", "Fleet Health", "Due This Week"]);
+    expect(within(dashboard).getByRole("heading", { name: /Good (morning|afternoon|evening),/ })).toBeVisible();
+    expect(within(dashboard).getByRole("heading", { name: "Operational Trends" })).toBeVisible();
+    expect(within(dashboard).getByRole("heading", { name: "Recent Activity" })).toBeVisible();
 
     expect(
       [...within(dashboard).getByLabelText("Operational highlights").querySelectorAll(".kpi-label")]
         .map((label) => label.textContent)
-    ).toEqual(["Total Assets", "In Service", "Overdue", "Awaiting Review"]);
-    expect(within(dashboard).queryByText("Pending Review")).not.toBeInTheDocument();
+    ).toEqual(["Total Assets", "Healthy Fleet", "Overdue", "Pending Review", "Escalations"]);
     expect(
       screen.getByRole("heading", { name: "Awaiting Review" }).closest(".dashboard-primary")
     ).not.toBeNull();
+  });
+
+  it("switches the staff workspace between dark and light themes", async () => {
+    vi.stubGlobal("fetch", dashboardFetch());
+    const user = userEvent.setup();
+
+    render(<App initialSession={adminSession} />);
+
+    const toggle = await screen.findByRole("button", { name: "Switch to light mode" });
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    await user.click(toggle);
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    await user.click(screen.getByRole("button", { name: "Switch to dark mode" }));
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
   });
 
   it("turns dashboard metrics into useful workspace shortcuts", async () => {
@@ -883,7 +894,7 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Dashboard" }));
-    await user.click(await screen.findByRole("button", { name: /Review overdue retests/i }));
+    await user.click((await screen.findAllByRole("button", { name: /Review overdue retests/i }))[0]);
     expect(await screen.findByRole("heading", { name: "Retest Schedule" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Dashboard" }));
@@ -1079,6 +1090,9 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Assets" }));
     expect(await screen.findByRole("row", { name: /API-777/i })).toBeVisible();
+    const assetSummary = screen.getByRole("region", { name: "Asset register summary" });
+    expect(assetSummary).toHaveTextContent("Total assets1");
+    expect(assetSummary).toHaveTextContent("Customers with assets1");
 
     await user.click(screen.getByRole("button", { name: "Retest Schedule" }));
     expect(await screen.findByRole("row", { name: /API-777/i })).toHaveTextContent(
@@ -1093,9 +1107,15 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Inspections" }));
     expect((await screen.findAllByRole("row", { name: /API-777/i }))[0]).toBeVisible();
+    const inspectionOverview = screen.getByRole("region", { name: "Inspection overview" });
+    expect(inspectionOverview).toHaveTextContent("Draft1");
+    expect(inspectionOverview).toHaveTextContent("Submitted0");
 
     await user.click(screen.getByRole("button", { name: "Certificates" }));
     expect(await screen.findByRole("row", { name: /CERT-API-777-1/i })).toBeVisible();
+    const certificateOverview = screen.getByRole("region", { name: "Certificate overview" });
+    expect(certificateOverview).toHaveTextContent("Issued1");
+    expect(certificateOverview).toHaveTextContent("Verification tokens1");
   });
 
   it("opens a copied asset as a create draft with its identity cleared", async () => {
@@ -1244,9 +1264,25 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: /Retest Schedule/i }));
 
     expect(await screen.findByRole("heading", { name: "Retest Schedule" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Retest schedule overview" })).toHaveTextContent(
+      "Overdue1"
+    );
+    expect(screen.getByRole("complementary", { name: "Retest calendar" })).toHaveTextContent(
+      "Schedule activity"
+    );
     expect(screen.getByRole("table", { name: "Retest schedule records" })).toHaveTextContent(
       "API-777"
     );
+
+    await user.click(screen.getByRole("button", { name: "Previous calendar month" }));
+    await user.click(screen.getByRole("button", { name: "Previous calendar month" }));
+    await user.click(screen.getByRole("button", { name: /July 15, 2026, 1 schedule/i }));
+    await user.click(screen.getByRole("button", { name: /^Filters/ }));
+    expect(screen.getByLabelText("Retest due from")).toHaveValue("2026-07-15");
+    expect(screen.getByLabelText("Retest due to")).toHaveValue("2026-07-15");
+    await user.click(screen.getByRole("button", { name: "Clear calendar date filter" }));
+    expect(screen.getByLabelText("Retest due from")).toHaveValue("");
+    expect(screen.getByLabelText("Retest due to")).toHaveValue("");
 
     await user.click(screen.getByRole("button", { name: "Open schedule API-777" }));
     await user.clear(screen.getByLabelText("Retest due date"));
@@ -1274,6 +1310,9 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: "Analytics" }));
     expect(await screen.findByRole("heading", { name: "Analytics" })).toBeVisible();
     expect(await screen.findByText("Fleet posture")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Reporting period" })).toHaveValue("last_month");
+    expect(screen.getByText("11% of assets are overdue")).toBeVisible();
+    expect(screen.getByText("12 current records")).toBeVisible();
     expect(screen.getByText("Vopak")).toBeVisible();
     expect(screen.queryByText("Mock data")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Open certificates/i }));
@@ -1463,10 +1502,10 @@ describe("App", () => {
     expect(createObjectURL).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Certificates" }));
-    await user.click(screen.getByRole("button", { name: "Filters" }));
     expect(
       screen.getByRole("status", { name: "Certificate records filter summary" })
     ).toHaveTextContent("Search: All records");
+    expect(screen.getAllByText("Select date")).toHaveLength(2);
 
     await user.click(screen.getByRole("button", { name: "Download Certificate records" }));
     expect(createObjectURL).toHaveBeenCalledTimes(2);

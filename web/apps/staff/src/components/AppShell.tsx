@@ -17,6 +17,8 @@ import {
   Search,
   ShieldCheck,
   Smartphone,
+  Moon,
+  Sun,
   TableProperties,
   UserCog,
   UsersRound,
@@ -45,6 +47,7 @@ export type AppModule =
   | "devices";
 
 type TopbarMenu = "notifications" | "help" | "user";
+type WorkspaceTheme = "dark" | "light";
 
 interface NavItem {
   label: string;
@@ -197,6 +200,17 @@ function initialsFor(name: string): string {
   return initials || "HM";
 }
 
+function initialWorkspaceTheme(): WorkspaceTheme {
+  if (typeof window === "undefined") {
+    return "dark";
+  }
+  try {
+    return window.localStorage?.getItem("hms-workspace-theme") === "light" ? "light" : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
 interface SidebarNavigationProps {
   activeModule: AppModule;
   globalQuery: string;
@@ -248,11 +262,10 @@ function SidebarNavigation({
           </label>
           <input
             id={`sidebar-search-input-${idSuffix}`}
-            placeholder="Search assets, customers..."
+            placeholder="Search workspace"
             value={globalQuery}
             onChange={(event) => onGlobalQueryChange(event.target.value)}
           />
-          <kbd>Cmd+K</kbd>
         </form>
       </div>
       <nav aria-label="Primary navigation" className="nav-list">
@@ -278,7 +291,7 @@ function SidebarNavigation({
                       transition={activeIndicatorTransition}
                     />
                   ) : null}
-                  <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
+                  <Icon aria-hidden="true" size={18} strokeWidth={1.75} />
                   <span>{item.label}</span>
                 </button>
               );
@@ -318,6 +331,7 @@ export function AppShell({
 }: AppShellProps) {
   const [openMenu, setOpenMenu] = useState<TopbarMenu | null>(null);
   const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
+  const [theme, setTheme] = useState<WorkspaceTheme>(initialWorkspaceTheme);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
   const [notificationUnreadTotal, setNotificationUnreadTotal] = useState(0);
   const [notificationStatus, setNotificationStatus] = useState<
@@ -330,6 +344,16 @@ export function AppShell({
   const reducedMotion = useReducedMotion();
   const accountName = accountNameFor(session);
   const accountEmail = accountEmailFor(session);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    try {
+      window.localStorage?.setItem("hms-workspace-theme", theme);
+    } catch {
+      // Theme persistence is optional; rendering must also work in restricted webviews.
+    }
+  }, [theme]);
 
   const loadNotifications = useCallback(async () => {
     setNotificationStatus("loading");
@@ -550,6 +574,15 @@ export function AppShell({
                 New Asset
               </button>
             ) : null}
+            <button
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+              aria-pressed={theme === "dark"}
+              className="icon-button theme-toggle"
+              onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
+              type="button"
+            >
+              {theme === "dark" ? <Sun aria-hidden="true" size={18} /> : <Moon aria-hidden="true" size={18} />}
+            </button>
             <button
               className={`icon-button${notificationUnreadTotal > 0 ? " has-count" : ""}`}
               aria-label="Notifications"

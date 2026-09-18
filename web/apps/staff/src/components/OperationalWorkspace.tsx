@@ -10,7 +10,12 @@ import {
   Hourglass,
   RefreshCcw,
   ShieldCheck,
-  ArrowUpRight
+  ArrowUpRight,
+  ArrowRight,
+  ChartNoAxesCombined,
+  Send,
+  Boxes,
+  BellRing
 } from "lucide-react";
 import { m, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
@@ -27,7 +32,10 @@ import { formatDateTime } from "../utils/dateTime";
 import { WorkspaceState } from "./WorkspaceState";
 import { downloadCsv } from "./ModuleTable";
 import { PaginationControls, usePagination } from "./Pagination";
+import { ReportingPeriodControl } from "./ReportingPeriodControl";
 import type { AppModule } from "./AppShell";
+import { reportingPeriodForPreset } from "../utils/reportingPeriod";
+import type { ReportingPeriod } from "../utils/reportingPeriod";
 
 export type OperationalModule = "dashboard" | "sync" | "audit";
 
@@ -36,6 +44,7 @@ interface OperationalWorkspaceProps {
   module: OperationalModule;
   onAssetOpen: (assetId: string) => void;
   onModuleChange: (module: AppModule, inspectionId?: string) => void;
+  userName: string;
 }
 
 const syncRows = [
@@ -50,9 +59,11 @@ export function OperationalWorkspace({
   canEscalate,
   module,
   onAssetOpen,
-  onModuleChange
+  onModuleChange,
+  userName
 }: OperationalWorkspaceProps) {
   const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>([]);
+  const [dashboardEvents, setDashboardEvents] = useState<AuditEventRecord[]>([]);
   const [auditError, setAuditError] = useState<string | null>(null);
   const [overduePage, setOverduePage] = useState(1);
   const [overduePageSize, setOverduePageSize] = useState(overduePageSizes[0]);
@@ -63,6 +74,8 @@ export function OperationalWorkspace({
   const [dashboardNotice, setDashboardNotice] = useState<string | null>(null);
   const [dashboardActionError, setDashboardActionError] = useState<string | null>(null);
   const [isEscalating, setEscalating] = useState(false);
+  const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>(() => reportingPeriodForPreset("last_month"));
+  const [dashboardNow] = useState(() => Date.now());
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
@@ -96,10 +109,10 @@ export function OperationalWorkspace({
     }
 
     let active = true;
-    setDashboardLoading(true);
-    setDashboardError(null);
+      setDashboardLoading(true);
+      setDashboardError(null);
     createHmsClient()
-      .getDashboard(overduePageSize, overdueStart)
+      .getDashboard(overduePageSize, overdueStart, reportingPeriod)
       .then((result) => {
         if (!active) {
           return;
@@ -119,10 +132,23 @@ export function OperationalWorkspace({
         }
       });
 
+    createHmsClient()
+      .listAuditEvents({ limit: 100, sort: "-sequence" })
+      .then((result) => {
+        if (active) {
+          setDashboardEvents(result.items);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setDashboardEvents([]);
+        }
+      });
+
     return () => {
       active = false;
     };
-  }, [module, overduePage, overduePageSize, overdueStart]);
+  }, [module, overduePage, overduePageSize, overdueStart, reportingPeriod]);
 
   if (module === "sync") {
     return (
@@ -198,6 +224,17 @@ export function OperationalWorkspace({
   const fleetHealth = healthTotal
     ? Math.round((dashboard.inServiceAssets / healthTotal) * 100)
     : 0;
+  const activityEvents = dashboardEvents.filter((event) => {
+    const timestamp = new Date(event.timestamp).getTime();
+    return timestamp >= new Date(reportingPeriod.startAt).getTime()
+      && timestamp < new Date(reportingPeriod.endAt).getTime();
+  });
+  const activityWindowDays = Math.max(
+    1,
+    Math.ceil((new Date(reportingPeriod.endAt).getTime() - new Date(reportingPeriod.startAt).getTime()) / 86_400_000)
+  );
+  const activityTrend = buildActivityTrend(activityEvents, activityWindowDays, new Date(reportingPeriod.endAt).getTime());
+  const escalationTotal = dashboard.overdueRetests.filter((retest) => retest.status === "ESCALATED").length;
   function exportOverdueRetests() {
     if (!dashboard) {
       return;
@@ -231,7 +268,7 @@ export function OperationalWorkspace({
     try {
       const client = createHmsClient();
       const dispatched = await client.escalateOverdueRetests();
-      setDashboard(await client.getDashboard(overduePageSize, overdueStart));
+      setDashboard(await client.getDashboard(overduePageSize, overdueStart, reportingPeriod));
       setDashboardNotice(
         dispatched
           ? `Queued escalations for ${dispatched} overdue asset${dispatched === 1 ? "" : "s"}.`
@@ -246,11 +283,21 @@ export function OperationalWorkspace({
 
   return (
     <section className="console-dashboard" aria-label="Dashboard workspace">
-      <header className="dashboard-source-row">
+      <header className="dashboard-source-row dashboard-hero">
         <div>
-          <span className="dashboard-context">Fleet operations</span>
-          <h2>Operational overview</h2>
-          <p>Retest priorities and inspection reviews.</p>
+          <span className="dashboard-context">Dashboard</span>
+          <h2>Good {greetingForCurrentTime(dashboardNow)}, {userName}</h2>
+          <p>Operational records for {reportingPeriod.label.toLowerCase()}.</p>
+        </div>
+        <div className="dashboard-hero-actions">
+          <span className="dashboard-date"><CalendarClock aria-hidden="true" size={18} />{formatDashboardDate(dashboardNow)}</span>
+          <ReportingPeriodControl
+            onChange={(period) => {
+              setReportingPeriod(period);
+              setOverduePage(1);
+            }}
+            period={reportingPeriod}
+          />
         </div>
       </header>
       <div className="kpi-grid" aria-label="Operational highlights" role="group">
@@ -264,17 +311,19 @@ export function OperationalWorkspace({
               action="Open asset register"
               onClick={() => onModuleChange("assets")}
               tone="blue"
+              trend={activityTrend.assets}
             />
           </StaggerItem>
           <StaggerItem>
             <MetricCard
               icon={<CheckCircle2 aria-hidden="true" size={18} />}
-              label="In Service"
+              label="Healthy Fleet"
               value={formatNumber(dashboard.inServiceAssets)}
               helper={`${fleetHealth}% fleet health`}
               action="View in-service assets"
               onClick={() => onModuleChange("assets")}
               tone="green"
+              trend={activityTrend.assets}
             />
           </StaggerItem>
           <StaggerItem>
@@ -286,20 +335,55 @@ export function OperationalWorkspace({
               action="Review overdue retests"
               onClick={() => onModuleChange("retest")}
               tone="red"
+              trend={activityTrend.retests}
             />
           </StaggerItem>
           <StaggerItem>
             <MetricCard
               icon={<Hourglass aria-hidden="true" size={18} />}
-              label="Awaiting Review"
+              label="Pending Review"
               value={formatNumber(dashboard.awaitingReviewInspections)}
               helper="Submitted inspections pending review"
               action="Review submitted inspections"
               onClick={() => onModuleChange("inspections")}
               tone="amber"
+              trend={activityTrend.inspections}
+            />
+          </StaggerItem>
+          <StaggerItem>
+            <MetricCard
+              icon={<BellRing aria-hidden="true" size={18} />}
+              label="Escalations"
+              value={formatNumber(escalationTotal)}
+              helper={escalationTotal ? "Needs attention" : "No active escalations"}
+              action="Review overdue retests"
+              onClick={() => onModuleChange("retest")}
+              tone="violet"
+              trend={activityTrend.escalations}
             />
           </StaggerItem>
         </StaggerGroup>
+      </div>
+
+      <div className="dashboard-command-grid">
+        <section className="data-panel trend-panel">
+          <div className="panel-heading compact">
+            <div>
+              <h2>Operational Trends</h2>
+              <p>Recorded asset, inspection, and retest activity over time.</p>
+            </div>
+            <button className="subtle-link-button" onClick={() => onModuleChange("analytics")} type="button">
+              <ChartNoAxesCombined aria-hidden="true" size={17} />
+              Analytics
+            </button>
+          </div>
+          <OperationalTrendPanel trend={activityTrend} />
+        </section>
+        <FleetHealthPanel
+          dueSoonAssets={dashboard.dueSoonAssets}
+          inServiceAssets={dashboard.inServiceAssets}
+          overdueAssets={dashboard.overdueAssets}
+        />
       </div>
 
       <div className="dashboard-layout">
@@ -307,7 +391,7 @@ export function OperationalWorkspace({
           <section className="data-panel overdue-panel">
             <div className="panel-heading">
               <div>
-                <h2>Overdue Retests</h2>
+                <div className="section-title"><h2>Overdue Retests</h2><span className="section-count is-urgent" aria-hidden="true">{formatNumber(dashboard.overdueTotal)}</span></div>
                 <p>{assetCountLabel(dashboard.overdueTotal)} past {dashboard.overdueTotal === 1 ? "its" : "their"} retest due date</p>
               </div>
               <div className="panel-actions">
@@ -321,6 +405,7 @@ export function OperationalWorkspace({
                   onClick={() => void sendOverdueEscalation()}
                   type="button"
                 >
+                  <Send aria-hidden="true" size={14} />
                   {isEscalating ? "Sending..." : "Send Escalation"}
                 </button>
               </div>
@@ -362,10 +447,10 @@ export function OperationalWorkspace({
           <section className="data-panel awaiting-panel">
             <div className="panel-heading">
               <div>
-                <h2>Awaiting Review</h2>
+                <div className="section-title"><h2>Awaiting Review</h2><span className="section-count" aria-hidden="true">{formatNumber(dashboard.awaitingReviewInspections)}</span></div>
                 <p>{dashboard.awaitingReviewInspections} {dashboard.awaitingReviewInspections === 1 ? "inspection" : "inspections"} pending reviewer approval</p>
               </div>
-              <button className="secondary-button" onClick={() => onModuleChange("inspections")} type="button">Review All</button>
+              <button className="secondary-button" onClick={() => onModuleChange("inspections")} type="button">Review All <ArrowRight aria-hidden="true" size={14} /></button>
             </div>
             <div className="review-strip">
               {dashboard.awaitingReview.map((inspection) => (
@@ -395,12 +480,6 @@ export function OperationalWorkspace({
         </div>
 
         <aside className="dashboard-side">
-          <FleetHealthPanel
-            dueSoonAssets={dashboard.dueSoonAssets}
-            inServiceAssets={dashboard.inServiceAssets}
-            overdueAssets={dashboard.overdueAssets}
-          />
-
           <section className="data-panel due-panel">
             <div className="panel-heading compact">
               <h2>Due This Week</h2>
@@ -419,7 +498,9 @@ export function OperationalWorkspace({
               ))}
               {dashboard.dueThisWeek.length === 0 ? <div className="schedule-empty"><CheckCircle2 aria-hidden="true" size={20} /><p>No retests due this week.</p></div> : null}
             </div>
+            <button className="schedule-link" onClick={() => onModuleChange("retest")} type="button">Open retest schedule <ArrowRight aria-hidden="true" size={15} /></button>
           </section>
+          <RecentActivityPanel events={activityEvents} now={dashboardNow} />
         </aside>
       </div>
 
@@ -485,6 +566,78 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat("en-AU").format(value);
 }
 
+function greetingForCurrentTime(now: number): string {
+  const hour = new Date(now).getHours();
+  if (hour < 12) return "morning";
+  if (hour < 18) return "afternoon";
+  return "evening";
+}
+
+function formatDashboardDate(now: number): string {
+  return new Intl.DateTimeFormat("en-AU", {
+    day: "numeric",
+    month: "short",
+    year: "numeric"
+  }).format(new Date(now));
+}
+
+type ActivitySeriesName = "assets" | "inspections" | "retests" | "escalations";
+
+interface ActivityTrend {
+  assets: number[];
+  escalations: number[];
+  inspections: number[];
+  labels: string[];
+  retests: number[];
+}
+
+function activitySeriesFor(event: AuditEventRecord): ActivitySeriesName | null {
+  const source = `${event.action} ${event.entity}`.toLowerCase();
+  if (source.includes("escalat")) return "escalations";
+  if (source.includes("retest") || source.includes("schedule")) return "retests";
+  if (source.includes("inspection")) return "inspections";
+  if (source.includes("asset")) return "assets";
+  return null;
+}
+
+function buildActivityTrend(events: AuditEventRecord[], days: number, now: number): ActivityTrend {
+  const bucketCount = 8;
+  const bucketDuration = (days * 86_400_000) / bucketCount;
+  const start = now - days * 86_400_000;
+  const trend: ActivityTrend = {
+    assets: Array.from({ length: bucketCount }, () => 0),
+    escalations: Array.from({ length: bucketCount }, () => 0),
+    inspections: Array.from({ length: bucketCount }, () => 0),
+    labels: Array.from({ length: bucketCount }, (_, index) =>
+      new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short" }).format(
+        new Date(start + bucketDuration * (index + 1))
+      )
+    ),
+    retests: Array.from({ length: bucketCount }, () => 0)
+  };
+
+  events.forEach((event) => {
+    const series = activitySeriesFor(event);
+    const timestamp = new Date(event.timestamp).getTime();
+    if (!series || Number.isNaN(timestamp)) return;
+    const bucket = Math.min(bucketCount - 1, Math.max(0, Math.floor((timestamp - start) / bucketDuration)));
+    trend[series][bucket] += 1;
+  });
+
+  return trend;
+}
+
+function chartPath(values: number[], maxValue: number, width: number, height: number): string {
+  const padding = { top: 16, right: 12, bottom: 28, left: 12 };
+  return values
+    .map((value, index) => {
+      const x = padding.left + ((width - padding.left - padding.right) * index) / Math.max(1, values.length - 1);
+      const y = height - padding.bottom - ((height - padding.top - padding.bottom) * value) / Math.max(1, maxValue);
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
 function OperationsHeader({
   description,
   eyebrow,
@@ -515,6 +668,7 @@ function MetricCard({
   label,
   onClick,
   tone,
+  trend,
   value
 }: {
   action: string;
@@ -522,7 +676,8 @@ function MetricCard({
   icon: ReactNode;
   label: string;
   onClick: () => void;
-  tone: "blue" | "green" | "amber" | "red";
+  tone: "blue" | "green" | "amber" | "red" | "violet";
+  trend: number[];
   value: string;
 }) {
   const reducedMotion = useReducedMotion();
@@ -541,12 +696,84 @@ function MetricCard({
       <span className="kpi-label">{label}</span>
       <strong>{value}</strong>
       <small>{helper}</small>
+      <MetricSparkline values={trend} />
       <span className="kpi-action">
         {action}
         <ArrowUpRight aria-hidden="true" size={15} />
       </span>
     </m.button>
   );
+}
+
+function MetricSparkline({ values }: { values: number[] }) {
+  const maxValue = Math.max(...values, 1);
+  return (
+    <svg aria-hidden="true" className="kpi-sparkline" viewBox="0 0 100 34">
+      <path d={chartPath(values, maxValue, 100, 34)} pathLength="1" />
+    </svg>
+  );
+}
+
+function OperationalTrendPanel({ trend }: { trend: ActivityTrend }) {
+  const series = [
+    { className: "trend-assets", label: "Assets", values: trend.assets },
+    { className: "trend-inspections", label: "Inspections", values: trend.inspections },
+    { className: "trend-retests", label: "Retests", values: trend.retests },
+    { className: "trend-escalations", label: "Escalations", values: trend.escalations }
+  ];
+  const maxValue = Math.max(...series.flatMap((entry) => entry.values), 1);
+  const hasActivity = series.some((entry) => entry.values.some((value) => value > 0));
+
+  return (
+    <div className="operational-trend">
+      {hasActivity ? (
+        <svg aria-label="Operational activity trend" className="operational-trend-chart" role="img" viewBox="0 0 640 240">
+          <desc>Recorded operational events grouped across the selected time range.</desc>
+          {[0.25, 0.5, 0.75, 1].map((ratio) => <line className="trend-grid-line" key={ratio} x1="12" x2="628" y1={212 - 196 * ratio} y2={212 - 196 * ratio} />)}
+          {series.map((entry) => <path className={`trend-line ${entry.className}`} d={chartPath(entry.values, maxValue, 640, 240)} key={entry.label} pathLength="1" />)}
+          {trend.labels.map((label, index) => (
+            <text key={label} x={12 + (616 * index) / Math.max(1, trend.labels.length - 1)} y="235">{label}</text>
+          ))}
+        </svg>
+      ) : <p className="trend-empty">No recorded operational activity in this range.</p>}
+      <div className="trend-legend" aria-label="Operational trend legend">
+        {series.map((entry) => <span className={entry.className} key={entry.label}><i aria-hidden="true" />{entry.label}</span>)}
+      </div>
+    </div>
+  );
+}
+
+function RecentActivityPanel({ events, now }: { events: AuditEventRecord[]; now: number }) {
+  const recentEvents = events.slice(0, 3);
+  return (
+    <section className="data-panel recent-activity-panel">
+      <div className="panel-heading compact">
+        <h2>Recent Activity</h2>
+        <Activity aria-hidden="true" size={18} />
+      </div>
+      <div className="recent-activity-list">
+        {recentEvents.map((event) => {
+          const series = activitySeriesFor(event);
+          const Icon = series === "inspections" ? ClipboardCheck : series === "retests" ? CalendarClock : series === "escalations" ? AlertTriangle : Boxes;
+          return (
+            <article className={`recent-activity-item ${series ?? "other"}`} key={`${event.sequence}-${event.hash}`}>
+              <span className="recent-activity-icon"><Icon aria-hidden="true" size={16} /></span>
+              <div><strong>{formatAuditAction(event.action)}</strong><span>{event.entity} record</span></div>
+              <time dateTime={event.timestamp}>{formatRelativeTime(event.timestamp, now)}</time>
+            </article>
+          );
+        })}
+        {recentEvents.length === 0 ? <p className="dashboard-empty">No recent activity has been recorded.</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function formatRelativeTime(value: string, now: number): string {
+  const elapsedSeconds = Math.round((new Date(value).getTime() - now) / 1000);
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [["day", 86_400], ["hour", 3_600], ["minute", 60]];
+  const [unit, seconds] = units.find(([, size]) => Math.abs(elapsedSeconds) >= size) ?? ["minute", 60];
+  return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(Math.round(elapsedSeconds / seconds), unit);
 }
 
 function FleetHealthPanel({

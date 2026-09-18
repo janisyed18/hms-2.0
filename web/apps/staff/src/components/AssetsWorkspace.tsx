@@ -1,3 +1,4 @@
+import { BadgeAlert, Boxes, CircleOff, UsersRound } from "lucide-react";
 import { useEffect } from "react";
 
 import { AssetDetail } from "./AssetDetail";
@@ -5,6 +6,7 @@ import { AssetForm } from "./AssetForm";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
 import { useAssetsWorkspace } from "../hooks/useAssetsWorkspace";
 import type { AssetRecord } from "../domain/types";
+import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 
 function locationLabel(asset: AssetRecord) {
   if (!asset.location) {
@@ -28,6 +30,12 @@ function statusClass(status: string) {
   }
   if (status === "DUE") {
     return "mini-status due-soon";
+  }
+  if (status === "CONDEMNED") {
+    return "mini-status condemned";
+  }
+  if (status === "RETIRED") {
+    return "mini-status retired";
   }
   return "mini-status current";
 }
@@ -62,6 +70,12 @@ export function AssetsWorkspace({
 }) {
   const workspace = useAssetsWorkspace();
   const { isLoading, openDetailById } = workspace;
+  const assetStats = {
+    total: workspace.assets.length,
+    overdue: workspace.assets.filter((asset) => asset.lifecycleStatus === "OVERDUE").length,
+    condemned: workspace.assets.filter((asset) => asset.lifecycleStatus === "CONDEMNED").length,
+    customers: new Set(workspace.assets.map((asset) => asset.customer.id)).size
+  };
 
   useEffect(() => {
     if (!initialAssetId || isLoading) {
@@ -152,9 +166,35 @@ export function AssetsWorkspace({
   }
 
   return (
-    <>
+    <section className="asset-register-workspace" aria-labelledby="asset-register-heading">
+      <header className="asset-register-header">
+        <div>
+          <span className="asset-register-eyebrow">Assets</span>
+          <h2 id="asset-register-heading">Fleet assets</h2>
+          <p>Manage hose assemblies, lifecycle status, and retest readiness.</p>
+        </div>
+        <div className="asset-register-context" aria-label="Current asset register scope">
+          <Boxes aria-hidden="true" size={23} />
+          <span>
+            <strong>{assetStats.total} total assets</strong>
+            <small>{workspace.visibleAssets.length} matching the current view</small>
+          </span>
+        </div>
+      </header>
+
+      <section aria-label="Asset register summary">
+        <StaggerGroup className="asset-register-metrics">
+          <AssetMetric icon={Boxes} label="Total assets" value={assetStats.total} detail="Registered in the current workspace" tone="blue" />
+          <AssetMetric icon={BadgeAlert} label="Overdue" value={assetStats.overdue} detail="Require retest attention" tone="red" />
+          <AssetMetric icon={CircleOff} label="Condemned" value={assetStats.condemned} detail="Removed from service" tone="amber" />
+          <AssetMetric icon={UsersRound} label="Customers with assets" value={assetStats.customers} detail="Active asset ownership" tone="green" />
+        </StaggerGroup>
+      </section>
+
       <ModuleTable
         actionLabel={canWrite ? "Add Asset" : undefined}
+        actionsInToolbar
+        className="asset-register-table"
         columns={assetColumns}
         countLabel={workspace.isLoading ? "Loading assets" : `${workspace.assets.length} assets`}
         emptyLabel="No assets match the current filters."
@@ -265,6 +305,31 @@ export function AssetsWorkspace({
           onSubmit={workspace.saveAsset}
         />
       ) : null}
-    </>
+    </section>
+  );
+}
+
+function AssetMetric({
+  detail,
+  icon: Icon,
+  label,
+  tone,
+  value
+}: {
+  detail: string;
+  icon: typeof Boxes;
+  label: string;
+  tone: "amber" | "blue" | "green" | "red";
+  value: number;
+}) {
+  return (
+    <StaggerItem className={`asset-register-metric tone-${tone}`}>
+      <Icon aria-hidden="true" size={21} />
+      <span>
+        <small>{label}</small>
+        <strong>{value}</strong>
+        <em>{detail}</em>
+      </span>
+    </StaggerItem>
   );
 }

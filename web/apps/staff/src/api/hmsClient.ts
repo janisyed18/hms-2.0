@@ -51,6 +51,7 @@ import type {
   StaffRole,
   StaffSession
 } from "../domain/types";
+import type { ReportingPeriod } from "../utils/reportingPeriod";
 
 interface ApiLocation {
   id: string;
@@ -1407,13 +1408,23 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toStaffSession(response.data);
     },
 
-    async getDashboard(limit = 5, offset = 0): Promise<DashboardRecord> {
-      const response = await request<ApiDashboard>("/api/v1/dashboard", {}, { limit, offset });
+    async getDashboard(
+      limit = 5,
+      offset = 0,
+      reportingPeriod?: ReportingPeriod
+    ): Promise<DashboardRecord> {
+      const response = await request<ApiDashboard>("/api/v1/dashboard", {}, {
+        limit,
+        offset,
+        ...(reportingPeriod ? { start_at: reportingPeriod.startAt, end_at: reportingPeriod.endAt } : {})
+      });
       return toDashboard(response.data);
     },
 
-    async getAnalyticsOverview(): Promise<AnalyticsOverview> {
-      const response = await request<ApiAnalyticsOverview>("/api/v1/analytics/overview");
+    async getAnalyticsOverview(reportingPeriod?: ReportingPeriod): Promise<AnalyticsOverview> {
+      const response = await request<ApiAnalyticsOverview>("/api/v1/analytics/overview", {}, reportingPeriod
+        ? { start_at: reportingPeriod.startAt, end_at: reportingPeriod.endAt }
+        : {});
       return toAnalyticsOverview(response.data);
     },
 

@@ -4,9 +4,15 @@
   .analytics-insight-grid,
   .analytics-table-grid,
   .inspection-layout,
+  .retest-schedule-layout,
   .system-layout,
   .customer-page {
     grid-template-columns: 1fr;
+  }
+
+  .retest-schedule-rail {
+    position: static;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .detail-panel {
@@ -14,10 +20,38 @@
     border-top: 1px solid var(--border);
     border-left: 0;
   }
+
+  .analytics-command-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 1200px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .console-dashboard .kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .dashboard-command-grid {
+    grid-template-columns: 1fr;
+  }
+
   .dashboard-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .asset-register-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .inspection-command-metrics.inspection-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .retest-schedule-rail {
     grid-template-columns: 1fr;
   }
 
@@ -94,12 +128,8 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .kpi-grid-motion > :nth-child(2n) .kpi-card {
-    border-right: 0;
-  }
-
-  .kpi-grid-motion > :nth-child(-n+2) .kpi-card {
-    border-bottom: 1px solid var(--border);
+  .console-dashboard .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .dashboard-layout,
@@ -113,6 +143,54 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .dashboard-hero {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-block: 4px;
+  }
+
+  .asset-register-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .inspection-command-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .asset-register-context {
+    min-width: 0;
+    padding: 12px 0 0;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .inspection-command-context {
+    min-width: 0;
+    padding: 12px 0 0;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .asset-register-table .module-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .inspection-register-table .module-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .asset-register-table .module-toolbar-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .inspection-register-table .module-toolbar-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
   .review-strip {
     grid-template-columns: 1fr;
   }
@@ -122,6 +200,17 @@
   .table-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .console-dashboard .panel-heading {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .console-dashboard .panel-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
   }
 
   .analytics-fleet-panel .health-legend {
@@ -356,6 +445,16 @@
     padding: 12px;
   }
 
+  .dashboard-source-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .kpi-grid {
+    gap: 10px;
+  }
+
   .kpi-icon {
     position: static;
     width: 24px;
@@ -387,6 +486,45 @@
     font-size: 23px;
   }
 
+  .console-dashboard .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-hero-actions {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard-range-control select {
+    width: 100%;
+  }
+
+  .console-dashboard .health-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .console-dashboard .health-panel .health-legend {
+    padding: 0 14px 14px;
+  }
+
+  .operational-trend {
+    padding-inline: 12px;
+  }
+
+  .operational-trend-chart {
+    min-width: 520px;
+  }
+
+  .operational-trend {
+    overflow-x: auto;
+  }
+
+  .trend-legend {
+    justify-content: flex-start;
+    min-width: 520px;
+  }
+
   .panel-heading,
   .customer-card,
   .inspection-dashboard {
@@ -394,7 +532,7 @@
   }
 
   .console-dashboard .panel-heading {
-    padding-inline: 0;
+    padding-inline: 14px;
   }
 
   .review-card {
@@ -529,6 +667,125 @@
 
   .analytics-outcome-totals {
     width: 100%;
+  }
+
+  .asset-register-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .inspection-command-metrics.inspection-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .asset-register-metric {
+    min-height: 104px;
+  }
+
+  .asset-register-table .module-toolbar-actions > * {
+    flex: 1 1 auto;
+  }
+
+  .inspection-register-table .module-toolbar-actions > * {
+    flex: 1 1 auto;
+  }
+
+  .inspection-bookings-heading,
+  .inspection-booking-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .inspection-bookings-heading {
+    display: flex;
+  }
+
+  .inspection-book-button {
+    width: 100%;
+  }
+
+  .inspection-booking-card {
+    display: flex;
+  }
+
+  .inspection-filter-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .inspection-filter-tabs button {
+    flex: 0 0 auto;
+  }
+
+  .analytics-command .analytics-header {
+    min-height: 0;
+  }
+
+  .analytics-header-actions {
+    width: 100%;
+    padding-top: 0;
+  }
+
+  .reporting-period-control,
+  .reporting-period-select {
+    width: 100%;
+  }
+
+  .reporting-period-select select {
+    flex: 1 1 auto;
+  }
+
+  .reporting-period-custom {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .reporting-period-custom label {
+    flex: 1 1 132px;
+  }
+
+  .reporting-period-custom button {
+    flex: 1 0 auto;
+  }
+
+  .analytics-header-actions .analytics-snapshot,
+  .analytics-header-actions .analytics-refresh {
+    flex: 1 1 0;
+  }
+
+  .analytics-fleet-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .analytics-fleet-panel .fleet-ring {
+    width: min(210px, 62vw);
+    margin-bottom: 6px;
+  }
+
+  .analytics-fleet-panel .health-legend {
+    padding: 4px 20px 14px;
+  }
+
+  .analytics-risk-labels {
+    display: none;
+  }
+
+  .analytics-risk-row {
+    grid-template-columns: minmax(0, 1fr) 45px 45px 45px auto 16px;
+    min-height: 50px;
+    column-gap: 7px;
+  }
+
+  .analytics-risk-customer strong {
+    font-size: 12px;
+  }
+
+  .analytics-risk-badge {
+    font-size: 9px;
+  }
+
+  .analytics-outcome-footer {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
