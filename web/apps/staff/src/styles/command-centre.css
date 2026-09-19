@@ -3526,3 +3526,265 @@ button:active:not(:disabled) {
   padding: 16px;
   border-top: 1px solid var(--border);
 }
+
+/* Shared command-centre grammar for customer, catalogue, governance and access views. */
+.management-workspace {
+  display: grid;
+  gap: 18px;
+  width: 100%;
+}
+
+.management-command-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 94px;
+  padding: 4px 2px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.management-command-eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--accent-2);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.management-command-header h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(25px, 2vw, 32px);
+  line-height: 1.12;
+}
+
+.management-command-header p {
+  margin: 7px 0 0;
+  color: var(--soft);
+  font-size: 13px;
+}
+
+.management-command-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 11px;
+  flex: 0 0 auto;
+  min-width: 210px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--accent-2);
+}
+
+.management-command-context span {
+  display: grid;
+  gap: 2px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.management-command-context small {
+  color: var(--soft);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.management-metric-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.management-metric {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 13px;
+  min-height: 108px;
+  align-items: start;
+  padding: 17px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.management-metric-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-2);
+}
+
+.management-metric > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.management-metric > div > span {
+  overflow: hidden;
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.management-metric strong {
+  color: var(--ink);
+  font-size: 27px;
+  line-height: 1.08;
+  font-variant-numeric: tabular-nums;
+}
+
+.management-metric small {
+  overflow: hidden;
+  color: var(--soft);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.management-metric--green .management-metric-icon {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
+}
+
+.management-metric--amber .management-metric-icon {
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--warning);
+}
+
+.management-metric--red .management-metric-icon {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+
+.management-metric--violet .management-metric-icon {
+  background: rgb(151 92 255 / 16%);
+  color: #b18bff;
+}
+
+.catalog-workspace .inspection-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(310px, 0.34fr);
+}
+
+.catalog-workspace .inspection-layout.detail-closed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.reference-catalog-workspace {
+  gap: 18px;
+}
+
+.reference-catalog-tabs {
+  padding: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.reference-catalog-tabs button {
+  min-height: 40px;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--soft);
+}
+
+.reference-catalog-tabs button:hover {
+  border-color: var(--border-strong);
+  background: var(--panel-subtle);
+  color: var(--ink);
+}
+
+.reference-catalog-tabs button.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, var(--panel));
+  box-shadow: inset 0 -2px 0 var(--accent);
+  color: var(--ink);
+}
+
+.reference-catalog-context {
+  padding: 15px 17px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+.reference-catalog-context p {
+  color: var(--soft);
+}
+
+.reference-access {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+}
+
+.reference-access.is-read-only {
+  border-color: var(--border);
+  background: var(--panel-subtle);
+  color: var(--soft);
+}
+
+.system-workspace .data-panel,
+.audit-events-table {
+  border-color: var(--border);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.system-workspace .panel-heading {
+  padding: 17px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.system-workspace .panel-heading h2 {
+  color: var(--ink);
+}
+
+.system-workspace .panel-heading p,
+.system-workspace .role-matrix span,
+.system-workspace .role-matrix p,
+.system-workspace .device-health-list span {
+  color: var(--soft);
+}
+
+.system-workspace .role-matrix article,
+.system-workspace .device-health-list article {
+  border-color: var(--border);
+  background: var(--panel-subtle);
+}
+
+.audit-workspace .module-toolbar,
+.audit-workspace .table-actions {
+  background: var(--panel);
+}
+
+.audit-workspace .filter-panel {
+  border-top-color: var(--border);
+  background: var(--panel-subtle);
+}
+
+.audit-workspace .module-table td:nth-child(4) {
+  color: var(--soft);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+@media (max-width: 1120px) {
+  .management-metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .catalog-workspace .inspection-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 720px) {
+  .management-command-header { align-items: flex-start; flex-direction: column; min-height: 0; }
+  .management-command-context { width: 100%; min-width: 0; }
+  .management-metric-strip { grid-template-columns: minmax(0, 1fr); }
+  .management-metric { min-height: 92px; }
+}

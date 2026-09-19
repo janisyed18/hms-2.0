@@ -9,7 +9,6 @@ import {
   Download,
   Hourglass,
   RefreshCcw,
-  ShieldCheck,
   ArrowUpRight,
   ArrowRight,
   ChartNoAxesCombined,
@@ -28,7 +27,6 @@ import {
 import type { AuditEventRecord, DashboardRecord } from "../domain/types";
 import { PresencePanel, StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { motionTokens } from "../motion/motionTokens";
-import { formatDateTime } from "../utils/dateTime";
 import { WorkspaceState } from "./WorkspaceState";
 import { downloadCsv } from "./ModuleTable";
 import { PaginationControls, usePagination } from "./Pagination";
@@ -37,7 +35,7 @@ import type { AppModule } from "./AppShell";
 import { reportingPeriodForPreset } from "../utils/reportingPeriod";
 import type { ReportingPeriod } from "../utils/reportingPeriod";
 
-export type OperationalModule = "dashboard" | "sync" | "audit";
+export type OperationalModule = "dashboard" | "sync";
 
 interface OperationalWorkspaceProps {
   canEscalate: boolean;
@@ -62,9 +60,7 @@ export function OperationalWorkspace({
   onModuleChange,
   userName
 }: OperationalWorkspaceProps) {
-  const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>([]);
   const [dashboardEvents, setDashboardEvents] = useState<AuditEventRecord[]>([]);
-  const [auditError, setAuditError] = useState<string | null>(null);
   const [overduePage, setOverduePage] = useState(1);
   const [overduePageSize, setOverduePageSize] = useState(overduePageSizes[0]);
   const overdueStart = (overduePage - 1) * overduePageSize;
@@ -77,31 +73,6 @@ export function OperationalWorkspace({
   const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>(() => reportingPeriodForPreset("last_month"));
   const [dashboardNow] = useState(() => Date.now());
   const reducedMotion = useReducedMotion();
-
-  useEffect(() => {
-    if (module !== "audit") {
-      return;
-    }
-
-    let active = true;
-    setAuditError(null);
-    createHmsClient().listAuditEvents({ sort: "-sequence" })
-      .then((result) => {
-        if (!active) {
-          return;
-        }
-        setAuditEvents(result.items);
-      })
-      .catch((error: unknown) => {
-        if (active) {
-          setAuditError(errorMessage(error));
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [module]);
 
   useEffect(() => {
     if (module !== "dashboard") {
@@ -163,37 +134,6 @@ export function OperationalWorkspace({
           ariaLabel="Sync queue items"
           columns={["Item", "State", "Record", "Updated"]}
           rows={syncRows}
-        />
-      </section>
-    );
-  }
-
-  if (module === "audit") {
-    const auditRows = auditEvents.map((event) => [
-      formatAuditAction(event.action),
-      event.actorId,
-      `${event.entity}:${event.entityId}`,
-      formatDateTime(event.timestamp)
-    ]);
-
-    return (
-      <section className="operations-page" aria-label="Audit workspace">
-        <OperationsHeader
-          eyebrow="Governance"
-          icon={<ShieldCheck aria-hidden="true" size={20} />}
-          title="Audit Trail"
-          description="Recent inspection, certificate, and asset lifecycle events across the staff workspace."
-        />
-        {auditError ? (
-          <WorkspaceState title="Audit log unavailable" tone="error">
-            {auditError}
-          </WorkspaceState>
-        ) : null}
-        <OperationsTable
-          ariaLabel="Audit trail events"
-          columns={["Event", "Actor", "Record", "Time"]}
-          rows={auditRows}
-          emptyMessage="No audit events have been recorded yet."
         />
       </section>
     );

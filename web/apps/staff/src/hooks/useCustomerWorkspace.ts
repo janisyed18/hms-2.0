@@ -20,11 +20,24 @@ export function useCustomerWorkspace() {
     let active = true;
     setLoading(true);
     setError(null);
-    void createHmsClient()
-      .listCustomers()
-      .then((result) => {
+    const client = createHmsClient();
+    void Promise.all([
+      client.listCustomers(),
+      client.listAssets({ limit: 100 }).catch(() => null)
+    ])
+      .then(([result, assetResult]) => {
         if (!active) return;
-        setCustomers(result.items);
+        const assetCounts = new Map<string, number>();
+        assetResult?.items.forEach((asset) => {
+          assetCounts.set(asset.customer.id, (assetCounts.get(asset.customer.id) ?? 0) + 1);
+        });
+        setCustomers(result.items.map((customer) => ({
+          ...customer,
+          metrics: {
+            ...customer.metrics,
+            assetCount: assetResult ? assetCounts.get(customer.id) ?? 0 : customer.metrics.assetCount
+          }
+        })));
         setTotalCount(result.total);
         setSelectedId(null);
       })

@@ -18,7 +18,6 @@ import {
   Wifi
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
 
 import {
   createHmsClient,
@@ -38,6 +37,7 @@ import {
   type UserAdminValues
 } from "./UserAdminDialog";
 import { WorkspaceState } from "./WorkspaceState";
+import { ManagementHeader, ManagementMetric, ManagementMetricStrip } from "./ManagementPrimitives";
 import { canManageRole } from "./roleAdmin";
 
 export type SystemModule = "users" | "devices";
@@ -210,38 +210,18 @@ export function SystemWorkspace({
     return (
       <section className="system-workspace" aria-label="Device workspace">
         {error ? <WorkspaceState title="Device admin unavailable" tone="error">{error}</WorkspaceState> : null}
-        <MetricGrid
-          items={[
-            {
-              icon: <Smartphone aria-hidden="true" size={18} />,
-              label: "Registered Devices",
-              value: String(devices.length),
-              helper: `${devices.filter((device) => !device.revoked).length} active devices`,
-              tone: "blue"
-            },
-            {
-              icon: <Wifi aria-hidden="true" size={18} />,
-              label: "Sync Health",
-              value: `${syncHealth(devices)}%`,
-              helper: "Devices with recent sync state",
-              tone: "green"
-            },
-            {
-              icon: <ServerCog aria-hidden="true" size={18} />,
-              label: "Offline Window",
-              value: `${maxOfflineWindow(devices)}d`,
-              helper: "Largest allowed offline window",
-              tone: "amber"
-            },
-            {
-              icon: <Clock3 aria-hidden="true" size={18} />,
-              label: "Revoked",
-              value: String(devices.filter((device) => device.revoked).length),
-              helper: "Blocked from future sync",
-              tone: "red"
-            }
-          ]}
+        <ManagementHeader
+          eyebrow="Device management"
+          title="Device management"
+          description="Manage registered mobile and field devices in this workspace."
+          context={<><Smartphone aria-hidden="true" size={20} /><span><strong>{devices.length} registered devices</strong><small>Field access and sync state</small></span></>}
         />
+        <ManagementMetricStrip>
+          <ManagementMetric icon={Smartphone} label="Registered Devices" value={devices.length} detail={`${devices.filter((device) => !device.revoked).length} active devices`} />
+          <ManagementMetric icon={Wifi} label="Sync Health" value={`${syncHealth(devices)}%`} detail="Devices with recent sync state" tone="green" />
+          <ManagementMetric icon={ServerCog} label="Offline Window" value={`${maxOfflineWindow(devices)}d`} detail="Largest allowed offline window" tone="amber" />
+          <ManagementMetric icon={Clock3} label="Revoked" value={devices.filter((device) => device.revoked).length} detail="Blocked from future sync" tone="red" />
+        </ManagementMetricStrip>
 
         <div className="system-layout">
           <section className="data-panel">
@@ -279,38 +259,18 @@ export function SystemWorkspace({
   return (
     <section className="system-workspace" aria-label="Users and roles workspace">
       {error ? <WorkspaceState title="User admin unavailable" tone="error">{error}</WorkspaceState> : null}
-      <MetricGrid
-        items={[
-          {
-            icon: <UsersRound aria-hidden="true" size={18} />,
-            label: "Active Users",
-            value: String(users.length),
-            helper: "Persisted staff and customer users",
-            tone: "blue"
-          },
-          {
-            icon: <ShieldCheck aria-hidden="true" size={18} />,
-            label: "Admin Seats",
-            value: String(users.filter((user) => user.role === "HMS_ADMIN").length),
-            helper: "Full HMS access",
-            tone: "green"
-          },
-          {
-            icon: <KeyRound aria-hidden="true" size={18} />,
-            label: "Reviewer Seats",
-            value: String(users.filter((user) => user.role === "REVIEWER").length),
-            helper: "Can approve inspections",
-            tone: "amber"
-          },
-          {
-            icon: <LockKeyhole aria-hidden="true" size={18} />,
-            label: "Restricted Users",
-            value: String(users.filter((user) => user.role === "CUSTOMER_USER").length),
-            helper: "Scoped customer access",
-            tone: "red"
-          }
-        ]}
+      <ManagementHeader
+        eyebrow="Access management"
+        title="Access control"
+        description="Manage workspace access, roles, reviewers, and customer-scoped users."
+        context={<><UsersRound aria-hidden="true" size={20} /><span><strong>{users.length} user accounts</strong><small>Role-based workspace access</small></span></>}
       />
+      <ManagementMetricStrip>
+        <ManagementMetric icon={UsersRound} label="Active Users" value={users.filter((user) => user.accountStatus === "ACTIVE").length} detail="Enabled staff and customer users" />
+        <ManagementMetric icon={ShieldCheck} label="Admin Seats" value={users.filter((user) => user.role === "HMS_ADMIN" || user.role === "SUPER_ADMIN").length} detail="Full HMS access" tone="green" />
+        <ManagementMetric icon={KeyRound} label="Reviewer Seats" value={users.filter((user) => user.role === "REVIEWER").length} detail="Can approve inspections" tone="amber" />
+        <ManagementMetric icon={LockKeyhole} label="Restricted Users" value={users.filter((user) => user.role === "CUSTOMER_USER").length} detail="Scoped customer access" tone="red" />
+      </ManagementMetricStrip>
 
       <div className="system-layout">
         <section className="data-panel">
@@ -376,31 +336,6 @@ export function SystemWorkspace({
         onClose={() => setCredential(null)}
       />
     </section>
-  );
-}
-
-function MetricGrid({
-  items
-}: {
-  items: Array<{
-    helper: string;
-    icon: ReactNode;
-    label: string;
-    tone: "blue" | "green" | "amber" | "red";
-    value: string;
-  }>;
-}) {
-  return (
-    <div className="kpi-grid" aria-label="System highlights">
-      {items.map((item) => (
-        <div className={`kpi-card tone-${item.tone}`} key={item.label}>
-          <div className="kpi-icon">{item.icon}</div>
-          <span>{item.label}</span>
-          <strong>{item.value}</strong>
-          <small>{item.helper}</small>
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -576,7 +511,9 @@ function roleSummary(users: AdminUserRecord[]) {
     count: users.filter((user) => user.role === role).length,
     scope: role === "CUSTOMER_USER" ? "Customer scoped" : "Staff workspace",
     permissions:
-      role === "HMS_ADMIN"
+      role === "SUPER_ADMIN"
+        ? "Full system administration and security controls"
+        : role === "HMS_ADMIN"
         ? "Administer records, users, devices, and audit"
         : role === "REVIEWER"
           ? "Review inspections and issue certificates"

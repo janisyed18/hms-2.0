@@ -19,6 +19,11 @@ const AnalyticsWorkspace = lazy(() =>
     default: AnalyticsWorkspace
   }))
 );
+const AuditWorkspace = lazy(() =>
+  import("./components/AuditWorkspace").then(({ AuditWorkspace }) => ({
+    default: AuditWorkspace
+  }))
+);
 const AuthFlow = lazy(() =>
   import("./auth/AuthFlow").then(({ AuthFlow }) => ({ default: AuthFlow }))
 );
@@ -113,7 +118,7 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   }
 };
 
-const operationalModules = new Set<AppModule>(["dashboard", "sync", "audit"]);
+const operationalModules = new Set<AppModule>(["dashboard", "sync"]);
 
 const allPermissions: StaffPermission[] = [
   "customer:read",
@@ -314,7 +319,9 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
             </WorkspaceState>
           }
         >
-          {isOperationalModule(renderedActiveModule) ? (
+          {renderedActiveModule === "audit" ? (
+            <main className="record-page"><div className="record-main"><AuditWorkspace /></div></main>
+          ) : isOperationalModule(renderedActiveModule) ? (
             <main className="record-page">
               <div className="record-main">
                 <OperationalWorkspace
@@ -342,6 +349,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                     <>
                       <CustomerTable
                         canWrite={hasPermission(session, "customer:write")}
+                        allCustomers={workspace.customers}
                         customers={workspace.visibleCustomers}
                         totalCount={workspace.totalCount}
                         selectedId={workspace.selectedCustomer?.id ?? null}

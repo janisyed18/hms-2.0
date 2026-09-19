@@ -1,4 +1,7 @@
+import { Archive, Boxes, Layers3, ShieldCheck } from "lucide-react";
+
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
+import { ManagementHeader, ManagementMetric, ManagementMetricStrip } from "./ManagementPrimitives";
 import { ProductDetail } from "./ProductDetail";
 import { ProductForm } from "./ProductForm";
 import { useProductsWorkspace } from "../hooks/useProductsWorkspace";
@@ -6,10 +9,16 @@ import type { ProductRecord } from "../domain/types";
 
 interface ProductsWorkspaceProps {
   canManage?: boolean;
+  embedded?: boolean;
 }
 
-export function ProductsWorkspace({ canManage = true }: ProductsWorkspaceProps) {
+export function ProductsWorkspace({ canManage = true, embedded = false }: ProductsWorkspaceProps) {
   const workspace = useProductsWorkspace();
+  const categoryCount = new Set(workspace.products.map((product) => product.category)).size;
+  const standardCount = new Set(workspace.products.map((product) => product.standardCode).filter(Boolean)).size;
+  const legacyCount = workspace.products.filter(
+    (product) => product.category.toLowerCase() === "legacy catalogue"
+  ).length;
   const productColumns: ModuleColumn<ProductRecord>[] = [
     {
       header: "Code",
@@ -51,7 +60,21 @@ export function ProductsWorkspace({ canManage = true }: ProductsWorkspaceProps) 
   ];
 
   return (
-    <section className="inspection-workspace" aria-label="Product workspace">
+    <section className="inspection-workspace catalog-workspace management-workspace" aria-label="Product workspace">
+      {!embedded ? <>
+        <ManagementHeader
+          eyebrow="Product catalog"
+          title="Product catalog"
+          description="Manage hose products, classifications, and standards."
+          context={<><Boxes aria-hidden="true" size={20} /><span><strong>{workspace.products.length} total products</strong><small>Across {categoryCount} categories</small></span></>}
+        />
+        <ManagementMetricStrip>
+          <ManagementMetric icon={Boxes} label="Total Products" value={workspace.products.length} detail="Available product definitions" />
+          <ManagementMetric icon={Layers3} label="Categories" value={categoryCount} detail="Product classifications" tone="green" />
+          <ManagementMetric icon={ShieldCheck} label="Standards Tracked" value={standardCount} detail="Linked to product records" tone="amber" />
+          <ManagementMetric icon={Archive} label="Legacy Catalogue" value={legacyCount} detail={workspace.products.length ? `${Math.round((legacyCount / workspace.products.length) * 100)}% of total` : "No product records"} tone="violet" />
+        </ManagementMetricStrip>
+      </> : null}
       <div className={`inspection-layout${workspace.selectedProduct ? "" : " detail-closed"}`}>
         <div className="inspection-table-wrap">
           <ModuleTable

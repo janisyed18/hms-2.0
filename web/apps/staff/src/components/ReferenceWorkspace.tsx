@@ -10,6 +10,7 @@ import { useState } from "react";
 
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
 import { ProductsWorkspace } from "./ProductsWorkspace";
+import { ManagementHeader } from "./ManagementPrimitives";
 import { ReferenceForm } from "./ReferenceForm";
 import { useReferenceWorkspace } from "../hooks/useReferenceWorkspace";
 import { PresencePanel } from "../motion/MotionPrimitives";
@@ -52,13 +53,12 @@ export function ReferenceWorkspace({ canManage }: ReferenceWorkspaceProps) {
 
   return (
     <section className="reference-catalog-workspace" aria-label="Reference data workspace">
-      <header className="reference-catalog-header">
-        <div>
-          <span>Controlled catalogue</span>
-          <h2>Reference data</h2>
-          <p>Changes are audited and immediately available to asset configuration.</p>
-        </div>
-      </header>
+      <ManagementHeader
+        eyebrow="Reference data"
+        title="Reference data"
+        description="Manage controlled catalogue data used throughout the HMS workspace."
+        context={<><BookOpenCheck aria-hidden="true" size={20} /><span><strong>Controlled access</strong><small>Changes are audit logged</small></span></>}
+      />
       <div className="reference-catalog-tabs" role="tablist" aria-label="Reference data categories">
         {catalogTabs.map((tab) => {
           const Icon = tab.icon;
@@ -92,7 +92,7 @@ export function ReferenceWorkspace({ canManage }: ReferenceWorkspaceProps) {
               {canManage ? "Managed access" : "Read only"}
             </span>
           </div>
-          <ProductsWorkspace canManage={canManage} />
+          <ProductsWorkspace canManage={canManage} embedded />
         </PresencePanel>
       ) : (
         <PresencePanel presenceKey={workspace.activeCategory} className="reference-catalog-panel">

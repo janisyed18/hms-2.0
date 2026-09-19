@@ -1250,7 +1250,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Audit Log" }));
     expect(await screen.findByRole("heading", { name: "Audit Trail" })).toBeVisible();
-    expect(screen.getByRole("table", { name: "Audit trail events" })).toHaveTextContent(
+    expect(await screen.findByRole("table", { name: "Audit trail events" })).toHaveTextContent(
       "User created"
     );
   });

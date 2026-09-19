@@ -1,15 +1,17 @@
-import { CheckCircle2, Download, Filter, Plus, Search } from "lucide-react";
+import { Boxes, CheckCircle2, Download, Filter, MapPin, Plus, Search, UsersRound } from "lucide-react";
 import { useState } from "react";
 import { m, useReducedMotion } from "motion/react";
 
 import { motionTokens } from "../motion/motionTokens";
 import { PaginationControls, usePagination } from "./Pagination";
 import { WorkspaceState } from "./WorkspaceState";
+import { ManagementHeader, ManagementMetric, ManagementMetricStrip } from "./ManagementPrimitives";
 import type { CustomerRecord } from "../domain/types";
 
 interface CustomerTableProps {
   canWrite: boolean;
   customers: CustomerRecord[];
+  allCustomers: CustomerRecord[];
   totalCount: number;
   selectedId: string | null;
   query: string;
@@ -72,6 +74,7 @@ function downloadCsv(filename: string, rows: string[][]) {
 export function CustomerTable({
   canWrite,
   customers,
+  allCustomers,
   totalCount,
   selectedId,
   query,
@@ -86,6 +89,9 @@ export function CustomerTable({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const reducedMotion = useReducedMotion();
   const pagination = usePagination(customers);
+  const activeCustomers = allCustomers.filter((customer) => customer.status === "Active").length;
+  const totalSites = allCustomers.reduce((total, customer) => total + customer.locations.length, 0);
+  const totalAssets = allCustomers.reduce((total, customer) => total + customer.metrics.assetCount, 0);
   const exportRows = [
     [
       "Customer Name",
@@ -108,7 +114,19 @@ export function CustomerTable({
   ];
 
   return (
-    <section className="customer-console" aria-label="Customer workspace">
+    <section className="customer-console management-workspace" aria-label="Customer workspace">
+      <ManagementHeader
+        eyebrow="Customer management"
+        title="Customers"
+        description="Manage customer accounts, locations, and fleet health at a glance."
+        context={<><Boxes aria-hidden="true" size={20} /><span><strong>{totalAssets} total assets</strong><small>Across customer fleets</small></span></>}
+      />
+      <ManagementMetricStrip>
+        <ManagementMetric icon={UsersRound} label="Total Customers" value={totalCount} detail="All registered customers" />
+        <ManagementMetric icon={CheckCircle2} label="Active Customers" value={activeCustomers} detail={`${totalCount ? Math.round((activeCustomers / totalCount) * 100) : 0}% active`} tone="green" />
+        <ManagementMetric icon={MapPin} label="Total Sites" value={totalSites} detail="Across all customers" tone="violet" />
+        <ManagementMetric icon={Boxes} label="Total Assets" value={totalAssets} detail="In customer fleets" tone="amber" />
+      </ManagementMetricStrip>
       <div className="customer-console-toolbar">
         <label className="field search-field">
           <Search aria-hidden="true" size={17} />
