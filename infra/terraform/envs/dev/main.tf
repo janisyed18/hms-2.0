@@ -28,6 +28,34 @@ locals {
   cloudfront_staff_origin_id     = "${local.name}-staff-s3"
   cloudfront_inspector_origin_id = "${local.name}-inspector-s3"
 
+  custom_domain_enabled = alltrue([
+    var.public_root_domain != "",
+    var.staff_hostname != "",
+    var.api_origin_hostname != "",
+    var.public_hosted_zone_id != "",
+    var.alb_acm_certificate_arn != "",
+    var.cloudfront_acm_certificate_arn != "",
+  ])
+  custom_domain_inputs_supplied = anytrue([
+    var.public_root_domain != "",
+    var.staff_hostname != "",
+    var.api_origin_hostname != "",
+    var.public_hosted_zone_id != "",
+    var.alb_acm_certificate_arn != "",
+    var.cloudfront_acm_certificate_arn != "",
+  ])
+  custom_domain_configuration_valid = (
+    !local.custom_domain_inputs_supplied || (
+      local.custom_domain_enabled &&
+      alltrue([
+        var.staff_hostname == var.public_root_domain || endswith(var.staff_hostname, ".${var.public_root_domain}"),
+        var.api_origin_hostname == var.public_root_domain || endswith(var.api_origin_hostname, ".${var.public_root_domain}"),
+      ])
+    )
+  )
+  cloudfront_api_origin_domain = local.custom_domain_enabled ? var.api_origin_hostname : aws_lb.api.dns_name
+  staff_public_url             = local.custom_domain_enabled ? "https://${var.staff_hostname}" : "https://${aws_cloudfront_distribution.staff.domain_name}"
+
   certificate_service_dns = "certificate-engine.${aws_service_discovery_private_dns_namespace.this.name}"
 
   app_secret_arn          = aws_secretsmanager_secret.app.arn
@@ -106,7 +134,7 @@ locals {
     },
     {
       name  = "PUBLIC_BASE_URL"
-      value = "http://${aws_lb.api.dns_name}"
+      value = local.staff_public_url
     },
     {
       name  = "REDIS_URL"
@@ -154,11 +182,11 @@ locals {
     },
     {
       name  = "AUTH_BROWSER_ALLOWED_ORIGINS"
-      value = jsonencode(["https://${aws_cloudfront_distribution.staff.domain_name}"])
+      value = jsonencode([local.staff_public_url])
     },
     {
       name  = "AUTH_BROWSER_STAFF_PUBLIC_URL"
-      value = "https://${aws_cloudfront_distribution.staff.domain_name}"
+      value = local.staff_public_url
     },
     {
       name  = "AUTH_BROWSER_COOKIE_SECURE"
@@ -291,7 +319,7 @@ resource "aws_route_table_association" "public" {
 
 resource "aws_security_group" "alb" {
   name        = "${local.name}-alb"
-  description = "Public HTTP ingress for the HMS dev API"
+  description = "Public HTTP and optional HTTPS ingress for the HMS API"
   vpc_id      = aws_vpc.this.id
 
   ingress {
@@ -299,7 +327,19 @@ resource "aws_security_group" "alb" {
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "Temporary dev HTTP"
+    description = "HTTP redirect or temporary development API ingress"
+  }
+
+  dynamic "ingress" {
+    for_each = local.custom_domain_enabled ? [443] : []
+
+    content {
+      from_port   = ingress.value
+      to_port     = ingress.value
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+      description = "HTTPS from CloudFront and public clients"
+    }
   }
 
   egress {
@@ -846,6 +886,31 @@ resource "aws_lb_listener" "api_http" {
   protocol          = "HTTP"
 
   default_action {
+    type             = local.custom_domain_enabled ? "redirect" : "forward"
+    target_group_arn = local.custom_domain_enabled ? null : aws_lb_target_group.api.arn
+
+    dynamic "redirect" {
+      for_each = local.custom_domain_enabled ? [1] : []
+
+      content {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
+      }
+    }
+  }
+}
+
+resource "aws_lb_listener" "api_https" {
+  count = local.custom_domain_enabled ? 1 : 0
+
+  load_balancer_arn = aws_lb.api.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = var.alb_acm_certificate_arn
+
+  default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.api.arn
   }
@@ -1300,7 +1365,7 @@ resource "aws_cloudfront_distribution" "staff" {
 
   origin {
     origin_id   = local.cloudfront_api_origin_id
-    domain_name = aws_lb.api.dns_name
+    domain_name = local.cloudfront_api_origin_domain
 
     custom_header {
       name  = "X-HMS-Edge-Secret"
@@ -1310,7 +1375,7 @@ resource "aws_cloudfront_distribution" "staff" {
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "http-only"
+      origin_protocol_policy = local.custom_domain_enabled ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
@@ -1376,8 +1441,22 @@ resource "aws_cloudfront_distribution" "staff" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = true
+    acm_certificate_arn            = local.custom_domain_enabled ? var.cloudfront_acm_certificate_arn : null
+    cloudfront_default_certificate = !local.custom_domain_enabled
+    minimum_protocol_version       = local.custom_domain_enabled ? "TLSv1.2_2021" : "TLSv1"
+    ssl_support_method             = local.custom_domain_enabled ? "sni-only" : null
   }
+
+  aliases = local.custom_domain_enabled ? [var.staff_hostname] : []
+
+  lifecycle {
+    precondition {
+      condition     = local.custom_domain_configuration_valid
+      error_message = "Custom TLS requires public_root_domain, staff_hostname, api_origin_hostname, public_hosted_zone_id, alb_acm_certificate_arn (ap-southeast-2), and cloudfront_acm_certificate_arn (us-east-1). Leave all six empty to retain development URLs."
+    }
+  }
+
+  depends_on = [aws_lb_listener.api_https]
 }
 
 resource "aws_cloudfront_distribution" "inspector" {
@@ -1395,7 +1474,7 @@ resource "aws_cloudfront_distribution" "inspector" {
 
   origin {
     origin_id   = local.cloudfront_api_origin_id
-    domain_name = aws_lb.api.dns_name
+    domain_name = local.cloudfront_api_origin_domain
 
     custom_header {
       name  = "X-HMS-Edge-Secret"
@@ -1405,7 +1484,7 @@ resource "aws_cloudfront_distribution" "inspector" {
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "http-only"
+      origin_protocol_policy = local.custom_domain_enabled ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
@@ -1472,6 +1551,36 @@ resource "aws_cloudfront_distribution" "inspector" {
 
   viewer_certificate {
     cloudfront_default_certificate = true
+  }
+
+  depends_on = [aws_lb_listener.api_https]
+}
+
+resource "aws_route53_record" "staff" {
+  count = local.custom_domain_enabled ? 1 : 0
+
+  zone_id = var.public_hosted_zone_id
+  name    = var.staff_hostname
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.staff.domain_name
+    zone_id                = aws_cloudfront_distribution.staff.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "api_origin" {
+  count = local.custom_domain_enabled ? 1 : 0
+
+  zone_id = var.public_hosted_zone_id
+  name    = var.api_origin_hostname
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.api.dns_name
+    zone_id                = aws_lb.api.zone_id
+    evaluate_target_health = true
   }
 }
 

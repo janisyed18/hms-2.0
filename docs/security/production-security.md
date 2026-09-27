@@ -17,7 +17,9 @@
 - CloudFront applies the equivalent headers to static applications. The CSP includes `frame-ancestors 'none'`; `X-Frame-Options` is retained for legacy clients.
 - Static and API CSP permits inline styles only because the existing frontend requires them. Inline scripts are not allowed. Remove `unsafe-inline` from `style-src` after migrating inline styles to hashed or external stylesheets.
 - CloudFront sends a random origin header to the ALB API origin. ECS receives the same secret from Secrets Manager and refuses non-health requests without it. `SECURITY_EDGE_SHARED_SECRET` is a deployment invariant outside local/test.
-- CloudFront is TLS-only for viewers. The current development ALB origin is HTTP because it has no custom DNS name or ACM certificate. Before production, attach an ACM certificate to an HTTPS ALB listener and change CloudFront's origin policy to `https-only`.
+- CloudFront is TLS-only for viewers. The current development ALB origin is HTTP because it has no custom DNS name or ACM certificate. The Terraform domain inputs atomically enable an ALB HTTPS listener, HTTP-to-HTTPS redirect, CloudFront `https-only` origin policy, and Route 53 aliases only when every required value is supplied.
+- Configure `public_root_domain`, `staff_hostname`, `api_origin_hostname`, `public_hosted_zone_id`, `alb_acm_certificate_arn`, and `cloudfront_acm_certificate_arn` together. The ALB certificate must be issued in `ap-southeast-2` for `api_origin_hostname`; the CloudFront certificate must be issued in `us-east-1` for `staff_hostname`. Terraform creates no ACM certificates, so request and DNS-validate them manually before setting the ARNs.
+- `staff_hostname` aliases to CloudFront and is the only public application/API base URL. `api_origin_hostname` aliases to the ALB solely so CloudFront can validate the ALB certificate. Direct API-origin traffic lacks the CloudFront secret and is rejected, except for narrowly scoped health endpoints.
 
 ## AWS traffic protection
 
@@ -36,7 +38,7 @@
 ## Production release checklist
 
 1. Set `enable_waf=true` only after approving the WAF cost and monitor the rule in count mode during the first release if application traffic is not yet known.
-2. Configure the ALB custom domain, ACM certificate, HTTPS listener, and CloudFront `https-only` origin policy.
+2. Create a public Route 53 zone, request and DNS-validate the ACM certificates in the required regions, then set all six custom-domain Terraform inputs together. Confirm `https://<staff_hostname>/api/...` works before any DNS cutover; do not expose the API-origin hostname to application clients.
 3. Keep `AUTH_BROWSER_COOKIE_SECURE=true`, `AUTH_BROWSER_ALLOWED_ORIGINS` exact, and all generated application secrets in Secrets Manager.
 4. Configure log retention and alarms for WAF blocks, repeated 401/429 responses, failed sign-ins, unusual API request rate, and infrastructure health.
 5. Before configuring Twilio live delivery, set its exact HTTPS status callback URL in both Twilio and `NOTIFICATION_TWILIO_STATUS_CALLBACK_URL`. Keep `NOTIFICATION_CHANNEL_MODE=console` until the sender identity and callback endpoint are ready.
