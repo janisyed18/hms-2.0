@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -390,12 +391,17 @@ async def _paginate(
 # --- Provider delivery webhooks (N-06) ------------------------------------------
 
 
-def _check_webhook_secret(request: Request, token: str | None) -> None:
+def _check_webhook_secret(request: Request) -> None:
     secret = settings.notification_webhook_secret
     if not secret:
-        return  # open in dev
-    provided = token or request.headers.get("X-HMS-Webhook-Secret")
-    if provided != secret:
+        if settings.is_local_or_test:
+            return
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook authentication is not configured",
+        )
+    provided = request.headers.get("X-HMS-Webhook-Secret", "")
+    if not hmac.compare_digest(provided, secret):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Invalid webhook secret"
         )
@@ -406,14 +412,13 @@ async def delivery_webhook(
     provider: str,
     request: Request,
     session: SessionDep,
-    token: str | None = None,
 ) -> dict[str, int]:
     """Update delivery status from a provider callback (Twilio / SES-SNS / generic).
 
     Matches notifications by ``provider_message_id``. Always returns 2xx so
     providers do not retry indefinitely.
     """
-    _check_webhook_secret(request, token)
+    _check_webhook_secret(request)
     receipts = parse_receipts(provider.lower(), await request.body())
     updated = 0
     for provider_message_id, receipt_status in receipts:

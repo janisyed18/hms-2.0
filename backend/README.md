@@ -285,7 +285,7 @@ Endpoints:
 - `POST /api/v1/notifications/webhooks/{provider}` — provider delivery callbacks
   (`twilio` status callbacks, `ses`/`sns` delivery/bounce/complaint, or
   `generic`), matched to notifications by `provider_message_id` (N-06). Gated by
-  `NOTIFICATION_WEBHOOK_SECRET` (`?token=` or `X-HMS-Webhook-Secret` header).
+  `NOTIFICATION_WEBHOOK_SECRET` (`X-HMS-Webhook-Secret` header only).
 
 Password reset (transactional, N-12): `POST /api/v1/auth/password/reset-request`
 (email → short-TTL signed link) and `POST /api/v1/auth/password/reset-confirm`

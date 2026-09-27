@@ -14,7 +14,8 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import ConfigDict, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,6 +48,10 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 _MIN_PASSWORD_LEN = 10
 _DUMMY_PASSWORD_HASH = hash_password("hms-dummy-password")
+
+
+class BaseModel(PydanticBaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class AuthMeResponse(BaseModel):

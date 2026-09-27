@@ -11,8 +11,12 @@ from email.message import EmailMessage
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
+from starlette.requests import Request
 
+from hms_backend.app.api.notifications import _check_webhook_secret
 from hms_backend.app.core.config import Settings
+from hms_backend.app.core.config import settings as app_settings
 from hms_backend.app.modules.notifications.channels.base import OutgoingMessage
 from hms_backend.app.modules.notifications.channels.email_ses import AwsSesEmailAdapter
 from hms_backend.app.modules.notifications.channels.email_smtp import (
@@ -34,6 +38,55 @@ from hms_backend.app.modules.notifications.webhooks import (
     parse_sns,
     parse_twilio,
 )
+
+
+def _webhook_request(
+    secret: str | None = None, query_string: bytes = b""
+) -> Request:
+    headers = [] if secret is None else [(b"x-hms-webhook-secret", secret.encode())]
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/notifications/webhooks/generic",
+            "headers": headers,
+            "query_string": query_string,
+        }
+    )
+
+
+def test_webhook_secret_is_required_outside_local_development(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_settings, "environment", "production")
+    monkeypatch.setattr(app_settings, "notification_webhook_secret", "")
+
+    with pytest.raises(HTTPException, match="Webhook authentication") as exc_info:
+        _check_webhook_secret(_webhook_request())
+
+    assert exc_info.value.status_code == 503
+
+
+def test_webhook_secret_rejects_invalid_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_settings, "environment", "production")
+    monkeypatch.setattr(app_settings, "notification_webhook_secret", "webhook-secret")
+
+    with pytest.raises(HTTPException, match="Invalid webhook secret"):
+        _check_webhook_secret(_webhook_request("wrong"))
+
+    _check_webhook_secret(_webhook_request("webhook-secret"))
+
+
+def test_webhook_secret_is_not_accepted_from_a_query_parameter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_settings, "environment", "production")
+    monkeypatch.setattr(app_settings, "notification_webhook_secret", "webhook-secret")
+
+    with pytest.raises(HTTPException, match="Invalid webhook secret"):
+        _check_webhook_secret(_webhook_request(query_string=b"token=webhook-secret"))
 
 
 class _FakeSesClient:

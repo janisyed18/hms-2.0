@@ -133,6 +133,23 @@ variable "enable_deletion_protection" {
   default     = false
 }
 
+variable "enable_waf" {
+  description = "Attach AWS WAF managed rules and request-rate limiting to the public ALB. This incurs AWS WAF charges."
+  type        = bool
+  default     = false
+}
+
+variable "waf_rate_limit" {
+  description = "Maximum requests per source IP in a rolling five-minute period before AWS WAF blocks it."
+  type        = number
+  default     = 2000
+
+  validation {
+    condition     = var.waf_rate_limit >= 100
+    error_message = "waf_rate_limit must be at least 100 requests per five minutes."
+  }
+}
+
 variable "notification_channel_mode" {
   description = "Notification delivery mode for ECS tasks. Use live only after SES/Twilio secrets are populated."
   type        = string
