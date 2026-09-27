@@ -13,7 +13,8 @@ from enum import StrEnum
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import ConfigDict
 from sqlalchemy import select
 
 from hms_backend.app.api.dependencies import (
@@ -41,6 +42,10 @@ router = APIRouter(prefix="/auth/browser", tags=["auth-browser"])
 
 _service = BrowserAuthService()
 _login_limiter = LoginRateLimiter()
+
+
+class BaseModel(PydanticBaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class BrowserAuthNextStep(StrEnum):

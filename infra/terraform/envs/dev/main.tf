@@ -92,6 +92,13 @@ locals {
     },
   ], local.notification_secret_environment)
 
+  api_secret_environment = concat(local.backend_secret_environment, [
+    {
+      name      = "SECURITY_EDGE_SHARED_SECRET"
+      valueFrom = "${local.app_secret_arn}:SECURITY_EDGE_SHARED_SECRET::"
+    },
+  ])
+
   backend_environment = [
     {
       name  = "ENVIRONMENT"
@@ -530,7 +537,13 @@ resource "aws_secretsmanager_secret_version" "app" {
     AUTH_MFA_ENCRYPTION_KEYS           = jsonencode({ (tostring(var.auth_mfa_key_version)) = random_password.auth_mfa.result })
     AUTH_RECOVERY_CODE_PEPPER          = random_password.auth_recovery_pepper.result
     AUTH_PASSWORD_RESET_ENCRYPTION_KEY = random_password.auth_password_reset.result
+    SECURITY_EDGE_SHARED_SECRET        = random_password.edge_origin.result
   })
+}
+
+resource "random_password" "edge_origin" {
+  length  = 48
+  special = false
 }
 
 resource "random_password" "notification_webhook" {
@@ -865,7 +878,7 @@ resource "aws_ecs_task_definition" "api" {
         }
       ]
       environment = local.backend_environment
-      secrets     = local.backend_secret_environment
+      secrets     = local.api_secret_environment
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -1156,6 +1169,114 @@ function handler(event) {
 EOT
 }
 
+resource "aws_cloudfront_response_headers_policy" "static_security" {
+  name    = "${local.name}-static-security"
+  comment = "Security headers for HMS static applications"
+
+  security_headers_config {
+    content_security_policy {
+      content_security_policy = "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:"
+      override                = true
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+
+    strict_transport_security {
+      access_control_max_age_sec = 15552000
+      include_subdomains         = true
+      override                   = true
+    }
+  }
+
+  custom_headers_config {
+    items {
+      header   = "Permissions-Policy"
+      value    = "camera=(), geolocation=(), microphone=()"
+      override = true
+    }
+  }
+}
+
+resource "aws_wafv2_web_acl" "api" {
+  count = var.enable_waf ? 1 : 0
+
+  name  = "${local.name}-api"
+  scope = "REGIONAL"
+
+  default_action {
+    allow {}
+  }
+
+  rule {
+    name     = "AWSManagedRulesCommonRuleSet"
+    priority = 10
+
+    override_action {
+      none {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesCommonRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "aws-managed-common"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "RateLimit"
+    priority = 20
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = var.waf_rate_limit
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "rate-limit"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "hms-api"
+    sampled_requests_enabled   = true
+  }
+}
+
+resource "aws_wafv2_web_acl_association" "api" {
+  count = var.enable_waf ? 1 : 0
+
+  resource_arn = aws_lb.api.arn
+  web_acl_arn  = aws_wafv2_web_acl.api[0].arn
+}
+
 resource "aws_cloudfront_distribution" "staff" {
   enabled             = true
   comment             = "${local.name} staff app"
@@ -1173,6 +1294,11 @@ resource "aws_cloudfront_distribution" "staff" {
     origin_id   = local.cloudfront_api_origin_id
     domain_name = aws_lb.api.dns_name
 
+    custom_header {
+      name  = "X-HMS-Edge-Secret"
+      value = random_password.edge_origin.result
+    }
+
     custom_origin_config {
       http_port              = 80
       https_port             = 443
@@ -1182,11 +1308,12 @@ resource "aws_cloudfront_distribution" "staff" {
   }
 
   default_cache_behavior {
-    target_origin_id       = local.cloudfront_staff_origin_id
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-    cached_methods         = ["GET", "HEAD"]
-    compress               = true
+    target_origin_id           = local.cloudfront_staff_origin_id
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD"]
+    compress                   = true
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.static_security.id
 
     forwarded_values {
       query_string = false
@@ -1262,6 +1389,11 @@ resource "aws_cloudfront_distribution" "inspector" {
     origin_id   = local.cloudfront_api_origin_id
     domain_name = aws_lb.api.dns_name
 
+    custom_header {
+      name  = "X-HMS-Edge-Secret"
+      value = random_password.edge_origin.result
+    }
+
     custom_origin_config {
       http_port              = 80
       https_port             = 443
@@ -1271,11 +1403,12 @@ resource "aws_cloudfront_distribution" "inspector" {
   }
 
   default_cache_behavior {
-    target_origin_id       = local.cloudfront_inspector_origin_id
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-    cached_methods         = ["GET", "HEAD"]
-    compress               = true
+    target_origin_id           = local.cloudfront_inspector_origin_id
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD"]
+    compress                   = true
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.static_security.id
 
     forwarded_values {
       query_string = false

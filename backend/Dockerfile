@@ -23,15 +23,17 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir uv
 
-# Install dependencies first (cached layer), then the project.
-# Not using --frozen: the committed uv.lock may lag pyproject, so we let uv
-# resolve at build time (network is available during the image build). Refresh
-# the committed lock on a Python 3.12 host with `uv lock`.
+# Install dependencies from the reviewed lock before copying application code.
 COPY pyproject.toml uv.lock* ./
-RUN uv sync --no-dev --no-install-project
+RUN uv sync --locked --no-dev --no-install-project
 
 COPY . .
-RUN uv sync --no-dev
+RUN uv sync --locked --no-dev \
+    && groupadd --system hms \
+    && useradd --system --gid hms --home-dir /app hms \
+    && chown -R hms:hms /app
+
+USER hms
 
 EXPOSE 8000
 

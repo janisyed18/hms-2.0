@@ -16,12 +16,19 @@ from hms_backend.app.api.public import router as public_router
 from hms_backend.app.api.records import router as records_router
 from hms_backend.app.api.sync import router as sync_router
 from hms_backend.app.core.config import settings
+from hms_backend.app.core.http_security import (
+    ApiRateLimitMiddleware,
+    EdgeOriginMiddleware,
+    RequestBodyLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from hms_backend.app.core.redis import close_redis, ping_redis
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings.validate_browser_auth()
+    settings.validate_http_security()
     yield
     # Release the Redis connection pool on shutdown.
     await close_redis()
@@ -44,6 +51,11 @@ def create_app() -> FastAPI:
         docs_url="/api/v1/docs",
         lifespan=lifespan,
     )
+    # Register innermost first so security headers are present even on rejects.
+    app.add_middleware(ApiRateLimitMiddleware)
+    app.add_middleware(EdgeOriginMiddleware)
+    app.add_middleware(RequestBodyLimitMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:

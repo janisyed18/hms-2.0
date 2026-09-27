@@ -167,6 +167,23 @@ class Settings(BaseSettings):
     auth_login_rate_limit_window_seconds: int = 300
     auth_login_lockout_seconds: int = 60
 
+    # --- HTTP edge security ---
+    # Applies to every API response. CloudFront uses an equivalent policy for
+    # static applications so HTML, API, and error responses stay consistent.
+    security_content_security_policy: str = (
+        "default-src 'self'; base-uri 'self'; form-action 'self'; "
+        "frame-ancestors 'none'; object-src 'none'; script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+        "connect-src 'self'; font-src 'self' data:"
+    )
+    security_hsts_max_age_seconds: int = Field(default=15_552_000, ge=0)
+    security_max_request_body_bytes: int = Field(default=5 * 1024 * 1024, ge=1)
+    security_api_rate_limit_max_requests: int = Field(default=300, ge=1)
+    security_api_rate_limit_window_seconds: int = Field(default=60, ge=1)
+    # Set only in ECS. CloudFront adds this random header to API origin
+    # requests, preventing a caller from bypassing CDN controls through the ALB.
+    security_edge_shared_secret: str = ""
+
     @property
     def is_local_or_test(self) -> bool:
         return self.environment.lower() in {"local", "test", "development"}
@@ -236,6 +253,20 @@ class Settings(BaseSettings):
         if errors:
             raise RuntimeError(
                 "Invalid browser auth configuration: " + "; ".join(errors)
+            )
+
+    def http_security_config_errors(self) -> list[str]:
+        if self.is_local_or_test:
+            return []
+        if not self.security_edge_shared_secret:
+            return ["SECURITY_EDGE_SHARED_SECRET is required"]
+        return []
+
+    def validate_http_security(self) -> None:
+        errors = self.http_security_config_errors()
+        if errors:
+            raise RuntimeError(
+                "Invalid HTTP security configuration: " + "; ".join(errors)
             )
 
     @property
