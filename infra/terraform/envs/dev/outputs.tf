@@ -9,13 +9,13 @@ output "aws_region" {
 }
 
 output "api_url" {
-  description = "Temporary public API URL through the ALB."
-  value       = "http://${aws_lb.api.dns_name}"
+  description = "Public API URL through the staff CloudFront distribution. Direct ALB/API-origin access is intentionally rejected."
+  value       = local.staff_public_url
 }
 
 output "staff_url" {
-  description = "Temporary CloudFront URL for the staff operations console."
-  value       = "https://${aws_cloudfront_distribution.staff.domain_name}"
+  description = "Public URL for the staff operations console."
+  value       = local.staff_public_url
 }
 
 output "inspector_url" {
