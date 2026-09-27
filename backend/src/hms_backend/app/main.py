@@ -29,6 +29,7 @@ from hms_backend.app.core.redis import close_redis, ping_redis
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings.validate_browser_auth()
     settings.validate_http_security()
+    settings.validate_notification_security()
     yield
     # Release the Redis connection pool on shutdown.
     await close_redis()

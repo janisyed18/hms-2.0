@@ -205,6 +205,14 @@ locals {
       value = local.notification_ses_configuration_set_name
     },
     {
+      name  = "NOTIFICATION_SNS_TOPIC_ARNS"
+      value = jsonencode([aws_sns_topic.notification_events.arn])
+    },
+    {
+      name  = "NOTIFICATION_TWILIO_STATUS_CALLBACK_URL"
+      value = var.notification_twilio_status_callback_url
+    },
+    {
       name  = "ISSUER_NAME"
       value = "BAT Engineering Pty Ltd"
     },

@@ -46,6 +46,23 @@ async def test_security_headers_are_added_to_responses() -> None:
 
 
 @pytest.mark.asyncio
+async def test_deployed_responses_include_hsts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "security_edge_shared_secret", "edge-secret")
+    transport = httpx.ASGITransport(app=create_app())
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://testserver"
+    ) as client:
+        response = await client.get("/health")
+
+    assert response.headers["strict-transport-security"] == (
+        "max-age=15552000; includeSubDomains"
+    )
+
+
+@pytest.mark.asyncio
 async def test_request_body_over_the_configured_limit_is_rejected() -> None:
     app = create_app()
 
@@ -95,11 +112,15 @@ async def test_configured_edge_secret_blocks_direct_api_requests(
         transport=transport, base_url="http://testserver"
     ) as client:
         denied = await client.get("/api/v1/openapi.json")
+        invalid = await client.get(
+            "/api/v1/openapi.json", headers={"X-HMS-Edge-Secret": "invalid"}
+        )
         allowed = await client.get(
             "/api/v1/openapi.json", headers={"X-HMS-Edge-Secret": "edge-secret"}
         )
 
     assert denied.status_code == 403
+    assert invalid.status_code == 403
     assert allowed.status_code == 200
 
 

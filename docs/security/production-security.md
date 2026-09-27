@@ -31,7 +31,7 @@
 - GitHub Actions are pinned to immutable commit SHAs. Dependabot opens weekly updates for actions, Python, and npm dependencies; updates require CI review before merge.
 - Backend containers install from `uv.lock` with `--locked` and both backend and certificate images run as non-root users.
 - `npm audit --omit=dev` is clean for both web applications. Run `uv lock --check`, Python test/lint/type checks, Terraform validation, and container builds in CI before deployment.
-- Provider webhook secrets fail closed outside local/test, use constant-time comparison, and are accepted only in a request header. Before enabling Twilio or SES/SNS delivery callbacks, replace the temporary shared-secret callback contract with each provider's signed-request verification.
+- Generic provider webhook secrets fail closed outside local/test, use constant-time comparison, and are accepted only in a request header. Twilio callbacks verify `X-Twilio-Signature` against the exact configured public callback URL. SES/SNS callbacks verify the provider signature, a trusted SNS topic ARN, and an HTTPS AWS SNS signing-certificate URL; certificate retrieval rejects redirects and arbitrary hosts to prevent SSRF.
 
 ## Production release checklist
 
@@ -39,4 +39,4 @@
 2. Configure the ALB custom domain, ACM certificate, HTTPS listener, and CloudFront `https-only` origin policy.
 3. Keep `AUTH_BROWSER_COOKIE_SECURE=true`, `AUTH_BROWSER_ALLOWED_ORIGINS` exact, and all generated application secrets in Secrets Manager.
 4. Configure log retention and alarms for WAF blocks, repeated 401/429 responses, failed sign-ins, unusual API request rate, and infrastructure health.
-5. Complete provider-native callback signature verification before turning notification delivery to `live`.
+5. Before configuring Twilio live delivery, set its exact HTTPS status callback URL in both Twilio and `NOTIFICATION_TWILIO_STATUS_CALLBACK_URL`. Keep `NOTIFICATION_CHANNEL_MODE=console` until the sender identity and callback endpoint are ready.

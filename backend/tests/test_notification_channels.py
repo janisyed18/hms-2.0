@@ -6,6 +6,9 @@ and delivery-webhook parsing) without any network or ORM.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 from email.message import EmailMessage
 from typing import Any
@@ -14,7 +17,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from hms_backend.app.api.notifications import _check_webhook_secret
+from hms_backend.app.api.notifications import _check_webhook_secret, _verify_webhook
 from hms_backend.app.core.config import Settings
 from hms_backend.app.core.config import settings as app_settings
 from hms_backend.app.modules.notifications.channels.base import OutgoingMessage
@@ -41,9 +44,13 @@ from hms_backend.app.modules.notifications.webhooks import (
 
 
 def _webhook_request(
-    secret: str | None = None, query_string: bytes = b""
+    secret: str | None = None,
+    query_string: bytes = b"",
+    headers: list[tuple[bytes, bytes]] | None = None,
 ) -> Request:
-    headers = [] if secret is None else [(b"x-hms-webhook-secret", secret.encode())]
+    headers = headers or []
+    if secret is not None:
+        headers.append((b"x-hms-webhook-secret", secret.encode()))
     return Request(
         {
             "type": "http",
@@ -77,6 +84,43 @@ def test_webhook_secret_rejects_invalid_values(
         _check_webhook_secret(_webhook_request("wrong"))
 
     _check_webhook_secret(_webhook_request("webhook-secret"))
+
+
+@pytest.mark.asyncio
+async def test_twilio_webhook_uses_provider_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback_url = "https://staff.example.com/api/v1/notifications/webhooks/twilio"
+    body = b"MessageSid=SM1&MessageStatus=delivered"
+    signature = base64.b64encode(
+        hmac.new(
+            b"twilio-auth-token",
+            f"{callback_url}MessageSidSM1MessageStatusdelivered".encode(),
+            hashlib.sha1,
+        ).digest()
+    ).decode()
+    monkeypatch.setattr(app_settings, "twilio_auth_token", "twilio-auth-token")
+    monkeypatch.setattr(
+        app_settings, "notification_twilio_status_callback_url", callback_url
+    )
+    request = _webhook_request(headers=[(b"x-twilio-signature", signature.encode())])
+
+    await _verify_webhook("twilio", request, body)
+    with pytest.raises(HTTPException, match="Invalid Twilio signature") as exc_info:
+        await _verify_webhook("twilio", request, b"MessageSid=SM2")
+    assert exc_info.value.status_code == 403
+
+
+def test_live_twilio_requires_a_complete_https_callback_configuration() -> None:
+    settings = Settings(notification_channel_mode="live", twilio_account_sid="AC123")
+    assert settings.notification_security_config_errors()
+    assert Settings(
+        notification_channel_mode="live",
+        twilio_account_sid="AC123",
+        twilio_auth_token="token",
+        twilio_from="+61400000000",
+        notification_twilio_status_callback_url="https://staff.example.com/callback",
+    ).notification_security_config_errors() == []
 
 
 def test_webhook_secret_is_not_accepted_from_a_query_parameter(
@@ -218,6 +262,24 @@ def test_build_twilio_request() -> None:
         "From": "+61400000000",
         "Body": "HMS: certificate issued.",
     }
+
+
+def test_twilio_request_includes_the_signed_status_callback() -> None:
+    settings = Settings(
+        twilio_account_sid="AC123",
+        twilio_from="+61400000000",
+        notification_twilio_status_callback_url="https://staff.example.com/api/v1/notifications/webhooks/twilio",
+    )
+    _, data = build_twilio_request(
+        settings,
+        OutgoingMessage(
+            channel=NotificationChannel.SMS,
+            to_address="+61411111111",
+            subject=None,
+            body_text="HMS",
+        ),
+    )
+    assert data["StatusCallback"] == settings.notification_twilio_status_callback_url
 
 
 def test_build_email_message_is_multipart() -> None:
