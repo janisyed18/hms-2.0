@@ -254,3 +254,9 @@ variable "notification_twilio_from" {
   default     = ""
   sensitive   = true
 }
+
+variable "notification_twilio_status_callback_url" {
+  description = "Exact public HTTPS URL configured in Twilio for signed status callbacks. Leave empty until an HTTPS custom domain is available."
+  type        = string
+  default     = ""
+}

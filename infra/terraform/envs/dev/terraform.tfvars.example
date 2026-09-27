@@ -22,6 +22,8 @@ auth_mfa_key_version       = 1
 
 # Keep console until the SES sender is verified and Twilio secrets exist.
 notification_channel_mode = "console"
+# Leave empty until HTTPS is configured and set this same public URL in Twilio.
+notification_twilio_status_callback_url = ""
 
 # AWS dev uses the SES API through the ECS task role. The SMTP values remain
 # available only if notification_email_provider is changed to "smtp".

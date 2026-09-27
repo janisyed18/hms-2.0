@@ -1,5 +1,6 @@
 import base64
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -74,8 +75,8 @@ class Settings(BaseSettings):
     )
     phone_verification_ttl_seconds: int = 600
     phone_verification_max_attempts: int = 5
-    # Shared secret gating provider delivery webhooks (Twilio status callbacks,
-    # SES/SNS delivery/bounce notifications). Empty = open (dev only).
+    # Shared secret used only by non-provider-native integrations. Empty = open
+    # in local/test only; Twilio and SNS use their signed request contracts.
     notification_webhook_secret: str = ""
 
     # Email — only used in "live" mode.
@@ -93,6 +94,8 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_from: str = ""  # E.164 number or alphanumeric sender ID
+    notification_twilio_status_callback_url: str = ""
+    notification_sns_topic_arns: list[str] = Field(default_factory=list)
 
     # Auth boundary. Local development keeps explicit HMS headers available;
     # deployed environments should use bearer mode and resolve the token subject
@@ -267,6 +270,40 @@ class Settings(BaseSettings):
         if errors:
             raise RuntimeError(
                 "Invalid HTTP security configuration: " + "; ".join(errors)
+            )
+
+    def notification_security_config_errors(self) -> list[str]:
+        if self.notification_channel_mode != "live":
+            return []
+        configured = (
+            self.twilio_account_sid,
+            self.twilio_auth_token,
+            self.twilio_from,
+            self.notification_twilio_status_callback_url,
+        )
+        if not any(configured):
+            return []
+        errors = (
+            [
+                "Twilio live delivery requires account SID, auth token, sender, "
+                "and HTTPS status callback URL"
+            ]
+            if not all(configured)
+            else []
+        )
+        callback = urlsplit(self.notification_twilio_status_callback_url)
+        if (
+            self.notification_twilio_status_callback_url
+            and (callback.scheme != "https" or not callback.hostname)
+        ):
+            errors.append("Twilio status callback URL must use HTTPS")
+        return errors
+
+    def validate_notification_security(self) -> None:
+        errors = self.notification_security_config_errors()
+        if errors:
+            raise RuntimeError(
+                "Invalid notification security configuration: " + "; ".join(errors)
             )
 
     @property

@@ -42,7 +42,11 @@ from hms_backend.app.modules.notifications.models import (
     PhoneVerification,
 )
 from hms_backend.app.modules.notifications.service import apply_delivery_receipt
-from hms_backend.app.modules.notifications.webhooks import parse_receipts
+from hms_backend.app.modules.notifications.webhooks import (
+    parse_receipts,
+    verify_sns_request,
+    verify_twilio_signature,
+)
 
 router = APIRouter(tags=["notifications"])
 
@@ -407,6 +411,44 @@ def _check_webhook_secret(request: Request) -> None:
         )
 
 
+async def _verify_webhook(provider: str, request: Request, body: bytes) -> None:
+    if provider == "twilio":
+        if (
+            not settings.notification_twilio_status_callback_url
+            or not settings.twilio_auth_token
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Twilio callback verification is not configured",
+            )
+        if not verify_twilio_signature(
+            settings.twilio_auth_token,
+            settings.notification_twilio_status_callback_url,
+            body,
+            request.headers.get("X-Twilio-Signature", ""),
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid Twilio signature",
+            )
+        return
+    if provider in {"ses", "sns"}:
+        if not settings.notification_sns_topic_arns:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="SNS callback verification is not configured",
+            )
+        if not await verify_sns_request(
+            body, set(settings.notification_sns_topic_arns)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid SNS signature",
+            )
+        return
+    _check_webhook_secret(request)
+
+
 @router.post("/notifications/webhooks/{provider}")
 async def delivery_webhook(
     provider: str,
@@ -418,8 +460,10 @@ async def delivery_webhook(
     Matches notifications by ``provider_message_id``. Always returns 2xx so
     providers do not retry indefinitely.
     """
-    _check_webhook_secret(request)
-    receipts = parse_receipts(provider.lower(), await request.body())
+    provider = provider.lower()
+    body = await request.body()
+    await _verify_webhook(provider, request, body)
+    receipts = parse_receipts(provider, body)
     updated = 0
     for provider_message_id, receipt_status in receipts:
         if await apply_delivery_receipt(

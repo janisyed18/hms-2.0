@@ -71,7 +71,10 @@ services:
       context: ./services/certificate
     image: hms-certificate-engine:local
     volumes:
-      - engine-signing:/root/.hms
+      - engine-signing:/var/lib/hms/.hms
+    depends_on:
+      certificate-engine-init:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - "CMD"
@@ -81,6 +84,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Docker creates named volumes as root. This one-shot initializer is the only
+  # root process and lets the certificate engine remain rootless at runtime.
+  certificate-engine-init:
+    image: hms-certificate-engine:local
+    user: root
+    command:
+      - "sh"
+      - "-c"
+      - "mkdir -p /var/lib/hms/.hms && chown -R hms:hms /var/lib/hms/.hms"
+    volumes:
+      - engine-signing:/var/lib/hms/.hms
+    restart: "no"
 
   # One-shot: apply migrations and seed synthetic demo + six role accounts.
   migrate:

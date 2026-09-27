@@ -33,6 +33,8 @@ def build_twilio_request(
         "From": settings.twilio_from,
         "Body": message.body_text,
     }
+    if settings.notification_twilio_status_callback_url:
+        data["StatusCallback"] = settings.notification_twilio_status_callback_url
     return url, data
 
 
