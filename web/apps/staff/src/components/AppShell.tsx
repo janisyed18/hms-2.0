@@ -26,7 +26,16 @@ import {
   type LucideIcon
 } from "lucide-react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode
+} from "react";
 import { createHmsClient } from "../api/hmsClient";
 import type { NotificationRecord, StaffSession } from "../domain/types";
 import { motionTokens } from "../motion/motionTokens";
@@ -62,9 +71,21 @@ interface AppShellProps {
   description: string;
   onLogout?: () => void;
   onModuleChange: (module: AppModule) => void;
+  onSearchRecordOpen: (suggestion: GlobalSearchSuggestion) => void;
   session: StaffSession;
   title: string;
   visibleModules: AppModule[];
+}
+
+export type GlobalSearchSuggestionKind = "asset" | "customer" | "inspection" | "product";
+
+export interface GlobalSearchSuggestion {
+  id: string;
+  kind: GlobalSearchSuggestionKind;
+  module: AppModule;
+  title: string;
+  detail: string;
+  searchTerms: string[];
 }
 
 const navGroups: Array<{ label: string; items: NavItem[] }> = [
@@ -102,6 +123,47 @@ const navGroups: Array<{ label: string; items: NavItem[] }> = [
     ]
   }
 ];
+
+function suggestionIcon(kind: GlobalSearchSuggestionKind): LucideIcon {
+  if (kind === "asset") {
+    return Database;
+  }
+  if (kind === "customer") {
+    return UsersRound;
+  }
+  if (kind === "inspection") {
+    return ClipboardCheck;
+  }
+  return Boxes;
+}
+
+function suggestionKindLabel(kind: GlobalSearchSuggestionKind): string {
+  if (kind === "asset") return "Asset";
+  if (kind === "customer") return "Customer";
+  if (kind === "inspection") return "Inspection";
+  return "Product";
+}
+
+function orderSuggestions(
+  suggestions: GlobalSearchSuggestion[],
+  query: string
+): GlobalSearchSuggestion[] {
+  const normalized = query.trim().toLocaleLowerCase();
+  return [...suggestions]
+    .sort((left, right) => {
+      const leftIsPrefixMatch = left.searchTerms.some((term) =>
+        term.toLocaleLowerCase().startsWith(normalized)
+      );
+      const rightIsPrefixMatch = right.searchTerms.some((term) =>
+        term.toLocaleLowerCase().startsWith(normalized)
+      );
+      if (leftIsPrefixMatch !== rightIsPrefixMatch) {
+        return leftIsPrefixMatch ? -1 : 1;
+      }
+      return left.title.localeCompare(right.title);
+    })
+    .slice(0, 8);
+}
 
 function popoverTitle(menu: TopbarMenu) {
   if (menu === "notifications") {
@@ -325,6 +387,7 @@ export function AppShell({
   description,
   onLogout,
   onModuleChange,
+  onSearchRecordOpen,
   session,
   title,
   visibleModules
@@ -339,11 +402,32 @@ export function AppShell({
   >("idle");
   const [notificationError, setNotificationError] = useState<string | null>(null);
   const [markingNotificationId, setMarkingNotificationId] = useState<string | null>(null);
+  const [globalQuery, setGlobalQuery] = useState("");
+  const [searchSuggestions, setSearchSuggestions] = useState<GlobalSearchSuggestion[]>([]);
+  const [searchStatus, setSearchStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(-1);
   const mobileDrawerRef = useRef<HTMLElement>(null);
   const mobileToggleRef = useRef<HTMLButtonElement>(null);
+  const globalSearchRef = useRef<HTMLDivElement>(null);
   const reducedMotion = useReducedMotion();
   const accountName = accountNameFor(session);
   const accountEmail = accountEmailFor(session);
+  const visibleModuleSet = useMemo(() => new Set(visibleModules), [visibleModules]);
+  const visibleNavGroups = useMemo(
+    () =>
+      navGroups
+        .map((group) => ({
+          ...group,
+          items: group.items.filter((item) => visibleModuleSet.has(item.module))
+        }))
+        .filter((group) => group.items.length > 0),
+    [visibleModuleSet]
+  );
+  const visibleNavItems = useMemo(
+    () => visibleNavGroups.flatMap((group) => group.items),
+    [visibleNavGroups]
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -373,21 +457,124 @@ export function AppShell({
     void loadNotifications();
   }, [loadNotifications, session.userId]);
 
+  useEffect(() => {
+    const query = globalQuery.trim();
+    if (query.length < 2) {
+      setSearchSuggestions([]);
+      setSearchStatus("idle");
+      setActiveSuggestionIndex(-1);
+      return;
+    }
+
+    let isCurrent = true;
+    const timeoutId = window.setTimeout(() => {
+      setSearchStatus("loading");
+      const client = createHmsClient();
+      void Promise.all([
+        visibleModuleSet.has("customers")
+          ? client.listCustomers({ search: query, limit: 3, sort: "name" })
+          : Promise.resolve(null),
+        visibleModuleSet.has("assets")
+          ? client.listAssets({ search: query, limit: 3, sort: "asset_number" })
+          : Promise.resolve(null),
+        visibleModuleSet.has("products")
+          ? client.listProducts({ search: query, limit: 3, sort: "name" })
+          : Promise.resolve(null),
+        visibleModuleSet.has("inspections")
+          ? client.listInspections({ search: query, limit: 3, sort: "submitted_at" })
+          : Promise.resolve(null)
+      ])
+        .then(([customers, assets, products, inspections]) => {
+          if (!isCurrent) return;
+          const suggestions = orderSuggestions(
+            [
+              ...(customers?.items.map((customer) => ({
+                id: customer.id,
+                kind: "customer" as const,
+                module: "customers" as const,
+                title: customer.name,
+                detail: customer.code,
+                searchTerms: [customer.name, customer.code]
+              })) ?? []),
+              ...(assets?.items.map((asset) => ({
+                id: asset.id,
+                kind: "asset" as const,
+                module: "assets" as const,
+                title: asset.assetNumber,
+                detail: `${asset.customer.name} · ${asset.product.name}`,
+                searchTerms: [
+                  asset.assetNumber,
+                  asset.assetName ?? "",
+                  asset.customer.name,
+                  asset.product.name
+                ]
+              })) ?? []),
+              ...(products?.items.map((product) => ({
+                id: product.id,
+                kind: "product" as const,
+                module: "products" as const,
+                title: product.name,
+                detail: `${product.code} · ${product.category}`,
+                searchTerms: [product.name, product.code, product.category]
+              })) ?? []),
+              ...(inspections?.items.map((inspection) => ({
+                id: inspection.id,
+                kind: "inspection" as const,
+                module: "inspections" as const,
+                title: inspection.asset.assetNumber,
+                detail: `${inspection.inspectionType.replaceAll("_", " ")} · ${inspection.status}`,
+                searchTerms: [
+                  inspection.asset.assetNumber,
+                  inspection.inspectionType,
+                  inspection.status,
+                  inspection.customer.name
+                ]
+              })) ?? [])
+            ],
+            query
+          );
+          setSearchSuggestions(suggestions);
+          setActiveSuggestionIndex(suggestions.length > 0 ? 0 : -1);
+          setSearchStatus("ready");
+        })
+        .catch(() => {
+          if (!isCurrent) return;
+          setSearchSuggestions([]);
+          setActiveSuggestionIndex(-1);
+          setSearchStatus("error");
+        });
+    }, 180);
+
+    return () => {
+      isCurrent = false;
+      window.clearTimeout(timeoutId);
+    };
+  }, [globalQuery, visibleModuleSet]);
+
+  useEffect(() => {
+    if (!isSearchOpen) return;
+    function closeSearchWhenClickedOutside(event: PointerEvent) {
+      if (!globalSearchRef.current?.contains(event.target as Node)) {
+        setIsSearchOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", closeSearchWhenClickedOutside);
+    return () => document.removeEventListener("pointerdown", closeSearchWhenClickedOutside);
+  }, [isSearchOpen]);
+
   function handleLogout() {
     setOpenMenu(null);
     setIsMobileNavigationOpen(false);
     onLogout?.();
   }
-  const [globalQuery, setGlobalQuery] = useState("");
-  const visibleModuleSet = new Set(visibleModules);
-  const visibleNavGroups = navGroups
-    .map((group) => ({
-      ...group,
-      items: group.items.filter((item) => visibleModuleSet.has(item.module))
-    }))
-    .filter((group) => group.items.length > 0);
-  const visibleNavItems = visibleNavGroups.flatMap((group) => group.items);
 
+  function clearGlobalSearch() {
+    setGlobalQuery("");
+    setSearchSuggestions([]);
+    setSearchStatus("idle");
+    setIsSearchOpen(false);
+    setActiveSuggestionIndex(-1);
+  }
   useEffect(() => {
     if (!isMobileNavigationOpen) return;
 
@@ -427,9 +614,14 @@ export function AppShell({
 
   function handleModuleChange(module: AppModule) {
     onModuleChange(module);
-    setGlobalQuery("");
+    clearGlobalSearch();
     setOpenMenu(null);
     setIsMobileNavigationOpen(false);
+  }
+
+  function handleSearchSuggestionOpen(suggestion: GlobalSearchSuggestion) {
+    clearGlobalSearch();
+    onSearchRecordOpen(suggestion);
   }
 
   async function handleNotificationOpen(notification: NotificationRecord) {
@@ -462,12 +654,39 @@ export function AppShell({
 
   function handleGlobalSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const normalized = globalQuery.trim().toLowerCase();
+    const normalized = globalQuery.trim().toLocaleLowerCase();
+    const activeSuggestion = searchSuggestions[activeSuggestionIndex] ?? searchSuggestions[0];
+    if (activeSuggestion && normalized.length >= 2) {
+      handleSearchSuggestionOpen(activeSuggestion);
+      return;
+    }
     const target = visibleNavItems.find((item) =>
       item.label.toLowerCase().includes(normalized)
     );
     if (target && normalized) {
       handleModuleChange(target.module);
+    }
+  }
+
+  function handleGlobalSearchKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      clearGlobalSearch();
+      event.currentTarget.blur();
+      return;
+    }
+    if (searchSuggestions.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setIsSearchOpen(true);
+      setActiveSuggestionIndex((current) =>
+        current < searchSuggestions.length - 1 ? current + 1 : 0
+      );
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setIsSearchOpen(true);
+      setActiveSuggestionIndex((current) =>
+        current > 0 ? current - 1 : searchSuggestions.length - 1
+      );
     }
   }
 
@@ -544,26 +763,92 @@ export function AppShell({
             >
               <Menu aria-hidden="true" size={20} />
             </button>
-            <form className="global-search" onSubmit={handleGlobalSearch}>
-              <Search aria-hidden="true" className="global-search-icon" size={17} />
-              <label className="sr-only" htmlFor="global-search-input">
-                Global search
-              </label>
-              <input
-                id="global-search-input"
-                placeholder="Search customers, assets, inspections..."
-                value={globalQuery}
-                onChange={(event) => setGlobalQuery(event.target.value)}
-              />
-              <button
-                aria-label="Run global search"
-                className="search-submit"
-                disabled={!globalQuery.trim()}
-                type="submit"
-              >
-                <Search aria-hidden="true" size={15} />
-              </button>
-            </form>
+            <div className="global-search-wrap" ref={globalSearchRef}>
+              <form className="global-search" onSubmit={handleGlobalSearch}>
+                <Search aria-hidden="true" className="global-search-icon" size={17} />
+                <label className="sr-only" htmlFor="global-search-input">
+                  Global search
+                </label>
+                <input
+                  aria-activedescendant={
+                    activeSuggestionIndex >= 0
+                      ? `global-search-result-${searchSuggestions[activeSuggestionIndex]?.kind}-${searchSuggestions[activeSuggestionIndex]?.id}`
+                      : undefined
+                  }
+                  aria-autocomplete="list"
+                  aria-controls="global-search-results"
+                  aria-expanded={isSearchOpen && globalQuery.trim().length >= 2}
+                  id="global-search-input"
+                  onChange={(event) => {
+                    setGlobalQuery(event.target.value);
+                    setIsSearchOpen(true);
+                  }}
+                  onFocus={() => {
+                    if (globalQuery.trim().length >= 2) setIsSearchOpen(true);
+                  }}
+                  onKeyDown={handleGlobalSearchKeyDown}
+                  placeholder="Search customers, assets, inspections..."
+                  role="combobox"
+                  value={globalQuery}
+                />
+                <button
+                  aria-label="Run global search"
+                  className="search-submit"
+                  disabled={!globalQuery.trim()}
+                  type="submit"
+                >
+                  <Search aria-hidden="true" size={15} />
+                </button>
+              </form>
+              {isSearchOpen && globalQuery.trim().length >= 2 ? (
+                <div
+                  aria-label="Search results"
+                  className="global-search-results"
+                  id="global-search-results"
+                  role="listbox"
+                >
+                  {searchStatus === "loading" ? (
+                    <p className="global-search-message" role="status">Searching HMS records...</p>
+                  ) : null}
+                  {searchStatus === "error" ? (
+                    <p className="global-search-message" role="status">
+                      Search is unavailable. Try again.
+                    </p>
+                  ) : null}
+                  {searchStatus === "ready" && searchSuggestions.length === 0 ? (
+                    <p className="global-search-message" role="status">
+                      No matching HMS records.
+                    </p>
+                  ) : null}
+                  {searchSuggestions.map((suggestion, index) => {
+                    const Icon = suggestionIcon(suggestion.kind);
+                    const isActive = index === activeSuggestionIndex;
+                    return (
+                      <button
+                        aria-selected={isActive}
+                        className={`global-search-result${isActive ? " is-active" : ""}`}
+                        id={`global-search-result-${suggestion.kind}-${suggestion.id}`}
+                        key={`${suggestion.kind}-${suggestion.id}`}
+                        onClick={() => handleSearchSuggestionOpen(suggestion)}
+                        role="option"
+                        type="button"
+                      >
+                        <span aria-hidden="true" className="global-search-result-icon">
+                          <Icon size={16} />
+                        </span>
+                        <span className="global-search-result-copy">
+                          <strong>{suggestion.title}</strong>
+                          <span>{suggestion.detail}</span>
+                        </span>
+                        <span className="global-search-result-kind">
+                          {suggestionKindLabel(suggestion.kind)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
             {canCreateAsset ? (
               <button
                 className="primary-button topbar-primary"

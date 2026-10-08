@@ -231,6 +231,29 @@ button:active:not(:disabled) {
   font-size: 12px !important;
 }
 
+.customer-location-map-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  border-radius: 4px;
+  color: var(--accent-2);
+  font-size: 12px;
+  font-weight: 720;
+  text-decoration: none;
+}
+
+.customer-location-map-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.customer-location-map-link:focus-visible,
+.customer-location-asset-link:focus-visible {
+  outline: 0;
+  box-shadow: var(--focus);
+}
+
 .customer-location-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -289,13 +312,28 @@ button:active:not(:disabled) {
 }
 
 .customer-location-grid li {
-  padding: 4px 7px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.customer-location-asset-link {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  border: 0;
   border-radius: 5px;
   background: var(--panel);
-  color: var(--color-neutral-700);
+  color: var(--accent-2);
+  padding: 4px 7px;
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 760;
+  text-decoration: none;
+}
+
+.customer-location-asset-link:hover {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--ink);
 }
 
 .customer-location-empty {
@@ -3775,6 +3813,86 @@ button:active:not(:disabled) {
   color: var(--soft);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
+}
+
+/* The customer workspace predates the tokenised command-centre surfaces.
+   Keep its dark-mode layers within the same low-glare surface scale. */
+:root:not([data-theme="light"]) .customer-console-toolbar .search-field,
+:root:not([data-theme="light"]) .customer-filter-summary .field,
+:root:not([data-theme="light"]) .customer-card,
+:root:not([data-theme="light"]) .customer-card.is-selected {
+  background: var(--panel);
+}
+
+:root:not([data-theme="light"]) .customer-card:hover,
+:root:not([data-theme="light"]) .customer-card:focus-visible,
+:root:not([data-theme="light"]) .customer-card.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+}
+
+:root:not([data-theme="light"]) .customer-card.is-selected {
+  background: var(--panel-subtle);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent),
+    var(--shadow-soft);
+}
+
+:root:not([data-theme="light"]) .customer-avatar,
+:root:not([data-theme="light"]) .customer-detail-mark,
+:root:not([data-theme="light"]) .customer-location-icon {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--accent-2);
+}
+
+:root:not([data-theme="light"]) .customer-selected-indicator {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+  background: var(--color-success-soft);
+  color: var(--success);
+  box-shadow: none;
+}
+
+:root:not([data-theme="light"]) .customer-card .risk-low,
+:root:not([data-theme="light"]) .customer-card .current,
+:root:not([data-theme="light"]) .customer-card .valid,
+:root:not([data-theme="light"]) .customer-card .status-active {
+  background: var(--color-success-soft);
+  color: var(--success);
+}
+
+:root:not([data-theme="light"]) .customer-card .risk-medium,
+:root:not([data-theme="light"]) .customer-card .due-soon {
+  background: var(--color-warning-soft);
+  color: var(--warning);
+}
+
+:root:not([data-theme="light"]) .customer-card .risk-high,
+:root:not([data-theme="light"]) .customer-card .overdue {
+  background: var(--color-danger-soft);
+  color: var(--danger);
+}
+
+:root:not([data-theme="light"]) .customer-detail-dialog .detail-section {
+  border-color: var(--border);
+  background: var(--panel-subtle);
+  box-shadow: none;
+}
+
+:root:not([data-theme="light"]) .customer-detail-dialog .info-grid dd,
+:root:not([data-theme="light"]) .customer-detail-dialog .requirement-list li,
+:root:not([data-theme="light"]) .customer-detail-dialog .record-notes {
+  color: var(--ink);
+}
+
+:root:not([data-theme="light"]) .customer-detail-dialog .info-grid dt,
+:root:not([data-theme="light"]) .customer-detail-dialog .empty-requirements,
+:root:not([data-theme="light"]) .customer-detail-dialog .customer-location-contact {
+  color: var(--soft) !important;
+}
+
+:root:not([data-theme="light"]) .customer-detail-dialog .customer-location-grid li {
+  background: var(--panel);
+  color: var(--color-neutral-700);
 }
 
 @media (max-width: 1120px) {

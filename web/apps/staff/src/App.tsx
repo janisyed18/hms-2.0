@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
-import { AppShell, type AppModule } from "./components/AppShell";
+import { AppShell, type AppModule, type GlobalSearchSuggestion } from "./components/AppShell";
 import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
 import { CustomerForm } from "./components/CustomerForm";
@@ -300,6 +300,26 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
     setActiveModule("assets");
   }
 
+  function handleSearchRecordOpen(suggestion: GlobalSearchSuggestion) {
+    if (!visibleModules.includes(suggestion.module)) {
+      return;
+    }
+    if (suggestion.kind === "customer") {
+      workspace.selectCustomer(suggestion.id);
+      setActiveModule("customers");
+      return;
+    }
+    if (suggestion.kind === "asset") {
+      handleAssetOpen(suggestion.id);
+      return;
+    }
+    if (suggestion.kind === "inspection") {
+      handleModuleChange("inspections", suggestion.id);
+      return;
+    }
+    setActiveModule("products");
+  }
+
   return (
     <AppShell
       activeModule={renderedActiveModule}
@@ -307,6 +327,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
       description={activeCopy.description}
       onLogout={onLogout}
       onModuleChange={handleModuleChange}
+      onSearchRecordOpen={handleSearchRecordOpen}
       session={session}
       title={activeCopy.title}
       visibleModules={visibleModules}
@@ -370,6 +391,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                 customer={workspace.selectedCustomer}
                 activeTab={workspace.activeTab}
                 canWrite={hasPermission(session, "customer:write")}
+                onAssetOpen={handleAssetOpen}
                 onClose={workspace.closeDetail}
                 onEdit={() => {
                   if (!workspace.selectedCustomer) return;

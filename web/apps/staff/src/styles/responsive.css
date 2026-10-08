@@ -86,7 +86,7 @@
     min-width: 0;
   }
 
-  .global-search {
+  .global-search-wrap {
     flex: 1 1 240px;
     width: auto;
     min-width: 180px;
@@ -217,7 +217,7 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .global-search {
+  .global-search-wrap {
     width: min(240px, 32vw);
   }
 
@@ -361,7 +361,7 @@
     scrollbar-width: none;
   }
 
-  .topbar-actions .global-search {
+  .topbar-actions .global-search-wrap {
     display: none;
   }
 
