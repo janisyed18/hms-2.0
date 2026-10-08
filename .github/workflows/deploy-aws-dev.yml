@@ -165,23 +165,38 @@ jobs:
 
       - name: Force ECS service deployments
         run: |
+          active_services=()
           for service in \
             "$ECS_CERTIFICATE_ENGINE_SERVICE" \
             "$ECS_API_SERVICE" \
             "$ECS_WORKER_SERVICE" \
             "$ECS_BEAT_SERVICE"; do
+            desired_count="$(
+              aws ecs describe-services \
+                --cluster "$ECS_CLUSTER" \
+                --services "$service" \
+                --query 'services[0].desiredCount' \
+                --output text
+            )"
+            if [ "$desired_count" = "None" ] || [ -z "$desired_count" ]; then
+              echo "ECS service $service was not found" >&2
+              exit 1
+            fi
+            if [ "$desired_count" -eq 0 ]; then
+              echo "Skipping $service because its desired count is zero"
+              continue
+            fi
             aws ecs update-service \
               --cluster "$ECS_CLUSTER" \
               --service "$service" \
               --force-new-deployment >/dev/null
+            active_services+=("$service")
           done
-          aws ecs wait services-stable \
-            --cluster "$ECS_CLUSTER" \
-            --services \
-              "$ECS_CERTIFICATE_ENGINE_SERVICE" \
-              "$ECS_API_SERVICE" \
-              "$ECS_WORKER_SERVICE" \
-              "$ECS_BEAT_SERVICE"
+          if [ "${#active_services[@]}" -gt 0 ]; then
+            aws ecs wait services-stable \
+              --cluster "$ECS_CLUSTER" \
+              --services "${active_services[@]}"
+          fi
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
