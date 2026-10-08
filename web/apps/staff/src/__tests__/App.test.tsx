@@ -1274,8 +1274,18 @@ describe("App", () => {
       "API-777"
     );
 
-    await user.click(screen.getByRole("button", { name: "Previous calendar month" }));
-    await user.click(screen.getByRole("button", { name: "Previous calendar month" }));
+    const now = new Date();
+    const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const targetMonth = new Date(2026, 6, 1);
+    const monthDelta =
+      (targetMonth.getFullYear() - currentMonth.getFullYear()) * 12 +
+      targetMonth.getMonth() -
+      currentMonth.getMonth();
+    const calendarNavigationLabel =
+      monthDelta < 0 ? "Previous calendar month" : "Next calendar month";
+    for (let index = 0; index < Math.abs(monthDelta); index += 1) {
+      await user.click(screen.getByRole("button", { name: calendarNavigationLabel }));
+    }
     await user.click(screen.getByRole("button", { name: /July 15, 2026, 1 schedule/i }));
     await user.click(screen.getByRole("button", { name: /^Filters/ }));
     expect(screen.getByLabelText("Retest due from")).toHaveValue("2026-07-15");

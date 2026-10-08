@@ -1,4 +1,4 @@
-import { Building2, Edit3, MapPin, Package, ShieldCheck, X } from "lucide-react";
+import { Building2, Edit3, ExternalLink, MapPin, Package, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 
@@ -10,6 +10,7 @@ interface CustomerDetailProps {
   activeTab: string;
   canWrite: boolean;
   customer: CustomerRecord | null;
+  onAssetOpen: (assetId: string) => void;
   onClose: () => void;
   onEdit: () => void;
   onTabChange: (tab: string) => void;
@@ -20,6 +21,31 @@ const tabs = ["Overview", "Locations"];
 interface CustomerAssets {
   items: AssetRecord[];
   total: number;
+}
+
+function googleMapsUrl(location: CustomerRecord["locations"][number]) {
+  const address = [
+    location.name,
+    location.address1,
+    location.address2,
+    location.city,
+    location.state,
+    location.country
+  ]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join(", ");
+
+  const hasRecordedAddress = [
+    location.address1,
+    location.address2,
+    location.city,
+    location.state,
+    location.country
+  ].some((value) => Boolean(value?.trim()));
+
+  return hasRecordedAddress
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
+    : null;
 }
 
 async function loadCustomerAssets(customerId: string): Promise<CustomerAssets> {
@@ -59,6 +85,7 @@ export function CustomerDetail({
   activeTab,
   canWrite,
   customer,
+  onAssetOpen,
   onClose,
   onEdit,
   onTabChange
@@ -247,20 +274,48 @@ export function CustomerDetail({
                   </div>
                 ) : null}
                 <div className="customer-location-grid">
-                  {locationGroups.map(({ location, assets: locationAssets }) => (
-                    <article key={location.id}>
-                      <span className="customer-location-icon"><MapPin aria-hidden="true" size={18} /></span>
-                      <div>
-                        <h4>{location.name}</h4>
-                    <p>{[location.address1, location.address2, location.city, location.state, location.country].filter(Boolean).join(", ") || "Location details not recorded"}</p>
-                    <p className="customer-location-contact">{location.siteContactName ? `Site contact: ${location.siteContactName}${location.siteContactMobile ? ` · ${location.siteContactMobile}` : ""}${location.siteContactEmail ? ` · ${location.siteContactEmail}` : ""}` : "Site contact not recorded"}</p>
-                      </div>
-                      <strong>{locationAssets.length}<small>{locationAssets.length === 1 ? "asset" : "assets"}</small></strong>
-                      <ul aria-label={`Assets at ${location.name}`}>
-                        {locationAssets.map((asset) => <li key={asset.id}>{asset.assetNumber}</li>)}
-                      </ul>
-                    </article>
-                  ))}
+                  {locationGroups.map(({ location, assets: locationAssets }) => {
+                    const mapUrl = googleMapsUrl(location);
+                    return (
+                      <article key={location.id}>
+                        <span className="customer-location-icon"><MapPin aria-hidden="true" size={18} /></span>
+                        <div>
+                          <h4>{location.name}</h4>
+                          <p>{[location.address1, location.address2, location.city, location.state, location.country].filter(Boolean).join(", ") || "Location details not recorded"}</p>
+                          {mapUrl ? (
+                            <a
+                              aria-label={`Open ${location.name} in Google Maps`}
+                              className="customer-location-map-link"
+                              href={mapUrl}
+                              rel="noopener noreferrer"
+                              target="_blank"
+                            >
+                              View in Google Maps <ExternalLink aria-hidden="true" size={13} />
+                            </a>
+                          ) : null}
+                        </div>
+                        <p className="customer-location-contact">{location.siteContactName ? `Site contact: ${location.siteContactName}${location.siteContactMobile ? ` · ${location.siteContactMobile}` : ""}${location.siteContactEmail ? ` · ${location.siteContactEmail}` : ""}` : "Site contact not recorded"}</p>
+                        <strong>{locationAssets.length}<small>{locationAssets.length === 1 ? "asset" : "assets"}</small></strong>
+                        <ul aria-label={`Assets at ${location.name}`}>
+                          {locationAssets.map((asset) => (
+                            <li key={asset.id}>
+                              <button
+                                aria-label={`Open asset ${asset.assetNumber}`}
+                                className="customer-location-asset-link"
+                                onClick={() => {
+                                  onClose();
+                                  onAssetOpen(asset.id);
+                                }}
+                                type="button"
+                              >
+                                {asset.assetNumber}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </article>
+                    );
+                  })}
                 </div>
               </section>
             ) : null}
