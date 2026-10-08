@@ -193,9 +193,29 @@ jobs:
             active_services+=("$service")
           done
           if [ "${#active_services[@]}" -gt 0 ]; then
-            aws ecs wait services-stable \
+            if ! aws ecs wait services-stable \
               --cluster "$ECS_CLUSTER" \
-              --services "${active_services[@]}"
+              --services "${active_services[@]}"; then
+              echo "ECS services did not stabilize; collecting diagnostics" >&2
+              aws ecs describe-services \
+                --cluster "$ECS_CLUSTER" \
+                --services "${active_services[@]}"
+              for service in "${active_services[@]}"; do
+                task_arn_output="$(
+                  aws ecs list-tasks \
+                    --cluster "$ECS_CLUSTER" \
+                    --service-name "$service" \
+                    --desired-status STOPPED \
+                    --query 'taskArns[:5]' \
+                  --output text
+                )"
+                if [ -n "$task_arn_output" ] && [ "$task_arn_output" != "None" ]; then
+                  read -r -a task_arns <<< "$task_arn_output"
+                  aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "${task_arns[@]}"
+                fi
+              done
+              exit 1
+            fi
           fi
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
