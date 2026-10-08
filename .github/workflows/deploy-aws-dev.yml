@@ -2,6 +2,12 @@ name: Deploy AWS Dev
 
 on:
   workflow_dispatch:
+    inputs:
+      deploy_api:
+        description: "Roll out ECS services after publishing images"
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -164,6 +170,7 @@ jobs:
           fi
 
       - name: Force ECS service deployments
+        if: ${{ github.event_name == 'push' || inputs.deploy_api }}
         run: |
           active_services=()
           for service in \
