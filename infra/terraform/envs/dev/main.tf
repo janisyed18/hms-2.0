@@ -319,7 +319,7 @@ resource "aws_route_table_association" "public" {
 
 resource "aws_security_group" "alb" {
   name        = "${local.name}-alb"
-  description = "Public HTTP and optional HTTPS ingress for the HMS API"
+  description = "Public HTTP ingress for the HMS dev API"
   vpc_id      = aws_vpc.this.id
 
   ingress {
@@ -327,7 +327,7 @@ resource "aws_security_group" "alb" {
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP redirect or temporary development API ingress"
+    description = "Temporary dev HTTP"
   }
 
   dynamic "ingress" {
