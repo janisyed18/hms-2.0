@@ -18,6 +18,7 @@ from hms_backend.app.api.dependencies import SessionLocal
 from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.certificates.issuance import regenerate_certificate_pdf
 from hms_backend.app.modules.certificates.models import Certificate
+from hms_backend.app.modules.customers import models as _customer_models  # noqa: F401
 from hms_backend.app.modules.inspections.models import Inspection
 from hms_backend.app.modules.products.models import Product
 
