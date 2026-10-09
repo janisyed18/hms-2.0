@@ -46,7 +46,13 @@ class ObjectStorage(Protocol):
 class PresignedObjectStorage(Protocol):
     """Storage that can mint short-lived, directly-downloadable URLs."""
 
-    def presigned_get_url(self, key: str, *, expires_in: int | None = None) -> str: ...
+    def presigned_get_url(
+        self,
+        key: str,
+        *,
+        download_filename: str | None = None,
+        expires_in: int | None = None,
+    ) -> str: ...
 
 
 class LocalObjectStorage:
@@ -202,10 +208,21 @@ class S3ObjectStorage:
             raise
         return True
 
-    def presigned_get_url(self, key: str, *, expires_in: int | None = None) -> str:
+    def presigned_get_url(
+        self,
+        key: str,
+        *,
+        download_filename: str | None = None,
+        expires_in: int | None = None,
+    ) -> str:
+        params = {"Bucket": self._bucket, "Key": self._s3_key(key)}
+        if download_filename:
+            params["ResponseContentDisposition"] = (
+                f'attachment; filename="{download_filename}"'
+            )
         url = self._get_client().generate_presigned_url(
             "get_object",
-            Params={"Bucket": self._bucket, "Key": self._s3_key(key)},
+            Params=params,
             ExpiresIn=expires_in or self._presign_expiry_seconds,
         )
         return cast(str, url)

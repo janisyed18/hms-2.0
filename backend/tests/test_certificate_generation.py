@@ -249,6 +249,14 @@ async def test_generate_certificate_renders_signs_stores_and_verifies(
         assert pdf.headers["content-type"] == "application/pdf"
         assert pdf.content.startswith(b"%PDF")
 
+        downloaded_pdf = await client.get(
+            f"/api/v1/certificates/verify/{token}/pdf?download=true"
+        )
+        assert downloaded_pdf.status_code == 200
+        assert downloaded_pdf.headers["content-disposition"] == (
+            f'attachment; filename="{body["number"]}.pdf"'
+        )
+
 
 @pytest.mark.asyncio
 async def test_tampered_certificate_fails_verification(

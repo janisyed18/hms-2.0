@@ -1,4 +1,4 @@
-import { Ban, Copy, FileCheck2, RotateCcw, X } from "lucide-react";
+import { Ban, Copy, Download, FileCheck2, RotateCcw, X } from "lucide-react";
 import { useState } from "react";
 
 import type { CertificateRecord } from "../domain/types";
@@ -21,6 +21,10 @@ function statusClass(status: string) {
   return "mini-status current";
 }
 
+function certificateDownloadUrl(publicToken: string) {
+  return `/api/v1/certificates/verify/${encodeURIComponent(publicToken)}/pdf?download=true`;
+}
+
 export function CertificateDetail({
   canManage,
   certificate,
@@ -32,7 +36,7 @@ export function CertificateDetail({
 
   if (!certificate) {
     return (
-      <aside className="inspection-detail-panel" aria-label="Certificate detail">
+      <aside className="inspection-detail-panel certificate-detail-panel" aria-label="Certificate detail">
         <div className="empty-detail">
           <strong>Select a certificate</strong>
           <span>Open a row to review issue metadata and verification data.</span>
@@ -52,20 +56,31 @@ export function CertificateDetail({
   }
 
   return (
-    <aside className="inspection-detail-panel" aria-label="Certificate detail">
+    <aside className="inspection-detail-panel certificate-detail-panel" aria-label="Certificate detail">
       <div className="inspection-detail-header">
         <div>
           <h2>{certificate.number}</h2>
           <p>{certificate.customer.name} / {certificate.asset.assetNumber}</p>
         </div>
-        <button
-          aria-label="Close certificate detail"
-          className="icon-button light"
-          onClick={onClose}
-          type="button"
-        >
-          <X size={18} />
-        </button>
+        <div className="certificate-detail-header-actions">
+          <a
+            aria-label={`Download certificate ${certificate.number} PDF`}
+            className="secondary-button certificate-download-link"
+            download={`${certificate.number}.pdf`}
+            href={certificateDownloadUrl(certificate.publicToken)}
+          >
+            <Download aria-hidden="true" size={16} />
+            Download PDF
+          </a>
+          <button
+            aria-label="Close certificate detail"
+            className="icon-button light"
+            onClick={onClose}
+            type="button"
+          >
+            <X size={18} />
+          </button>
+        </div>
       </div>
 
       <div className="inspection-detail-strip">
