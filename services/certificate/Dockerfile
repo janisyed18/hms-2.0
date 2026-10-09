@@ -21,12 +21,9 @@ COPY src ./src
 RUN pip install --no-cache-dir . \
     && groupadd --system hms \
     && useradd --system --gid hms --home-dir /var/lib/hms hms \
-    && install -d --owner=hms --group=hms /var/lib/hms
+    && install -d --owner=hms --group=hms /var/lib/hms/.hms
 
 EXPOSE 50051
-
-# Dev signing material is auto-generated on first run under this path.
-VOLUME ["/var/lib/hms/.hms"]
 
 USER hms
 
