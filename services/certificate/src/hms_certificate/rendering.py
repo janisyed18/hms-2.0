@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
+from pathlib import Path
 
 import qrcode
 from qrcode.image.pil import PilImage
@@ -44,6 +45,7 @@ _LINE = colors.HexColor("#c9d4e2")
 
 _PAGE_W, _PAGE_H = A4
 _MARGIN = 16 * mm
+_BRAND_LOGO = Path(__file__).with_name("assets") / "momentum-logo.png"
 
 
 @dataclass(frozen=True)
@@ -175,21 +177,9 @@ def _story(
 
 
 def _header(data: CertificateData, s: _Styles, settings: Settings) -> Table:
-    issuer_name = data.issuer.name or settings.issuer_name
-    issuer_lines = "<br/>".join(
-        filter(
-            None,
-            [
-                data.issuer.address or settings.issuer_address,
-                data.issuer.contact or settings.issuer_contact,
-                data.issuer.identifier or settings.issuer_identifier,
-            ],
-        )
-    )
-    left = [
-        Paragraph(issuer_name, s.issuer),
-        Paragraph(issuer_lines, s.issuer_sub),
-    ]
+    # The supplied Momentum certificate template establishes the document
+    # brand. Legal issuer identity remains in the signed certificate metadata.
+    left = [_brand_lockup(s)]
     title_style = ParagraphStyle("t", parent=s.h1, alignment=TA_RIGHT)
     right = [
         Paragraph(settings.field_title, title_style),
@@ -211,6 +201,28 @@ def _header(data: CertificateData, s: _Styles, settings: Settings) -> Table:
         )
     )
     return table
+
+
+def _brand_lockup(s: _Styles) -> list:
+    if _BRAND_LOGO.exists():
+        return [
+            Image(str(_BRAND_LOGO), width=82 * mm, height=17 * mm, kind="proportional"),
+            Spacer(1, 1),
+            Paragraph("Hose Management System", s.issuer_sub),
+        ]
+
+    # An installation that omitted the bundled brand asset remains usable.
+    fallback = ParagraphStyle(
+        "brand_fallback",
+        parent=s.issuer,
+        fontSize=22,
+        leading=24,
+        textColor=colors.HexColor("#ff914d"),
+    )
+    return [
+        Paragraph("MOMENTUM", fallback),
+        Paragraph("Hose Management System", s.issuer_sub),
+    ]
 
 
 def _summary_band(data: CertificateData, s: _Styles) -> Table:
@@ -401,7 +413,7 @@ def _verification_block(
         Spacer(1, 3),
         Paragraph(
             "Scan the QR code or visit the URL below to independently verify this "
-            "certificate against BAT Engineering's records.",
+            "certificate against Momentum HMS records.",
             s.verify,
         ),
         Spacer(1, 3),

@@ -23,9 +23,16 @@ def test_render_embeds_key_content(
     result = render_certificate(sample_data, vh, settings)
     reader = PdfReader(BytesIO(result.pdf))
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    normalised_text = " ".join(text.split())
     assert sample_data.certificate_number in text
     assert sample_data.asset_number in text
     assert sample_data.customer_name in text
+    assert "HOSE ASSEMBLY TEST & INSPECTION CERTIFICATE" in normalised_text
+    assert "CUSTOMER & SITE" in normalised_text
+    assert "END CONFIGURATION" in normalised_text
+    assert "PRESSURE TEST" in normalised_text
+    assert "INSPECTION & APPROVAL" in normalised_text
+    assert "Authenticity & Verification" in normalised_text
     # The verification hash appears (wrapped) in the document.
     assert vh[:32] in text.replace("\n", "")
 

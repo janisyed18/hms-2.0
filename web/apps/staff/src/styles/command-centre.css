@@ -3895,6 +3895,197 @@ button:active:not(:disabled) {
   color: var(--color-neutral-700);
 }
 
+/* Record detail views keep the same low-glare surface hierarchy as the command
+   centre. These components predate the tokenised theme and otherwise inherit
+   light-only section and fact colours from the legacy stylesheet. */
+.asset-detail-page .detail-section,
+.certificate-detail-panel {
+  border-color: var(--border);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.asset-detail-page .info-grid dd,
+.asset-detail-page .asset-history-column h4,
+.asset-detail-page .asset-history-list strong,
+.asset-detail-page .detail-page-title h2,
+.asset-detail-page .detail-section h3,
+.certificate-detail-panel .inspection-detail-header h2,
+.certificate-detail-panel .inspection-facts strong,
+.certificate-detail-panel .certificate-verification strong {
+  color: var(--ink);
+}
+
+.asset-detail-page .detail-page-title p,
+.asset-detail-page .info-grid dt,
+.asset-detail-page .asset-history-heading p,
+.asset-detail-page .asset-history-list span,
+.asset-detail-page .asset-history-list time,
+.asset-detail-page .history-empty {
+  color: var(--soft);
+}
+
+.asset-detail-page .secondary-button,
+.certificate-download-link {
+  background: var(--panel);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.asset-detail-page .asset-history-list,
+.asset-detail-page .asset-history-list li {
+  border-color: var(--border);
+}
+
+.certificate-detail-panel {
+  gap: 14px;
+}
+
+.certificate-detail-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.certificate-download-link {
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+.certificate-detail-panel .inspection-detail-header p,
+.certificate-detail-panel .inspection-detail-strip,
+.certificate-detail-panel .inspection-facts span,
+.certificate-detail-panel .certificate-verification span {
+  color: var(--soft);
+}
+
+.certificate-detail-panel .inspection-detail-strip > span:not(.mini-status),
+.certificate-detail-panel .inspection-facts > div,
+.certificate-detail-panel .certificate-verification > div {
+  border-color: var(--border);
+  background: var(--panel-subtle);
+}
+
+.certificate-detail-panel .certificate-action-band {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-subtle));
+  color: var(--soft);
+}
+
+:root:not([data-theme="light"]) .certificate-register-table .module-table tbody tr.is-selected {
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel));
+}
+
+:root:not([data-theme="light"]) .certificate-register-table .module-table tbody tr.is-selected td,
+:root:not([data-theme="light"]) .certificate-register-table .module-table tbody tr.is-selected strong {
+  color: var(--ink);
+}
+
+/* The first-generation workspace stylesheet used literal light surfaces for
+   tables, details and native controls. Keep that layer readable in the
+   command-centre dark theme without changing the light-theme treatment. */
+:root:not([data-theme="light"]) {
+  color-scheme: dark;
+}
+
+:root:not([data-theme="light"]) .table-panel,
+:root:not([data-theme="light"]) .activity-panel,
+:root:not([data-theme="light"]) .detail-panel,
+:root:not([data-theme="light"]) .detail-section,
+:root:not([data-theme="light"]) .inspection-list,
+:root:not([data-theme="light"]) .inspection-dashboard,
+:root:not([data-theme="light"]) .inspection-detail-panel,
+:root:not([data-theme="light"]) .operations-header,
+:root:not([data-theme="light"]) .operations-panel {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+:root:not([data-theme="light"]) .secondary-button,
+:root:not([data-theme="light"]) .detail-link {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--ink);
+}
+
+:root:not([data-theme="light"]) .filter-field input,
+:root:not([data-theme="light"]) .filter-field select,
+:root:not([data-theme="light"]) .inspection-detail-form input,
+:root:not([data-theme="light"]) .inspection-detail-form select,
+:root:not([data-theme="light"]) .inspection-detail-form textarea,
+:root:not([data-theme="light"]) .auth-field input,
+:root:not([data-theme="light"]) .auth-field select,
+:root:not([data-theme="light"]) .auth-field textarea {
+  background: var(--panel-subtle);
+  border-color: var(--border-strong);
+  color: var(--ink);
+  color-scheme: dark;
+}
+
+:root:not([data-theme="light"]) .filter-field input::placeholder,
+:root:not([data-theme="light"]) .inspection-detail-form input::placeholder,
+:root:not([data-theme="light"]) .inspection-detail-form textarea::placeholder,
+:root:not([data-theme="light"]) .auth-field input::placeholder,
+:root:not([data-theme="light"]) .auth-field textarea::placeholder {
+  color: var(--soft);
+}
+
+:root:not([data-theme="light"]) .filter-field select option,
+:root:not([data-theme="light"]) .inspection-detail-form select option,
+:root:not([data-theme="light"]) .auth-field select option {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+:root:not([data-theme="light"]) .inspection-detail-form label,
+:root:not([data-theme="light"]) .checkbox-field,
+:root:not([data-theme="light"]) .inspection-detail-header h2,
+:root:not([data-theme="light"]) .inspection-dashboard h2,
+:root:not([data-theme="light"]) .inspection-facts strong,
+:root:not([data-theme="light"]) .empty-detail strong {
+  color: var(--ink);
+}
+
+:root:not([data-theme="light"]) .inspection-detail-header p,
+:root:not([data-theme="light"]) .inspection-dashboard p,
+:root:not([data-theme="light"]) .inspection-facts span,
+:root:not([data-theme="light"]) .empty-detail span {
+  color: var(--soft);
+}
+
+:root:not([data-theme="light"]) .inspection-facts > div,
+:root:not([data-theme="light"]) .empty-detail,
+:root:not([data-theme="light"]) .certificate-verification > div {
+  background: var(--panel-subtle);
+  border-color: var(--border);
+}
+
+:root:not([data-theme="light"]) tbody tr.is-selected,
+:root:not([data-theme="light"]) .module-table tr.is-selected,
+:root:not([data-theme="light"]) .module-table tr[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+}
+
+:root:not([data-theme="light"]) tbody tr.is-selected td,
+:root:not([data-theme="light"]) tbody tr.is-selected strong,
+:root:not([data-theme="light"]) .module-table tr[aria-selected="true"] td,
+:root:not([data-theme="light"]) .module-table tr[aria-selected="true"] strong {
+  color: var(--ink);
+}
+
+@media (max-width: 560px) {
+  .certificate-detail-header-actions {
+    gap: 6px;
+  }
+
+  .certificate-download-link {
+    width: 36px;
+    min-width: 36px;
+    padding: 0;
+    font-size: 0;
+  }
+}
+
 @media (max-width: 1120px) {
   .management-metric-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .catalog-workspace .inspection-layout { grid-template-columns: minmax(0, 1fr); }

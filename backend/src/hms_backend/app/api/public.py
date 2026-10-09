@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -123,6 +123,7 @@ async def verify_certificate(
 async def download_certificate_pdf(
     public_token: str,
     session: SessionDep,
+    download: bool = Query(default=False),
 ) -> Response:
     certificate = await _load_by_token(session, public_token)
     storage = get_object_storage()
@@ -136,7 +137,11 @@ async def download_certificate_pdf(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Certificate PDF is not available",
             )
-        url = storage.presigned_get_url(certificate.pdf_object_key)
+        filename = f"{certificate.number}.pdf"
+        url = storage.presigned_get_url(
+            certificate.pdf_object_key,
+            download_filename=filename if download else None,
+        )
         return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
 
     try:
@@ -147,8 +152,9 @@ async def download_certificate_pdf(
             detail="Certificate PDF is not available",
         ) from exc
     filename = f"{certificate.number}.pdf"
+    disposition = "attachment" if download else "inline"
     return Response(
         content=pdf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
     )
