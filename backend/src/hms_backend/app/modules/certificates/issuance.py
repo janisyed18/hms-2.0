@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hms_backend.app.core.config import Settings
 from hms_backend.app.core.config import settings as default_settings
 from hms_backend.app.core.object_storage import ObjectStorage, get_object_storage
-from hms_backend.app.core.repository import record_create
+from hms_backend.app.core.repository import record_create, record_update
 from hms_backend.app.modules.certificates.engine_client import (
     CertificateEngineClient,
     get_certificate_engine,
@@ -152,5 +152,60 @@ async def generate_and_store_certificate(
             "public_token": public_token,
             "link": verify_url,
         },
+    )
+    return certificate
+
+
+async def regenerate_certificate_pdf(
+    session: AsyncSession,
+    certificate: Certificate,
+    *,
+    actor_id: str,
+    settings: Settings | None = None,
+    engine: CertificateEngineClient | None = None,
+    storage: ObjectStorage | None = None,
+) -> Certificate:
+    """Re-render a stored issued certificate and repair its verification hash.
+
+    This is deliberately limited to issued records. It retains the certificate's
+    public identity (number, token, issue date and object key), so it is suitable
+    for recovering a missing legacy PDF without creating a second certificate.
+    The caller owns the transaction.
+    """
+    if certificate.status != CertificateStatus.ISSUED.value:
+        raise ValueError("only issued certificates can have their PDF regenerated")
+
+    settings = settings or default_settings
+    engine = engine or get_certificate_engine()
+    storage = storage or get_object_storage()
+    inspection = certificate.inspection
+    verify_url = (
+        f"{settings.public_base_url.rstrip('/')}"
+        f"/api/v1/certificates/verify/{certificate.public_token}"
+    )
+    facts = build_facts(
+        inspection,
+        certificate_number=certificate.number,
+        certificate_version=certificate.certificate_version,
+        status=certificate.status,
+        issued_at=certificate.issued_at,
+        valid_until=certificate.valid_until,
+        public_token=certificate.public_token,
+        verify_url=verify_url,
+        issued_by_name=certificate.issued_by_user_id,
+        issuer_name=settings.issuer_name,
+        issuer_identifier=settings.issuer_identifier,
+    )
+    rendered = await engine.render(to_proto(facts))
+    storage.put(certificate.pdf_object_key, rendered.pdf)
+
+    before = certificate.to_audit_dict()
+    certificate.verification_hash = rendered.verification_hash
+    await record_update(
+        session,
+        certificate,
+        actor_id=actor_id,
+        action="certificate.pdf_regenerated",
+        before=before,
     )
     return certificate

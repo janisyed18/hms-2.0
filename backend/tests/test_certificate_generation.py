@@ -22,9 +22,11 @@ from hms_backend.app.core.object_storage import LocalObjectStorage
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
+from hms_backend.app.models.foundation import AuditEvent
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
 from hms_backend.app.modules.certificates.engine_client import RenderedCertificate
 from hms_backend.app.modules.certificates.enginepb import certificate_pb2 as pb
+from hms_backend.app.modules.certificates.issuance import regenerate_certificate_pdf
 from hms_backend.app.modules.certificates.models import Certificate
 from hms_backend.app.modules.certificates.verification import (
     EndInput,
@@ -291,6 +293,67 @@ async def test_tampered_certificate_fails_verification(
         result = verify.json()
         assert result["hash_matches"] is False
         assert result["valid"] is False
+
+
+@pytest.mark.asyncio
+async def test_regenerate_certificate_pdf_repairs_legacy_storage_and_hash(
+    session_factory, approved_inspection_id, _storage, _engine
+) -> None:
+    """A legacy record can be repaired without changing its public identity."""
+    async with _client(session_factory, _REVIEWER) as client:
+        issue = await client.post(
+            f"/api/v1/inspections/{approved_inspection_id}/certificate", json={}
+        )
+        assert issue.status_code == 201
+        issued = issue.json()
+
+    async with session_factory() as session:
+        certificate = (
+            await session.scalars(
+                select(Certificate).where(Certificate.number == issued["number"])
+            )
+        ).one()
+        original_token = certificate.public_token
+        original_object_key = certificate.pdf_object_key
+        original_issued_at = certificate.issued_at
+        certificate.verification_hash = "stale-hash"
+        await session.commit()
+
+    async with session_factory() as session:
+        certificate = (
+            await session.scalars(
+                select(Certificate).where(Certificate.number == issued["number"])
+            )
+        ).one()
+        repaired = await regenerate_certificate_pdf(
+            session,
+            certificate,
+            actor_id="system-certificate-repair",
+            engine=_engine,
+            storage=_storage,
+        )
+        await session.commit()
+        assert repaired.public_token == original_token
+        assert repaired.pdf_object_key == original_object_key
+        assert repaired.issued_at == original_issued_at
+        assert repaired.verification_hash != "stale-hash"
+        assert _storage.exists(original_object_key)
+
+        audit = (
+            await session.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.action == "certificate.pdf_regenerated"
+                )
+            )
+        ).one()
+        assert audit.actor_id == "system-certificate-repair"
+        assert audit.entity_id == repaired.id
+
+    async with _client(session_factory, _REVIEWER) as client:
+        verify = await client.get(f"/api/v1/certificates/verify/{original_token}")
+        assert verify.status_code == 200
+        assert verify.json()["valid"] is True
+        assert verify.json()["hash_matches"] is True
 
 
 @pytest.mark.asyncio
