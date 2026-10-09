@@ -1101,6 +1101,17 @@ resource "aws_ecs_task_definition" "certificate_engine" {
       name      = "certificate-engine"
       image     = local.certificate_engine_image
       essential = true
+      command = [
+        "sh",
+        "-c",
+        "umask 077 && mkdir -p \"$HOME\" && exec hms-certificate-engine",
+      ]
+      environment = [
+        {
+          name  = "HOME"
+          value = "/tmp/hms"
+        }
+      ]
       portMappings = [
         {
           containerPort = 50051
