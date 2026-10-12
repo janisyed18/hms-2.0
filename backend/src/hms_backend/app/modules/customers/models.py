@@ -22,16 +22,6 @@ class Customer(SyncableMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     retest_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     default_retest_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    ppe_requirements: Mapped[list[str]] = mapped_column(
-        JSON,
-        nullable=False,
-        default=list,
-    )
-    additional_requirements: Mapped[list[str]] = mapped_column(
-        JSON,
-        nullable=False,
-        default=list,
-    )
 
     locations: Mapped[list[CustomerLocation]] = relationship(
         back_populates="customer",
@@ -71,6 +61,16 @@ class CustomerLocation(SyncableMixin, Base):
     site_contact_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     site_contact_mobile: Mapped[str | None] = mapped_column(String(80), nullable=True)
     site_contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    ppe_requirements: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+    additional_requirements: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
 
     customer: Mapped[Customer] = relationship(
         back_populates="locations",

@@ -588,7 +588,9 @@
   }
 
   .customer-profile-metrics,
-  .customer-location-grid {
+  .customer-location-grid,
+  .customer-location-requirements,
+  .location-requirements-grid {
     grid-template-columns: 1fr;
   }
 

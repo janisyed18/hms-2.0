@@ -21,7 +21,9 @@ const location = {
   country: "Australia",
   siteContactName: "Faria Javed",
   siteContactMobile: "+61 412 275 772",
-  siteContactEmail: "faria@example.test"
+  siteContactEmail: "faria@example.test",
+  ppeRequirements: ["High Vis", "Safety Boots"],
+  additionalRequirements: ["2-way radio"]
 };
 
 const asset: AssetRecord = {
@@ -57,8 +59,6 @@ const customer: CustomerRecord = {
   notes: null,
   retestEnabled: true,
   defaultRetestMonths: 12,
-  ppeRequirements: [],
-  additionalRequirements: [],
   locations: [location],
   contacts: [],
   status: "Active",
@@ -110,6 +110,9 @@ describe("CustomerDetail locations", () => {
     );
     expect(mapsLink).toHaveAttribute("target", "_blank");
     expect(mapsLink).toHaveAttribute("rel", "noopener noreferrer");
+    expect(screen.getByText("PPE requirements")).toBeVisible();
+    expect(screen.getByText("High Vis")).toBeVisible();
+    expect(screen.queryByRole("tab", { name: "Overview" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Open asset HMS-798BBD74CE" }));
     expect(onClose).toHaveBeenCalledOnce();

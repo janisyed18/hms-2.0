@@ -734,14 +734,17 @@ describe("hmsClient", () => {
     );
   });
 
-  it("sends customer locations, contacts, and requirements in create payloads", async () => {
+  it("sends location-specific contacts and requirements in create payloads", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       okJson({
         ...apiCustomer,
         code: "SUM",
         name: "Summit Marine Group",
-        ppe_requirements: ["High Vis", "Safety Boots"],
-        additional_requirements: ["2-way radio"]
+        locations: [{
+          ...apiCustomer.locations[0],
+          ppe_requirements: ["High Vis", "Safety Boots"],
+          additional_requirements: ["2-way radio"]
+        }]
       })
     );
 
@@ -753,12 +756,14 @@ describe("hmsClient", () => {
         name: "Newcastle operations yard",
         siteContactName: "Alex Nguyen",
         siteContactMobile: "+61 412 345 678",
-        siteContactEmail: "alex.nguyen@example.test"
-      }, { name: "Kooragang workshop" }],
-      phone: "+61 2 5555 0200",
-      email: "operations@summit.example.test",
-      ppeRequirements: ["High Vis", "Safety Boots"],
-      additionalRequirements: ["2-way radio"]
+        siteContactEmail: "alex.nguyen@example.test",
+        ppeRequirements: ["High Vis", "Safety Boots"],
+        additionalRequirements: ["2-way radio"]
+      }, {
+        name: "Kooragang workshop",
+        ppeRequirements: [],
+        additionalRequirements: []
+      }]
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -773,18 +778,20 @@ describe("hmsClient", () => {
               name: "Newcastle operations yard",
               site_contact_name: "Alex Nguyen",
               site_contact_mobile: "+61 412 345 678",
-              site_contact_email: "alex.nguyen@example.test"
+              site_contact_email: "alex.nguyen@example.test",
+              ppe_requirements: ["High Vis", "Safety Boots"],
+              additional_requirements: ["2-way radio"]
             },
-            { name: "Kooragang workshop" }
-          ],
-          phone: "+61 2 5555 0200",
-          email: "operations@summit.example.test",
-          ppe_requirements: ["High Vis", "Safety Boots"],
-          additional_requirements: ["2-way radio"]
+            {
+              name: "Kooragang workshop",
+              ppe_requirements: [],
+              additional_requirements: []
+            }
+          ]
         })
       })
     );
-    expect(created.ppeRequirements).toEqual(["High Vis", "Safety Boots"]);
+    expect(created.locations[0].ppeRequirements).toEqual(["High Vis", "Safety Boots"]);
   });
 
   it("updates the customer profile with its current ETag", async () => {
@@ -792,8 +799,11 @@ describe("hmsClient", () => {
       okJson({
         ...apiCustomer,
         name: "Summit Marine Services",
-        ppe_requirements: ["Hard Hat"],
-        additional_requirements: ["Vehicle Site Approval"]
+        locations: [{
+          ...apiCustomer.locations[0],
+          ppe_requirements: ["Hard Hat"],
+          additional_requirements: ["Vehicle Site Approval"]
+        }]
       }, { ETag: '"4"' })
     );
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
@@ -801,11 +811,12 @@ describe("hmsClient", () => {
     await client.updateCustomer("customer-api-1", {
       name: "Summit Marine Services",
       notes: "Confirm the annual service window.",
-      locations: [{ id: "location-api-1", name: "Newcastle workshop" }],
-      phone: "+61 2 5555 0300",
-      email: "service@summit.example.test",
-      ppeRequirements: ["Hard Hat"],
-      additionalRequirements: ["Vehicle Site Approval"]
+      locations: [{
+        id: "location-api-1",
+        name: "Newcastle workshop",
+        ppeRequirements: ["Hard Hat"],
+        additionalRequirements: ["Vehicle Site Approval"]
+      }]
     }, '"3"');
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -816,11 +827,12 @@ describe("hmsClient", () => {
         body: JSON.stringify({
           name: "Summit Marine Services",
           notes: "Confirm the annual service window.",
-          locations: [{ id: "location-api-1", name: "Newcastle workshop" }],
-          phone: "+61 2 5555 0300",
-          email: "service@summit.example.test",
-          ppe_requirements: ["Hard Hat"],
-          additional_requirements: ["Vehicle Site Approval"]
+          locations: [{
+            id: "location-api-1",
+            name: "Newcastle workshop",
+            ppe_requirements: ["Hard Hat"],
+            additional_requirements: ["Vehicle Site Approval"]
+          }]
         })
       })
     );

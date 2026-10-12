@@ -1142,7 +1142,7 @@ async def test_create_customer_writes_sync_change_and_audit_event(
 
 
 @pytest.mark.asyncio
-async def test_customer_profile_create_and_update_are_atomic(
+async def test_customer_profile_create_and_update_keeps_requirements_per_location(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     principal = Principal(
@@ -1157,13 +1157,17 @@ async def test_customer_profile_create_and_update_are_atomic(
             json={
                 "name": "Summit Marine Group",
                 "locations": [
-                    {"name": "Newcastle operations yard"},
-                    {"name": "Kooragang workshop"},
+                    {
+                        "name": "Newcastle operations yard",
+                        "ppe_requirements": ["High Vis", "Safety Boots"],
+                        "additional_requirements": ["2-way radio"],
+                    },
+                    {
+                        "name": "Kooragang workshop",
+                        "ppe_requirements": ["Hard Hat"],
+                        "additional_requirements": ["Vehicle Site Approval"],
+                    },
                 ],
-                "phone": "+61 2 5555 0200",
-                "email": "operations@summit.example.test",
-                "ppe_requirements": ["High Vis", "Safety Boots"],
-                "additional_requirements": ["2-way radio"],
             },
         )
 
@@ -1174,8 +1178,14 @@ async def test_customer_profile_create_and_update_are_atomic(
             "Kooragang workshop",
             "Newcastle operations yard",
         ]
-        assert created["contacts"][0]["phone"] == "+61 2 5555 0200"
-        assert created["ppe_requirements"] == ["High Vis", "Safety Boots"]
+        locations = {location["name"]: location for location in created["locations"]}
+        assert locations["Newcastle operations yard"]["ppe_requirements"] == [
+            "High Vis",
+            "Safety Boots",
+        ]
+        assert locations["Kooragang workshop"]["additional_requirements"] == [
+            "Vehicle Site Approval"
+        ]
 
         location_id = created["locations"][0]["id"]
         update_response = await client.patch(
@@ -1185,26 +1195,36 @@ async def test_customer_profile_create_and_update_are_atomic(
                 "name": "Summit Marine Services",
                 "locations": [
                     {"id": location_id, "name": "Kooragang service workshop"},
-                    {"name": "Port of Newcastle berth"},
+                    {
+                        "name": "Port of Newcastle berth",
+                        "ppe_requirements": ["Safety Glasses"],
+                        "additional_requirements": ["Vehicle Site Approval"],
+                    },
                 ],
-                "phone": "+61 2 5555 0299",
-                "email": "service@summit.example.test",
-                "ppe_requirements": ["Hard Hat", "Safety Glasses"],
-                "additional_requirements": ["Vehicle Site Approval"],
             },
         )
 
     assert update_response.status_code == 200
     updated = update_response.json()
     assert updated["name"] == "Summit Marine Services"
-    assert updated["contacts"][0]["email"] == "service@summit.example.test"
-    assert updated["ppe_requirements"] == ["Hard Hat", "Safety Glasses"]
-    assert updated["additional_requirements"] == ["Vehicle Site Approval"]
-    assert {location["name"] for location in updated["locations"]} == {
+    locations = {location["name"]: location for location in updated["locations"]}
+    assert set(locations) == {
         "Kooragang service workshop",
         "Newcastle operations yard",
         "Port of Newcastle berth",
     }
+    assert locations["Port of Newcastle berth"]["ppe_requirements"] == [
+        "Safety Glasses"
+    ]
+    assert locations["Port of Newcastle berth"]["additional_requirements"] == [
+        "Vehicle Site Approval"
+    ]
+    assert locations["Kooragang service workshop"]["ppe_requirements"] == [
+        "Hard Hat"
+    ]
+    assert locations["Kooragang service workshop"]["additional_requirements"] == [
+        "Vehicle Site Approval"
+    ]
 
 
 @pytest.mark.asyncio
@@ -1222,7 +1242,12 @@ async def test_customer_profile_rejects_unknown_site_requirements(
             "/api/v1/customers",
             json={
                 "name": "Validation Test Customer",
-                "ppe_requirements": ["Unapproved protective item"],
+                "locations": [
+                    {
+                        "name": "Validation site",
+                        "ppe_requirements": ["Unapproved protective item"],
+                    }
+                ],
             },
         )
 

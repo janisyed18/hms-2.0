@@ -148,6 +148,8 @@ export interface CustomerLocation {
   siteContactName: string | null;
   siteContactMobile: string | null;
   siteContactEmail: string | null;
+  ppeRequirements: string[];
+  additionalRequirements: string[];
 }
 
 export interface CustomerContact {
@@ -196,8 +198,6 @@ export interface CustomerRecord {
   notes: string | null;
   retestEnabled: boolean;
   defaultRetestMonths: number | null;
-  ppeRequirements: string[];
-  additionalRequirements: string[];
   locations: CustomerLocation[];
   contacts: CustomerContact[];
   status: CustomerStatus;
@@ -219,11 +219,9 @@ export interface CustomerFormValues {
     siteContactName?: string;
     siteContactMobile?: string;
     siteContactEmail?: string;
+    ppeRequirements: string[];
+    additionalRequirements: string[];
   }>;
-  phone: string;
-  email: string;
-  ppeRequirements: string[];
-  additionalRequirements: string[];
 }
 
 export interface ApiListResult<TItem> {

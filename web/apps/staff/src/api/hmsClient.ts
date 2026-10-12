@@ -64,6 +64,8 @@ interface ApiLocation {
   site_contact_name: string | null;
   site_contact_mobile: string | null;
   site_contact_email: string | null;
+  ppe_requirements: string[];
+  additional_requirements: string[];
 }
 
 interface ApiContact {
@@ -82,8 +84,6 @@ interface ApiCustomer {
   notes: string | null;
   retest_enabled: boolean;
   default_retest_months: number | null;
-  ppe_requirements?: string[];
-  additional_requirements?: string[];
   locations: ApiLocation[];
   contacts: ApiContact[];
 }
@@ -681,7 +681,9 @@ function toLocation(location: ApiLocation): CustomerLocation {
     country: location.country,
     siteContactName: location.site_contact_name,
     siteContactMobile: location.site_contact_mobile,
-    siteContactEmail: location.site_contact_email
+    siteContactEmail: location.site_contact_email,
+    ppeRequirements: location.ppe_requirements ?? [],
+    additionalRequirements: location.additional_requirements ?? []
   };
 }
 
@@ -793,8 +795,6 @@ function toCustomer(customer: ApiCustomer, etag: string | null = null): Customer
         notes: customer.notes,
         retestEnabled: customer.retest_enabled,
         defaultRetestMonths: customer.default_retest_months,
-        ppeRequirements: customer.ppe_requirements ?? [],
-        additionalRequirements: customer.additional_requirements ?? [],
         locations: customer.locations.map(toLocation),
         contacts: customer.contacts.map(toContact),
         status: "Active",
@@ -1321,12 +1321,10 @@ function customerPayload(values: CustomerFormValues) {
       name: location.name.trim(),
       ...(location.siteContactName ? { site_contact_name: location.siteContactName.trim() } : {}),
       ...(location.siteContactMobile ? { site_contact_mobile: location.siteContactMobile.trim() } : {}),
-      ...(location.siteContactEmail ? { site_contact_email: location.siteContactEmail.trim() } : {})
+      ...(location.siteContactEmail ? { site_contact_email: location.siteContactEmail.trim() } : {}),
+      ppe_requirements: location.ppeRequirements,
+      additional_requirements: location.additionalRequirements
     })),
-    phone: values.phone.trim() || null,
-    email: values.email.trim() || null,
-    ppe_requirements: values.ppeRequirements,
-    additional_requirements: values.additionalRequirements
   };
 }
 

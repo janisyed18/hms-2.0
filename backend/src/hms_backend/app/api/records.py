@@ -676,8 +676,6 @@ async def create_customer(
         notes=_clean_optional(payload.notes),
         retest_enabled=payload.retest_enabled,
         default_retest_months=payload.default_retest_months,
-        ppe_requirements=list(payload.ppe_requirements),
-        additional_requirements=list(payload.additional_requirements),
     )
     session.add(customer)
     await record_create(
@@ -693,6 +691,10 @@ async def create_customer(
             site_contact_name=_clean_optional(location_payload.site_contact_name),
             site_contact_mobile=_clean_optional(location_payload.site_contact_mobile),
             site_contact_email=_clean_optional(location_payload.site_contact_email),
+            ppe_requirements=list(location_payload.ppe_requirements or []),
+            additional_requirements=list(
+                location_payload.additional_requirements or []
+            ),
         )
         session.add(location)
         await record_create(
@@ -700,20 +702,6 @@ async def create_customer(
             location,
             actor_id=principal.user_id,
             action="customer_location.created",
-        )
-    if payload.phone is not None or payload.email is not None:
-        contact = CustomerContact(
-            customer=customer,
-            name=customer.name,
-            email=_clean_optional(payload.email),
-            phone=_clean_optional(payload.phone),
-        )
-        session.add(contact)
-        await record_create(
-            session,
-            contact,
-            actor_id=principal.user_id,
-            action="customer_contact.created",
         )
     await session.commit()
     loaded = await _get_visible_customer_or_404(session, customer.id, principal)
@@ -782,6 +770,8 @@ async def create_customer_location(
         site_contact_name=_clean_optional(payload.site_contact_name),
         site_contact_mobile=_clean_optional(payload.site_contact_mobile),
         site_contact_email=_clean_optional(payload.site_contact_email),
+        ppe_requirements=list(payload.ppe_requirements),
+        additional_requirements=list(payload.additional_requirements),
     )
     session.add(location)
     await record_create(
@@ -832,6 +822,13 @@ async def update_customer_location(
         location.site_contact_mobile = _clean_optional(payload.site_contact_mobile)
     if "site_contact_email" in updates:
         location.site_contact_email = _clean_optional(payload.site_contact_email)
+    if "ppe_requirements" in updates and payload.ppe_requirements is not None:
+        location.ppe_requirements = list(payload.ppe_requirements)
+    if (
+        "additional_requirements" in updates
+        and payload.additional_requirements is not None
+    ):
+        location.additional_requirements = list(payload.additional_requirements)
 
     await record_update(
         session,
@@ -999,14 +996,6 @@ async def update_customer(
         customer.retest_enabled = payload.retest_enabled
     if "default_retest_months" in updates:
         customer.default_retest_months = payload.default_retest_months
-    if "ppe_requirements" in updates and payload.ppe_requirements is not None:
-        customer.ppe_requirements = list(payload.ppe_requirements)
-    if (
-        "additional_requirements" in updates
-        and payload.additional_requirements is not None
-    ):
-        customer.additional_requirements = list(payload.additional_requirements)
-
     await record_update(
         session,
         customer,
@@ -1034,6 +1023,10 @@ async def update_customer(
                     site_contact_email=_clean_optional(
                         location_payload.site_contact_email
                     ),
+                    ppe_requirements=list(location_payload.ppe_requirements or []),
+                    additional_requirements=list(
+                        location_payload.additional_requirements or []
+                    ),
                 )
                 session.add(new_location)
                 await record_create(
@@ -1060,46 +1053,18 @@ async def update_customer(
             existing_location.site_contact_email = _clean_optional(
                 location_payload.site_contact_email
             )
+            if location_payload.ppe_requirements is not None:
+                existing_location.ppe_requirements = list(location_payload.ppe_requirements)
+            if location_payload.additional_requirements is not None:
+                existing_location.additional_requirements = list(
+                    location_payload.additional_requirements
+                )
             await record_update(
                 session,
                 existing_location,
                 actor_id=principal.user_id,
                 action="customer_location.updated",
                 before=location_before,
-            )
-    if "phone" in updates or "email" in updates:
-        contacts = sorted(
-            (contact for contact in customer.contacts if contact.deleted_at is None),
-            key=lambda contact: (contact.created_at, contact.id),
-        )
-        if contacts:
-            contact = contacts[0]
-            contact_before = contact.to_audit_dict()
-            contact.name = customer.name
-            if "phone" in updates:
-                contact.phone = _clean_optional(payload.phone)
-            if "email" in updates:
-                contact.email = _clean_optional(payload.email)
-            await record_update(
-                session,
-                contact,
-                actor_id=principal.user_id,
-                action="customer_contact.updated",
-                before=contact_before,
-            )
-        elif payload.phone is not None or payload.email is not None:
-            contact = CustomerContact(
-                customer=customer,
-                name=customer.name,
-                email=_clean_optional(payload.email),
-                phone=_clean_optional(payload.phone),
-            )
-            session.add(contact)
-            await record_create(
-                session,
-                contact,
-                actor_id=principal.user_id,
-                action="customer_contact.created",
             )
     await session.commit()
     _set_etag(response, customer.version)
@@ -3095,6 +3060,8 @@ def _customer_location_read(location: CustomerLocation) -> CustomerLocationRead:
         site_contact_name=location.site_contact_name,
         site_contact_mobile=location.site_contact_mobile,
         site_contact_email=location.site_contact_email,
+        ppe_requirements=location.ppe_requirements,
+        additional_requirements=location.additional_requirements,
     )
 
 
@@ -3125,10 +3092,6 @@ def _customer_read(customer: Customer) -> CustomerRead:
         notes=customer.notes,
         retest_enabled=customer.retest_enabled,
         default_retest_months=customer.default_retest_months,
-        ppe_requirements=cast("list[PpeRequirement]", customer.ppe_requirements),
-        additional_requirements=cast(
-            "list[AdditionalRequirement]", customer.additional_requirements
-        ),
         locations=[_customer_location_read(location) for location in locations],
         contacts=[_customer_contact_read(contact) for contact in contacts],
     )

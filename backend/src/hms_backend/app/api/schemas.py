@@ -104,6 +104,8 @@ class CustomerLocationRead(BaseModel):
     site_contact_name: str | None
     site_contact_mobile: str | None
     site_contact_email: str | None
+    ppe_requirements: list[PpeRequirement]
+    additional_requirements: list[AdditionalRequirement]
 
 
 class CustomerContactRead(BaseModel):
@@ -122,8 +124,6 @@ class CustomerRead(BaseModel):
     notes: str | None
     retest_enabled: bool
     default_retest_months: int | None
-    ppe_requirements: list[PpeRequirement]
-    additional_requirements: list[AdditionalRequirement]
     locations: list[CustomerLocationRead]
     contacts: list[CustomerContactRead]
 
@@ -141,6 +141,8 @@ class CustomerLocationWrite(BaseModel):
     site_contact_name: str | None = None
     site_contact_mobile: str | None = None
     site_contact_email: str | None = None
+    ppe_requirements: list[PpeRequirement] | None = None
+    additional_requirements: list[AdditionalRequirement] | None = None
 
 
 class CustomerCreate(BaseModel):
@@ -150,10 +152,6 @@ class CustomerCreate(BaseModel):
     retest_enabled: bool = False
     default_retest_months: int | None = None
     locations: list[CustomerLocationWrite] = Field(default_factory=list)
-    phone: str | None = None
-    email: str | None = None
-    ppe_requirements: list[PpeRequirement] = Field(default_factory=list)
-    additional_requirements: list[AdditionalRequirement] = Field(default_factory=list)
 
 
 class CustomerUpdate(BaseModel):
@@ -163,10 +161,6 @@ class CustomerUpdate(BaseModel):
     retest_enabled: bool | None = None
     default_retest_months: int | None = None
     locations: list[CustomerLocationWrite] | None = None
-    phone: str | None = None
-    email: str | None = None
-    ppe_requirements: list[PpeRequirement] | None = None
-    additional_requirements: list[AdditionalRequirement] | None = None
 
 
 class CustomerLocationCreate(BaseModel):
@@ -179,6 +173,8 @@ class CustomerLocationCreate(BaseModel):
     site_contact_name: str | None = None
     site_contact_mobile: str | None = None
     site_contact_email: str | None = None
+    ppe_requirements: list[PpeRequirement] = Field(default_factory=list)
+    additional_requirements: list[AdditionalRequirement] = Field(default_factory=list)
 
 
 class CustomerLocationUpdate(BaseModel):
@@ -191,6 +187,8 @@ class CustomerLocationUpdate(BaseModel):
     site_contact_name: str | None = None
     site_contact_mobile: str | None = None
     site_contact_email: str | None = None
+    ppe_requirements: list[PpeRequirement] | None = None
+    additional_requirements: list[AdditionalRequirement] | None = None
 
 
 class CustomerContactCreate(BaseModel):
