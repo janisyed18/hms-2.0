@@ -2939,7 +2939,7 @@ async def test_customer_booking_quote_approval_reserves_inspector(
         roles=frozenset({Role.CUSTOMER_USER}),
         customer_ids=frozenset({seeded_session["vopak_id"]}),
     )
-    availability_params = {
+    availability_params: dict[str, str | int] = {
         "customer_id": seeded_session["vopak_id"],
         "location_id": seeded_session["vopak_location_id"],
         "local_date": "2027-10-04",
@@ -3070,7 +3070,7 @@ async def test_location_schedule_uses_timezone_and_blackout_dates(
         roles=frozenset({Role.CUSTOMER_USER}),
         customer_ids=frozenset({seeded_session["vopak_id"]}),
     )
-    params = {
+    params: dict[str, str | int] = {
         "customer_id": seeded_session["vopak_id"],
         "location_id": seeded_session["vopak_location_id"],
         "local_date": "2027-10-04",
@@ -3273,7 +3273,7 @@ async def test_booking_conflict_and_cancel_releases_inspector_slot(
         roles=frozenset({Role.HMS_ADMIN}),
         customer_ids=frozenset(),
     )
-    params = {
+    params: dict[str, str | int] = {
         "customer_id": seeded_session["vopak_id"],
         "location_id": seeded_session["vopak_location_id"],
         "local_date": "2027-10-05",
@@ -3367,7 +3367,7 @@ async def test_failed_reschedule_preserves_confirmed_appointment(
         roles=frozenset({Role.HMS_ADMIN}),
         customer_ids=frozenset(),
     )
-    base_params = {
+    base_params: dict[str, str | int] = {
         "customer_id": seeded_session["vopak_id"],
         "location_id": seeded_session["vopak_location_id"],
         "local_date": "2027-10-07",
@@ -3466,7 +3466,7 @@ async def test_customer_reschedule_request_creates_a_new_appointment_revision(
         roles=frozenset({Role.HMS_ADMIN}),
         customer_ids=frozenset(),
     )
-    base_params = {
+    base_params: dict[str, str | int] = {
         "customer_id": seeded_session["vopak_id"],
         "location_id": seeded_session["vopak_location_id"],
         "local_date": "2027-10-06",

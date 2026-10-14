@@ -4,7 +4,22 @@ import { dirname, resolve } from "node:path";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 
-export default function globalSetup() {
+function clearLoginRateLimits() {
+  const keys = execFileSync(
+    "docker",
+    ["compose", "exec", "-T", "redis", "redis-cli", "--scan", "--pattern", "hms:login-rate:*"],
+    { cwd: repoRoot, encoding: "utf8" }
+  ).trim().split("\n").filter(Boolean);
+  if (keys.length) {
+    execFileSync(
+      "docker",
+      ["compose", "exec", "-T", "redis", "redis-cli", "DEL", ...keys],
+      { cwd: repoRoot, encoding: "utf8" }
+    );
+  }
+}
+
+export function resetAuthTestAccounts(): Record<string, string> {
   const output = execFileSync(
     "docker",
     [
@@ -30,5 +45,10 @@ export default function globalSetup() {
   if (Object.keys(accounts).length !== 6) {
     throw new Error("Expected six development auth accounts from the Docker seed command.");
   }
-  process.env.HMS_E2E_ACCOUNTS_JSON = JSON.stringify(accounts);
+  clearLoginRateLimits();
+  return accounts;
+}
+
+export default function globalSetup() {
+  process.env.HMS_E2E_ACCOUNTS_JSON = JSON.stringify(resetAuthTestAccounts());
 }

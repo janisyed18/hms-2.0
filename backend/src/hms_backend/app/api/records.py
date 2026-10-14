@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-import tzdata
+import tzdata  # type: ignore[import-untyped]
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import desc, false, func, or_, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
@@ -15,6 +15,7 @@ from sqlalchemy.sql import Select
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.api.schemas import (
+    AdditionalRequirement,
     AnalyticsCertificateCoverageRead,
     AnalyticsCustomerRiskRead,
     AnalyticsFleetPostureRead,
@@ -69,6 +70,7 @@ from hms_backend.app.api.schemas import (
     LocationSummary,
     LookupListResponse,
     LookupRead,
+    PpeRequirement,
     PressureTestRead,
     PressureTestWrite,
     ProductCreate,
@@ -847,7 +849,7 @@ async def update_customer_location(
         and payload.additional_requirements is not None
     ):
         location.additional_requirements = list(payload.additional_requirements)
-    _update_location_scheduling(location, payload, updates)
+    _update_location_scheduling(location, payload, set(updates))
 
     await record_update(
         session,
@@ -3391,13 +3393,17 @@ def _customer_location_read(location: CustomerLocation) -> CustomerLocationRead:
         site_contact_name=location.site_contact_name,
         site_contact_mobile=location.site_contact_mobile,
         site_contact_email=location.site_contact_email,
-        ppe_requirements=location.ppe_requirements,
-        additional_requirements=location.additional_requirements,
+        ppe_requirements=cast(list[PpeRequirement], location.ppe_requirements),
+        additional_requirements=cast(
+            list[AdditionalRequirement], location.additional_requirements
+        ),
         scheduling_timezone=location.scheduling_timezone,
         scheduling_open_time=location.scheduling_open_time,
         scheduling_close_time=location.scheduling_close_time,
         scheduling_weekdays=location.scheduling_weekdays,
-        scheduling_blackout_dates=location.scheduling_blackout_dates,
+        scheduling_blackout_dates=[
+            date.fromisoformat(value) for value in location.scheduling_blackout_dates
+        ],
     )
 
 
@@ -4354,7 +4360,7 @@ async def _create_revision_allocations(
             )
     except (IntegrityError, DBAPIError) as exc:
         await session.rollback()
-        if not _is_allocation_conflict(exc.orig):
+        if not _is_allocation_conflict(exc.orig or exc):
             raise
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

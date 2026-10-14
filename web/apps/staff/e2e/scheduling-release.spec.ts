@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 import { expect, test, type Browser, type Page } from "@playwright/test";
 
+import { resetAuthTestAccounts } from "./global-setup";
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const schedulingDate = "2027-10-04";
 const permanentPasswords = {
@@ -293,6 +295,10 @@ test.describe("scheduling release workflow", () => {
     } catch (error) {
       writeFileSync(testInfo.outputPath("service.log"), `Service logs unavailable: ${String(error)}`);
     }
+  });
+
+  test.afterAll(() => {
+    process.env.HMS_E2E_ACCOUNTS_JSON = JSON.stringify(resetAuthTestAccounts());
   });
 
   test("customer booking, admin assignment, and two-party rescheduling", async ({ browser }) => {
