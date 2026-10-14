@@ -1077,7 +1077,9 @@ async def update_customer(
                 location_payload.site_contact_email
             )
             if location_payload.ppe_requirements is not None:
-                existing_location.ppe_requirements = list(location_payload.ppe_requirements)
+                existing_location.ppe_requirements = list(
+                    location_payload.ppe_requirements
+                )
             if location_payload.additional_requirements is not None:
                 existing_location.additional_requirements = list(
                     location_payload.additional_requirements
