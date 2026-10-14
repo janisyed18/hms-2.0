@@ -1,6 +1,8 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from zoneinfo import TZPATH
 
+import tzdata
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -62,6 +64,14 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         # Liveness: the process is up. No external dependencies checked.
         return {"status": "ok", "service": "hms-backend"}
+
+    @app.get("/health/metadata", tags=["health"])
+    async def runtime_metadata() -> dict[str, str]:
+        return {
+            "tzdata_package_version": tzdata.__version__,
+            "iana_timezone_version": tzdata.IANA_VERSION,
+            "timezone_data_source": "tzdata" if not TZPATH else "system",
+        }
 
     @app.get("/health/ready", tags=["health"])
     async def readiness() -> JSONResponse:

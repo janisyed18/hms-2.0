@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from zoneinfo import reset_tzpath
+
 import pytest
 
 import hms_backend.app.core.cache as cache
 from hms_backend.app.core.redis import set_redis_client
+
+# Match the containers, which set PYTHONTZPATH="" to use the locked tzdata.
+reset_tzpath(())
 
 
 @pytest.fixture(autouse=True)

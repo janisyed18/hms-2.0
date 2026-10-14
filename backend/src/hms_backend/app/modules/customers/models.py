@@ -71,6 +71,21 @@ class CustomerLocation(SyncableMixin, Base):
         nullable=False,
         default=list,
     )
+    scheduling_timezone: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="UTC"
+    )
+    scheduling_open_time: Mapped[str] = mapped_column(
+        String(5), nullable=False, default="08:00"
+    )
+    scheduling_close_time: Mapped[str] = mapped_column(
+        String(5), nullable=False, default="17:00"
+    )
+    scheduling_weekdays: Mapped[list[int]] = mapped_column(
+        JSON, nullable=False, default=lambda: [0, 1, 2, 3, 4]
+    )
+    scheduling_blackout_dates: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
 
     customer: Mapped[Customer] = relationship(
         back_populates="locations",

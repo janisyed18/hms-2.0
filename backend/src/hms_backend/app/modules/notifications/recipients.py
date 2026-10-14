@@ -159,12 +159,28 @@ async def resolve_recipients(
     elif category in {
         _Cat.INSPECTION_BOOKING_APPROVED,
         _Cat.INSPECTION_BOOKING_REJECTED,
+        _Cat.INSPECTION_BOOKING_CANCELLED,
+        _Cat.INSPECTION_BOOKING_RESCHEDULED,
     }:
         requester = await _user_by_id(
             session, payload.get("requested_by_user_id", "")
         )
         if requester is not None:
             add(_from_user(requester))
+        if category in {
+            _Cat.INSPECTION_BOOKING_APPROVED,
+            _Cat.INSPECTION_BOOKING_CANCELLED,
+            _Cat.INSPECTION_BOOKING_RESCHEDULED,
+        }:
+            inspector = await _user_by_id(
+                session, payload.get("inspector_user_id", "")
+            )
+            if inspector is not None:
+                add(_from_user(inspector))
+    elif category is _Cat.INSPECTION_BOOKING_RESCHEDULE_REQUESTED:
+        for role in (Role.SUPER_ADMIN, Role.HMS_ADMIN):
+            for user in await _users_by_role(session, role):
+                add(_from_user(user))
     elif category is _Cat.INSPECTION_FAILED:
         reviewer = await _user_by_id(session, payload.get("reviewer_user_id", ""))
         if reviewer is not None:

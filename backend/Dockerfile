@@ -10,6 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
     UV_PYTHON_PREFERENCE=only-system \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
+    PYTHONTZPATH="" \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     PATH="/app/.venv/bin:$PATH"
 
