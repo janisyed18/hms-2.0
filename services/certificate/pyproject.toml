@@ -5,7 +5,7 @@ description = "HMS 2.0 gRPC certificate engine — renders and cryptographically
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "grpcio>=1.81.1,<1.82",
+    "grpcio>=1.81.1,<1.85",
     "grpcio-health-checking>=1.81.1,<1.82",
     "grpcio-reflection>=1.81.1,<1.82",
     "protobuf>=6.33,<7",
