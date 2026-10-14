@@ -24,6 +24,7 @@ export function useInspectionsWorkspace(
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
   const [isBookingFormOpen, setBookingFormOpen] = useState(false);
+  const [rescheduleBooking, setRescheduleBooking] = useState<InspectionBookingRecord | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -36,7 +37,7 @@ export function useInspectionsWorkspace(
     ])
       .then(async ([inspectionResult, assetResult, bookingResult]) => {
         const userResult = canApproveBookings
-          && bookingResult.items.some((booking) => booking.status === "PENDING_APPROVAL")
+          && bookingResult.items.some((booking) => booking.status === "PENDING_APPROVAL" || booking.changeRequests.some((change) => change.status === "PENDING_ADMIN_APPROVAL"))
             ? await client.listAdminUsers({ sort: "email", limit: 100 })
             : { items: [] as AdminUserRecord[] };
         if (!active) return;
@@ -76,8 +77,9 @@ export function useInspectionsWorkspace(
         return;
       }
     }
-    setBookingFormOpen(true);
+    setRescheduleBooking(null); setBookingFormOpen(true);
   }
+  function openReschedule(booking: InspectionBookingRecord) { setRescheduleBooking(booking); setBookingFormOpen(true); }
   function openDetail(inspection: InspectionRecord) { setSelectedId(inspection.id); }
   function closeDetail() { setSelectedId(null); }
   function replaceInspection(updated: InspectionRecord) { setInspections((current) => current.map((inspection) => inspection.id === updated.id ? updated : inspection)); setSelectedId(updated.id); }
@@ -90,6 +92,31 @@ export function useInspectionsWorkspace(
     setBookings((current) => [saved, ...current]);
     setBookingFormOpen(false);
   }
+  async function requestInspectionBookingReschedule(id: string, values: { availabilityQuoteId: string; reason: string | null; inspectorUserId: string | null }) {
+    const client = createHmsClient();
+    const change = await client.requestInspectionBookingReschedule(id, values);
+    setBookings((current) => current.map((booking) => booking.id === id ? {
+      ...booking,
+      changeRequests: [...booking.changeRequests.filter((item) => item.id !== change.id), change]
+    } : booking));
+    setBookingFormOpen(false); setRescheduleBooking(null);
+  }
+  async function confirmInspectionBookingReschedule(id: string) {
+    const client = createHmsClient();
+    await client.confirmInspectionBookingReschedule(id);
+    const changeBooking = bookings.find((booking) => booking.changeRequests.some((change) => change.id === id));
+    if (!changeBooking) return;
+    const saved = await client.getInspectionBooking(changeBooking.id);
+    setBookings((current) => current.map((booking) => booking.id === saved.id ? saved : booking));
+  }
+  async function approveInspectionBookingReschedule(id: string, inspectorUserId: string) {
+    const client = createHmsClient();
+    await client.approveInspectionBookingReschedule(id, inspectorUserId);
+    const changeBooking = bookings.find((booking) => booking.changeRequests.some((change) => change.id === id));
+    if (!changeBooking) return;
+    const saved = await client.getInspectionBooking(changeBooking.id);
+    setBookings((current) => current.map((booking) => booking.id === saved.id ? saved : booking));
+  }
   async function approveInspectionBooking(id: string, inspectorUserId: string) {
     const saved = await createHmsClient().approveInspectionBooking(id, inspectorUserId);
     setBookings((current) => current.map((booking) => booking.id === saved.id ? saved : booking));
@@ -98,6 +125,10 @@ export function useInspectionsWorkspace(
   }
   async function rejectInspectionBooking(id: string) {
     const saved = await createHmsClient().rejectInspectionBooking(id);
+    setBookings((current) => current.map((booking) => booking.id === saved.id ? saved : booking));
+  }
+  async function cancelInspectionBooking(id: string) {
+    const saved = await createHmsClient().cancelInspectionBooking(id);
     setBookings((current) => current.map((booking) => booking.id === saved.id ? saved : booking));
   }
   async function saveInspectionUpdate(values: InspectionUpdateValues) {
@@ -114,5 +145,5 @@ export function useInspectionsWorkspace(
   }
   function clearInspectionFilters() { setTypeFilter("ALL"); setResultFilter("ALL"); }
   const activeFilterCount = [typeFilter !== "ALL", resultFilter !== "ALL"].filter(Boolean).length;
-  return { activeFilterCount, approveInspection, approveInspectionBooking, assetOptions: assets, bookings, clearInspectionFilters, closeDetail, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, query, rejectInspectionBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
+  return { activeFilterCount, approveInspection, approveInspectionBooking, approveInspectionBookingReschedule, assetOptions: assets, bookings, cancelInspectionBooking, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, rejectInspectionBooking, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
 }

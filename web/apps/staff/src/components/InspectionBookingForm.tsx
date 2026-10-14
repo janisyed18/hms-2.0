@@ -1,36 +1,51 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 
+import { createHmsClient } from "../api/hmsClient";
 import type {
-  AdminUserRecord,
   AssetRecord,
-  InspectionBookingCreateValues
+  AdminUserRecord,
+  InspectionAvailabilitySlot,
+  InspectionBookingCreateValues,
+  InspectionBookingRecord
 } from "../domain/types";
 
 interface InspectionBookingFormProps {
   assetOptions: AssetRecord[];
-  inspectors: AdminUserRecord[];
-  requiresInspector: boolean;
   open: boolean;
+  rescheduleBooking?: InspectionBookingRecord | null;
+  inspectors?: AdminUserRecord[];
+  requiresInspector?: boolean;
   onClose: () => void;
   onSubmit: (values: InspectionBookingCreateValues) => Promise<void>;
+  onReschedule?: (
+    bookingId: string,
+    values: {
+      availabilityQuoteId: string;
+      reason: string | null;
+      inspectorUserId: string | null;
+    }
+  ) => Promise<void>;
 }
 
 export function InspectionBookingForm({
   assetOptions,
-  inspectors,
-  requiresInspector,
   open,
+  rescheduleBooking = null,
+  inspectors = [],
+  requiresInspector = false,
   onClose,
-  onSubmit
+  onSubmit,
+  onReschedule
 }: InspectionBookingFormProps) {
   const locations = useMemo(() => {
-    const entries = new Map<string, { id: string; label: string }>();
+    const entries = new Map<string, { id: string; label: string; timezone: string }>();
     assetOptions.forEach((asset) => {
       if (!asset.location) return;
       entries.set(asset.location.id, {
         id: asset.location.id,
-        label: `${asset.customer.name} - ${asset.location.name}`
+        label: `${asset.customer.name} - ${asset.location.name}`,
+        timezone: asset.location.schedulingTimezone ?? "UTC"
       });
     });
     return Array.from(entries.values()).sort((left, right) =>
@@ -39,29 +54,74 @@ export function InspectionBookingForm({
   }, [assetOptions]);
   const [locationId, setLocationId] = useState("");
   const [assetIds, setAssetIds] = useState<string[]>([]);
-  const [scheduledAt, setScheduledAt] = useState("");
-  const [additionalInformation, setAdditionalInformation] = useState("");
+  const [bookingDate, setBookingDate] = useState("");
+  const [availableSlots, setAvailableSlots] = useState<InspectionAvailabilitySlot[]>([]);
+  const [availabilityQuoteId, setAvailabilityQuoteId] = useState("");
   const [inspectorUserId, setInspectorUserId] = useState("");
+  const [isLoadingAvailability, setLoadingAvailability] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+  const [additionalInformation, setAdditionalInformation] = useState("");
   const [isSubmitting, setSubmitting] = useState(false);
   const availableAssets = useMemo(
     () => assetOptions.filter((asset) => asset.location?.id === locationId),
     [assetOptions, locationId]
   );
+  const schedulingTimezone = locations.find((location) => location.id === locationId)?.timezone ?? "UTC";
 
   useEffect(() => {
     if (!open) return;
-    const firstLocationId = locations[0]?.id ?? "";
+    const firstLocationId = rescheduleBooking?.location.id ?? locations[0]?.id ?? "";
     setLocationId(firstLocationId);
     setAssetIds(
-      assetOptions
-        .filter((asset) => asset.location?.id === firstLocationId)
-        .slice(0, 1)
-        .map((asset) => asset.id)
+      rescheduleBooking
+        ? rescheduleBooking.assets.map((asset) => asset.id)
+        : assetOptions
+            .filter((asset) => asset.location?.id === firstLocationId)
+            .slice(0, 1)
+            .map((asset) => asset.id)
     );
-    setScheduledAt("");
-    setAdditionalInformation("");
+    setBookingDate("");
+    setAvailableSlots([]);
+    setAvailabilityQuoteId("");
     setInspectorUserId("");
-  }, [assetOptions, locations, open]);
+    setAvailabilityError(null);
+    setAdditionalInformation("");
+  }, [assetOptions, locations, open, rescheduleBooking]);
+
+  useEffect(() => {
+    const customerId = availableAssets[0]?.customer.id;
+    if (!open || !bookingDate || !customerId || !locationId) return;
+    let active = true;
+    setLoadingAvailability(true);
+    setAvailabilityError(null);
+    setAvailableSlots([]);
+    setAvailabilityQuoteId("");
+    void createHmsClient()
+      .listInspectionAvailability({
+        customerId,
+        locationId,
+        localDate: bookingDate,
+        durationMinutes: 60
+      })
+      .then((slots) => {
+        if (active) setAvailableSlots(slots);
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setAvailabilityError(
+            reason instanceof Error
+              ? reason.message
+              : "Availability could not be loaded."
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingAvailability(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [availableAssets, bookingDate, locationId, open]);
 
   if (!open) return null;
 
@@ -73,6 +133,9 @@ export function InspectionBookingForm({
         .slice(0, 1)
         .map((asset) => asset.id)
     );
+    setBookingDate("");
+    setAvailableSlots([]);
+    setAvailabilityQuoteId("");
   }
 
   function toggleAsset(assetId: string) {
@@ -86,17 +149,24 @@ export function InspectionBookingForm({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const customerId = availableAssets[0]?.customer.id;
-    if (!customerId || !locationId || assetIds.length === 0) return;
+    if (!customerId || !locationId || assetIds.length === 0 || !availabilityQuoteId) return;
     setSubmitting(true);
     try {
-      await onSubmit({
-        customerId,
-        locationId,
-        assetIds,
-        scheduledAt: new Date(scheduledAt).toISOString(),
-        additionalInformation: additionalInformation.trim() || null,
-        inspectorUserId: requiresInspector ? inspectorUserId : null
-      });
+      if (rescheduleBooking && onReschedule) {
+        await onReschedule(rescheduleBooking.id, {
+          availabilityQuoteId,
+          reason: additionalInformation.trim() || null,
+          inspectorUserId: requiresInspector ? inspectorUserId : null
+        });
+      } else {
+        await onSubmit({
+          customerId,
+          locationId,
+          assetIds,
+          availabilityQuoteId,
+          additionalInformation: additionalInformation.trim() || null,
+        });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -107,8 +177,8 @@ export function InspectionBookingForm({
       <form className="customer-drawer inspection-booking-form" onSubmit={handleSubmit}>
         <div className="drawer-header">
           <div>
-            <h2>Book inspection</h2>
-            <p>Choose one location and the assets that need the same visit.</p>
+            <h2>{rescheduleBooking ? "Request reschedule" : "Book inspection"}</h2>
+            <p>{rescheduleBooking ? "Choose a new available time for this confirmed visit." : "Choose one location and the assets that need the same visit."}</p>
           </div>
           <button
             aria-label="Close booking form"
@@ -124,6 +194,7 @@ export function InspectionBookingForm({
           <select
             aria-label="Booking location"
             required
+            disabled={Boolean(rescheduleBooking)}
             value={locationId}
             onChange={(event) => updateLocation(event.target.value)}
           >
@@ -134,25 +205,7 @@ export function InspectionBookingForm({
             ))}
           </select>
         </label>
-        {requiresInspector ? (
-          <label>
-            <span>Assigned inspector</span>
-            <select
-              aria-label="Assigned inspector"
-              required
-              value={inspectorUserId}
-              onChange={(event) => setInspectorUserId(event.target.value)}
-            >
-              <option value="">Select an inspector</option>
-              {inspectors.map((inspector) => (
-                <option key={inspector.id} value={inspector.id}>
-                  {inspector.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        <fieldset className="booking-asset-list">
+        <fieldset className="booking-asset-list" disabled={Boolean(rescheduleBooking)}>
           <legend>Assets</legend>
           {availableAssets.map((asset) => (
             <label key={asset.id} className="checkbox-field">
@@ -166,17 +219,67 @@ export function InspectionBookingForm({
           ))}
         </fieldset>
         <label>
-          <span>Inspection date and time</span>
+          <span>Preferred inspection date</span>
           <input
-            aria-label="Inspection date and time"
+            aria-label="Preferred inspection date"
             required
-            type="datetime-local"
-            value={scheduledAt}
-            onChange={(event) => setScheduledAt(event.target.value)}
+            type="date"
+            value={bookingDate}
+            onChange={(event) => setBookingDate(event.target.value)}
           />
         </label>
+        {bookingDate ? (
+          <label>
+            <span>Available time ({schedulingTimezone})</span>
+            <select
+              aria-label="Available inspection time"
+              disabled={isLoadingAvailability || availableSlots.length === 0}
+              required
+              value={availabilityQuoteId}
+              onChange={(event) => setAvailabilityQuoteId(event.target.value)}
+            >
+              <option value="">
+                {isLoadingAvailability
+                  ? "Checking availability..."
+                  : availableSlots.length
+                    ? "Select a time"
+                    : "No times available"}
+              </option>
+              {availableSlots.map((slot) => (
+                <option key={slot.quoteId} value={slot.quoteId}>
+                  {new Intl.DateTimeFormat(undefined, {
+                    hour: "numeric",
+                    minute: "2-digit",
+                    timeZone: schedulingTimezone
+                  }).format(new Date(slot.startsAt))} - {new Intl.DateTimeFormat(undefined, {
+                    hour: "numeric",
+                    minute: "2-digit",
+                    timeZone: schedulingTimezone
+                  }).format(new Date(slot.endsAt))}
+                </option>
+              ))}
+            </select>
+            {availabilityError ? <small className="form-error">{availabilityError}</small> : null}
+          </label>
+        ) : null}
+        {rescheduleBooking && requiresInspector ? (
+          <label>
+            <span>Inspector</span>
+            <select
+              aria-label="Inspector for rescheduled inspection"
+              required
+              value={inspectorUserId}
+              onChange={(event) => setInspectorUserId(event.target.value)}
+            >
+              <option value="">Assign inspector</option>
+              {inspectors.map((inspector) => (
+                <option key={inspector.id} value={inspector.id}>{inspector.displayName}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label>
-          <span>Additional information</span>
+          <span>{rescheduleBooking ? "Reason for rescheduling" : "Additional information"}</span>
           <textarea
             aria-label="Additional inspection information"
             rows={3}
@@ -190,10 +293,10 @@ export function InspectionBookingForm({
           </button>
           <button
             className="primary-button"
-            disabled={isSubmitting || assetIds.length === 0 || (requiresInspector && !inspectorUserId)}
+            disabled={isSubmitting || assetIds.length === 0 || !availabilityQuoteId || (rescheduleBooking !== null && requiresInspector && !inspectorUserId)}
             type="submit"
           >
-            {isSubmitting ? "Saving..." : "Create booking"}
+            {isSubmitting ? "Saving..." : rescheduleBooking ? "Request reschedule" : "Create booking"}
           </button>
         </div>
       </form>

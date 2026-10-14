@@ -188,6 +188,16 @@ const apiInspectionBooking = {
   created_at: "2026-09-08T10:00:00Z"
 };
 
+const apiInspectionBookingChangeRequest = {
+  id: "change-api-1",
+  status: "PENDING_CUSTOMER_CONFIRMATION" as const,
+  starts_at: "2026-10-03T10:30:00Z",
+  ends_at: "2026-10-03T11:30:00Z",
+  reason: "Customer requested an earlier appointment.",
+  emergency: false,
+  created_at: "2026-09-08T11:00:00Z"
+};
+
 const apiCertificate = {
   id: "certificate-api-1",
   inspection_id: "inspection-api-1",
@@ -780,12 +790,22 @@ describe("hmsClient", () => {
               site_contact_mobile: "+61 412 345 678",
               site_contact_email: "alex.nguyen@example.test",
               ppe_requirements: ["High Vis", "Safety Boots"],
-              additional_requirements: ["2-way radio"]
+              additional_requirements: ["2-way radio"],
+              scheduling_timezone: "UTC",
+              scheduling_open_time: "08:00",
+              scheduling_close_time: "17:00",
+              scheduling_weekdays: [0, 1, 2, 3, 4],
+              scheduling_blackout_dates: []
             },
             {
               name: "Kooragang workshop",
               ppe_requirements: [],
-              additional_requirements: []
+              additional_requirements: [],
+              scheduling_timezone: "UTC",
+              scheduling_open_time: "08:00",
+              scheduling_close_time: "17:00",
+              scheduling_weekdays: [0, 1, 2, 3, 4],
+              scheduling_blackout_dates: []
             }
           ]
         })
@@ -831,7 +851,12 @@ describe("hmsClient", () => {
             id: "location-api-1",
             name: "Newcastle workshop",
             ppe_requirements: ["Hard Hat"],
-            additional_requirements: ["Vehicle Site Approval"]
+            additional_requirements: ["Vehicle Site Approval"],
+            scheduling_timezone: "UTC",
+            scheduling_open_time: "08:00",
+            scheduling_close_time: "17:00",
+            scheduling_weekdays: [0, 1, 2, 3, 4],
+            scheduling_blackout_dates: []
           }]
         })
       })
@@ -1084,7 +1109,8 @@ describe("hmsClient", () => {
       .mockResolvedValueOnce(okJson(apiInspectionBooking))
       .mockResolvedValueOnce(
         okJson({ ...apiInspectionBooking, status: "APPROVED", reviewed_by_user_id: "admin-1" })
-      );
+      )
+      .mockResolvedValueOnce(okJson({ ...apiInspectionBooking, status: "CANCELLED" }));
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
 
     const bookings = await client.listInspectionBookings({ status: "PENDING_APPROVAL" });
@@ -1092,10 +1118,11 @@ describe("hmsClient", () => {
       customerId: "cust-api-1",
       locationId: "loc-api-1",
       assetIds: ["asset-api-1"],
-      scheduledAt: "2026-10-02T10:30:00Z",
+      availabilityQuoteId: "quote-api-1",
       additionalInformation: "Access via gate three."
     });
     const approved = await client.approveInspectionBooking("booking-api-1", "inspector-api-1");
+    const cancelled = await client.cancelInspectionBooking("booking-api-1");
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -1111,7 +1138,7 @@ describe("hmsClient", () => {
           customer_id: "cust-api-1",
           location_id: "loc-api-1",
           asset_ids: ["asset-api-1"],
-          scheduled_at: "2026-10-02T10:30:00Z",
+          availability_quote_id: "quote-api-1",
           additional_information: "Access via gate three."
         })
       })
@@ -1124,12 +1151,49 @@ describe("hmsClient", () => {
         body: JSON.stringify({ inspector_user_id: "inspector-api-1" })
       })
     );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "/api/v1/inspection-bookings/booking-api-1/cancel",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ reason: null })
+      })
+    );
     expect(bookings.items[0]).toMatchObject({
       status: "PENDING_APPROVAL",
       assets: [expect.objectContaining({ assetNumber: "997950" })]
     });
     expect(created.location.name).toBe("Site A");
     expect(approved.status).toBe("APPROVED");
+    expect(cancelled.status).toBe("CANCELLED");
+  });
+
+  it("returns the authoritative reschedule response", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okJson(apiInspectionBookingChangeRequest));
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    const change = await client.requestInspectionBookingReschedule("booking-api-1", {
+      availabilityQuoteId: "quote-api-1",
+      reason: apiInspectionBookingChangeRequest.reason,
+      inspectorUserId: "inspector-api-1"
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/inspection-bookings/booking-api-1/change-requests",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          availability_quote_id: "quote-api-1",
+          reason: apiInspectionBookingChangeRequest.reason,
+          inspector_user_id: "inspector-api-1"
+        })
+      })
+    );
+    expect(change).toMatchObject({
+      id: "change-api-1",
+      status: "PENDING_CUSTOMER_CONFIRMATION",
+      startsAt: "2026-10-03T10:30:00Z"
+    });
   });
 
   it("maps certificate list responses and issue mutations", async () => {
