@@ -231,6 +231,63 @@ button:active:not(:disabled) {
   font-size: 12px !important;
 }
 
+.customer-location-requirements {
+  grid-column: 2 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 12px 0 2px;
+  border-top: 1px solid var(--border);
+}
+
+.customer-location-requirements h5 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.customer-location-requirements .requirement-list {
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.customer-location-requirements .requirement-list li,
+.customer-location-requirements .empty-requirements {
+  color: var(--soft);
+  font-size: 12px;
+}
+
+.location-requirements-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.customer-location-map-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  border-radius: 4px;
+  color: var(--accent-2);
+  font-size: 12px;
+  font-weight: 720;
+  text-decoration: none;
+}
+
+.customer-location-map-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.customer-location-map-link:focus-visible,
+.customer-location-asset-link:focus-visible {
+  outline: 0;
+  box-shadow: var(--focus);
+}
+
 .customer-location-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -289,13 +346,28 @@ button:active:not(:disabled) {
 }
 
 .customer-location-grid li {
-  padding: 4px 7px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.customer-location-asset-link {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  border: 0;
   border-radius: 5px;
   background: var(--panel);
-  color: var(--color-neutral-700);
+  color: var(--accent-2);
+  padding: 4px 7px;
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 760;
+  text-decoration: none;
+}
+
+.customer-location-asset-link:hover {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--ink);
 }
 
 .customer-location-empty {
@@ -3775,6 +3847,313 @@ button:active:not(:disabled) {
   color: var(--soft);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
+}
+
+/* The customer workspace predates the tokenised command-centre surfaces.
+   Keep its dark-mode layers within the same low-glare surface scale. */
+:root:not([data-theme="light"]) .customer-console-toolbar .search-field,
+:root:not([data-theme="light"]) .customer-filter-summary .field,
+:root:not([data-theme="light"]) .customer-card,
+:root:not([data-theme="light"]) .customer-card.is-selected {
+  background: var(--panel);
+}
+
+:root:not([data-theme="light"]) .customer-card:hover,
+:root:not([data-theme="light"]) .customer-card:focus-visible,
+:root:not([data-theme="light"]) .customer-card.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+}
+
+:root:not([data-theme="light"]) .customer-card.is-selected {
+  background: var(--panel-subtle);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent),
+    var(--shadow-soft);
+}
+
+:root:not([data-theme="light"]) .customer-avatar,
+:root:not([data-theme="light"]) .customer-detail-mark,
+:root:not([data-theme="light"]) .customer-location-icon {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--accent-2);
+}
+
+:root:not([data-theme="light"]) .customer-selected-indicator {
+  border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+  background: var(--color-success-soft);
+  color: var(--success);
+  box-shadow: none;
+}
+
+:root:not([data-theme="light"]) .customer-card .risk-low,
+:root:not([data-theme="light"]) .customer-card .current,
+:root:not([data-theme="light"]) .customer-card .valid,
+:root:not([data-theme="light"]) .customer-card .status-active {
+  background: var(--color-success-soft);
+  color: var(--success);
+}
+
+:root:not([data-theme="light"]) .customer-card .risk-medium,
+:root:not([data-theme="light"]) .customer-card .due-soon {
+  background: var(--color-warning-soft);
+  color: var(--warning);
+}
+
+:root:not([data-theme="light"]) .customer-card .risk-high,
+:root:not([data-theme="light"]) .customer-card .overdue {
+  background: var(--color-danger-soft);
+  color: var(--danger);
+}
+
+:root:not([data-theme="light"]) .customer-detail-dialog .detail-section {
+  border-color: var(--border);
+  background: var(--panel-subtle);
+  box-shadow: none;
+}
+
+:root:not([data-theme="light"]) .customer-detail-dialog .info-grid dd,
+:root:not([data-theme="light"]) .customer-detail-dialog .requirement-list li,
+:root:not([data-theme="light"]) .customer-detail-dialog .record-notes {
+  color: var(--ink);
+}
+
+:root:not([data-theme="light"]) .customer-detail-dialog .info-grid dt,
+:root:not([data-theme="light"]) .customer-detail-dialog .empty-requirements,
+:root:not([data-theme="light"]) .customer-detail-dialog .customer-location-contact {
+  color: var(--soft) !important;
+}
+
+:root:not([data-theme="light"]) .customer-detail-dialog .customer-location-grid li {
+  background: var(--panel);
+  color: var(--color-neutral-700);
+}
+
+:root:not([data-theme="light"]) .customer-drawer,
+:root:not([data-theme="light"]) .customer-location-entry {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+:root:not([data-theme="light"]) .customer-drawer label,
+:root:not([data-theme="light"]) .customer-location-entry legend,
+:root:not([data-theme="light"]) .customer-drawer .requirements-fieldset legend,
+:root:not([data-theme="light"]) .customer-drawer .checkbox-field {
+  color: var(--ink);
+}
+
+:root:not([data-theme="light"]) .customer-drawer input,
+:root:not([data-theme="light"]) .customer-drawer select,
+:root:not([data-theme="light"]) .customer-drawer textarea {
+  background: var(--panel-subtle);
+  border-color: var(--border-strong);
+  color: var(--ink);
+  color-scheme: dark;
+}
+
+:root:not([data-theme="light"]) .customer-drawer input::placeholder,
+:root:not([data-theme="light"]) .customer-drawer textarea::placeholder {
+  color: var(--soft);
+}
+
+:root:not([data-theme="light"]) .customer-drawer select option {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+:root:not([data-theme="light"]) .customer-drawer input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+/* Record detail views keep the same low-glare surface hierarchy as the command
+   centre. These components predate the tokenised theme and otherwise inherit
+   light-only section and fact colours from the legacy stylesheet. */
+.asset-detail-page .detail-section,
+.certificate-detail-panel {
+  border-color: var(--border);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.asset-detail-page .info-grid dd,
+.asset-detail-page .asset-history-column h4,
+.asset-detail-page .asset-history-list strong,
+.asset-detail-page .detail-page-title h2,
+.asset-detail-page .detail-section h3,
+.certificate-detail-panel .inspection-detail-header h2,
+.certificate-detail-panel .inspection-facts strong,
+.certificate-detail-panel .certificate-verification strong {
+  color: var(--ink);
+}
+
+.asset-detail-page .detail-page-title p,
+.asset-detail-page .info-grid dt,
+.asset-detail-page .asset-history-heading p,
+.asset-detail-page .asset-history-list span,
+.asset-detail-page .asset-history-list time,
+.asset-detail-page .history-empty {
+  color: var(--soft);
+}
+
+.asset-detail-page .secondary-button,
+.certificate-download-link {
+  background: var(--panel);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.asset-detail-page .asset-history-list,
+.asset-detail-page .asset-history-list li {
+  border-color: var(--border);
+}
+
+.certificate-detail-panel {
+  gap: 14px;
+}
+
+.certificate-detail-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.certificate-download-link {
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+.certificate-detail-panel .inspection-detail-header p,
+.certificate-detail-panel .inspection-detail-strip,
+.certificate-detail-panel .inspection-facts span,
+.certificate-detail-panel .certificate-verification span {
+  color: var(--soft);
+}
+
+.certificate-detail-panel .inspection-detail-strip > span:not(.mini-status),
+.certificate-detail-panel .inspection-facts > div,
+.certificate-detail-panel .certificate-verification > div {
+  border-color: var(--border);
+  background: var(--panel-subtle);
+}
+
+.certificate-detail-panel .certificate-action-band {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-subtle));
+  color: var(--soft);
+}
+
+:root:not([data-theme="light"]) .certificate-register-table .module-table tbody tr.is-selected {
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel));
+}
+
+:root:not([data-theme="light"]) .certificate-register-table .module-table tbody tr.is-selected td,
+:root:not([data-theme="light"]) .certificate-register-table .module-table tbody tr.is-selected strong {
+  color: var(--ink);
+}
+
+/* The first-generation workspace stylesheet used literal light surfaces for
+   tables, details and native controls. Keep that layer readable in the
+   command-centre dark theme without changing the light-theme treatment. */
+:root:not([data-theme="light"]) {
+  color-scheme: dark;
+}
+
+:root:not([data-theme="light"]) .table-panel,
+:root:not([data-theme="light"]) .activity-panel,
+:root:not([data-theme="light"]) .detail-panel,
+:root:not([data-theme="light"]) .detail-section,
+:root:not([data-theme="light"]) .inspection-list,
+:root:not([data-theme="light"]) .inspection-dashboard,
+:root:not([data-theme="light"]) .inspection-detail-panel,
+:root:not([data-theme="light"]) .operations-header,
+:root:not([data-theme="light"]) .operations-panel {
+  background: var(--panel);
+  border-color: var(--border);
+}
+
+:root:not([data-theme="light"]) .secondary-button,
+:root:not([data-theme="light"]) .detail-link {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--ink);
+}
+
+:root:not([data-theme="light"]) .filter-field input,
+:root:not([data-theme="light"]) .filter-field select,
+:root:not([data-theme="light"]) .inspection-detail-form input,
+:root:not([data-theme="light"]) .inspection-detail-form select,
+:root:not([data-theme="light"]) .inspection-detail-form textarea,
+:root:not([data-theme="light"]) .auth-field input,
+:root:not([data-theme="light"]) .auth-field select,
+:root:not([data-theme="light"]) .auth-field textarea {
+  background: var(--panel-subtle);
+  border-color: var(--border-strong);
+  color: var(--ink);
+  color-scheme: dark;
+}
+
+:root:not([data-theme="light"]) .filter-field input::placeholder,
+:root:not([data-theme="light"]) .inspection-detail-form input::placeholder,
+:root:not([data-theme="light"]) .inspection-detail-form textarea::placeholder,
+:root:not([data-theme="light"]) .auth-field input::placeholder,
+:root:not([data-theme="light"]) .auth-field textarea::placeholder {
+  color: var(--soft);
+}
+
+:root:not([data-theme="light"]) .filter-field select option,
+:root:not([data-theme="light"]) .inspection-detail-form select option,
+:root:not([data-theme="light"]) .auth-field select option {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+:root:not([data-theme="light"]) .inspection-detail-form label,
+:root:not([data-theme="light"]) .checkbox-field,
+:root:not([data-theme="light"]) .inspection-detail-header h2,
+:root:not([data-theme="light"]) .inspection-dashboard h2,
+:root:not([data-theme="light"]) .inspection-facts strong,
+:root:not([data-theme="light"]) .empty-detail strong {
+  color: var(--ink);
+}
+
+:root:not([data-theme="light"]) .inspection-detail-header p,
+:root:not([data-theme="light"]) .inspection-dashboard p,
+:root:not([data-theme="light"]) .inspection-facts span,
+:root:not([data-theme="light"]) .empty-detail span {
+  color: var(--soft);
+}
+
+:root:not([data-theme="light"]) .inspection-facts > div,
+:root:not([data-theme="light"]) .empty-detail,
+:root:not([data-theme="light"]) .certificate-verification > div {
+  background: var(--panel-subtle);
+  border-color: var(--border);
+}
+
+:root:not([data-theme="light"]) tbody tr.is-selected,
+:root:not([data-theme="light"]) .module-table tr.is-selected,
+:root:not([data-theme="light"]) .module-table tr[aria-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel));
+}
+
+:root:not([data-theme="light"]) tbody tr.is-selected td,
+:root:not([data-theme="light"]) tbody tr.is-selected strong,
+:root:not([data-theme="light"]) .module-table tr[aria-selected="true"] td,
+:root:not([data-theme="light"]) .module-table tr[aria-selected="true"] strong {
+  color: var(--ink);
+}
+
+@media (max-width: 560px) {
+  .certificate-detail-header-actions {
+    gap: 6px;
+  }
+
+  .certificate-download-link {
+    width: 36px;
+    min-width: 36px;
+    padding: 0;
+    font-size: 0;
+  }
 }
 
 @media (max-width: 1120px) {

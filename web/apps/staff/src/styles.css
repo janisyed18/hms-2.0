@@ -967,7 +967,7 @@ tr.is-selected .row-check {
 .customer-drawer label {
   display: grid;
   gap: 7px;
-  color: #334155;
+  color: var(--ink);
   font-size: 12px;
   font-weight: 700;
 }
@@ -1077,7 +1077,7 @@ tr.is-selected .row-check {
 
 .customer-location-entry legend {
   padding: 0 4px;
-  color: #172033;
+  color: var(--ink);
   font-size: 13px;
   font-weight: 800;
 }
@@ -1109,13 +1109,13 @@ tr.is-selected .row-check {
 
 .requirements-fieldset legend {
   margin-bottom: 10px;
-  color: #172033;
+  color: var(--ink);
   font-size: 13px;
   font-weight: 800;
 }
 
 .customer-profile-form .checkbox-field {
-  color: #334155;
+  color: var(--ink);
   font-size: 13px;
 }
 
@@ -1154,7 +1154,7 @@ tr.is-selected .row-check {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #334155;
+  color: var(--ink);
   font-size: 12px;
   font-weight: 650;
 }

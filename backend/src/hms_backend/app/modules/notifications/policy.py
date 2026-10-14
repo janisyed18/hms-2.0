@@ -75,6 +75,18 @@ CATEGORY_POLICIES: dict[NotificationCategory, CategoryPolicy] = {
     _Cat.INSPECTION_BOOKING_REJECTED: CategoryPolicy(
         _T.IMPORTANT, (_C.EMAIL, _C.IN_APP)
     ),
+    _Cat.INSPECTION_BOOKING_CANCELLED: CategoryPolicy(
+        _T.IMPORTANT, (_C.EMAIL, _C.IN_APP)
+    ),
+    _Cat.INSPECTION_BOOKING_RESCHEDULE_REQUESTED: CategoryPolicy(
+        _T.IMPORTANT, (_C.EMAIL, _C.IN_APP)
+    ),
+    _Cat.INSPECTION_BOOKING_RESCHEDULE_PROPOSED: CategoryPolicy(
+        _T.IMPORTANT, (_C.EMAIL, _C.IN_APP)
+    ),
+    _Cat.INSPECTION_BOOKING_RESCHEDULED: CategoryPolicy(
+        _T.IMPORTANT, (_C.EMAIL, _C.IN_APP)
+    ),
     _Cat.CERTIFICATE_ISSUED: CategoryPolicy(_T.IMPORTANT, (_C.EMAIL, _C.SMS)),
     _Cat.CERTIFICATE_BULK_COMPLETED: CategoryPolicy(
         _T.INFORMATIONAL, (_C.EMAIL, _C.IN_APP)

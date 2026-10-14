@@ -133,6 +133,89 @@ variable "enable_deletion_protection" {
   default     = false
 }
 
+variable "enable_waf" {
+  description = "Attach AWS WAF managed rules and request-rate limiting to the public ALB. This incurs AWS WAF charges."
+  type        = bool
+  default     = false
+}
+
+variable "public_root_domain" {
+  description = "Verified public DNS suffix for HMS, for example example.com. Leave empty to retain the development CloudFront URLs."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.public_root_domain == "" || can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", var.public_root_domain))
+    error_message = "public_root_domain must be a lowercase DNS name without a scheme or path."
+  }
+}
+
+variable "staff_hostname" {
+  description = "Public staff application hostname served by CloudFront, for example hms.example.com. Leave empty with the other domain settings to retain development URLs."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.staff_hostname == "" || can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", var.staff_hostname))
+    error_message = "staff_hostname must be a lowercase DNS name without a scheme or path."
+  }
+}
+
+variable "api_origin_hostname" {
+  description = "Dedicated public DNS hostname that CloudFront uses as the ALB HTTPS origin, for example api-origin.example.com. Direct API requests are rejected by the origin-secret guard."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.api_origin_hostname == "" || can(regex("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", var.api_origin_hostname))
+    error_message = "api_origin_hostname must be a lowercase DNS name without a scheme or path."
+  }
+}
+
+variable "public_hosted_zone_id" {
+  description = "Public Route 53 hosted zone ID used for the staff CloudFront and API-origin ALB alias records. Leave empty with the other domain settings to retain development URLs."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.public_hosted_zone_id == "" || can(regex("^Z[A-Z0-9]+$", var.public_hosted_zone_id))
+    error_message = "public_hosted_zone_id must be a Route 53 hosted zone ID such as Z0123456789ABCDEF."
+  }
+}
+
+variable "alb_acm_certificate_arn" {
+  description = "Issued ACM certificate ARN in ap-southeast-2 covering api_origin_hostname. Leave empty with the other domain settings to retain development URLs."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.alb_acm_certificate_arn == "" || can(regex("^arn:aws:acm:ap-southeast-2:[0-9]{12}:certificate/[0-9a-f-]+$", var.alb_acm_certificate_arn))
+    error_message = "alb_acm_certificate_arn must be an ACM certificate ARN from ap-southeast-2."
+  }
+}
+
+variable "cloudfront_acm_certificate_arn" {
+  description = "Issued ACM certificate ARN in us-east-1 covering staff_hostname. Leave empty with the other domain settings to retain development URLs."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.cloudfront_acm_certificate_arn == "" || can(regex("^arn:aws:acm:us-east-1:[0-9]{12}:certificate/[0-9a-f-]+$", var.cloudfront_acm_certificate_arn))
+    error_message = "cloudfront_acm_certificate_arn must be an ACM certificate ARN from us-east-1."
+  }
+}
+
+variable "waf_rate_limit" {
+  description = "Maximum requests per source IP in a rolling five-minute period before AWS WAF blocks it."
+  type        = number
+  default     = 2000
+
+  validation {
+    condition     = var.waf_rate_limit >= 100
+    error_message = "waf_rate_limit must be at least 100 requests per five minutes."
+  }
+}
+
 variable "notification_channel_mode" {
   description = "Notification delivery mode for ECS tasks. Use live only after SES/Twilio secrets are populated."
   type        = string
@@ -236,4 +319,10 @@ variable "notification_twilio_from" {
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "notification_twilio_status_callback_url" {
+  description = "Exact public HTTPS URL configured in Twilio for signed status callbacks. Leave empty until an HTTPS custom domain is available."
+  type        = string
+  default     = ""
 }

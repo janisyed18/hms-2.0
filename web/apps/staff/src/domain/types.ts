@@ -148,6 +148,13 @@ export interface CustomerLocation {
   siteContactName: string | null;
   siteContactMobile: string | null;
   siteContactEmail: string | null;
+  ppeRequirements: string[];
+  additionalRequirements: string[];
+  schedulingTimezone?: string;
+  schedulingOpenTime?: string;
+  schedulingCloseTime?: string;
+  schedulingWeekdays?: number[];
+  schedulingBlackoutDates?: string[];
 }
 
 export interface CustomerContact {
@@ -196,8 +203,6 @@ export interface CustomerRecord {
   notes: string | null;
   retestEnabled: boolean;
   defaultRetestMonths: number | null;
-  ppeRequirements: string[];
-  additionalRequirements: string[];
   locations: CustomerLocation[];
   contacts: CustomerContact[];
   status: CustomerStatus;
@@ -219,11 +224,14 @@ export interface CustomerFormValues {
     siteContactName?: string;
     siteContactMobile?: string;
     siteContactEmail?: string;
+    ppeRequirements: string[];
+    additionalRequirements: string[];
+    schedulingTimezone?: string;
+    schedulingOpenTime?: string;
+    schedulingCloseTime?: string;
+    schedulingWeekdays?: number[];
+    schedulingBlackoutDates?: string[];
   }>;
-  phone: string;
-  email: string;
-  ppeRequirements: string[];
-  additionalRequirements: string[];
 }
 
 export interface ApiListResult<TItem> {
@@ -295,6 +303,7 @@ export interface AssetLocationSummary {
   city: string | null;
   state: string | null;
   country: string | null;
+  schedulingTimezone?: string;
 }
 
 export interface AssetInspectionHistoryRecord {
@@ -388,7 +397,8 @@ export type InspectionStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
 export type InspectionBookingStatus =
   | "PENDING_APPROVAL"
   | "APPROVED"
-  | "REJECTED";
+  | "REJECTED"
+  | "CANCELLED";
 
 export type InspectionType = "NEW_ASSET" | "SERVICE";
 
@@ -539,6 +549,7 @@ export interface InspectionBookingRecord {
   location: AssetLocationSummary;
   assets: InspectionAssetSummary[];
   scheduledAt: string;
+  scheduledEndAt: string | null;
   additionalInformation: string | null;
   status: InspectionBookingStatus;
   requestedByUserId: string;
@@ -547,15 +558,41 @@ export interface InspectionBookingRecord {
   reviewedAt: string | null;
   rejectionReason: string | null;
   createdAt: string;
+  appointment: InspectionAppointmentRecord | null;
+  changeRequests: InspectionBookingChangeRequest[];
+}
+
+export interface InspectionAppointmentRecord {
+  id: string;
+  status: "CONFIRMED" | "CANCELLED" | "COMPLETED" | "NO_SHOW";
+  startsAt: string;
+  endsAt: string;
+  revisionNumber: number;
+}
+
+export interface InspectionAvailabilitySlot {
+  quoteId: string;
+  startsAt: string;
+  endsAt: string;
+  expiresAt: string;
+}
+
+export interface InspectionBookingChangeRequest {
+  id: string;
+  status: "PENDING_ADMIN_APPROVAL" | "PENDING_CUSTOMER_CONFIRMATION" | "APPLIED" | "REJECTED" | "CANCELLED";
+  startsAt: string;
+  endsAt: string;
+  reason: string | null;
+  emergency: boolean;
+  createdAt: string;
 }
 
 export interface InspectionBookingCreateValues {
   customerId: string;
   locationId: string;
   assetIds: string[];
-  scheduledAt: string;
+  availabilityQuoteId: string;
   additionalInformation: string | null;
-  inspectorUserId?: string | null;
 }
 
 export interface InspectionCreateValues {

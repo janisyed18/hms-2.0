@@ -32,11 +32,14 @@ function emptyValues(): CustomerFormValues {
   return {
     name: "",
     notes: "",
-    locations: [{ name: "", siteContactName: "", siteContactMobile: "", siteContactEmail: "" }],
-    phone: "",
-    email: "",
-    ppeRequirements: [],
-    additionalRequirements: []
+    locations: [{
+      name: "",
+      siteContactName: "",
+      siteContactMobile: "",
+      siteContactEmail: "",
+      ppeRequirements: [],
+      additionalRequirements: []
+    }]
   };
 }
 
@@ -44,7 +47,6 @@ function valuesFor(customer: CustomerRecord | null): CustomerFormValues {
   if (!customer) {
     return emptyValues();
   }
-  const primaryContact = customer.contacts[0];
   return {
     name: customer.name,
     notes: customer.notes ?? "",
@@ -54,13 +56,16 @@ function valuesFor(customer: CustomerRecord | null): CustomerFormValues {
         name: location.name,
         siteContactName: location.siteContactName ?? "",
         siteContactMobile: location.siteContactMobile ?? "",
-        siteContactEmail: location.siteContactEmail ?? ""
+        siteContactEmail: location.siteContactEmail ?? "",
+        ppeRequirements: location.ppeRequirements,
+        additionalRequirements: location.additionalRequirements,
+        schedulingTimezone: location.schedulingTimezone,
+        schedulingOpenTime: location.schedulingOpenTime,
+        schedulingCloseTime: location.schedulingCloseTime,
+        schedulingWeekdays: location.schedulingWeekdays,
+        schedulingBlackoutDates: location.schedulingBlackoutDates
       }))
-      : [{ name: "", siteContactName: "", siteContactMobile: "", siteContactEmail: "" }],
-    phone: primaryContact?.phone ?? "",
-    email: primaryContact?.email ?? "",
-    ppeRequirements: customer.ppeRequirements,
-    additionalRequirements: customer.additionalRequirements
+      : emptyValues().locations
   };
 }
 
@@ -80,15 +85,23 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
     return null;
   }
 
-  function toggleRequirement(
+  function toggleLocationRequirement(
+    index: number,
     group: "ppeRequirements" | "additionalRequirements",
     requirement: string
   ) {
     setValues((current) => ({
       ...current,
-      [group]: current[group].includes(requirement)
-        ? current[group].filter((item) => item !== requirement)
-        : [...current[group], requirement]
+      locations: current.locations.map((location, locationIndex) => {
+        if (locationIndex !== index) return location;
+        const requirements = location[group];
+        return {
+          ...location,
+          [group]: requirements.includes(requirement)
+            ? requirements.filter((item) => item !== requirement)
+            : [...requirements, requirement]
+        };
+      })
     }));
   }
 
@@ -106,10 +119,15 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
           name: location.name.trim(),
           siteContactName: location.siteContactName?.trim() ?? "",
           siteContactMobile: location.siteContactMobile?.trim() ?? "",
-          siteContactEmail: location.siteContactEmail?.trim() ?? ""
-        })),
-        phone: values.phone.trim(),
-        email: values.email.trim()
+          siteContactEmail: location.siteContactEmail?.trim() ?? "",
+          ppeRequirements: location.ppeRequirements,
+          additionalRequirements: location.additionalRequirements,
+          schedulingTimezone: location.schedulingTimezone,
+          schedulingOpenTime: location.schedulingOpenTime,
+          schedulingCloseTime: location.schedulingCloseTime,
+          schedulingWeekdays: location.schedulingWeekdays,
+          schedulingBlackoutDates: location.schedulingBlackoutDates
+        }))
       });
     } catch {
       setSubmitError("The customer could not be saved. Check the entered details and try again.");
@@ -173,6 +191,34 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
                     <input aria-label="Site contact email" required type="email" value={location.siteContactEmail ?? ""} onChange={(event) => updateLocation("siteContactEmail", event.target.value)} />
                   </label>
                 </div>
+                <div className="location-requirements-grid">
+                  <fieldset className="requirements-fieldset">
+                    <legend>PPE requirements</legend>
+                    {ppeRequirements.map((requirement) => (
+                      <label className="checkbox-field" key={requirement}>
+                        <input
+                          checked={location.ppeRequirements.includes(requirement)}
+                          type="checkbox"
+                          onChange={() => toggleLocationRequirement(index, "ppeRequirements", requirement)}
+                        />
+                        <span>{requirement}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                  <fieldset className="requirements-fieldset">
+                    <legend>Additional requirements</legend>
+                    {additionalRequirements.map((requirement) => (
+                      <label className="checkbox-field" key={requirement}>
+                        <input
+                          checked={location.additionalRequirements.includes(requirement)}
+                          type="checkbox"
+                          onChange={() => toggleLocationRequirement(index, "additionalRequirements", requirement)}
+                        />
+                        <span>{requirement}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                </div>
               </fieldset>
             );
           })}
@@ -181,33 +227,20 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
             type="button"
             onClick={() => setValues((current) => ({
               ...current,
-              locations: [...current.locations, { name: "", siteContactName: "", siteContactMobile: "", siteContactEmail: "" }]
+              locations: [...current.locations, {
+                name: "",
+                siteContactName: "",
+                siteContactMobile: "",
+                siteContactEmail: "",
+                ppeRequirements: [],
+                additionalRequirements: []
+              }]
             }))}
           >
             <Plus aria-hidden="true" size={16} />
             Add location
           </button>
         </div>
-
-        <label>
-          <span>Phone</span>
-          <input
-            aria-label="Phone"
-            inputMode="tel"
-            type="tel"
-            value={values.phone}
-            onChange={(event) => setValues((current) => ({ ...current, phone: event.target.value }))}
-          />
-        </label>
-        <label>
-          <span>Email</span>
-          <input
-            aria-label="Email"
-            type="email"
-            value={values.email}
-            onChange={(event) => setValues((current) => ({ ...current, email: event.target.value }))}
-          />
-        </label>
 
         <label>
           <span>Notes</span>
@@ -218,34 +251,6 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
             onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))}
           />
         </label>
-
-        <fieldset className="requirements-fieldset">
-          <legend>PPE Requirements</legend>
-          {ppeRequirements.map((requirement) => (
-            <label className="checkbox-field" key={requirement}>
-              <input
-                checked={values.ppeRequirements.includes(requirement)}
-                type="checkbox"
-                onChange={() => toggleRequirement("ppeRequirements", requirement)}
-              />
-              <span>{requirement}</span>
-            </label>
-          ))}
-        </fieldset>
-
-        <fieldset className="requirements-fieldset">
-          <legend>Additional Requirements</legend>
-          {additionalRequirements.map((requirement) => (
-            <label className="checkbox-field" key={requirement}>
-              <input
-                checked={values.additionalRequirements.includes(requirement)}
-                type="checkbox"
-                onChange={() => toggleRequirement("additionalRequirements", requirement)}
-              />
-              <span>{requirement}</span>
-            </label>
-          ))}
-        </fieldset>
 
         {submitError ? <p className="form-error" role="alert">{submitError}</p> : null}
         <div className="drawer-actions">

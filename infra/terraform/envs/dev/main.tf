@@ -28,6 +28,34 @@ locals {
   cloudfront_staff_origin_id     = "${local.name}-staff-s3"
   cloudfront_inspector_origin_id = "${local.name}-inspector-s3"
 
+  custom_domain_enabled = alltrue([
+    var.public_root_domain != "",
+    var.staff_hostname != "",
+    var.api_origin_hostname != "",
+    var.public_hosted_zone_id != "",
+    var.alb_acm_certificate_arn != "",
+    var.cloudfront_acm_certificate_arn != "",
+  ])
+  custom_domain_inputs_supplied = anytrue([
+    var.public_root_domain != "",
+    var.staff_hostname != "",
+    var.api_origin_hostname != "",
+    var.public_hosted_zone_id != "",
+    var.alb_acm_certificate_arn != "",
+    var.cloudfront_acm_certificate_arn != "",
+  ])
+  custom_domain_configuration_valid = (
+    !local.custom_domain_inputs_supplied || (
+      local.custom_domain_enabled &&
+      alltrue([
+        var.staff_hostname == var.public_root_domain || endswith(var.staff_hostname, ".${var.public_root_domain}"),
+        var.api_origin_hostname == var.public_root_domain || endswith(var.api_origin_hostname, ".${var.public_root_domain}"),
+      ])
+    )
+  )
+  cloudfront_api_origin_domain = local.custom_domain_enabled ? var.api_origin_hostname : aws_lb.api.dns_name
+  staff_public_url             = local.custom_domain_enabled ? "https://${var.staff_hostname}" : "https://${aws_cloudfront_distribution.staff.domain_name}"
+
   certificate_service_dns = "certificate-engine.${aws_service_discovery_private_dns_namespace.this.name}"
 
   app_secret_arn          = aws_secretsmanager_secret.app.arn
@@ -92,6 +120,13 @@ locals {
     },
   ], local.notification_secret_environment)
 
+  api_secret_environment = concat(local.backend_secret_environment, [
+    {
+      name      = "SECURITY_EDGE_SHARED_SECRET"
+      valueFrom = "${local.app_secret_arn}:SECURITY_EDGE_SHARED_SECRET::"
+    },
+  ])
+
   backend_environment = [
     {
       name  = "ENVIRONMENT"
@@ -99,7 +134,7 @@ locals {
     },
     {
       name  = "PUBLIC_BASE_URL"
-      value = "http://${aws_lb.api.dns_name}"
+      value = local.staff_public_url
     },
     {
       name  = "REDIS_URL"
@@ -147,11 +182,11 @@ locals {
     },
     {
       name  = "AUTH_BROWSER_ALLOWED_ORIGINS"
-      value = jsonencode(["https://${aws_cloudfront_distribution.staff.domain_name}"])
+      value = jsonencode([local.staff_public_url])
     },
     {
       name  = "AUTH_BROWSER_STAFF_PUBLIC_URL"
-      value = "https://${aws_cloudfront_distribution.staff.domain_name}"
+      value = local.staff_public_url
     },
     {
       name  = "AUTH_BROWSER_COOKIE_SECURE"
@@ -196,6 +231,14 @@ locals {
     {
       name  = "NOTIFICATION_SES_CONFIGURATION_SET"
       value = local.notification_ses_configuration_set_name
+    },
+    {
+      name  = "NOTIFICATION_SNS_TOPIC_ARNS"
+      value = jsonencode([aws_sns_topic.notification_events.arn])
+    },
+    {
+      name  = "NOTIFICATION_TWILIO_STATUS_CALLBACK_URL"
+      value = var.notification_twilio_status_callback_url
     },
     {
       name  = "ISSUER_NAME"
@@ -285,6 +328,18 @@ resource "aws_security_group" "alb" {
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
     description = "Temporary dev HTTP"
+  }
+
+  dynamic "ingress" {
+    for_each = local.custom_domain_enabled ? [443] : []
+
+    content {
+      from_port   = ingress.value
+      to_port     = ingress.value
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+      description = "HTTPS from CloudFront and public clients"
+    }
   }
 
   egress {
@@ -530,7 +585,13 @@ resource "aws_secretsmanager_secret_version" "app" {
     AUTH_MFA_ENCRYPTION_KEYS           = jsonencode({ (tostring(var.auth_mfa_key_version)) = random_password.auth_mfa.result })
     AUTH_RECOVERY_CODE_PEPPER          = random_password.auth_recovery_pepper.result
     AUTH_PASSWORD_RESET_ENCRYPTION_KEY = random_password.auth_password_reset.result
+    SECURITY_EDGE_SHARED_SECRET        = random_password.edge_origin.result
   })
+}
+
+resource "random_password" "edge_origin" {
+  length  = 48
+  special = false
 }
 
 resource "random_password" "notification_webhook" {
@@ -825,6 +886,31 @@ resource "aws_lb_listener" "api_http" {
   protocol          = "HTTP"
 
   default_action {
+    type             = local.custom_domain_enabled ? "redirect" : "forward"
+    target_group_arn = local.custom_domain_enabled ? null : aws_lb_target_group.api.arn
+
+    dynamic "redirect" {
+      for_each = local.custom_domain_enabled ? [1] : []
+
+      content {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
+      }
+    }
+  }
+}
+
+resource "aws_lb_listener" "api_https" {
+  count = local.custom_domain_enabled ? 1 : 0
+
+  load_balancer_arn = aws_lb.api.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = var.alb_acm_certificate_arn
+
+  default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.api.arn
   }
@@ -865,7 +951,7 @@ resource "aws_ecs_task_definition" "api" {
         }
       ]
       environment = local.backend_environment
-      secrets     = local.backend_secret_environment
+      secrets     = local.api_secret_environment
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -1015,6 +1101,17 @@ resource "aws_ecs_task_definition" "certificate_engine" {
       name      = "certificate-engine"
       image     = local.certificate_engine_image
       essential = true
+      command = [
+        "sh",
+        "-c",
+        "umask 077 && mkdir -p \"$HOME\" && exec hms-certificate-engine",
+      ]
+      environment = [
+        {
+          name  = "HOME"
+          value = "/tmp/hms"
+        }
+      ]
       portMappings = [
         {
           containerPort = 50051
@@ -1156,6 +1253,114 @@ function handler(event) {
 EOT
 }
 
+resource "aws_cloudfront_response_headers_policy" "static_security" {
+  name    = "${local.name}-static-security"
+  comment = "Security headers for HMS static applications"
+
+  security_headers_config {
+    content_security_policy {
+      content_security_policy = "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:"
+      override                = true
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+
+    strict_transport_security {
+      access_control_max_age_sec = 15552000
+      include_subdomains         = true
+      override                   = true
+    }
+  }
+
+  custom_headers_config {
+    items {
+      header   = "Permissions-Policy"
+      value    = "camera=(), geolocation=(), microphone=()"
+      override = true
+    }
+  }
+}
+
+resource "aws_wafv2_web_acl" "api" {
+  count = var.enable_waf ? 1 : 0
+
+  name  = "${local.name}-api"
+  scope = "REGIONAL"
+
+  default_action {
+    allow {}
+  }
+
+  rule {
+    name     = "AWSManagedRulesCommonRuleSet"
+    priority = 10
+
+    override_action {
+      none {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesCommonRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "aws-managed-common"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "RateLimit"
+    priority = 20
+
+    action {
+      block {}
+    }
+
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = var.waf_rate_limit
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "rate-limit"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "hms-api"
+    sampled_requests_enabled   = true
+  }
+}
+
+resource "aws_wafv2_web_acl_association" "api" {
+  count = var.enable_waf ? 1 : 0
+
+  resource_arn = aws_lb.api.arn
+  web_acl_arn  = aws_wafv2_web_acl.api[0].arn
+}
+
 resource "aws_cloudfront_distribution" "staff" {
   enabled             = true
   comment             = "${local.name} staff app"
@@ -1171,22 +1376,28 @@ resource "aws_cloudfront_distribution" "staff" {
 
   origin {
     origin_id   = local.cloudfront_api_origin_id
-    domain_name = aws_lb.api.dns_name
+    domain_name = local.cloudfront_api_origin_domain
+
+    custom_header {
+      name  = "X-HMS-Edge-Secret"
+      value = random_password.edge_origin.result
+    }
 
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "http-only"
+      origin_protocol_policy = local.custom_domain_enabled ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
 
   default_cache_behavior {
-    target_origin_id       = local.cloudfront_staff_origin_id
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-    cached_methods         = ["GET", "HEAD"]
-    compress               = true
+    target_origin_id           = local.cloudfront_staff_origin_id
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD"]
+    compress                   = true
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.static_security.id
 
     forwarded_values {
       query_string = false
@@ -1241,8 +1452,22 @@ resource "aws_cloudfront_distribution" "staff" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = true
+    acm_certificate_arn            = local.custom_domain_enabled ? var.cloudfront_acm_certificate_arn : null
+    cloudfront_default_certificate = !local.custom_domain_enabled
+    minimum_protocol_version       = local.custom_domain_enabled ? "TLSv1.2_2021" : "TLSv1"
+    ssl_support_method             = local.custom_domain_enabled ? "sni-only" : null
   }
+
+  aliases = local.custom_domain_enabled ? [var.staff_hostname] : []
+
+  lifecycle {
+    precondition {
+      condition     = local.custom_domain_configuration_valid
+      error_message = "Custom TLS requires public_root_domain, staff_hostname, api_origin_hostname, public_hosted_zone_id, alb_acm_certificate_arn (ap-southeast-2), and cloudfront_acm_certificate_arn (us-east-1). Leave all six empty to retain development URLs."
+    }
+  }
+
+  depends_on = [aws_lb_listener.api_https]
 }
 
 resource "aws_cloudfront_distribution" "inspector" {
@@ -1260,22 +1485,28 @@ resource "aws_cloudfront_distribution" "inspector" {
 
   origin {
     origin_id   = local.cloudfront_api_origin_id
-    domain_name = aws_lb.api.dns_name
+    domain_name = local.cloudfront_api_origin_domain
+
+    custom_header {
+      name  = "X-HMS-Edge-Secret"
+      value = random_password.edge_origin.result
+    }
 
     custom_origin_config {
       http_port              = 80
       https_port             = 443
-      origin_protocol_policy = "http-only"
+      origin_protocol_policy = local.custom_domain_enabled ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
 
   default_cache_behavior {
-    target_origin_id       = local.cloudfront_inspector_origin_id
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-    cached_methods         = ["GET", "HEAD"]
-    compress               = true
+    target_origin_id           = local.cloudfront_inspector_origin_id
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD", "OPTIONS"]
+    cached_methods             = ["GET", "HEAD"]
+    compress                   = true
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.static_security.id
 
     forwarded_values {
       query_string = false
@@ -1331,6 +1562,36 @@ resource "aws_cloudfront_distribution" "inspector" {
 
   viewer_certificate {
     cloudfront_default_certificate = true
+  }
+
+  depends_on = [aws_lb_listener.api_https]
+}
+
+resource "aws_route53_record" "staff" {
+  count = local.custom_domain_enabled ? 1 : 0
+
+  zone_id = var.public_hosted_zone_id
+  name    = var.staff_hostname
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.staff.domain_name
+    zone_id                = aws_cloudfront_distribution.staff.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "api_origin" {
+  count = local.custom_domain_enabled ? 1 : 0
+
+  zone_id = var.public_hosted_zone_id
+  name    = var.api_origin_hostname
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.api.dns_name
+    zone_id                = aws_lb.api.zone_id
+    evaluate_target_health = true
   }
 }
 

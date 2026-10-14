@@ -30,6 +30,7 @@ import type {
   InspectionBookingCreateValues,
   InspectionBookingRecord,
   InspectionBookingStatus,
+  InspectionAvailabilitySlot,
   InspectionRecord,
   InspectionStatus,
   InspectionType,
@@ -64,6 +65,13 @@ interface ApiLocation {
   site_contact_name: string | null;
   site_contact_mobile: string | null;
   site_contact_email: string | null;
+  ppe_requirements: string[];
+  additional_requirements: string[];
+  scheduling_timezone: string;
+  scheduling_open_time: string;
+  scheduling_close_time: string;
+  scheduling_weekdays: number[];
+  scheduling_blackout_dates: string[];
 }
 
 interface ApiContact {
@@ -82,8 +90,6 @@ interface ApiCustomer {
   notes: string | null;
   retest_enabled: boolean;
   default_retest_months: number | null;
-  ppe_requirements?: string[];
-  additional_requirements?: string[];
   locations: ApiLocation[];
   contacts: ApiContact[];
 }
@@ -239,6 +245,7 @@ interface ApiLocationSummary {
   city: string | null;
   state: string | null;
   country: string | null;
+  scheduling_timezone: string;
 }
 
 interface ApiAssetRetestSchedule {
@@ -356,6 +363,7 @@ interface ApiInspectionBooking {
   location: ApiLocationSummary;
   assets: ApiInspectionAssetSummary[];
   scheduled_at: string;
+  scheduled_end_at: string | null;
   additional_information: string | null;
   status: InspectionBookingStatus;
   requested_by_user_id: string;
@@ -364,6 +372,35 @@ interface ApiInspectionBooking {
   reviewed_at: string | null;
   rejection_reason: string | null;
   created_at: string;
+  appointment: {
+    id: string;
+    status: "CONFIRMED" | "CANCELLED" | "COMPLETED" | "NO_SHOW";
+    starts_at: string;
+    ends_at: string;
+    revision_number: number;
+  } | null;
+  change_requests: ApiInspectionBookingChangeRequest[];
+}
+
+interface ApiInspectionBookingChangeRequest {
+  id: string;
+  status: "PENDING_ADMIN_APPROVAL" | "PENDING_CUSTOMER_CONFIRMATION" | "APPLIED" | "REJECTED" | "CANCELLED";
+  starts_at: string;
+  ends_at: string;
+  reason: string | null;
+  emergency: boolean;
+  created_at: string;
+}
+
+interface ApiInspectionAvailability {
+  quote_id: string;
+  starts_at: string;
+  ends_at: string;
+  expires_at: string;
+}
+
+interface ApiInspectionAvailabilityList {
+  items: ApiInspectionAvailability[];
 }
 
 interface ApiInspectionBookingList {
@@ -585,6 +622,13 @@ interface ListInspectionBookingOptions {
   offset?: number;
 }
 
+interface InspectionAvailabilityOptions {
+  customerId: string;
+  locationId: string;
+  localDate: string;
+  durationMinutes?: number;
+}
+
 interface ListRetestScheduleOptions {
   search?: string;
   status?: RetestScheduleStatus;
@@ -681,7 +725,14 @@ function toLocation(location: ApiLocation): CustomerLocation {
     country: location.country,
     siteContactName: location.site_contact_name,
     siteContactMobile: location.site_contact_mobile,
-    siteContactEmail: location.site_contact_email
+    siteContactEmail: location.site_contact_email,
+    ppeRequirements: location.ppe_requirements ?? [],
+    additionalRequirements: location.additional_requirements ?? [],
+    schedulingTimezone: location.scheduling_timezone,
+    schedulingOpenTime: location.scheduling_open_time,
+    schedulingCloseTime: location.scheduling_close_time,
+    schedulingWeekdays: location.scheduling_weekdays ?? [0, 1, 2, 3, 4],
+    schedulingBlackoutDates: location.scheduling_blackout_dates ?? []
   };
 }
 
@@ -793,8 +844,6 @@ function toCustomer(customer: ApiCustomer, etag: string | null = null): Customer
         notes: customer.notes,
         retestEnabled: customer.retest_enabled,
         defaultRetestMonths: customer.default_retest_months,
-        ppeRequirements: customer.ppe_requirements ?? [],
-        additionalRequirements: customer.additional_requirements ?? [],
         locations: customer.locations.map(toLocation),
         contacts: customer.contacts.map(toContact),
         status: "Active",
@@ -882,7 +931,8 @@ function toLocationSummary(
     address2: location.address_2,
     city: location.city,
     state: location.state,
-    country: location.country
+    country: location.country,
+    schedulingTimezone: location.scheduling_timezone
   };
 }
 
@@ -1019,6 +1069,7 @@ function toInspectionBooking(booking: ApiInspectionBooking): InspectionBookingRe
     location: toLocationSummary(booking.location)!,
     assets: booking.assets.map(toInspectionAssetSummary),
     scheduledAt: booking.scheduled_at,
+    scheduledEndAt: booking.scheduled_end_at,
     additionalInformation: booking.additional_information,
     status: booking.status,
     requestedByUserId: booking.requested_by_user_id,
@@ -1026,7 +1077,31 @@ function toInspectionBooking(booking: ApiInspectionBooking): InspectionBookingRe
     reviewedByUserId: booking.reviewed_by_user_id,
     reviewedAt: booking.reviewed_at,
     rejectionReason: booking.rejection_reason,
-    createdAt: booking.created_at
+    createdAt: booking.created_at,
+    appointment: booking.appointment
+      ? {
+          id: booking.appointment.id,
+          status: booking.appointment.status,
+          startsAt: booking.appointment.starts_at,
+          endsAt: booking.appointment.ends_at,
+          revisionNumber: booking.appointment.revision_number
+        }
+      : null,
+    changeRequests: (booking.change_requests ?? []).map(toInspectionBookingChangeRequest)
+  };
+}
+
+function toInspectionBookingChangeRequest(
+  change: ApiInspectionBookingChangeRequest
+): InspectionBookingRecord["changeRequests"][number] {
+  return {
+    id: change.id,
+    status: change.status,
+    startsAt: change.starts_at,
+    endsAt: change.ends_at,
+    reason: change.reason,
+    emergency: change.emergency,
+    createdAt: change.created_at
   };
 }
 
@@ -1321,12 +1396,15 @@ function customerPayload(values: CustomerFormValues) {
       name: location.name.trim(),
       ...(location.siteContactName ? { site_contact_name: location.siteContactName.trim() } : {}),
       ...(location.siteContactMobile ? { site_contact_mobile: location.siteContactMobile.trim() } : {}),
-      ...(location.siteContactEmail ? { site_contact_email: location.siteContactEmail.trim() } : {})
+      ...(location.siteContactEmail ? { site_contact_email: location.siteContactEmail.trim() } : {}),
+      ppe_requirements: location.ppeRequirements,
+      additional_requirements: location.additionalRequirements,
+      scheduling_timezone: location.schedulingTimezone ?? "UTC",
+      scheduling_open_time: location.schedulingOpenTime ?? "08:00",
+      scheduling_close_time: location.schedulingCloseTime ?? "17:00",
+      scheduling_weekdays: location.schedulingWeekdays ?? [0, 1, 2, 3, 4],
+      scheduling_blackout_dates: location.schedulingBlackoutDates ?? []
     })),
-    phone: values.phone.trim() || null,
-    email: values.email.trim() || null,
-    ppe_requirements: values.ppeRequirements,
-    additional_requirements: values.additionalRequirements
   };
 }
 
@@ -1674,6 +1752,27 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       };
     },
 
+    async listInspectionAvailability(
+      options: InspectionAvailabilityOptions
+    ): Promise<InspectionAvailabilitySlot[]> {
+      const response = await request<ApiInspectionAvailabilityList>(
+        "/api/v1/inspection-availability",
+        {},
+        {
+          customer_id: options.customerId,
+          location_id: options.locationId,
+          local_date: options.localDate,
+          duration_minutes: options.durationMinutes ?? 60
+        }
+      );
+      return response.data.items.map((slot) => ({
+        quoteId: slot.quote_id,
+        startsAt: slot.starts_at,
+        endsAt: slot.ends_at,
+        expiresAt: slot.expires_at
+      }));
+    },
+
     async createInspectionBooking(
       values: InspectionBookingCreateValues
     ): Promise<InspectionBookingRecord> {
@@ -1685,9 +1784,8 @@ export function createHmsClient(options: HmsClientOptions = {}) {
             customer_id: values.customerId,
             location_id: values.locationId,
             asset_ids: values.assetIds,
-            scheduled_at: values.scheduledAt,
-            additional_information: values.additionalInformation,
-            ...(values.inspectorUserId ? { inspector_user_id: values.inspectorUserId } : {})
+            availability_quote_id: values.availabilityQuoteId,
+            additional_information: values.additionalInformation
           })
         }
       );
@@ -1717,6 +1815,62 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         }
       );
       return toInspectionBooking(response.data);
+    },
+
+    async cancelInspectionBooking(
+      id: string,
+      reason: string | null = null
+    ): Promise<InspectionBookingRecord> {
+      const response = await request<ApiInspectionBooking>(
+        `/api/v1/inspection-bookings/${encodeURIComponent(id)}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason })
+        }
+      );
+      return toInspectionBooking(response.data);
+    },
+
+    async getInspectionBooking(id: string): Promise<InspectionBookingRecord> {
+      const response = await request<ApiInspectionBooking>(
+        `/api/v1/inspection-bookings/${encodeURIComponent(id)}`
+      );
+      return toInspectionBooking(response.data);
+    },
+
+    async requestInspectionBookingReschedule(
+      id: string,
+      values: { availabilityQuoteId: string; reason: string | null; inspectorUserId: string | null }
+    ): Promise<InspectionBookingRecord["changeRequests"][number]> {
+      const response = await request<ApiInspectionBookingChangeRequest>(
+        `/api/v1/inspection-bookings/${encodeURIComponent(id)}/change-requests`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            availability_quote_id: values.availabilityQuoteId,
+            reason: values.reason,
+            ...(values.inspectorUserId ? { inspector_user_id: values.inspectorUserId } : {})
+          })
+        }
+      );
+      return toInspectionBookingChangeRequest(response.data);
+    },
+
+    async approveInspectionBookingReschedule(
+      id: string,
+      inspectorUserId: string
+    ): Promise<void> {
+      await request<ApiInspectionBookingChangeRequest>(
+        `/api/v1/inspection-booking-change-requests/${encodeURIComponent(id)}/approve`,
+        { method: "POST", body: JSON.stringify({ inspector_user_id: inspectorUserId }) }
+      );
+    },
+
+    async confirmInspectionBookingReschedule(id: string): Promise<void> {
+      await request<ApiInspectionBookingChangeRequest>(
+        `/api/v1/inspection-booking-change-requests/${encodeURIComponent(id)}/confirm`,
+        { method: "POST" }
+      );
     },
 
     async createInspection(

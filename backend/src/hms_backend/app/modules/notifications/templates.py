@@ -101,6 +101,38 @@ _TEMPLATES: dict[tuple[NotificationCategory, NotificationChannel], _Template] = 
         "Inspection booking declined",
         "{reason}",
     ),
+    (_Cat.INSPECTION_BOOKING_CANCELLED, _Ch.EMAIL): _Template(
+        "Inspection booking cancelled",
+        "The inspection booking at {location_name} on {scheduled_at} was "
+        "cancelled.\n\nReason: {reason}",
+    ),
+    (_Cat.INSPECTION_BOOKING_CANCELLED, _Ch.IN_APP): _Template(
+        "Inspection booking cancelled", "{reason}"
+    ),
+    (_Cat.INSPECTION_BOOKING_RESCHEDULE_REQUESTED, _Ch.EMAIL): _Template(
+        "Inspection reschedule awaiting approval",
+        "A new time was requested for the inspection at {location_name} on "
+        "{scheduled_at}.\n\nReason: {reason}",
+    ),
+    (_Cat.INSPECTION_BOOKING_RESCHEDULE_REQUESTED, _Ch.IN_APP): _Template(
+        "Inspection reschedule awaiting approval", "{location_name}"
+    ),
+    (_Cat.INSPECTION_BOOKING_RESCHEDULE_PROPOSED, _Ch.EMAIL): _Template(
+        "Inspection reschedule awaiting your confirmation",
+        "A new inspection time was proposed for {location_name} on "
+        "{scheduled_at}.\n\nReason: {reason}",
+    ),
+    (_Cat.INSPECTION_BOOKING_RESCHEDULE_PROPOSED, _Ch.IN_APP): _Template(
+        "Inspection reschedule awaiting your confirmation", "{location_name}"
+    ),
+    (_Cat.INSPECTION_BOOKING_RESCHEDULED, _Ch.EMAIL): _Template(
+        "Inspection booking rescheduled",
+        "The inspection at {location_name} is now scheduled for "
+        "{scheduled_at}.\n\nReason: {reason}",
+    ),
+    (_Cat.INSPECTION_BOOKING_RESCHEDULED, _Ch.IN_APP): _Template(
+        "Inspection booking rescheduled", "{location_name}"
+    ),
     (_Cat.CERTIFICATE_ISSUED, _Ch.EMAIL): _Template(
         "Certificate {certificate_number} issued for asset {asset_number}",
         "A test certificate has been issued for asset {asset_number} "

@@ -56,7 +56,7 @@ export function AssetDetail({ asset, canWrite, onBack, onCopy, onEdit }: AssetDe
   const { inspectionHistory, certificateHistory } = asset;
 
   return (
-    <section className="detail-page" role="complementary" aria-label="Asset detail">
+    <section className="detail-page asset-detail-page" role="complementary" aria-label="Asset detail">
       <div className="detail-page-header">
         <button className="secondary-button detail-back" onClick={onBack} type="button">
           <ArrowLeft aria-hidden="true" size={16} />

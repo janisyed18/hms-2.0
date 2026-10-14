@@ -1,10 +1,17 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import ConfigDict, Field, field_validator
+
+
+class BaseModel(PydanticBaseModel):
+    model_config = ConfigDict(extra="forbid")
+
 
 PpeRequirement = Literal[
     "High Vis",
@@ -99,6 +106,13 @@ class CustomerLocationRead(BaseModel):
     site_contact_name: str | None
     site_contact_mobile: str | None
     site_contact_email: str | None
+    ppe_requirements: list[PpeRequirement]
+    additional_requirements: list[AdditionalRequirement]
+    scheduling_timezone: str
+    scheduling_open_time: str
+    scheduling_close_time: str
+    scheduling_weekdays: list[int]
+    scheduling_blackout_dates: list[date]
 
 
 class CustomerContactRead(BaseModel):
@@ -117,8 +131,6 @@ class CustomerRead(BaseModel):
     notes: str | None
     retest_enabled: bool
     default_retest_months: int | None
-    ppe_requirements: list[PpeRequirement]
-    additional_requirements: list[AdditionalRequirement]
     locations: list[CustomerLocationRead]
     contacts: list[CustomerContactRead]
 
@@ -130,12 +142,77 @@ class CustomerListResponse(BaseModel):
     items: list[CustomerRead]
 
 
-class CustomerLocationWrite(BaseModel):
+class LocationSchedulingValidation(BaseModel):
+    @field_validator("scheduling_timezone", check_fields=False)
+    @classmethod
+    def validate_scheduling_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(
+                "scheduling_timezone must be a valid IANA timezone"
+            ) from exc
+        return value
+
+    @field_validator(
+        "scheduling_open_time", "scheduling_close_time", check_fields=False
+    )
+    @classmethod
+    def validate_scheduling_time(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            parsed = time.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("scheduling times must use HH:MM") from exc
+        if parsed.second or parsed.microsecond:
+            raise ValueError("scheduling times must use HH:MM")
+        return value
+
+    @field_validator("scheduling_weekdays", check_fields=False)
+    @classmethod
+    def validate_scheduling_weekdays(
+        cls, value: list[int] | None
+    ) -> list[int] | None:
+        if value is None:
+            return None
+        if (
+            not value
+            or len(set(value)) != len(value)
+            or any(day not in range(7) for day in value)
+        ):
+            raise ValueError(
+                "scheduling_weekdays must contain unique values from 0 to 6"
+            )
+        return sorted(value)
+
+    @field_validator("scheduling_blackout_dates", check_fields=False)
+    @classmethod
+    def validate_scheduling_blackout_dates(
+        cls, value: list[date] | None
+    ) -> list[date] | None:
+        if value is None:
+            return None
+        if len(set(value)) != len(value):
+            raise ValueError("scheduling_blackout_dates must not contain duplicates")
+        return sorted(value)
+
+
+class CustomerLocationWrite(LocationSchedulingValidation):
     id: str | None = None
     name: str = Field(min_length=1, max_length=160)
     site_contact_name: str | None = None
     site_contact_mobile: str | None = None
     site_contact_email: str | None = None
+    ppe_requirements: list[PpeRequirement] | None = None
+    additional_requirements: list[AdditionalRequirement] | None = None
+    scheduling_timezone: str = "UTC"
+    scheduling_open_time: str = "08:00"
+    scheduling_close_time: str = "17:00"
+    scheduling_weekdays: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
+    scheduling_blackout_dates: list[date] = Field(default_factory=list)
 
 
 class CustomerCreate(BaseModel):
@@ -145,10 +222,6 @@ class CustomerCreate(BaseModel):
     retest_enabled: bool = False
     default_retest_months: int | None = None
     locations: list[CustomerLocationWrite] = Field(default_factory=list)
-    phone: str | None = None
-    email: str | None = None
-    ppe_requirements: list[PpeRequirement] = Field(default_factory=list)
-    additional_requirements: list[AdditionalRequirement] = Field(default_factory=list)
 
 
 class CustomerUpdate(BaseModel):
@@ -158,13 +231,9 @@ class CustomerUpdate(BaseModel):
     retest_enabled: bool | None = None
     default_retest_months: int | None = None
     locations: list[CustomerLocationWrite] | None = None
-    phone: str | None = None
-    email: str | None = None
-    ppe_requirements: list[PpeRequirement] | None = None
-    additional_requirements: list[AdditionalRequirement] | None = None
 
 
-class CustomerLocationCreate(BaseModel):
+class CustomerLocationCreate(LocationSchedulingValidation):
     name: str
     address_1: str | None = None
     address_2: str | None = None
@@ -174,9 +243,16 @@ class CustomerLocationCreate(BaseModel):
     site_contact_name: str | None = None
     site_contact_mobile: str | None = None
     site_contact_email: str | None = None
+    ppe_requirements: list[PpeRequirement] = Field(default_factory=list)
+    additional_requirements: list[AdditionalRequirement] = Field(default_factory=list)
+    scheduling_timezone: str = "UTC"
+    scheduling_open_time: str = "08:00"
+    scheduling_close_time: str = "17:00"
+    scheduling_weekdays: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4])
+    scheduling_blackout_dates: list[date] = Field(default_factory=list)
 
 
-class CustomerLocationUpdate(BaseModel):
+class CustomerLocationUpdate(LocationSchedulingValidation):
     name: str | None = None
     address_1: str | None = None
     address_2: str | None = None
@@ -186,6 +262,13 @@ class CustomerLocationUpdate(BaseModel):
     site_contact_name: str | None = None
     site_contact_mobile: str | None = None
     site_contact_email: str | None = None
+    ppe_requirements: list[PpeRequirement] | None = None
+    additional_requirements: list[AdditionalRequirement] | None = None
+    scheduling_timezone: str | None = None
+    scheduling_open_time: str | None = None
+    scheduling_close_time: str | None = None
+    scheduling_weekdays: list[int] | None = None
+    scheduling_blackout_dates: list[date] | None = None
 
 
 class CustomerContactCreate(BaseModel):
@@ -218,6 +301,7 @@ class LocationSummary(BaseModel):
     city: str | None
     state: str | None
     country: str | None
+    scheduling_timezone: str
 
 
 class ProductSummary(BaseModel):
@@ -405,9 +489,8 @@ class InspectionBookingCreate(BaseModel):
     customer_id: str
     location_id: str
     asset_ids: list[str] = Field(min_length=1)
-    scheduled_at: datetime
+    availability_quote_id: str
     additional_information: str | None = None
-    inspector_user_id: str | None = None
 
 
 class InspectionBookingApproval(BaseModel):
@@ -416,6 +499,56 @@ class InspectionBookingApproval(BaseModel):
 
 class InspectionBookingRejectRequest(BaseModel):
     reason: str | None = None
+
+
+class InspectionBookingCancelRequest(BaseModel):
+    reason: str | None = None
+
+
+class InspectionAvailabilityRead(BaseModel):
+    quote_id: str
+    starts_at: datetime
+    ends_at: datetime
+    expires_at: datetime
+
+
+class InspectionAvailabilityListResponse(BaseModel):
+    items: list[InspectionAvailabilityRead]
+
+
+class InspectionAppointmentRead(BaseModel):
+    id: str
+    status: str
+    starts_at: datetime
+    ends_at: datetime
+    revision_number: int
+    timezone_id: str
+    local_start_snapshot: str
+    local_end_snapshot: str
+    utc_offset_start: str
+    utc_offset_end: str
+    tzdata_version: str
+
+
+class InspectionAppointmentChangeRequestCreate(BaseModel):
+    availability_quote_id: str
+    reason: str | None = None
+    inspector_user_id: str | None = None
+    emergency: bool = False
+
+
+class InspectionAppointmentChangeRequestApproval(BaseModel):
+    inspector_user_id: str
+
+
+class InspectionAppointmentChangeRequestRead(BaseModel):
+    id: str
+    status: str
+    starts_at: datetime
+    ends_at: datetime
+    reason: str | None
+    emergency: bool
+    created_at: datetime
 
 
 class InspectionAssetSummary(BaseModel):
@@ -431,6 +564,7 @@ class InspectionBookingRead(BaseModel):
     location: LocationSummary
     assets: list[InspectionAssetSummary]
     scheduled_at: datetime
+    scheduled_end_at: datetime | None
     additional_information: str | None
     status: str
     requested_by_user_id: str
@@ -439,6 +573,8 @@ class InspectionBookingRead(BaseModel):
     reviewed_at: datetime | None
     rejection_reason: str | None
     created_at: datetime
+    appointment: InspectionAppointmentRead | None = None
+    change_requests: list[InspectionAppointmentChangeRequestRead] = []
 
 
 class InspectionBookingListResponse(BaseModel):

@@ -362,7 +362,7 @@ class BrowserAuthService:
             raise BrowserAuthError(_GENERIC_LOGIN_ERROR)
 
     def _maybe_lock(self, user: User) -> None:
-        threshold = self._settings.auth_login_rate_limit_max_attempts
+        threshold = self._settings.auth_login_account_rate_limit_max_attempts
         if user.failed_password_attempts >= threshold:
             user.account_status = AccountStatus.LOCKED.value
             user.locked_until = self._now() + timedelta(

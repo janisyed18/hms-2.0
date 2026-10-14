@@ -1,6 +1,8 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from zoneinfo import TZPATH
 
+import tzdata  # type: ignore[import-untyped]
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -16,12 +18,20 @@ from hms_backend.app.api.public import router as public_router
 from hms_backend.app.api.records import router as records_router
 from hms_backend.app.api.sync import router as sync_router
 from hms_backend.app.core.config import settings
+from hms_backend.app.core.http_security import (
+    ApiRateLimitMiddleware,
+    EdgeOriginMiddleware,
+    RequestBodyLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from hms_backend.app.core.redis import close_redis, ping_redis
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings.validate_browser_auth()
+    settings.validate_http_security()
+    settings.validate_notification_security()
     yield
     # Release the Redis connection pool on shutdown.
     await close_redis()
@@ -44,11 +54,24 @@ def create_app() -> FastAPI:
         docs_url="/api/v1/docs",
         lifespan=lifespan,
     )
+    # Register innermost first so security headers are present even on rejects.
+    app.add_middleware(ApiRateLimitMiddleware)
+    app.add_middleware(EdgeOriginMiddleware)
+    app.add_middleware(RequestBodyLimitMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
         # Liveness: the process is up. No external dependencies checked.
         return {"status": "ok", "service": "hms-backend"}
+
+    @app.get("/health/metadata", tags=["health"])
+    async def runtime_metadata() -> dict[str, str]:
+        return {
+            "tzdata_package_version": tzdata.__version__,
+            "iana_timezone_version": tzdata.IANA_VERSION,
+            "timezone_data_source": "tzdata" if not TZPATH else "system",
+        }
 
     @app.get("/health/ready", tags=["health"])
     async def readiness() -> JSONResponse:

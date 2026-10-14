@@ -33,6 +33,26 @@ def test_deployed_dev_browser_auth_is_validated() -> None:
     )
 
 
+def test_deployed_http_security_requires_an_edge_secret() -> None:
+    configured = Settings.model_validate({"environment": "production"})
+
+    assert configured.http_security_config_errors() == [
+        "SECURITY_EDGE_SHARED_SECRET is required"
+    ]
+
+
+def test_deployed_http_security_accepts_an_edge_secret() -> None:
+    configured = Settings.model_validate(
+        {
+            "environment": "production",
+            "security_edge_shared_secret": "edge-secret",
+        }
+    )
+
+    assert configured.http_security_config_errors() == []
+    configured.validate_http_security()
+
+
 def test_production_browser_auth_accepts_complete_secure_configuration() -> None:
     reset_encryption_key = base64.urlsafe_b64encode(
         b"reset-production-key-material-32"

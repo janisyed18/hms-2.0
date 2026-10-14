@@ -1,4 +1,4 @@
-import { Building2, Edit3, MapPin, Package, ShieldCheck, X } from "lucide-react";
+import { Building2, Edit3, ExternalLink, MapPin, Package, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 
@@ -10,16 +10,42 @@ interface CustomerDetailProps {
   activeTab: string;
   canWrite: boolean;
   customer: CustomerRecord | null;
+  onAssetOpen: (assetId: string) => void;
   onClose: () => void;
   onEdit: () => void;
   onTabChange: (tab: string) => void;
 }
 
-const tabs = ["Overview", "Locations"];
+const tabs = ["Locations"];
 
 interface CustomerAssets {
   items: AssetRecord[];
   total: number;
+}
+
+function googleMapsUrl(location: CustomerRecord["locations"][number]) {
+  const address = [
+    location.name,
+    location.address1,
+    location.address2,
+    location.city,
+    location.state,
+    location.country
+  ]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .join(", ");
+
+  const hasRecordedAddress = [
+    location.address1,
+    location.address2,
+    location.city,
+    location.state,
+    location.country
+  ].some((value) => Boolean(value?.trim()));
+
+  return hasRecordedAddress
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
+    : null;
 }
 
 async function loadCustomerAssets(customerId: string): Promise<CustomerAssets> {
@@ -59,6 +85,7 @@ export function CustomerDetail({
   activeTab,
   canWrite,
   customer,
+  onAssetOpen,
   onClose,
   onEdit,
   onTabChange
@@ -110,8 +137,6 @@ export function CustomerDetail({
     }))
     .sort((left, right) => left.location.name.localeCompare(right.location.name)), [assets, customer]);
   const unassignedAssets = assets.filter((asset) => !asset.location).length;
-
-  const primaryContact = customer?.contacts[0];
 
   return (
     <AnimatePresence initial={false}>
@@ -196,38 +221,10 @@ export function CustomerDetail({
                   type="button"
                   onClick={() => onTabChange(tab)}
                 >
-                  {tab}{tab === "Locations" ? ` (${isLoadingAssets ? "…" : locationGroups.length})` : ""}
+                  {tab} ({isLoadingAssets ? "…" : locationGroups.length})
                 </button>
               ))}
             </div>
-
-            {activeTab === "Overview" ? (
-              <div className="customer-detail-content">
-                <section className="detail-section">
-                  <h3>Customer details</h3>
-                  <dl className="info-grid customer-info-grid">
-                    <div><dt>Name</dt><dd>{customer.name}</dd></div>
-                    <div><dt>Primary asset location</dt><dd>{locationGroups[0]?.location.name ?? "No assigned asset location"}</dd></div>
-                    <div><dt>Phone</dt><dd>{primaryContact?.phone ?? "Not set"}</dd></div>
-                    <div><dt>Email</dt><dd>{primaryContact?.email ?? "Not set"}</dd></div>
-                  </dl>
-                </section>
-                <section className="detail-section customer-requirements-grid">
-                  <div>
-                    <h3>PPE Requirements</h3>
-                    <RequirementList emptyLabel="No PPE requirements recorded." items={customer.ppeRequirements} />
-                  </div>
-                  <div>
-                    <h3>Additional Requirements</h3>
-                    <RequirementList emptyLabel="No additional requirements recorded." items={customer.additionalRequirements} />
-                  </div>
-                </section>
-                <section className="detail-section customer-notes-section">
-                  <h3>Notes</h3>
-                  <p className="record-notes">{customer.notes?.trim() || "No notes recorded."}</p>
-                </section>
-              </div>
-            ) : null}
 
             {activeTab === "Locations" ? (
               <section className="customer-location-section">
@@ -247,20 +244,58 @@ export function CustomerDetail({
                   </div>
                 ) : null}
                 <div className="customer-location-grid">
-                  {locationGroups.map(({ location, assets: locationAssets }) => (
-                    <article key={location.id}>
-                      <span className="customer-location-icon"><MapPin aria-hidden="true" size={18} /></span>
-                      <div>
-                        <h4>{location.name}</h4>
-                    <p>{[location.address1, location.address2, location.city, location.state, location.country].filter(Boolean).join(", ") || "Location details not recorded"}</p>
-                    <p className="customer-location-contact">{location.siteContactName ? `Site contact: ${location.siteContactName}${location.siteContactMobile ? ` · ${location.siteContactMobile}` : ""}${location.siteContactEmail ? ` · ${location.siteContactEmail}` : ""}` : "Site contact not recorded"}</p>
-                      </div>
-                      <strong>{locationAssets.length}<small>{locationAssets.length === 1 ? "asset" : "assets"}</small></strong>
-                      <ul aria-label={`Assets at ${location.name}`}>
-                        {locationAssets.map((asset) => <li key={asset.id}>{asset.assetNumber}</li>)}
-                      </ul>
-                    </article>
-                  ))}
+                  {locationGroups.map(({ location, assets: locationAssets }) => {
+                    const mapUrl = googleMapsUrl(location);
+                    return (
+                      <article key={location.id}>
+                        <span className="customer-location-icon"><MapPin aria-hidden="true" size={18} /></span>
+                        <div>
+                          <h4>{location.name}</h4>
+                          <p>{[location.address1, location.address2, location.city, location.state, location.country].filter(Boolean).join(", ") || "Location details not recorded"}</p>
+                          {mapUrl ? (
+                            <a
+                              aria-label={`Open ${location.name} in Google Maps`}
+                              className="customer-location-map-link"
+                              href={mapUrl}
+                              rel="noopener noreferrer"
+                              target="_blank"
+                            >
+                              View in Google Maps <ExternalLink aria-hidden="true" size={13} />
+                            </a>
+                          ) : null}
+                        </div>
+                        <p className="customer-location-contact">{location.siteContactName ? `Site contact: ${location.siteContactName}${location.siteContactMobile ? ` · ${location.siteContactMobile}` : ""}${location.siteContactEmail ? ` · ${location.siteContactEmail}` : ""}` : "Site contact not recorded"}</p>
+                        <div className="customer-location-requirements">
+                          <div>
+                            <h5>PPE requirements</h5>
+                            <RequirementList emptyLabel="No PPE requirements." items={location.ppeRequirements} />
+                          </div>
+                          <div>
+                            <h5>Additional requirements</h5>
+                            <RequirementList emptyLabel="No additional requirements." items={location.additionalRequirements} />
+                          </div>
+                        </div>
+                        <strong>{locationAssets.length}<small>{locationAssets.length === 1 ? "asset" : "assets"}</small></strong>
+                        <ul aria-label={`Assets at ${location.name}`}>
+                          {locationAssets.map((asset) => (
+                            <li key={asset.id}>
+                              <button
+                                aria-label={`Open asset ${asset.assetNumber}`}
+                                className="customer-location-asset-link"
+                                onClick={() => {
+                                  onClose();
+                                  onAssetOpen(asset.id);
+                                }}
+                                type="button"
+                              >
+                                {asset.assetNumber}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </article>
+                    );
+                  })}
                 </div>
               </section>
             ) : null}

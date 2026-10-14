@@ -27,7 +27,8 @@ x-backend: &backend
     AUTH_DEV_ALLOW_ROLE_FALLBACK: "false"
     AUTH_BROWSER_LOGIN_ENABLED: "true"
     AUTH_MFA_REQUIRED: ${AUTH_MFA_REQUIRED:-false}
-    AUTH_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: ${AUTH_LOGIN_RATE_LIMIT_MAX_ATTEMPTS:-5}
+    AUTH_LOGIN_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS: ${AUTH_LOGIN_ACCOUNT_RATE_LIMIT_MAX_ATTEMPTS:-5}
+    AUTH_LOGIN_IP_RATE_LIMIT_MAX_ATTEMPTS: ${AUTH_LOGIN_IP_RATE_LIMIT_MAX_ATTEMPTS:-50}
     # Development-only defaults. Shared/deployed environments must inject
     # independently generated values through their secret manager.
     AUTH_BEARER_HMAC_SECRET: ${AUTH_BEARER_HMAC_SECRET:-hms-local-only-signing-secret-change-before-any-shared-use}
@@ -73,7 +74,10 @@ services:
       context: ./services/certificate
     image: hms-certificate-engine:local
     volumes:
-      - engine-signing:/root/.hms
+      - engine-signing:/var/lib/hms/.hms
+    depends_on:
+      certificate-engine-init:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - "CMD"
@@ -83,6 +87,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Docker creates named volumes as root. This one-shot initializer is the only
+  # root process and lets the certificate engine remain rootless at runtime.
+  certificate-engine-init:
+    image: hms-certificate-engine:local
+    user: root
+    command:
+      - "sh"
+      - "-c"
+      - "mkdir -p /var/lib/hms/.hms && chown -R hms:hms /var/lib/hms/.hms"
+    volumes:
+      - engine-signing:/var/lib/hms/.hms
+    restart: "no"
 
   # One-shot: apply migrations and seed synthetic demo + six role accounts.
   migrate:

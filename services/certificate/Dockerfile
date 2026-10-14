@@ -3,6 +3,7 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    HOME=/var/run/hms \
     HMS_CERT_HOST=0.0.0.0 \
     HMS_CERT_PORT=50051
 
@@ -18,11 +19,13 @@ RUN apt-get update \
 COPY pyproject.toml README.md ./
 COPY proto ./proto
 COPY src ./src
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . \
+    && groupadd --system hms \
+    && useradd --system --gid hms --home-dir /var/lib/hms hms \
+    && install -d --owner=hms --group=hms /var/lib/hms/.hms /var/run/hms
 
 EXPOSE 50051
 
-# Dev signing material is auto-generated on first run under this path.
-VOLUME ["/root/.hms"]
+USER hms
 
 CMD ["hms-certificate-engine"]

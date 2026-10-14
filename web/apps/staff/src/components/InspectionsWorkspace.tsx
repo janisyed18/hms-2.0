@@ -52,6 +52,14 @@ function countByStatus(inspections: InspectionRecord[], status: string) {
   return inspections.filter((inspection) => inspection.status === status).length;
 }
 
+function formatLocationDateTime(value: string, timezone: string | null | undefined) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: timezone ?? "UTC"
+  }).format(new Date(value));
+}
+
 export function InspectionsWorkspace({
   canApprove,
   canApproveBookings,
@@ -173,7 +181,7 @@ export function InspectionsWorkspace({
                   <div>
                     <span>{booking.assets.map((asset) => asset.assetNumber).join(", ")}</span>
                     <time dateTime={booking.scheduledAt}>
-                      {new Date(booking.scheduledAt).toLocaleString()}
+                      {formatLocationDateTime(booking.scheduledAt, booking.location.schedulingTimezone)}
                     </time>
                   </div>
                   <span className={statusClass(booking.status)}>
@@ -203,6 +211,65 @@ export function InspectionsWorkspace({
                       </button>
                     </span>
                   ) : null}
+                  {canBook && booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED" && !booking.changeRequests.some((change) => ["PENDING_ADMIN_APPROVAL", "PENDING_CUSTOMER_CONFIRMATION"].includes(change.status)) ? (
+                    <span className="row-actions">
+                      <button onClick={() => workspace.openReschedule(booking)} type="button">
+                        Request reschedule
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (window.confirm("Cancel this inspection booking?")) {
+                            void workspace.cancelInspectionBooking(booking.id);
+                          }
+                        }}
+                        type="button"
+                      >
+                        Cancel booking
+                      </button>
+                    </span>
+                  ) : null}
+                  {canApproveBookings ? booking.changeRequests.filter((change) => change.status === "PENDING_ADMIN_APPROVAL").map((change) => (
+                    <span className="row-actions" key={change.id}>
+                      <time dateTime={change.startsAt}>Reschedule: {formatLocationDateTime(change.startsAt, booking.location.schedulingTimezone)}</time>
+                      <select
+                        aria-label={`Assign inspector for reschedule at ${booking.location.name}`}
+                        value={inspectorByBooking[change.id] ?? ""}
+                        onChange={(event) => setInspectorByBooking((current) => ({ ...current, [change.id]: event.target.value }))}
+                      >
+                        <option value="">Assign inspector</option>
+                        {workspace.inspectors.map((inspector) => (
+                          <option key={inspector.id} value={inspector.id}>{inspector.displayName}</option>
+                        ))}
+                      </select>
+                      <button
+                        disabled={!inspectorByBooking[change.id]}
+                        onClick={() => void workspace.approveInspectionBookingReschedule(change.id, inspectorByBooking[change.id])}
+                        type="button"
+                      >
+                        Approve reschedule
+                      </button>
+                    </span>
+                  )) : null}
+                  {canApproveBookings ? booking.changeRequests.filter((change) => change.status === "PENDING_CUSTOMER_CONFIRMATION").map((change) => (
+                    <span className="row-actions" key={change.id}>
+                      <span className="mini-status status-review">Awaiting customer confirmation</span>
+                      <time dateTime={change.startsAt}>Proposed: {formatLocationDateTime(change.startsAt, booking.location.schedulingTimezone)}</time>
+                    </span>
+                  )) : null}
+                  {canBook && !canApproveBookings ? booking.changeRequests.filter((change) => change.status === "PENDING_ADMIN_APPROVAL").map((change) => (
+                    <span className="row-actions" key={change.id}>
+                      <span className="mini-status status-review">Awaiting admin approval</span>
+                      <time dateTime={change.startsAt}>Requested: {formatLocationDateTime(change.startsAt, booking.location.schedulingTimezone)}</time>
+                    </span>
+                  )) : null}
+                  {canBook && !canApproveBookings ? booking.changeRequests.filter((change) => change.status === "PENDING_CUSTOMER_CONFIRMATION").map((change) => (
+                    <span className="row-actions" key={change.id}>
+                      <time dateTime={change.startsAt}>Proposed: {formatLocationDateTime(change.startsAt, booking.location.schedulingTimezone)}</time>
+                      <button onClick={() => void workspace.confirmInspectionBookingReschedule(change.id)} type="button">
+                        Confirm reschedule
+                      </button>
+                    </span>
+                  )) : null}
                 </article>
               ))}
             </div>
@@ -324,11 +391,13 @@ export function InspectionsWorkspace({
       {canBook ? (
         <InspectionBookingForm
           assetOptions={workspace.assetOptions}
+          open={workspace.isBookingFormOpen}
+          rescheduleBooking={workspace.rescheduleBooking}
           inspectors={workspace.inspectors}
           requiresInspector={canApproveBookings}
-          open={workspace.isBookingFormOpen}
           onClose={() => workspace.setBookingFormOpen(false)}
           onSubmit={workspace.saveInspectionBooking}
+          onReschedule={workspace.requestInspectionBookingReschedule}
         />
       ) : null}
     </section>

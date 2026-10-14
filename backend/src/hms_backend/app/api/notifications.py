@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
@@ -41,7 +42,11 @@ from hms_backend.app.modules.notifications.models import (
     PhoneVerification,
 )
 from hms_backend.app.modules.notifications.service import apply_delivery_receipt
-from hms_backend.app.modules.notifications.webhooks import parse_receipts
+from hms_backend.app.modules.notifications.webhooks import (
+    parse_receipts,
+    verify_sns_request,
+    verify_twilio_signature,
+)
 
 router = APIRouter(tags=["notifications"])
 
@@ -390,15 +395,58 @@ async def _paginate(
 # --- Provider delivery webhooks (N-06) ------------------------------------------
 
 
-def _check_webhook_secret(request: Request, token: str | None) -> None:
+def _check_webhook_secret(request: Request) -> None:
     secret = settings.notification_webhook_secret
     if not secret:
-        return  # open in dev
-    provided = token or request.headers.get("X-HMS-Webhook-Secret")
-    if provided != secret:
+        if settings.is_local_or_test:
+            return
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook authentication is not configured",
+        )
+    provided = request.headers.get("X-HMS-Webhook-Secret", "")
+    if not hmac.compare_digest(provided, secret):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Invalid webhook secret"
         )
+
+
+async def _verify_webhook(provider: str, request: Request, body: bytes) -> None:
+    if provider == "twilio":
+        if (
+            not settings.notification_twilio_status_callback_url
+            or not settings.twilio_auth_token
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Twilio callback verification is not configured",
+            )
+        if not verify_twilio_signature(
+            settings.twilio_auth_token,
+            settings.notification_twilio_status_callback_url,
+            body,
+            request.headers.get("X-Twilio-Signature", ""),
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid Twilio signature",
+            )
+        return
+    if provider in {"ses", "sns"}:
+        if not settings.notification_sns_topic_arns:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="SNS callback verification is not configured",
+            )
+        if not await verify_sns_request(
+            body, set(settings.notification_sns_topic_arns)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Invalid SNS signature",
+            )
+        return
+    _check_webhook_secret(request)
 
 
 @router.post("/notifications/webhooks/{provider}")
@@ -406,15 +454,16 @@ async def delivery_webhook(
     provider: str,
     request: Request,
     session: SessionDep,
-    token: str | None = None,
 ) -> dict[str, int]:
     """Update delivery status from a provider callback (Twilio / SES-SNS / generic).
 
     Matches notifications by ``provider_message_id``. Always returns 2xx so
     providers do not retry indefinitely.
     """
-    _check_webhook_secret(request, token)
-    receipts = parse_receipts(provider.lower(), await request.body())
+    provider = provider.lower()
+    body = await request.body()
+    await _verify_webhook(provider, request, body)
+    receipts = parse_receipts(provider, body)
     updated = 0
     for provider_message_id, receipt_status in receipts:
         if await apply_delivery_receipt(

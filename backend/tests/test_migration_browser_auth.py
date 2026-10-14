@@ -10,6 +10,7 @@ the migrated schema, not just the model metadata.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -180,3 +181,86 @@ def test_migration_0010_upgrades_downgrades_and_reupgrades(
     command.upgrade(config, "head")
     tables_final, _ = _schema(db_path)
     assert BROWSER_AUTH_TABLES | PASSWORD_RESET_TABLES <= tables_final
+
+
+def test_migration_0017_moves_customer_access_requirements_to_each_location(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "location-requirements.db"
+    config = _alembic_config(db_path, monkeypatch)
+    command.upgrade(config, "20260915_0016")
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO customers (
+                        id, code, name, version, created_at, updated_at,
+                        retest_enabled, ppe_requirements, additional_requirements
+                    ) VALUES (
+                        'customer-1', 'SITE-ACCESS', 'Site Access Customer', 1,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0,
+                        :ppe_requirements, :additional_requirements
+                    )
+                    """
+                ),
+                {
+                    "ppe_requirements": json.dumps(["High Vis", "Safety Boots"]),
+                    "additional_requirements": json.dumps(["2-way radio"]),
+                },
+            )
+            for location_id, name in (
+                ("location-1", "North Yard"),
+                ("location-2", "South Yard"),
+            ):
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO customer_locations (
+                            id, customer_id, name, version, created_at, updated_at
+                        ) VALUES (
+                            :id, 'customer-1', :name, 1,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        )
+                        """
+                    ),
+                    {"id": location_id, "name": name},
+                )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "head")
+
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        inspector = inspect(engine)
+        customer_columns = {
+            column["name"] for column in inspector.get_columns("customers")
+        }
+        location_columns = {
+            column["name"] for column in inspector.get_columns("customer_locations")
+        }
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT ppe_requirements, additional_requirements
+                    FROM customer_locations
+                    WHERE customer_id = 'customer-1'
+                    ORDER BY name
+                    """
+                )
+            ).all()
+    finally:
+        engine.dispose()
+
+    assert "ppe_requirements" not in customer_columns
+    assert "additional_requirements" not in customer_columns
+    assert {"ppe_requirements", "additional_requirements"} <= location_columns
+    assert [json.loads(row[0]) for row in rows] == [
+        ["High Vis", "Safety Boots"],
+        ["High Vis", "Safety Boots"],
+    ]
+    assert [json.loads(row[1]) for row in rows] == [["2-way radio"], ["2-way radio"]]

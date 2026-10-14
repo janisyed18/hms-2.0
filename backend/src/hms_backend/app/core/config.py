@@ -1,5 +1,6 @@
 import base64
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -74,8 +75,8 @@ class Settings(BaseSettings):
     )
     phone_verification_ttl_seconds: int = 600
     phone_verification_max_attempts: int = 5
-    # Shared secret gating provider delivery webhooks (Twilio status callbacks,
-    # SES/SNS delivery/bounce notifications). Empty = open (dev only).
+    # Shared secret used only by non-provider-native integrations. Empty = open
+    # in local/test only; Twilio and SNS use their signed request contracts.
     notification_webhook_secret: str = ""
 
     # Email — only used in "live" mode.
@@ -93,6 +94,8 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_from: str = ""  # E.164 number or alphanumeric sender ID
+    notification_twilio_status_callback_url: str = ""
+    notification_sns_topic_arns: list[str] = Field(default_factory=list)
 
     # Auth boundary. Local development keeps explicit HMS headers available;
     # deployed environments should use bearer mode and resolve the token subject
@@ -162,10 +165,30 @@ class Settings(BaseSettings):
     auth_browser_reauth_max_age_seconds: int = 300
     # Max verification attempts against a single challenge before it is rejected.
     auth_browser_challenge_max_attempts: int = 5
-    # Login throttling (per normalised account and per source IP, independently).
+    # Login throttling: a low per-account threshold protects credentials while a
+    # higher per-IP threshold tolerates legitimate shared corporate networks.
     auth_login_rate_limit_max_attempts: int = 5
+    auth_login_account_rate_limit_max_attempts: int = 5
+    auth_login_ip_rate_limit_max_attempts: int = 50
     auth_login_rate_limit_window_seconds: int = 300
     auth_login_lockout_seconds: int = 60
+
+    # --- HTTP edge security ---
+    # Applies to every API response. CloudFront uses an equivalent policy for
+    # static applications so HTML, API, and error responses stay consistent.
+    security_content_security_policy: str = (
+        "default-src 'self'; base-uri 'self'; form-action 'self'; "
+        "frame-ancestors 'none'; object-src 'none'; script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+        "connect-src 'self'; font-src 'self' data:"
+    )
+    security_hsts_max_age_seconds: int = Field(default=15_552_000, ge=0)
+    security_max_request_body_bytes: int = Field(default=5 * 1024 * 1024, ge=1)
+    security_api_rate_limit_max_requests: int = Field(default=300, ge=1)
+    security_api_rate_limit_window_seconds: int = Field(default=60, ge=1)
+    # Set only in ECS. CloudFront adds this random header to API origin
+    # requests, preventing a caller from bypassing CDN controls through the ALB.
+    security_edge_shared_secret: str = ""
 
     @property
     def is_local_or_test(self) -> bool:
@@ -236,6 +259,54 @@ class Settings(BaseSettings):
         if errors:
             raise RuntimeError(
                 "Invalid browser auth configuration: " + "; ".join(errors)
+            )
+
+    def http_security_config_errors(self) -> list[str]:
+        if self.is_local_or_test:
+            return []
+        if not self.security_edge_shared_secret:
+            return ["SECURITY_EDGE_SHARED_SECRET is required"]
+        return []
+
+    def validate_http_security(self) -> None:
+        errors = self.http_security_config_errors()
+        if errors:
+            raise RuntimeError(
+                "Invalid HTTP security configuration: " + "; ".join(errors)
+            )
+
+    def notification_security_config_errors(self) -> list[str]:
+        if self.notification_channel_mode != "live":
+            return []
+        configured = (
+            self.twilio_account_sid,
+            self.twilio_auth_token,
+            self.twilio_from,
+            self.notification_twilio_status_callback_url,
+        )
+        if not any(configured):
+            return []
+        errors = (
+            [
+                "Twilio live delivery requires account SID, auth token, sender, "
+                "and HTTPS status callback URL"
+            ]
+            if not all(configured)
+            else []
+        )
+        callback = urlsplit(self.notification_twilio_status_callback_url)
+        if (
+            self.notification_twilio_status_callback_url
+            and (callback.scheme != "https" or not callback.hostname)
+        ):
+            errors.append("Twilio status callback URL must use HTTPS")
+        return errors
+
+    def validate_notification_security(self) -> None:
+        errors = self.notification_security_config_errors()
+        if errors:
+            raise RuntimeError(
+                "Invalid notification security configuration: " + "; ".join(errors)
             )
 
     @property

@@ -2,6 +2,8 @@ import { createHmac } from "node:crypto";
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { resetAuthTestAccounts } from "./global-setup";
+
 const roleCases = [
   {
     role: "SUPER_ADMIN",
@@ -90,6 +92,10 @@ async function signIn(page: Page, email: string, password: string) {
 
 test.describe("staff browser authentication and role workspaces", () => {
   test.describe.configure({ mode: "serial" });
+
+  test.beforeEach(() => {
+    process.env.HMS_E2E_ACCOUNTS_JSON = JSON.stringify(resetAuthTestAccounts());
+  });
 
   for (const [index, account] of roleCases.entries()) {
     test(`${account.role} completes first login, role navigation, refresh login, and logout`, async ({ page, context }) => {

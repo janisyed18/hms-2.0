@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, cast
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
+import tzdata  # type: ignore[import-untyped]
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy import desc, false, func, or_, select
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import Select
@@ -46,8 +49,15 @@ from hms_backend.app.api.schemas import (
     DashboardRead,
     DashboardRetestRead,
     DashboardReviewRead,
+    InspectionAppointmentChangeRequestApproval,
+    InspectionAppointmentChangeRequestCreate,
+    InspectionAppointmentChangeRequestRead,
+    InspectionAppointmentRead,
     InspectionAssetSummary,
+    InspectionAvailabilityListResponse,
+    InspectionAvailabilityRead,
     InspectionBookingApproval,
+    InspectionBookingCancelRequest,
     InspectionBookingCreate,
     InspectionBookingListResponse,
     InspectionBookingRead,
@@ -117,9 +127,17 @@ from hms_backend.app.modules.customers.models import (
 from hms_backend.app.modules.identity.models import AccountStatus, User
 from hms_backend.app.modules.inspections.models import (
     Inspection,
+    InspectionAllocationState,
+    InspectionAppointment,
+    InspectionAppointmentChangeRequest,
+    InspectionAppointmentRevision,
+    InspectionAppointmentStatus,
+    InspectionAvailabilityQuote,
     InspectionBooking,
     InspectionBookingAsset,
     InspectionBookingStatus,
+    InspectionChangeRequestStatus,
+    InspectionResourceAllocation,
     InspectionStatus,
     PressureTestResult,
 )
@@ -253,9 +271,7 @@ def _reporting_window(
         )
 
     start = (
-        start_at.astimezone(UTC)
-        if start_at.tzinfo
-        else start_at.replace(tzinfo=UTC)
+        start_at.astimezone(UTC) if start_at.tzinfo else start_at.replace(tzinfo=UTC)
     )
     end = end_at.astimezone(UTC) if end_at.tzinfo else end_at.replace(tzinfo=UTC)
     if start >= end:
@@ -676,8 +692,6 @@ async def create_customer(
         notes=_clean_optional(payload.notes),
         retest_enabled=payload.retest_enabled,
         default_retest_months=payload.default_retest_months,
-        ppe_requirements=list(payload.ppe_requirements),
-        additional_requirements=list(payload.additional_requirements),
     )
     session.add(customer)
     await record_create(
@@ -693,27 +707,19 @@ async def create_customer(
             site_contact_name=_clean_optional(location_payload.site_contact_name),
             site_contact_mobile=_clean_optional(location_payload.site_contact_mobile),
             site_contact_email=_clean_optional(location_payload.site_contact_email),
+            ppe_requirements=list(location_payload.ppe_requirements or []),
+            additional_requirements=list(
+                location_payload.additional_requirements or []
+            ),
+            **_location_scheduling_values(location_payload),
         )
+        _validate_location_scheduling(location)
         session.add(location)
         await record_create(
             session,
             location,
             actor_id=principal.user_id,
             action="customer_location.created",
-        )
-    if payload.phone is not None or payload.email is not None:
-        contact = CustomerContact(
-            customer=customer,
-            name=customer.name,
-            email=_clean_optional(payload.email),
-            phone=_clean_optional(payload.phone),
-        )
-        session.add(contact)
-        await record_create(
-            session,
-            contact,
-            actor_id=principal.user_id,
-            action="customer_contact.created",
         )
     await session.commit()
     loaded = await _get_visible_customer_or_404(session, customer.id, principal)
@@ -782,7 +788,11 @@ async def create_customer_location(
         site_contact_name=_clean_optional(payload.site_contact_name),
         site_contact_mobile=_clean_optional(payload.site_contact_mobile),
         site_contact_email=_clean_optional(payload.site_contact_email),
+        ppe_requirements=list(payload.ppe_requirements),
+        additional_requirements=list(payload.additional_requirements),
+        **_location_scheduling_values(payload),
     )
+    _validate_location_scheduling(location)
     session.add(location)
     await record_create(
         session,
@@ -832,6 +842,14 @@ async def update_customer_location(
         location.site_contact_mobile = _clean_optional(payload.site_contact_mobile)
     if "site_contact_email" in updates:
         location.site_contact_email = _clean_optional(payload.site_contact_email)
+    if "ppe_requirements" in updates and payload.ppe_requirements is not None:
+        location.ppe_requirements = list(payload.ppe_requirements)
+    if (
+        "additional_requirements" in updates
+        and payload.additional_requirements is not None
+    ):
+        location.additional_requirements = list(payload.additional_requirements)
+    _update_location_scheduling(location, payload, set(updates))
 
     await record_update(
         session,
@@ -999,14 +1017,6 @@ async def update_customer(
         customer.retest_enabled = payload.retest_enabled
     if "default_retest_months" in updates:
         customer.default_retest_months = payload.default_retest_months
-    if "ppe_requirements" in updates and payload.ppe_requirements is not None:
-        customer.ppe_requirements = list(payload.ppe_requirements)
-    if (
-        "additional_requirements" in updates
-        and payload.additional_requirements is not None
-    ):
-        customer.additional_requirements = list(payload.additional_requirements)
-
     await record_update(
         session,
         customer,
@@ -1034,7 +1044,13 @@ async def update_customer(
                     site_contact_email=_clean_optional(
                         location_payload.site_contact_email
                     ),
+                    ppe_requirements=list(location_payload.ppe_requirements or []),
+                    additional_requirements=list(
+                        location_payload.additional_requirements or []
+                    ),
+                    **_location_scheduling_values(location_payload),
                 )
+                _validate_location_scheduling(new_location)
                 session.add(new_location)
                 await record_create(
                     session,
@@ -1060,46 +1076,25 @@ async def update_customer(
             existing_location.site_contact_email = _clean_optional(
                 location_payload.site_contact_email
             )
+            if location_payload.ppe_requirements is not None:
+                existing_location.ppe_requirements = list(
+                    location_payload.ppe_requirements
+                )
+            if location_payload.additional_requirements is not None:
+                existing_location.additional_requirements = list(
+                    location_payload.additional_requirements
+                )
+            _update_location_scheduling(
+                existing_location,
+                location_payload,
+                location_payload.model_fields_set,
+            )
             await record_update(
                 session,
                 existing_location,
                 actor_id=principal.user_id,
                 action="customer_location.updated",
                 before=location_before,
-            )
-    if "phone" in updates or "email" in updates:
-        contacts = sorted(
-            (contact for contact in customer.contacts if contact.deleted_at is None),
-            key=lambda contact: (contact.created_at, contact.id),
-        )
-        if contacts:
-            contact = contacts[0]
-            contact_before = contact.to_audit_dict()
-            contact.name = customer.name
-            if "phone" in updates:
-                contact.phone = _clean_optional(payload.phone)
-            if "email" in updates:
-                contact.email = _clean_optional(payload.email)
-            await record_update(
-                session,
-                contact,
-                actor_id=principal.user_id,
-                action="customer_contact.updated",
-                before=contact_before,
-            )
-        elif payload.phone is not None or payload.email is not None:
-            contact = CustomerContact(
-                customer=customer,
-                name=customer.name,
-                email=_clean_optional(payload.email),
-                phone=_clean_optional(payload.phone),
-            )
-            session.add(contact)
-            await record_create(
-                session,
-                contact,
-                actor_id=principal.user_id,
-                action="customer_contact.created",
             )
     await session.commit()
     _set_etag(response, customer.version)
@@ -1897,6 +1892,52 @@ async def list_inspection_bookings(
     )
 
 
+@router.get(
+    "/inspection-availability", response_model=InspectionAvailabilityListResponse
+)
+async def list_inspection_availability(
+    session: SessionDep,
+    principal: PrincipalDep,
+    customer_id: str,
+    location_id: str,
+    local_date: date,
+    duration_minutes: Annotated[int, Query(ge=30, le=480)] = 60,
+) -> InspectionAvailabilityListResponse:
+    """Return private, short-lived booking quotes rather than inspector calendars."""
+    _require_inspection_booking(principal)
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    location = await _get_visible_customer_location_or_404(
+        session, customer.id, location_id, principal
+    )
+    duration = timedelta(minutes=duration_minutes)
+    quotes: list[InspectionAvailabilityRead] = []
+    slots = _location_availability_slots(location, local_date, duration)
+    for cursor, slot_end in slots:
+        if cursor >= utc_now():
+            candidates = await _available_inspector_ids(session, cursor, slot_end)
+            if candidates:
+                quote = InspectionAvailabilityQuote(
+                    customer_id=customer.id,
+                    location_id=location_id,
+                    starts_at=cursor,
+                    ends_at=slot_end,
+                    candidate_inspector_ids=candidates,
+                    expires_at=utc_now() + timedelta(minutes=15),
+                )
+                session.add(quote)
+                await session.flush()
+                quotes.append(
+                    InspectionAvailabilityRead(
+                        quote_id=quote.id,
+                        starts_at=quote.starts_at,
+                        ends_at=quote.ends_at,
+                        expires_at=quote.expires_at,
+                    )
+                )
+    await session.commit()
+    return InspectionAvailabilityListResponse(items=quotes)
+
+
 @router.post(
     "/inspection-bookings",
     response_model=InspectionBookingRead,
@@ -1937,45 +1978,43 @@ async def create_inspection_booking(
             detail="All booking assets must belong to the selected location",
         )
 
-    requested_by_customer = is_customer_scoped(principal)
-    if requested_by_customer and payload.inspector_user_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Customers cannot assign an inspector",
-        )
-    if not requested_by_customer and not payload.inspector_user_id:
+    quote = await session.get(
+        InspectionAvailabilityQuote, payload.availability_quote_id
+    )
+    if (
+        quote is None
+        or quote.customer_id != customer.id
+        or quote.location_id != location.id
+        or quote.consumed_at is not None
+        or _as_utc(quote.expires_at) <= utc_now()
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="An active inspector is required for an approved booking",
+            detail="The selected availability is no longer valid. Choose another time.",
         )
-    inspector = (
-        await _get_active_inspector_or_422(session, payload.inspector_user_id)
-        if payload.inspector_user_id
-        else None
-    )
+    scheduled_at = _as_utc(quote.starts_at)
+    scheduled_end_at = _as_utc(quote.ends_at)
     booking = InspectionBooking(
         customer=customer,
         location=location,
-        scheduled_at=payload.scheduled_at,
+        scheduled_at=scheduled_at,
+        scheduled_end_at=scheduled_end_at,
+        availability_quote=quote,
         additional_information=_clean_optional(payload.additional_information),
         status=(
             InspectionBookingStatus.PENDING_APPROVAL.value
-            if requested_by_customer
-            else InspectionBookingStatus.APPROVED.value
         ),
         requested_by_user_id=principal.user_id,
-        inspector_user_id=inspector.id if inspector else None,
-        reviewed_by_user_id=None if requested_by_customer else principal.user_id,
-        reviewed_at=None if requested_by_customer else utc_now(),
+        inspector_user_id=None,
+        reviewed_by_user_id=None,
+        reviewed_at=None,
     )
     session.add(booking)
     await record_create(
         session,
         booking,
         actor_id=principal.user_id,
-        action="inspection_booking.requested"
-        if requested_by_customer
-        else "inspection_booking.created",
+        action="inspection_booking.requested",
     )
     for asset_id in asset_ids:
         booking_asset = InspectionBookingAsset(
@@ -1989,18 +2028,14 @@ async def create_inspection_booking(
             action="inspection_booking_asset.created",
         )
 
-    if requested_by_customer:
-        await emit_event(
-            session,
-            category=NotificationCategory.INSPECTION_BOOKING_REQUESTED,
-            aggregate_type="inspection_booking",
-            aggregate_id=booking.id,
-            payload=_inspection_booking_event_payload(
-                booking, asset_count=len(asset_ids)
-            ),
-        )
-    if not requested_by_customer:
-        await _create_booking_inspections(session, booking, actor_id=principal.user_id)
+    quote.consumed_at = utc_now()
+    await emit_event(
+        session,
+        category=NotificationCategory.INSPECTION_BOOKING_REQUESTED,
+        aggregate_type="inspection_booking",
+        aggregate_id=booking.id,
+        payload=_inspection_booking_event_payload(booking, asset_count=len(asset_ids)),
+    )
     await session.commit()
     loaded = await _get_visible_inspection_booking_or_404(
         session, booking.id, principal
@@ -2033,6 +2068,7 @@ async def approve_inspection_booking(
             detail="Only pending inspection bookings can be approved",
         )
     inspector = await _get_active_inspector_or_422(session, payload.inspector_user_id)
+    await _require_booking_inspector_candidate(booking, inspector.id)
     before = booking.to_audit_dict()
     booking.status = InspectionBookingStatus.APPROVED.value
     booking.inspector_user_id = inspector.id
@@ -2044,6 +2080,13 @@ async def approve_inspection_booking(
         actor_id=principal.user_id,
         action="inspection_booking.approved",
         before=before,
+    )
+    await _confirm_booking_appointment(
+        session,
+        booking,
+        inspector=inspector,
+        actor_id=principal.user_id,
+        change_reason="Booking approved",
     )
     await _create_booking_inspections(session, booking, actor_id=principal.user_id)
     await emit_event(
@@ -2116,6 +2159,267 @@ async def reject_inspection_booking(
     return _inspection_booking_read(loaded)
 
 
+@router.post(
+    "/inspection-bookings/{booking_id}/cancel",
+    response_model=InspectionBookingRead,
+)
+async def cancel_inspection_booking(
+    booking_id: str,
+    payload: InspectionBookingCancelRequest,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionBookingRead:
+    _require_inspection_booking(principal)
+    booking = await _get_visible_inspection_booking_or_404(
+        session, booking_id, principal
+    )
+    if booking.status not in {
+        InspectionBookingStatus.PENDING_APPROVAL.value,
+        InspectionBookingStatus.APPROVED.value,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only pending or approved inspection bookings can be cancelled",
+        )
+    if (
+        booking.appointment is not None
+        and booking.appointment.status != InspectionAppointmentStatus.CONFIRMED.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only confirmed inspection appointments can be cancelled",
+        )
+    before = booking.to_audit_dict()
+    booking.status = InspectionBookingStatus.CANCELLED.value
+    await record_update(
+        session,
+        booking,
+        actor_id=principal.user_id,
+        action="inspection_booking.cancelled",
+        before=before,
+    )
+    await _cancel_pending_booking_change_requests(
+        session, booking, actor_id=principal.user_id
+    )
+    if booking.appointment is not None:
+        await _cancel_appointment(
+            session,
+            booking.appointment,
+            actor_id=principal.user_id,
+            reason=_clean_optional(payload.reason) or "Cancelled",
+        )
+    await emit_event(
+        session,
+        category=NotificationCategory.INSPECTION_BOOKING_CANCELLED,
+        aggregate_type="inspection_booking",
+        aggregate_id=booking.id,
+        payload=_inspection_booking_event_payload(
+            booking,
+            asset_count=len(booking.assets),
+            reason=_clean_optional(payload.reason) or "Cancelled",
+        ),
+    )
+    await session.commit()
+    loaded = await _get_visible_inspection_booking_or_404(
+        session, booking.id, principal
+    )
+    return _inspection_booking_read(loaded)
+
+
+@router.get("/inspection-bookings/{booking_id}", response_model=InspectionBookingRead)
+async def get_inspection_booking(
+    booking_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionBookingRead:
+    _require_asset_read(principal)
+    booking = await _get_visible_inspection_booking_or_404(
+        session, booking_id, principal
+    )
+    return _inspection_booking_read(booking)
+
+
+@router.post(
+    "/inspection-bookings/{booking_id}/change-requests",
+    response_model=InspectionAppointmentChangeRequestRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_inspection_booking_change_request(
+    booking_id: str,
+    payload: InspectionAppointmentChangeRequestCreate,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionAppointmentChangeRequestRead:
+    _require_inspection_booking(principal)
+    booking = await _get_visible_inspection_booking_or_404(
+        session, booking_id, principal
+    )
+    if (
+        booking.status != InspectionBookingStatus.APPROVED.value
+        or booking.appointment is None
+        or booking.appointment.status != InspectionAppointmentStatus.CONFIRMED.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a confirmed inspection booking can be rescheduled",
+        )
+    quote = await _get_valid_availability_quote(
+        session, booking, payload.availability_quote_id
+    )
+    customer_request = is_customer_scoped(principal)
+    if customer_request and (
+        payload.inspector_user_id is not None or payload.emergency
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Customers can request a time but cannot assign or force a reschedule"
+            ),
+        )
+    proposed_inspector: User | None = None
+    if payload.inspector_user_id:
+        proposed_inspector = await _get_active_inspector_or_422(
+            session, payload.inspector_user_id
+        )
+        if proposed_inspector.id not in quote.candidate_inspector_ids:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The inspector is no longer available for the selected time",
+            )
+    if not customer_request and proposed_inspector is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Admin reschedule proposals require an active inspector",
+        )
+    change = InspectionAppointmentChangeRequest(
+        booking=booking,
+        appointment=booking.appointment,
+        availability_quote=quote,
+        availability_quote_id=quote.id,
+        requested_by_user_id=principal.user_id,
+        proposed_inspector_user_id=(
+            proposed_inspector.id if proposed_inspector is not None else None
+        ),
+        status=(
+            InspectionChangeRequestStatus.PENDING_ADMIN_APPROVAL.value
+            if customer_request
+            else InspectionChangeRequestStatus.PENDING_CUSTOMER_CONFIRMATION.value
+        ),
+        reason=_clean_optional(payload.reason),
+        emergency=payload.emergency,
+    )
+    session.add(change)
+    await record_create(
+        session,
+        change,
+        actor_id=principal.user_id,
+        action="inspection_booking_change.requested",
+    )
+    if payload.emergency:
+        await _apply_appointment_change(
+            session,
+            booking,
+            change,
+            inspector=proposed_inspector,
+            actor_id=principal.user_id,
+        )
+    else:
+        await emit_event(
+            session,
+            category=(
+                NotificationCategory.INSPECTION_BOOKING_RESCHEDULE_REQUESTED
+                if customer_request
+                else NotificationCategory.INSPECTION_BOOKING_RESCHEDULE_PROPOSED
+            ),
+            aggregate_type="inspection_booking",
+            aggregate_id=booking.id,
+            payload=_inspection_booking_event_payload(
+                booking,
+                asset_count=len(booking.assets),
+                reason=change.reason,
+            ),
+        )
+    await session.commit()
+    return _inspection_booking_change_request_read(change)
+
+
+@router.post(
+    "/inspection-booking-change-requests/{change_id}/approve",
+    response_model=InspectionAppointmentChangeRequestRead,
+)
+async def approve_inspection_booking_change_request(
+    change_id: str,
+    payload: InspectionAppointmentChangeRequestApproval,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionAppointmentChangeRequestRead:
+    _require_inspection_booking(principal)
+    if is_customer_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin can approve customer reschedule requests",
+        )
+    change = await _get_visible_change_request_or_404(session, change_id, principal)
+    if change.status != InspectionChangeRequestStatus.PENDING_ADMIN_APPROVAL.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only customer reschedule requests can be approved",
+        )
+    inspector = await _get_active_inspector_or_422(session, payload.inspector_user_id)
+    await _apply_appointment_change(
+        session,
+        change.booking,
+        change,
+        inspector=inspector,
+        actor_id=principal.user_id,
+    )
+    await session.commit()
+    return _inspection_booking_change_request_read(change)
+
+
+@router.post(
+    "/inspection-booking-change-requests/{change_id}/confirm",
+    response_model=InspectionAppointmentChangeRequestRead,
+)
+async def confirm_inspection_booking_change_request(
+    change_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionAppointmentChangeRequestRead:
+    _require_inspection_booking(principal)
+    if not is_customer_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the customer can confirm an Admin reschedule proposal",
+        )
+    change = await _get_visible_change_request_or_404(session, change_id, principal)
+    if (
+        change.status
+        != InspectionChangeRequestStatus.PENDING_CUSTOMER_CONFIRMATION.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This reschedule proposal cannot be confirmed",
+        )
+    if change.proposed_inspector_user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The reschedule proposal does not have an assigned inspector",
+        )
+    inspector = await _get_active_inspector_or_422(
+        session, change.proposed_inspector_user_id
+    )
+    await _apply_appointment_change(
+        session,
+        change.booking,
+        change,
+        inspector=inspector,
+        actor_id=principal.user_id,
+    )
+    await session.commit()
+    return _inspection_booking_change_request_read(change)
+
+
 @router.get("/inspections/{inspection_id}", response_model=InspectionRead)
 async def get_inspection(
     inspection_id: str,
@@ -2184,6 +2488,7 @@ async def update_inspection(
 ) -> InspectionRead:
     _require_inspection_write(principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    await _require_active_inspection_booking(session, inspection)
     if inspection.status != InspectionStatus.DRAFT.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2222,6 +2527,7 @@ async def submit_inspection(
 ) -> InspectionRead:
     _require_inspection_write(principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    await _require_active_inspection_booking(session, inspection)
     if inspection.status != InspectionStatus.DRAFT.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2264,6 +2570,7 @@ async def approve_inspection(
 ) -> InspectionRead:
     _require_certificate_approve(principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    await _require_active_inspection_booking(session, inspection)
     if inspection.status != InspectionStatus.SUBMITTED.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2298,6 +2605,10 @@ async def approve_inspection(
             aggregate_id=inspection.id,
             payload={**payload, "reviewer_user_id": principal.user_id},
         )
+    if inspection.booking_id:
+        await _complete_booking_appointment_if_ready(
+            session, inspection.booking_id, actor_id=principal.user_id
+        )
     await session.commit()
     return _inspection_read(inspection)
 
@@ -2311,6 +2622,7 @@ async def reject_inspection(
 ) -> InspectionRead:
     _require_certificate_approve(principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    await _require_active_inspection_booking(session, inspection)
     if inspection.status != InspectionStatus.SUBMITTED.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2368,6 +2680,7 @@ def _inspection_booking_event_payload(
         "scheduled_at": booking.scheduled_at.isoformat(),
         "asset_count": asset_count,
         "requested_by_user_id": booking.requested_by_user_id,
+        "inspector_user_id": booking.inspector_user_id,
         "reason": reason or "",
         "link": settings.public_base_url.rstrip("/"),
     }
@@ -2386,6 +2699,7 @@ async def issue_certificate(
 ) -> CertificateRead:
     _require_certificate_approve(principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    await _require_active_inspection_booking(session, inspection)
     if inspection.certificate is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -3008,6 +3322,12 @@ def _inspection_booking_statement() -> Select[tuple[InspectionBooking]]:
             selectinload(InspectionBooking.assets).selectinload(
                 InspectionBookingAsset.asset
             ),
+            selectinload(InspectionBooking.appointment)
+            .selectinload(InspectionAppointment.revisions)
+            .selectinload(InspectionAppointmentRevision.allocations),
+            selectinload(InspectionBooking.change_requests).selectinload(
+                InspectionAppointmentChangeRequest.availability_quote
+            ),
         )
         .where(
             InspectionBooking.deleted_at.is_(None),
@@ -3095,7 +3415,164 @@ def _customer_location_read(location: CustomerLocation) -> CustomerLocationRead:
         site_contact_name=location.site_contact_name,
         site_contact_mobile=location.site_contact_mobile,
         site_contact_email=location.site_contact_email,
+        ppe_requirements=cast(list[PpeRequirement], location.ppe_requirements),
+        additional_requirements=cast(
+            list[AdditionalRequirement], location.additional_requirements
+        ),
+        scheduling_timezone=location.scheduling_timezone,
+        scheduling_open_time=location.scheduling_open_time,
+        scheduling_close_time=location.scheduling_close_time,
+        scheduling_weekdays=location.scheduling_weekdays,
+        scheduling_blackout_dates=[
+            date.fromisoformat(value) for value in location.scheduling_blackout_dates
+        ],
     )
+
+
+def _location_scheduling_values(payload: Any) -> dict[str, Any]:
+    return {
+        "scheduling_timezone": payload.scheduling_timezone,
+        "scheduling_open_time": payload.scheduling_open_time,
+        "scheduling_close_time": payload.scheduling_close_time,
+        "scheduling_weekdays": list(payload.scheduling_weekdays),
+        "scheduling_blackout_dates": [
+            blackout_date.isoformat()
+            for blackout_date in payload.scheduling_blackout_dates
+        ],
+    }
+
+
+def _update_location_scheduling(
+    location: CustomerLocation,
+    payload: Any,
+    updated_fields: set[str],
+) -> None:
+    for field_name in (
+        "scheduling_timezone",
+        "scheduling_open_time",
+        "scheduling_close_time",
+        "scheduling_weekdays",
+        "scheduling_blackout_dates",
+    ):
+        if field_name not in updated_fields:
+            continue
+        value = getattr(payload, field_name)
+        if value is None:
+            continue
+        setattr(
+            location,
+            field_name,
+            [item.isoformat() for item in value]
+            if field_name == "scheduling_blackout_dates"
+            else list(value)
+            if field_name == "scheduling_weekdays"
+            else value,
+        )
+    _validate_location_scheduling(location)
+
+
+def _validate_location_scheduling(location: CustomerLocation) -> None:
+    try:
+        opening = time.fromisoformat(location.scheduling_open_time)
+        closing = time.fromisoformat(location.scheduling_close_time)
+        ZoneInfo(location.scheduling_timezone)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Location scheduling configuration is invalid",
+        ) from exc
+    if opening >= closing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Location closing time must be later than opening time",
+        )
+
+
+def _location_availability_slots(
+    location: CustomerLocation,
+    local_date: date,
+    duration: timedelta,
+) -> list[tuple[datetime, datetime]]:
+    _validate_location_scheduling(location)
+    if (
+        local_date.weekday() not in location.scheduling_weekdays
+        or local_date.isoformat() in location.scheduling_blackout_dates
+    ):
+        return []
+    timezone = ZoneInfo(location.scheduling_timezone)
+    opening = datetime.combine(
+        local_date,
+        time.fromisoformat(location.scheduling_open_time),
+        tzinfo=timezone,
+    )
+    closing = datetime.combine(
+        local_date,
+        time.fromisoformat(location.scheduling_close_time),
+        tzinfo=timezone,
+    )
+    slots: list[tuple[datetime, datetime]] = []
+    cursor = opening
+    while cursor + duration <= closing:
+        starts_at = cursor.astimezone(UTC)
+        ends_at = (cursor + duration).astimezone(UTC)
+        if _is_unambiguous_local_interval(cursor, cursor + duration, timezone):
+            slots.append((starts_at, ends_at))
+        cursor += duration
+    return slots
+
+
+def _is_unambiguous_local_interval(
+    start: datetime, end: datetime, timezone: ZoneInfo
+) -> bool:
+    return (
+        _is_unambiguous_local_time(start, timezone)
+        and _is_unambiguous_local_time(end, timezone)
+        and start.utcoffset() == end.utcoffset()
+    )
+
+
+def _is_unambiguous_local_time(value: datetime, timezone: ZoneInfo) -> bool:
+    wall_time = value.replace(tzinfo=None)
+    candidates = [
+        wall_time.replace(tzinfo=timezone, fold=fold)
+        for fold in (0, 1)
+    ]
+    if candidates[0].utcoffset() != candidates[1].utcoffset():
+        return False
+    return all(
+        candidate.astimezone(UTC).astimezone(timezone).replace(tzinfo=None)
+        == wall_time
+        for candidate in candidates
+    )
+
+
+def _appointment_time_snapshot(
+    location: CustomerLocation, starts_at: datetime, ends_at: datetime
+) -> dict[str, str]:
+    timezone = ZoneInfo(location.scheduling_timezone)
+    start_local = _as_utc(starts_at).astimezone(timezone)
+    end_local = _as_utc(ends_at).astimezone(timezone)
+    return {
+        "timezone_id": timezone.key,
+        "local_start_snapshot": start_local.replace(tzinfo=None).isoformat(
+            timespec="seconds"
+        ),
+        "local_end_snapshot": end_local.replace(tzinfo=None).isoformat(
+            timespec="seconds"
+        ),
+        "utc_offset_start": _utc_offset_text(start_local),
+        "utc_offset_end": _utc_offset_text(end_local),
+        "tzdata_version": tzdata.IANA_VERSION,
+    }
+
+
+def _utc_offset_text(value: datetime) -> str:
+    offset = value.utcoffset()
+    if offset is None:
+        raise RuntimeError("Appointment timestamp must include a UTC offset")
+    sign = "+" if offset >= timedelta() else "-"
+    total_minutes = abs(int(offset.total_seconds() // 60))
+    return f"{sign}{total_minutes // 60:02d}:{total_minutes % 60:02d}"
 
 
 def _customer_contact_read(contact: CustomerContact) -> CustomerContactRead:
@@ -3125,10 +3602,6 @@ def _customer_read(customer: Customer) -> CustomerRead:
         notes=customer.notes,
         retest_enabled=customer.retest_enabled,
         default_retest_months=customer.default_retest_months,
-        ppe_requirements=cast("list[PpeRequirement]", customer.ppe_requirements),
-        additional_requirements=cast(
-            "list[AdditionalRequirement]", customer.additional_requirements
-        ),
         locations=[_customer_location_read(location) for location in locations],
         contacts=[_customer_contact_read(contact) for contact in contacts],
     )
@@ -3714,6 +4187,616 @@ def _inspection_read(inspection: Inspection) -> InspectionRead:
     )
 
 
+def _as_utc(value: datetime) -> datetime:
+    return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+async def _available_inspector_ids(
+    session: AsyncSession,
+    starts_at: datetime,
+    ends_at: datetime,
+) -> list[str]:
+    inspectors = (
+        await session.scalars(
+            select(User.id).where(
+                User.role == "INSPECTOR",
+                User.account_status == AccountStatus.ACTIVE.value,
+                User.deleted_at.is_(None),
+            )
+        )
+    ).all()
+    if not inspectors:
+        return []
+    conflicts = (
+        await session.scalars(
+            select(InspectionResourceAllocation.resource_id).where(
+                InspectionResourceAllocation.resource_type == "INSPECTOR",
+                InspectionResourceAllocation.state
+                == InspectionAllocationState.CONFIRMED.value,
+                InspectionResourceAllocation.starts_at < ends_at,
+                InspectionResourceAllocation.ends_at > starts_at,
+                InspectionResourceAllocation.deleted_at.is_(None),
+            )
+        )
+    ).all()
+    conflicting_ids = set(conflicts)
+    return [
+        inspector_id
+        for inspector_id in inspectors
+        if inspector_id not in conflicting_ids
+    ]
+
+
+async def _assert_resource_available(
+    session: AsyncSession,
+    resource_type: str,
+    resource_id: str,
+    starts_at: datetime,
+    ends_at: datetime,
+    exclude_revision_id: str | None = None,
+) -> None:
+    statement = (
+        select(InspectionResourceAllocation.id)
+        .where(
+            InspectionResourceAllocation.resource_type == resource_type,
+            InspectionResourceAllocation.resource_id == resource_id,
+            InspectionResourceAllocation.state
+            == InspectionAllocationState.CONFIRMED.value,
+            InspectionResourceAllocation.starts_at < ends_at,
+            InspectionResourceAllocation.ends_at > starts_at,
+            InspectionResourceAllocation.deleted_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if exclude_revision_id is not None:
+        statement = statement.where(
+            InspectionResourceAllocation.revision_id != exclude_revision_id
+        )
+    conflict = await session.scalar(statement)
+    if conflict is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "The inspector is no longer available for the selected time"
+                if resource_type == "INSPECTOR"
+                else "An asset is no longer available for the selected time"
+            ),
+        )
+
+
+async def _assert_booking_resources_available(
+    session: AsyncSession,
+    booking: InspectionBooking,
+    inspector_id: str,
+    starts_at: datetime,
+    ends_at: datetime,
+    exclude_revision_id: str | None = None,
+) -> None:
+    await _assert_resource_available(
+        session,
+        "INSPECTOR",
+        inspector_id,
+        starts_at,
+        ends_at,
+        exclude_revision_id,
+    )
+    for booking_asset in booking.assets:
+        await _assert_resource_available(
+            session,
+            "ASSET",
+            booking_asset.asset_id,
+            starts_at,
+            ends_at,
+            exclude_revision_id,
+        )
+
+
+async def _require_booking_inspector_candidate(
+    booking: InspectionBooking,
+    inspector_id: str,
+) -> None:
+    if booking.availability_quote is None:
+        return
+    if inspector_id not in booking.availability_quote.candidate_inspector_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The inspector was not available for the requested time",
+        )
+
+
+async def _confirm_booking_appointment(
+    session: AsyncSession,
+    booking: InspectionBooking,
+    *,
+    inspector: User | None,
+    actor_id: str,
+    change_reason: str,
+) -> InspectionAppointment:
+    if inspector is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="An active inspector is required for an approved booking",
+        )
+    if booking.scheduled_end_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The booking does not have an end time",
+        )
+    await _require_booking_inspector_candidate(booking, inspector.id)
+    starts_at = _as_utc(booking.scheduled_at)
+    ends_at = _as_utc(booking.scheduled_end_at)
+    await _assert_booking_resources_available(
+        session, booking, inspector.id, starts_at, ends_at
+    )
+    appointment = InspectionAppointment(
+        booking=booking,
+        customer_id=booking.customer_id,
+        location_id=booking.location_id,
+        status=InspectionAppointmentStatus.CONFIRMED.value,
+        current_revision_number=1,
+    )
+    session.add(appointment)
+    await record_create(
+        session,
+        appointment,
+        actor_id=actor_id,
+        action="inspection_appointment.confirmed",
+    )
+    revision = InspectionAppointmentRevision(
+        appointment=appointment,
+        revision_number=1,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        **_appointment_time_snapshot(booking.location, starts_at, ends_at),
+        inspector_user_id=inspector.id,
+        change_reason=change_reason,
+        created_by_user_id=actor_id,
+    )
+    session.add(revision)
+    await record_create(
+        session,
+        revision,
+        actor_id=actor_id,
+        action="inspection_appointment_revision.created",
+    )
+    await _create_revision_allocations(
+        session,
+        revision,
+        booking=booking,
+        inspector_id=inspector.id,
+        actor_id=actor_id,
+    )
+    return appointment
+
+
+async def _create_revision_allocations(
+    session: AsyncSession,
+    revision: InspectionAppointmentRevision,
+    *,
+    booking: InspectionBooking,
+    inspector_id: str,
+    actor_id: str,
+) -> None:
+    try:
+        for resource_type, resource_id in [
+            ("INSPECTOR", inspector_id),
+            *(("ASSET", booking_asset.asset_id) for booking_asset in booking.assets),
+        ]:
+            allocation = InspectionResourceAllocation(
+                revision=revision,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                starts_at=revision.starts_at,
+                ends_at=revision.ends_at,
+                state=InspectionAllocationState.CONFIRMED.value,
+            )
+            session.add(allocation)
+            await record_create(
+                session,
+                allocation,
+                actor_id=actor_id,
+                action="inspection_resource_allocation.confirmed",
+            )
+    except (IntegrityError, DBAPIError) as exc:
+        await session.rollback()
+        if not _is_allocation_conflict(exc.orig or exc):
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A scheduling conflict occurred. Refresh availability and try again."
+            ),
+        ) from exc
+
+
+def _is_allocation_conflict(error: BaseException) -> bool:
+    message = str(error).lower()
+    return (
+        "ex_inspection_resource_allocation_overlap" in message
+        or "deadlock detected" in message
+    )
+
+
+async def _cancel_appointment(
+    session: AsyncSession,
+    appointment: InspectionAppointment,
+    *,
+    actor_id: str,
+    reason: str,
+) -> None:
+    if appointment.status == InspectionAppointmentStatus.CANCELLED.value:
+        return
+    before = appointment.to_audit_dict()
+    appointment.status = InspectionAppointmentStatus.CANCELLED.value
+    appointment.cancelled_reason = reason
+    appointment.cancelled_by_user_id = actor_id
+    await record_update(
+        session,
+        appointment,
+        actor_id=actor_id,
+        action="inspection_appointment.cancelled",
+        before=before,
+    )
+    for revision in appointment.revisions:
+        for allocation in revision.allocations:
+            if allocation.state != InspectionAllocationState.CONFIRMED.value:
+                continue
+            allocation_before = allocation.to_audit_dict()
+            allocation.state = InspectionAllocationState.RELEASED.value
+            await record_update(
+                session,
+                allocation,
+                actor_id=actor_id,
+                action="inspection_resource_allocation.released",
+                before=allocation_before,
+            )
+
+
+async def _cancel_pending_booking_change_requests(
+    session: AsyncSession,
+    booking: InspectionBooking,
+    *,
+    actor_id: str,
+) -> None:
+    pending_statuses = {
+        InspectionChangeRequestStatus.PENDING_ADMIN_APPROVAL.value,
+        InspectionChangeRequestStatus.PENDING_CUSTOMER_CONFIRMATION.value,
+    }
+    for change in booking.change_requests:
+        if change.status not in pending_statuses:
+            continue
+        before = change.to_audit_dict()
+        change.status = InspectionChangeRequestStatus.CANCELLED.value
+        change.reviewed_by_user_id = actor_id
+        change.reviewed_at = utc_now()
+        await record_update(
+            session,
+            change,
+            actor_id=actor_id,
+            action="inspection_booking_change.cancelled",
+            before=before,
+        )
+
+
+async def _require_active_inspection_booking(
+    session: AsyncSession, inspection: Inspection
+) -> None:
+    if inspection.booking_id is None:
+        return
+    booking_status = await session.scalar(
+        select(InspectionBooking.status).where(
+            InspectionBooking.id == inspection.booking_id,
+            InspectionBooking.deleted_at.is_(None),
+        )
+    )
+    if booking_status != InspectionBookingStatus.APPROVED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The inspection booking is no longer active",
+        )
+
+
+async def _complete_booking_appointment_if_ready(
+    session: AsyncSession,
+    booking_id: str,
+    *,
+    actor_id: str,
+) -> None:
+    appointment = await session.scalar(
+        select(InspectionAppointment)
+        .where(
+            InspectionAppointment.booking_id == booking_id,
+            InspectionAppointment.deleted_at.is_(None),
+        )
+        .options(selectinload(InspectionAppointment.revisions))
+    )
+    if (
+        appointment is None
+        or appointment.status != InspectionAppointmentStatus.CONFIRMED.value
+    ):
+        return
+    outstanding = await session.scalar(
+        select(func.count())
+        .select_from(Inspection)
+        .where(
+            Inspection.booking_id == booking_id,
+            Inspection.deleted_at.is_(None),
+            Inspection.status != InspectionStatus.APPROVED.value,
+        )
+    )
+    if outstanding:
+        return
+    before = appointment.to_audit_dict()
+    appointment.status = InspectionAppointmentStatus.COMPLETED.value
+    await record_update(
+        session,
+        appointment,
+        actor_id=actor_id,
+        action="inspection_appointment.completed",
+        before=before,
+    )
+
+
+async def _get_valid_availability_quote(
+    session: AsyncSession,
+    booking: InspectionBooking,
+    quote_id: str,
+) -> InspectionAvailabilityQuote:
+    quote = await session.get(InspectionAvailabilityQuote, quote_id)
+    if (
+        quote is None
+        or quote.customer_id != booking.customer_id
+        or quote.location_id != booking.location_id
+        or quote.consumed_at is not None
+        or _as_utc(quote.expires_at) <= utc_now()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The selected availability is no longer valid. Choose another time.",
+        )
+    return quote
+
+
+async def _apply_appointment_change(
+    session: AsyncSession,
+    booking: InspectionBooking,
+    change: InspectionAppointmentChangeRequest,
+    *,
+    inspector: User | None,
+    actor_id: str,
+) -> None:
+    if (
+        booking.status != InspectionBookingStatus.APPROVED.value
+        or booking.appointment is None
+        or booking.appointment.status != InspectionAppointmentStatus.CONFIRMED.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a confirmed inspection booking can be rescheduled",
+        )
+    if inspector is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="A confirmed appointment and active inspector are required",
+        )
+    quote = await _get_valid_availability_quote(
+        session, booking, change.availability_quote_id
+    )
+    appointment = booking.appointment
+    current_revision = next(
+        item
+        for item in appointment.revisions
+        if item.revision_number == appointment.current_revision_number
+    )
+    if (
+        inspector.id not in quote.candidate_inspector_ids
+        and inspector.id != current_revision.inspector_user_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The inspector is no longer available for the selected time",
+        )
+    starts_at = _as_utc(quote.starts_at)
+    ends_at = _as_utc(quote.ends_at)
+    await _assert_booking_resources_available(
+        session,
+        booking,
+        inspector.id,
+        starts_at,
+        ends_at,
+        exclude_revision_id=current_revision.id,
+    )
+
+    for allocation in current_revision.allocations:
+        if allocation.state != InspectionAllocationState.CONFIRMED.value:
+            continue
+        allocation_before = allocation.to_audit_dict()
+        allocation.state = InspectionAllocationState.RELEASED.value
+        await record_update(
+            session,
+            allocation,
+            actor_id=actor_id,
+            action="inspection_resource_allocation.released",
+            before=allocation_before,
+        )
+
+    booking_before = booking.to_audit_dict()
+    booking.scheduled_at = starts_at
+    booking.scheduled_end_at = ends_at
+    booking.inspector_user_id = inspector.id
+    await record_update(
+        session,
+        booking,
+        actor_id=actor_id,
+        action="inspection_booking.rescheduled",
+        before=booking_before,
+    )
+    await _reassign_draft_booking_inspections(
+        session, booking, inspector_id=inspector.id, actor_id=actor_id
+    )
+    appointment_before = appointment.to_audit_dict()
+    appointment.current_revision_number += 1
+    await record_update(
+        session,
+        appointment,
+        actor_id=actor_id,
+        action="inspection_appointment.rescheduled",
+        before=appointment_before,
+    )
+    revision = InspectionAppointmentRevision(
+        appointment=appointment,
+        revision_number=appointment.current_revision_number,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        **_appointment_time_snapshot(booking.location, starts_at, ends_at),
+        inspector_user_id=inspector.id,
+        change_reason=change.reason,
+        created_by_user_id=actor_id,
+    )
+    session.add(revision)
+    await record_create(
+        session,
+        revision,
+        actor_id=actor_id,
+        action="inspection_appointment_revision.created",
+    )
+    await _create_revision_allocations(
+        session,
+        revision,
+        booking=booking,
+        inspector_id=inspector.id,
+        actor_id=actor_id,
+    )
+    change_before = change.to_audit_dict()
+    change.status = InspectionChangeRequestStatus.APPLIED.value
+    change.proposed_inspector_user_id = inspector.id
+    change.reviewed_by_user_id = actor_id
+    change.reviewed_at = utc_now()
+    await record_update(
+        session,
+        change,
+        actor_id=actor_id,
+        action="inspection_booking_change.applied",
+        before=change_before,
+    )
+    quote.consumed_at = utc_now()
+    await emit_event(
+        session,
+        category=NotificationCategory.INSPECTION_BOOKING_RESCHEDULED,
+        aggregate_type="inspection_booking",
+        aggregate_id=booking.id,
+        payload=_inspection_booking_event_payload(
+            booking,
+            asset_count=len(booking.assets),
+            reason=change.reason,
+        ),
+    )
+
+
+async def _reassign_draft_booking_inspections(
+    session: AsyncSession,
+    booking: InspectionBooking,
+    *,
+    inspector_id: str,
+    actor_id: str,
+) -> None:
+    inspections = (
+        await session.scalars(
+            select(Inspection).where(
+                Inspection.booking_id == booking.id,
+                Inspection.status == InspectionStatus.DRAFT.value,
+                Inspection.deleted_at.is_(None),
+            )
+        )
+    ).all()
+    for inspection in inspections:
+        if inspection.inspector_user_id == inspector_id:
+            continue
+        before = inspection.to_audit_dict()
+        inspection.inspector_user_id = inspector_id
+        await record_update(
+            session,
+            inspection,
+            actor_id=actor_id,
+            action="inspection.reassigned_from_booking",
+            before=before,
+        )
+
+
+async def _get_visible_change_request_or_404(
+    session: AsyncSession,
+    change_id: str,
+    principal: Principal,
+) -> InspectionAppointmentChangeRequest:
+    statement = (
+        select(InspectionAppointmentChangeRequest)
+        .join(InspectionAppointmentChangeRequest.booking)
+        .join(InspectionBooking.customer)
+        .options(
+            selectinload(InspectionAppointmentChangeRequest.booking)
+            .selectinload(InspectionBooking.assets)
+            .selectinload(InspectionBookingAsset.asset),
+            selectinload(InspectionAppointmentChangeRequest.booking)
+            .selectinload(InspectionBooking.appointment)
+            .selectinload(InspectionAppointment.revisions)
+            .selectinload(InspectionAppointmentRevision.allocations),
+        )
+        .where(
+            InspectionAppointmentChangeRequest.id == change_id,
+            InspectionAppointmentChangeRequest.deleted_at.is_(None),
+            InspectionBooking.deleted_at.is_(None),
+        )
+    )
+    statement = _apply_customer_scope(statement, principal)
+    change = (await session.scalars(statement)).first()
+    if change is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inspection booking change request not found",
+        )
+    return change
+
+
+def _inspection_booking_change_request_read(
+    change: InspectionAppointmentChangeRequest,
+) -> InspectionAppointmentChangeRequestRead:
+    return InspectionAppointmentChangeRequestRead(
+        id=change.id,
+        status=change.status,
+        starts_at=change.availability_quote.starts_at,
+        ends_at=change.availability_quote.ends_at,
+        reason=change.reason,
+        emergency=change.emergency,
+        created_at=change.created_at,
+    )
+
+
+def _appointment_read(appointment: InspectionAppointment) -> InspectionAppointmentRead:
+    revision = next(
+        (
+            item
+            for item in appointment.revisions
+            if item.revision_number == appointment.current_revision_number
+        ),
+        None,
+    )
+    if revision is None:
+        raise RuntimeError("Appointment is missing its current revision")
+    return InspectionAppointmentRead(
+        id=appointment.id,
+        status=appointment.status,
+        starts_at=revision.starts_at,
+        ends_at=revision.ends_at,
+        revision_number=revision.revision_number,
+        timezone_id=revision.timezone_id,
+        local_start_snapshot=revision.local_start_snapshot,
+        local_end_snapshot=revision.local_end_snapshot,
+        utc_offset_start=revision.utc_offset_start,
+        utc_offset_end=revision.utc_offset_end,
+        tzdata_version=revision.tzdata_version,
+    )
+
+
 def _inspection_booking_read(booking: InspectionBooking) -> InspectionBookingRead:
     return InspectionBookingRead(
         id=booking.id,
@@ -3730,6 +4813,7 @@ def _inspection_booking_read(booking: InspectionBooking) -> InspectionBookingRea
             city=booking.location.city,
             state=booking.location.state,
             country=booking.location.country,
+            scheduling_timezone=booking.location.scheduling_timezone,
         ),
         assets=[
             InspectionAssetSummary(
@@ -3743,6 +4827,7 @@ def _inspection_booking_read(booking: InspectionBooking) -> InspectionBookingRea
             and booking_asset.asset.deleted_at is None
         ],
         scheduled_at=booking.scheduled_at,
+        scheduled_end_at=booking.scheduled_end_at,
         additional_information=booking.additional_information,
         status=booking.status,
         requested_by_user_id=booking.requested_by_user_id,
@@ -3751,6 +4836,15 @@ def _inspection_booking_read(booking: InspectionBooking) -> InspectionBookingRea
         reviewed_at=booking.reviewed_at,
         rejection_reason=booking.rejection_reason,
         created_at=booking.created_at,
+        appointment=(
+            _appointment_read(booking.appointment)
+            if booking.appointment is not None
+            else None
+        ),
+        change_requests=[
+            _inspection_booking_change_request_read(change)
+            for change in booking.change_requests
+        ],
     )
 
 
@@ -3886,6 +4980,7 @@ def _asset_read(asset: Asset) -> AssetRead:
                 city=asset.location.city,
                 state=asset.location.state,
                 country=asset.location.country,
+                scheduling_timezone=asset.location.scheduling_timezone,
             )
             if asset.location is not None
             else None

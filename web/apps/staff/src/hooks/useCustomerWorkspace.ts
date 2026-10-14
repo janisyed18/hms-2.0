@@ -10,7 +10,7 @@ export function useCustomerWorkspace() {
   const [query, setQuery] = useState("");
   const [riskFilter, setRiskFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [activeTab, setActiveTab] = useState("Overview");
+  const [activeTab, setActiveTab] = useState("Locations");
   const [isFormOpen, setFormOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null);
   const [isLoading, setLoading] = useState(true);
@@ -76,7 +76,7 @@ export function useCustomerWorkspace() {
   function closeCustomerForm() { setEditingCustomer(null); setFormOpen(false); }
   function openCreateCustomer() { setEditingCustomer(null); setFormOpen(true); }
   function openEditCustomer(customer: CustomerRecord) { setEditingCustomer(customer); setFormOpen(true); }
-  function selectCustomer(id: string) { setSelectedId(id); setActiveTab("Overview"); }
+  function selectCustomer(id: string) { setSelectedId(id); setActiveTab("Locations"); }
 
   async function saveCustomer(values: CustomerFormValues) {
     const client = createHmsClient();

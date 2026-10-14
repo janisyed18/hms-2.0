@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
+from typing import cast
 
 import httpx
 import pytest
@@ -9,6 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
+from hms_backend.app.api.records import (
+    _is_allocation_conflict,
+    _location_availability_slots,
+)
 from hms_backend.app.core.audit import verify_audit_chain
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
@@ -28,6 +33,7 @@ from hms_backend.app.modules.customers.models import (
 from hms_backend.app.modules.identity.models import AccountStatus, User
 from hms_backend.app.modules.inspections.models import (
     Inspection,
+    InspectionAppointmentRevision,
     InspectionStatus,
     InspectionType,
     PressureTestResult,
@@ -1142,7 +1148,7 @@ async def test_create_customer_writes_sync_change_and_audit_event(
 
 
 @pytest.mark.asyncio
-async def test_customer_profile_create_and_update_are_atomic(
+async def test_customer_profile_create_and_update_keeps_requirements_per_location(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     principal = Principal(
@@ -1157,13 +1163,17 @@ async def test_customer_profile_create_and_update_are_atomic(
             json={
                 "name": "Summit Marine Group",
                 "locations": [
-                    {"name": "Newcastle operations yard"},
-                    {"name": "Kooragang workshop"},
+                    {
+                        "name": "Newcastle operations yard",
+                        "ppe_requirements": ["High Vis", "Safety Boots"],
+                        "additional_requirements": ["2-way radio"],
+                    },
+                    {
+                        "name": "Kooragang workshop",
+                        "ppe_requirements": ["Hard Hat"],
+                        "additional_requirements": ["Vehicle Site Approval"],
+                    },
                 ],
-                "phone": "+61 2 5555 0200",
-                "email": "operations@summit.example.test",
-                "ppe_requirements": ["High Vis", "Safety Boots"],
-                "additional_requirements": ["2-way radio"],
             },
         )
 
@@ -1174,8 +1184,14 @@ async def test_customer_profile_create_and_update_are_atomic(
             "Kooragang workshop",
             "Newcastle operations yard",
         ]
-        assert created["contacts"][0]["phone"] == "+61 2 5555 0200"
-        assert created["ppe_requirements"] == ["High Vis", "Safety Boots"]
+        locations = {location["name"]: location for location in created["locations"]}
+        assert locations["Newcastle operations yard"]["ppe_requirements"] == [
+            "High Vis",
+            "Safety Boots",
+        ]
+        assert locations["Kooragang workshop"]["additional_requirements"] == [
+            "Vehicle Site Approval"
+        ]
 
         location_id = created["locations"][0]["id"]
         update_response = await client.patch(
@@ -1185,26 +1201,34 @@ async def test_customer_profile_create_and_update_are_atomic(
                 "name": "Summit Marine Services",
                 "locations": [
                     {"id": location_id, "name": "Kooragang service workshop"},
-                    {"name": "Port of Newcastle berth"},
+                    {
+                        "name": "Port of Newcastle berth",
+                        "ppe_requirements": ["Safety Glasses"],
+                        "additional_requirements": ["Vehicle Site Approval"],
+                    },
                 ],
-                "phone": "+61 2 5555 0299",
-                "email": "service@summit.example.test",
-                "ppe_requirements": ["Hard Hat", "Safety Glasses"],
-                "additional_requirements": ["Vehicle Site Approval"],
             },
         )
 
     assert update_response.status_code == 200
     updated = update_response.json()
     assert updated["name"] == "Summit Marine Services"
-    assert updated["contacts"][0]["email"] == "service@summit.example.test"
-    assert updated["ppe_requirements"] == ["Hard Hat", "Safety Glasses"]
-    assert updated["additional_requirements"] == ["Vehicle Site Approval"]
-    assert {location["name"] for location in updated["locations"]} == {
+    locations = {location["name"]: location for location in updated["locations"]}
+    assert set(locations) == {
         "Kooragang service workshop",
         "Newcastle operations yard",
         "Port of Newcastle berth",
     }
+    assert locations["Port of Newcastle berth"]["ppe_requirements"] == [
+        "Safety Glasses"
+    ]
+    assert locations["Port of Newcastle berth"]["additional_requirements"] == [
+        "Vehicle Site Approval"
+    ]
+    assert locations["Kooragang service workshop"]["ppe_requirements"] == ["Hard Hat"]
+    assert locations["Kooragang service workshop"]["additional_requirements"] == [
+        "Vehicle Site Approval"
+    ]
 
 
 @pytest.mark.asyncio
@@ -1222,7 +1246,12 @@ async def test_customer_profile_rejects_unknown_site_requirements(
             "/api/v1/customers",
             json={
                 "name": "Validation Test Customer",
-                "ppe_requirements": ["Unapproved protective item"],
+                "locations": [
+                    {
+                        "name": "Validation site",
+                        "ppe_requirements": ["Unapproved protective item"],
+                    }
+                ],
             },
         )
 
@@ -1485,15 +1514,17 @@ async def test_customer_location_returns_site_contact_details(
         update_response = await client.patch(
             f"/api/v1/customers/{seeded_session['vopak_id']}",
             json={
-                "locations": [{
-                    "id": response.json()["id"],
-                    "name": "Newcastle Depot",
-                    "site_contact_name": "Morgan Lee",
-                    "site_contact_mobile": "+61 401 222 333",
-                    "site_contact_email": "morgan.lee@example.test",
-                }],
+                "locations": [
+                    {
+                        "id": response.json()["id"],
+                        "name": "Newcastle Depot",
+                        "site_contact_name": "Morgan Lee",
+                        "site_contact_mobile": "+61 401 222 333",
+                        "site_contact_email": "morgan.lee@example.test",
+                    }
+                ],
             },
-    )
+        )
 
     assert update_response.status_code == 200
     updated_location = next(
@@ -2704,11 +2735,21 @@ async def test_customer_booking_approval_creates_per_asset_drafts(
         "customer_id": seeded_session["vopak_id"],
         "location_id": seeded_session["vopak_location_id"],
         "asset_ids": [seeded_session["vopak_asset_id"], second_asset_id],
-        "scheduled_at": "2026-10-02T10:30:00Z",
         "additional_information": "Access via gate three.",
     }
 
     async with api_client(session_factory, customer) as client:
+        availability = await client.get(
+            "/api/v1/inspection-availability",
+            params={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "local_date": "2027-10-01",
+                "duration_minutes": 60,
+            },
+        )
+        assert availability.status_code == 200
+        payload["availability_quote_id"] = availability.json()["items"][0]["quote_id"]
         request_response = await client.post(
             "/api/v1/inspection-bookings", json=payload
         )
@@ -2799,7 +2840,7 @@ async def test_inspection_booking_rejects_assets_outside_the_selected_location(
                 "customer_id": seeded_session["vopak_id"],
                 "location_id": seeded_session["vopak_location_id"],
                 "asset_ids": [seeded_session["orica_asset_id"]],
-                "scheduled_at": "2026-10-02T10:30:00Z",
+                "availability_quote_id": "invalid-quote",
             },
         )
 
@@ -2814,6 +2855,17 @@ async def test_rejecting_an_inspection_booking_stages_a_requester_notification(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
 ) -> None:
+    async with session_factory() as session:
+        session.add(
+            User(
+                id="inspector-rejection-1",
+                oidc_subject="local:inspector-rejection-1",
+                email="rejection.inspector@example.test",
+                role=Role.INSPECTOR.value,
+                account_status=AccountStatus.ACTIVE.value,
+            )
+        )
+        await session.commit()
     customer = Principal(
         user_id="customer-user-1",
         roles=frozenset({Role.CUSTOMER_USER}),
@@ -2823,9 +2875,19 @@ async def test_rejecting_an_inspection_booking_stages_a_requester_notification(
         "customer_id": seeded_session["vopak_id"],
         "location_id": seeded_session["vopak_location_id"],
         "asset_ids": [seeded_session["vopak_asset_id"]],
-        "scheduled_at": "2026-10-02T10:30:00Z",
     }
     async with api_client(session_factory, customer) as client:
+        availability = await client.get(
+            "/api/v1/inspection-availability",
+            params={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "local_date": "2027-10-01",
+                "duration_minutes": 60,
+            },
+        )
+        assert availability.status_code == 200
+        payload["availability_quote_id"] = availability.json()["items"][0]["quote_id"]
         created = await client.post("/api/v1/inspection-bookings", json=payload)
     assert created.status_code == 201
 
@@ -2854,6 +2916,872 @@ async def test_rejecting_an_inspection_booking_stages_a_requester_notification(
         "INSPECTION_BOOKING_REJECTED",
     ]
     assert events[-1].payload["reason"] == "The selected date is unavailable."
+
+
+@pytest.mark.asyncio
+async def test_customer_booking_quote_approval_reserves_inspector(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            User(
+                id="inspector-availability-1",
+                oidc_subject="local:inspector-availability-1",
+                email="availability.inspector@example.test",
+                role=Role.INSPECTOR.value,
+                account_status=AccountStatus.ACTIVE.value,
+            )
+        )
+        await session.commit()
+
+    customer = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    availability_params: dict[str, str | int] = {
+        "customer_id": seeded_session["vopak_id"],
+        "location_id": seeded_session["vopak_location_id"],
+        "local_date": "2027-10-04",
+        "duration_minutes": 60,
+    }
+    async with api_client(session_factory, customer) as client:
+        availability = await client.get(
+            "/api/v1/inspection-availability", params=availability_params
+        )
+        assert availability.status_code == 200
+        quote = availability.json()["items"][0]
+        arbitrary = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["vopak_asset_id"]],
+                "scheduled_at": "2027-10-04T08:00:00Z",
+            },
+        )
+        booking = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["vopak_asset_id"]],
+                "availability_quote_id": quote["quote_id"],
+            },
+        )
+
+    assert arbitrary.status_code == 422
+    assert booking.status_code == 201
+    assert booking.json()["scheduled_at"] == quote["starts_at"]
+    assert booking.json()["scheduled_end_at"] == quote["ends_at"]
+
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with api_client(session_factory, admin) as client:
+        approved = await client.post(
+            f"/api/v1/inspection-bookings/{booking.json()['id']}/approve",
+            json={"inspector_user_id": "inspector-availability-1"},
+        )
+
+    assert approved.status_code == 200
+    assert approved.json()["appointment"]["status"] == "CONFIRMED"
+    assert approved.json()["appointment"]["revision_number"] == 1
+    async with session_factory() as session:
+        revision = await session.scalar(
+            select(InspectionAppointmentRevision).where(
+                InspectionAppointmentRevision.inspector_user_id
+                == "inspector-availability-1"
+            )
+        )
+    assert revision is not None
+    assert revision.timezone_id == "UTC"
+    assert revision.local_start_snapshot == "2027-10-04T08:00:00"
+    assert revision.utc_offset_start == "+00:00"
+
+
+def test_allocation_conflict_detection_handles_postgres_race_outcomes() -> None:
+    assert _is_allocation_conflict(
+        Exception(
+            "violates exclusion constraint "
+            '"ex_inspection_resource_allocation_overlap"'
+        )
+    )
+    assert _is_allocation_conflict(Exception("deadlock detected"))
+    assert not _is_allocation_conflict(Exception("foreign key violation"))
+
+
+@pytest.mark.asyncio
+async def test_inspection_availability_does_not_return_elapsed_slots(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    customer = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    yesterday = date.today() - timedelta(days=1)
+    async with api_client(session_factory, customer) as client:
+        response = await client.get(
+            "/api/v1/inspection-availability",
+            params={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "local_date": yesterday.isoformat(),
+                "duration_minutes": 60,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_location_schedule_uses_timezone_and_blackout_dates(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        location = await session.get(
+            CustomerLocation, seeded_session["vopak_location_id"]
+        )
+        assert location is not None
+        location.scheduling_timezone = "Australia/Sydney"
+        location.scheduling_open_time = "08:00"
+        location.scheduling_close_time = "10:00"
+        location.scheduling_weekdays = [0]
+        location.scheduling_blackout_dates = []
+        session.add(
+            User(
+                id="inspector-timezone-1",
+                oidc_subject="local:inspector-timezone-1",
+                email="timezone.inspector@example.test",
+                role=Role.INSPECTOR.value,
+                account_status=AccountStatus.ACTIVE.value,
+            )
+        )
+        await session.commit()
+
+    customer = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    params: dict[str, str | int] = {
+        "customer_id": seeded_session["vopak_id"],
+        "location_id": seeded_session["vopak_location_id"],
+        "local_date": "2027-10-04",
+        "duration_minutes": 60,
+    }
+    async with api_client(session_factory, customer) as client:
+        available = await client.get("/api/v1/inspection-availability", params=params)
+
+    assert available.status_code == 200
+    assert [item["starts_at"] for item in available.json()["items"]] == [
+        "2027-10-03T21:00:00Z",
+        "2027-10-03T22:00:00Z",
+    ]
+
+    async with session_factory() as session:
+        location = await session.get(
+            CustomerLocation, seeded_session["vopak_location_id"]
+        )
+        assert location is not None
+        location.scheduling_blackout_dates = ["2027-10-04"]
+        await session.commit()
+
+    async with api_client(session_factory, customer) as client:
+        unavailable = await client.get("/api/v1/inspection-availability", params=params)
+
+    assert unavailable.status_code == 200
+    assert unavailable.json()["items"] == []
+
+
+def test_location_availability_skips_nonexistent_and_ambiguous_dst_intervals() -> None:
+    spring_forward = CustomerLocation(
+        customer_id="customer-1",
+        name="New York",
+        scheduling_timezone="America/New_York",
+        scheduling_open_time="01:00",
+        scheduling_close_time="04:00",
+        scheduling_weekdays=[6],
+        scheduling_blackout_dates=[],
+    )
+    fall_back = CustomerLocation(
+        customer_id="customer-1",
+        name="New York",
+        scheduling_timezone="America/New_York",
+        scheduling_open_time="00:00",
+        scheduling_close_time="03:00",
+        scheduling_weekdays=[6],
+        scheduling_blackout_dates=[],
+    )
+
+    assert _location_availability_slots(
+        spring_forward, date(2027, 3, 14), timedelta(hours=1)
+    ) == [
+        (
+            datetime(2027, 3, 14, 7, tzinfo=UTC),
+            datetime(2027, 3, 14, 8, tzinfo=UTC),
+        )
+    ]
+    assert _location_availability_slots(
+        fall_back, date(2027, 11, 7), timedelta(hours=1)
+    ) == [
+        (
+            datetime(2027, 11, 7, 7, tzinfo=UTC),
+            datetime(2027, 11, 7, 8, tzinfo=UTC),
+        )
+    ]
+
+
+def test_location_availability_handles_utc_and_non_hour_dst_transitions() -> None:
+    utc_location = CustomerLocation(
+        customer_id="customer-1",
+        name="UTC",
+        scheduling_timezone="UTC",
+        scheduling_open_time="08:00",
+        scheduling_close_time="10:00",
+        scheduling_weekdays=[0],
+        scheduling_blackout_dates=[],
+    )
+    lord_howe = CustomerLocation(
+        customer_id="customer-1",
+        name="Lord Howe",
+        scheduling_timezone="Australia/Lord_Howe",
+        scheduling_open_time="01:00",
+        scheduling_close_time="03:00",
+        scheduling_weekdays=[6],
+        scheduling_blackout_dates=[],
+    )
+
+    assert _location_availability_slots(
+        utc_location, date(2027, 1, 4), timedelta(hours=1)
+    ) == [
+        (
+            datetime(2027, 1, 4, 8, tzinfo=UTC),
+            datetime(2027, 1, 4, 9, tzinfo=UTC),
+        ),
+        (
+            datetime(2027, 1, 4, 9, tzinfo=UTC),
+            datetime(2027, 1, 4, 10, tzinfo=UTC),
+        ),
+    ]
+    assert _location_availability_slots(
+        lord_howe, date(2027, 4, 4), timedelta(minutes=30)
+    ) == [
+        (
+            datetime(2027, 4, 3, 15, 30, tzinfo=UTC),
+            datetime(2027, 4, 3, 16, tzinfo=UTC),
+        ),
+        (
+            datetime(2027, 4, 3, 16, tzinfo=UTC),
+            datetime(2027, 4, 3, 16, 30, tzinfo=UTC),
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_inspection_availability_requires_a_location_local_date(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    customer = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    async with api_client(session_factory, customer) as client:
+        response = await client.get(
+            "/api/v1/inspection-availability",
+            params={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "duration_minutes": 60,
+            },
+        )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_customer_location_rejects_invalid_schedule_hours(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    admin = Principal(
+        user_id="hms-admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with api_client(session_factory, admin) as client:
+        response = await client.post(
+            "/api/v1/customers",
+            json={
+                "name": "Invalid scheduling customer",
+                "locations": [
+                    {
+                        "name": "Invalid scheduling location",
+                        "scheduling_open_time": "17:00",
+                        "scheduling_close_time": "08:00",
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Location closing time must be later than opening time"
+    )
+
+
+@pytest.mark.asyncio
+async def test_booking_conflict_and_cancel_releases_inspector_slot(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        session.add_all(
+            [
+                User(
+                    id="inspector-conflict-1",
+                    oidc_subject="local:inspector-conflict-1",
+                    email="conflict.inspector@example.test",
+                    role=Role.INSPECTOR.value,
+                    account_status=AccountStatus.ACTIVE.value,
+                ),
+                User(
+                    id="inspector-conflict-2",
+                    oidc_subject="local:inspector-conflict-2",
+                    email="conflict.inspector.2@example.test",
+                    role=Role.INSPECTOR.value,
+                    account_status=AccountStatus.ACTIVE.value,
+                ),
+            ]
+        )
+        await session.commit()
+
+    customer = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    params: dict[str, str | int] = {
+        "customer_id": seeded_session["vopak_id"],
+        "location_id": seeded_session["vopak_location_id"],
+        "local_date": "2027-10-05",
+        "duration_minutes": 60,
+    }
+
+    async with api_client(session_factory, customer) as client:
+        first_quote = (
+            await client.get("/api/v1/inspection-availability", params=params)
+        ).json()["items"][0]
+        second_quote = (
+            await client.get("/api/v1/inspection-availability", params=params)
+        ).json()["items"][0]
+        first_booking = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["vopak_asset_id"]],
+                "availability_quote_id": first_quote["quote_id"],
+            },
+        )
+    assert first_booking.status_code == 201
+
+    async with api_client(session_factory, admin) as client:
+        first_approved = await client.post(
+            f"/api/v1/inspection-bookings/{first_booking.json()['id']}/approve",
+            json={"inspector_user_id": "inspector-conflict-1"},
+        )
+    assert first_approved.status_code == 200
+
+    async with api_client(session_factory, customer) as client:
+        second_booking = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["vopak_asset_id"]],
+                "availability_quote_id": second_quote["quote_id"],
+            },
+        )
+    assert second_booking.status_code == 201
+
+    async with api_client(session_factory, admin) as client:
+        conflict = await client.post(
+            f"/api/v1/inspection-bookings/{second_booking.json()['id']}/approve",
+            json={"inspector_user_id": "inspector-conflict-2"},
+        )
+        cancelled = await client.post(
+            f"/api/v1/inspection-bookings/{first_booking.json()['id']}/cancel",
+            json={"reason": "Site shutdown"},
+        )
+        approved_after_cancel = await client.post(
+            f"/api/v1/inspection-bookings/{second_booking.json()['id']}/approve",
+            json={"inspector_user_id": "inspector-conflict-2"},
+        )
+
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == (
+        "An asset is no longer available for the selected time"
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["appointment"]["status"] == "CANCELLED"
+    assert approved_after_cancel.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_failed_reschedule_preserves_confirmed_appointment(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            User(
+                id="inspector-atomic-reschedule-1",
+                oidc_subject="local:inspector-atomic-reschedule-1",
+                email="atomic.reschedule.inspector@example.test",
+                role=Role.INSPECTOR.value,
+                account_status=AccountStatus.ACTIVE.value,
+            )
+        )
+        await session.commit()
+
+    customer = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    base_params: dict[str, str | int] = {
+        "customer_id": seeded_session["vopak_id"],
+        "location_id": seeded_session["vopak_location_id"],
+        "local_date": "2027-10-07",
+        "duration_minutes": 60,
+    }
+
+    async with api_client(session_factory, customer) as client:
+        quotes = (
+            await client.get("/api/v1/inspection-availability", params=base_params)
+        ).json()["items"]
+        stale_replacement_quote = (
+            await client.get("/api/v1/inspection-availability", params=base_params)
+        ).json()["items"][1]
+        first_booking = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["vopak_asset_id"]],
+                "availability_quote_id": quotes[0]["quote_id"],
+            },
+        )
+        second_booking = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["vopak_asset_id"]],
+                "availability_quote_id": quotes[1]["quote_id"],
+            },
+        )
+    assert first_booking.status_code == 201
+    assert second_booking.status_code == 201
+
+    async with api_client(session_factory, admin) as client:
+        first_approved = await client.post(
+            f"/api/v1/inspection-bookings/{first_booking.json()['id']}/approve",
+            json={"inspector_user_id": "inspector-atomic-reschedule-1"},
+        )
+        second_approved = await client.post(
+            f"/api/v1/inspection-bookings/{second_booking.json()['id']}/approve",
+            json={"inspector_user_id": "inspector-atomic-reschedule-1"},
+        )
+    assert first_approved.status_code == 200
+    assert second_approved.status_code == 200
+
+    async with api_client(session_factory, customer) as client:
+        requested = await client.post(
+            f"/api/v1/inspection-bookings/{first_booking.json()['id']}/change-requests",
+            json={
+                "availability_quote_id": stale_replacement_quote["quote_id"],
+                "reason": "Customer requested a later slot.",
+            },
+        )
+    assert requested.status_code == 201
+
+    async with api_client(session_factory, admin) as client:
+        rejected = await client.post(
+            f"/api/v1/inspection-booking-change-requests/{requested.json()['id']}/approve",
+            json={"inspector_user_id": "inspector-atomic-reschedule-1"},
+        )
+        unchanged = await client.get(
+            f"/api/v1/inspection-bookings/{first_booking.json()['id']}"
+        )
+
+    assert rejected.status_code == 409
+    assert unchanged.status_code == 200
+    assert unchanged.json()["appointment"]["revision_number"] == 1
+    assert unchanged.json()["scheduled_at"] == first_approved.json()["scheduled_at"]
+
+
+@pytest.mark.asyncio
+async def test_customer_reschedule_request_creates_a_new_appointment_revision(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        session.add_all([
+            User(
+                id="inspector-reschedule-1",
+                oidc_subject="local:inspector-reschedule-1",
+                email="reschedule.inspector@example.test",
+                role=Role.INSPECTOR.value,
+                account_status=AccountStatus.ACTIVE.value,
+            ),
+            User(
+                id="inspector-reschedule-2",
+                oidc_subject="local:inspector-reschedule-2",
+                email="reschedule.second.inspector@example.test",
+                role=Role.INSPECTOR.value,
+                account_status=AccountStatus.ACTIVE.value,
+            ),
+        ])
+        await session.commit()
+
+    customer = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    base_params: dict[str, str | int] = {
+        "customer_id": seeded_session["vopak_id"],
+        "location_id": seeded_session["vopak_location_id"],
+        "local_date": "2027-10-06",
+        "duration_minutes": 60,
+    }
+    async with api_client(session_factory, customer) as client:
+        initial_quote = (
+            await client.get("/api/v1/inspection-availability", params=base_params)
+        ).json()["items"][0]
+        booking = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["vopak_asset_id"]],
+                "availability_quote_id": initial_quote["quote_id"],
+            },
+        )
+    assert booking.status_code == 201
+
+    async with api_client(session_factory, admin) as client:
+        approved = await client.post(
+            f"/api/v1/inspection-bookings/{booking.json()['id']}/approve",
+            json={"inspector_user_id": "inspector-reschedule-1"},
+        )
+    assert approved.status_code == 200
+
+    async with api_client(session_factory, customer) as client:
+        reschedule_quote = (
+            await client.get("/api/v1/inspection-availability", params=base_params)
+        ).json()["items"][0]
+        requested = await client.post(
+            f"/api/v1/inspection-bookings/{booking.json()['id']}/change-requests",
+            json={
+                "availability_quote_id": reschedule_quote["quote_id"],
+                "reason": "Site access is unavailable in the morning.",
+            },
+        )
+    assert requested.status_code == 201
+    assert requested.json()["status"] == "PENDING_ADMIN_APPROVAL"
+
+    async with api_client(session_factory, admin) as client:
+        applied = await client.post(
+            f"/api/v1/inspection-booking-change-requests/{requested.json()['id']}/approve",
+            json={"inspector_user_id": "inspector-reschedule-1"},
+        )
+        refreshed = await client.get(
+            f"/api/v1/inspection-bookings/{booking.json()['id']}"
+        )
+
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["status"] == "APPLIED"
+    assert refreshed.status_code == 200
+    assert refreshed.json()["appointment"]["revision_number"] == 2
+    assert refreshed.json()["appointment"]["timezone_id"] == "UTC"
+    assert refreshed.json()["appointment"]["local_start_snapshot"] == (
+        reschedule_quote["starts_at"].removesuffix("Z")
+    )
+    assert refreshed.json()["scheduled_at"] == reschedule_quote[
+        "starts_at"
+    ].removesuffix("Z")
+
+    async with api_client(session_factory, admin) as client:
+        admin_quote = (
+            await client.get("/api/v1/inspection-availability", params=base_params)
+        ).json()["items"][0]
+        admin_request = await client.post(
+            f"/api/v1/inspection-bookings/{booking.json()['id']}/change-requests",
+            json={
+                "availability_quote_id": admin_quote["quote_id"],
+                "inspector_user_id": "inspector-reschedule-2",
+                "reason": "Inspector requested a different time.",
+            },
+        )
+    assert admin_request.status_code == 201
+    assert admin_request.json()["status"] == "PENDING_CUSTOMER_CONFIRMATION"
+
+    async with api_client(session_factory, customer) as client:
+        confirmed = await client.post(
+            f"/api/v1/inspection-booking-change-requests/{admin_request.json()['id']}/confirm"
+        )
+        refreshed = await client.get(
+            f"/api/v1/inspection-bookings/{booking.json()['id']}"
+        )
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["status"] == "APPLIED"
+    assert refreshed.json()["appointment"]["revision_number"] == 3
+    assert refreshed.json()["appointment"]["tzdata_version"] == "2026e"
+    async with session_factory() as session:
+        inspection_inspector_id = await session.scalar(
+            select(Inspection.inspector_user_id).where(
+                Inspection.booking_id == booking.json()["id"]
+            )
+        )
+    assert inspection_inspector_id == "inspector-reschedule-2"
+
+
+async def _create_confirmed_booking(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+    *,
+    customer: Principal,
+    admin: Principal,
+    inspector_id: str,
+    local_date: str,
+) -> dict[str, object]:
+    params: dict[str, str | int] = {
+        "customer_id": seeded_session["vopak_id"],
+        "location_id": seeded_session["vopak_location_id"],
+        "local_date": local_date,
+        "duration_minutes": 60,
+    }
+    async with api_client(session_factory, customer) as client:
+        quote = (
+            await client.get("/api/v1/inspection-availability", params=params)
+        ).json()["items"][0]
+        booking = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["vopak_asset_id"]],
+                "availability_quote_id": quote["quote_id"],
+            },
+        )
+    assert booking.status_code == 201
+    async with api_client(session_factory, admin) as client:
+        approved = await client.post(
+            f"/api/v1/inspection-bookings/{booking.json()['id']}/approve",
+            json={"inspector_user_id": inspector_id},
+        )
+    assert approved.status_code == 200
+    body = approved.json()
+    assert isinstance(body, dict)
+    return cast(dict[str, object], body)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_booking_blocks_generated_inspection_transitions(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    inspector_id = "inspector-cancel-lifecycle-1"
+    async with session_factory() as session:
+        session.add(User(
+            id=inspector_id,
+            oidc_subject=f"local:{inspector_id}",
+            email="cancel.lifecycle.inspector@example.test",
+            role=Role.INSPECTOR.value,
+            account_status=AccountStatus.ACTIVE.value,
+        ))
+        await session.commit()
+    customer = Principal(
+        "customer-user-1",
+        frozenset({Role.CUSTOMER_USER}),
+        frozenset({seeded_session["vopak_id"]}),
+    )
+    admin = Principal("admin-1", frozenset({Role.HMS_ADMIN}), frozenset())
+    booking = await _create_confirmed_booking(
+        session_factory, seeded_session, customer=customer, admin=admin,
+        inspector_id=inspector_id, local_date="2027-10-12",
+    )
+    async with session_factory() as session:
+        inspection_id = await session.scalar(
+            select(Inspection.id).where(Inspection.booking_id == booking["id"])
+        )
+    assert inspection_id is not None
+    async with api_client(session_factory, customer) as client:
+        cancelled = await client.post(
+            f"/api/v1/inspection-bookings/{booking['id']}/cancel",
+            json={"reason": "Site shutdown"},
+        )
+    assert cancelled.status_code == 200
+    inspector = Principal(inspector_id, frozenset({Role.INSPECTOR}), frozenset())
+    async with api_client(session_factory, inspector) as client:
+        submitted = await client.post(f"/api/v1/inspections/{inspection_id}/submit")
+    assert submitted.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_completed_booking_appointment_cannot_be_cancelled(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    inspector_id = "inspector-completed-lifecycle-1"
+    async with session_factory() as session:
+        session.add(User(
+            id=inspector_id,
+            oidc_subject=f"local:{inspector_id}",
+            email="completed.lifecycle.inspector@example.test",
+            role=Role.INSPECTOR.value,
+            account_status=AccountStatus.ACTIVE.value,
+        ))
+        await session.commit()
+    customer = Principal(
+        "customer-user-1",
+        frozenset({Role.CUSTOMER_USER}),
+        frozenset({seeded_session["vopak_id"]}),
+    )
+    admin = Principal("admin-1", frozenset({Role.HMS_ADMIN}), frozenset())
+    booking = await _create_confirmed_booking(
+        session_factory, seeded_session, customer=customer, admin=admin,
+        inspector_id=inspector_id, local_date="2027-10-13",
+    )
+    async with session_factory() as session:
+        inspection_id = await session.scalar(
+            select(Inspection.id).where(Inspection.booking_id == booking["id"])
+        )
+    assert inspection_id is not None
+    inspector = Principal(inspector_id, frozenset({Role.INSPECTOR}), frozenset())
+    async with api_client(session_factory, inspector) as client:
+        submitted = await client.post(f"/api/v1/inspections/{inspection_id}/submit")
+    assert submitted.status_code == 200
+    reviewer = Principal("reviewer-1", frozenset({Role.REVIEWER}), frozenset())
+    async with api_client(session_factory, reviewer) as client:
+        approved = await client.post(f"/api/v1/inspections/{inspection_id}/approve")
+    async with api_client(session_factory, admin) as client:
+        cancelled = await client.post(
+            f"/api/v1/inspection-bookings/{booking['id']}/cancel",
+            json={"reason": "Too late"},
+        )
+    assert approved.status_code == 200
+    assert cancelled.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_cancellation_invalidates_pending_reschedule_requests(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    inspector_id = "inspector-stale-change-1"
+    async with session_factory() as session:
+        session.add(User(
+            id=inspector_id,
+            oidc_subject=f"local:{inspector_id}",
+            email="stale.change.inspector@example.test",
+            role=Role.INSPECTOR.value,
+            account_status=AccountStatus.ACTIVE.value,
+        ))
+        await session.commit()
+    customer = Principal(
+        "customer-user-1",
+        frozenset({Role.CUSTOMER_USER}),
+        frozenset({seeded_session["vopak_id"]}),
+    )
+    admin = Principal("admin-1", frozenset({Role.HMS_ADMIN}), frozenset())
+    booking = await _create_confirmed_booking(
+        session_factory, seeded_session, customer=customer, admin=admin,
+        inspector_id=inspector_id, local_date="2027-10-14",
+    )
+    params: dict[str, str | int] = {
+        "customer_id": seeded_session["vopak_id"],
+        "location_id": seeded_session["vopak_location_id"],
+        "local_date": "2027-10-14",
+        "duration_minutes": 60,
+    }
+    async with api_client(session_factory, customer) as client:
+        availability = await client.get(
+            "/api/v1/inspection-availability", params=params
+        )
+        quote = availability.json()["items"][0]
+        requested = await client.post(
+            f"/api/v1/inspection-bookings/{booking['id']}/change-requests",
+            json={"availability_quote_id": quote["quote_id"], "reason": "Weather"},
+        )
+        cancelled = await client.post(
+            f"/api/v1/inspection-bookings/{booking['id']}/cancel",
+            json={"reason": "Site closed"},
+        )
+    assert requested.status_code == 201
+    assert cancelled.status_code == 200
+    async with api_client(session_factory, admin) as client:
+        stale_approval = await client.post(
+            f"/api/v1/inspection-booking-change-requests/{requested.json()['id']}/approve",
+            json={"inspector_user_id": inspector_id},
+        )
+    assert stale_approval.status_code == 409
+
+    proposal_booking = await _create_confirmed_booking(
+        session_factory, seeded_session, customer=customer, admin=admin,
+        inspector_id=inspector_id, local_date="2027-10-15",
+    )
+    proposal_params = {**params, "local_date": "2027-10-15"}
+    async with api_client(session_factory, admin) as client:
+        proposal_quote = (
+            await client.get("/api/v1/inspection-availability", params=proposal_params)
+        ).json()["items"][0]
+        proposed = await client.post(
+            f"/api/v1/inspection-bookings/{proposal_booking['id']}/change-requests",
+            json={
+                "availability_quote_id": proposal_quote["quote_id"],
+                "inspector_user_id": inspector_id,
+                "reason": "Inspector availability changed",
+            },
+        )
+    assert proposed.status_code == 201
+    async with api_client(session_factory, customer) as client:
+        cancelled_proposal = await client.post(
+            f"/api/v1/inspection-bookings/{proposal_booking['id']}/cancel",
+            json={"reason": "Site closed"},
+        )
+        stale_confirmation = await client.post(
+            f"/api/v1/inspection-booking-change-requests/{proposed.json()['id']}/confirm"
+        )
+    assert cancelled_proposal.status_code == 200
+    assert stale_confirmation.status_code == 409
 
 
 @pytest.mark.asyncio

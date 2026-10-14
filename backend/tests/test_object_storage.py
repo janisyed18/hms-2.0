@@ -33,6 +33,7 @@ class _FakeBody:
 class _FakeS3Client:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], dict[str, Any]] = {}
+        self.last_presign_params: dict[str, str] = {}
 
     def put_object(
         self,
@@ -69,6 +70,7 @@ class _FakeS3Client:
         Params: dict[str, str],
         ExpiresIn: int,
     ) -> str:
+        self.last_presign_params = Params
         return (
             f"https://s3.example/{Params['Bucket']}/{Params['Key']}"
             f"?op={operation}&exp={ExpiresIn}"
@@ -137,6 +139,21 @@ def test_s3_object_storage_presigns_downloads_with_prefix() -> None:
     assert "exp=900" in url
     assert "exp=60" in storage.presigned_get_url("k", expires_in=60)
     assert isinstance(storage, PresignedObjectStorage)
+
+
+def test_s3_object_storage_presigns_attachment_downloads() -> None:
+    client = _FakeS3Client()
+    storage = S3ObjectStorage(bucket="hms-dev-media", client=client)
+
+    storage.presigned_get_url(
+        "certificates/CERT-1.pdf",
+        download_filename="CERT-1.pdf",
+    )
+
+    # S3 receives the response header override as part of the signed request.
+    assert client.last_presign_params["ResponseContentDisposition"] == (
+        'attachment; filename="CERT-1.pdf"'
+    )
 
 
 def test_storage_factory_selects_s3_backend(monkeypatch: pytest.MonkeyPatch) -> None:

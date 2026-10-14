@@ -3,7 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel as PydanticBaseModel
+from pydantic import ConfigDict, Field
+
+
+class BaseModel(PydanticBaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class SyncDeviceRead(BaseModel):
