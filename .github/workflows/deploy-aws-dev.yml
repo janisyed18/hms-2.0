@@ -4,20 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       deploy_api:
-        description: "Roll out ECS services after publishing images"
-        required: false
+        description: "Confirm a manual API, worker, and migration release after infrastructure is applied"
+        required: true
         default: false
         type: boolean
-  push:
-    branches:
-      - main
-    paths:
-      - "backend/**"
-      - "services/certificate/**"
-      - "web/apps/staff/**"
-      - "web/apps/inspector/**"
-      - "infra/terraform/**"
-      - ".github/workflows/deploy-aws-dev.yml"
 
 permissions:
   contents: read
@@ -33,10 +23,12 @@ env:
   ECS_BEAT_SERVICE: ${{ vars.AWS_DEV_BEAT_SERVICE || 'hms-dev-beat' }}
   ECS_CERTIFICATE_ENGINE_SERVICE: ${{ vars.AWS_DEV_CERTIFICATE_ENGINE_SERVICE || 'hms-dev-certificate-engine' }}
   ECS_MIGRATE_TASK_DEFINITION: ${{ vars.AWS_DEV_MIGRATE_TASK_DEFINITION || 'hms-dev-migrate' }}
+  API_HEALTH_URL: ${{ vars.AWS_DEV_API_HEALTH_URL }}
 
 jobs:
   deploy:
     name: Build and deploy dev
+    if: ${{ inputs.deploy_api }}
     runs-on: ubuntu-latest
     environment: aws-dev
 
@@ -48,6 +40,44 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_DEV_GITHUB_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+
+      - name: Verify Terraform infrastructure is already applied
+        working-directory: infra/terraform/envs/dev
+        run: |
+          terraform init -input=false
+          terraform validate
+          set +e
+          terraform plan -detailed-exitcode -input=false -out=tfplan
+          result=$?
+          set -e
+          if [ "$result" -eq 2 ]; then
+            echo "Terraform changes are pending. Run the approved infrastructure workflow before an application release." >&2
+            exit 1
+          fi
+          exit "$result"
+
+      - name: Verify required task definitions and edge secret injection
+        run: |
+          aws ecs describe-task-definition --task-definition "$ECS_MIGRATE_TASK_DEFINITION" >/dev/null
+          api_task_definition="$(
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_API_SERVICE" \
+              --query 'services[0].taskDefinition' \
+              --output text
+          )"
+          edge_secret="$(
+            aws ecs describe-task-definition \
+              --task-definition "$api_task_definition" \
+              --query "taskDefinition.containerDefinitions[?name=='api'].secrets[?name=='SECURITY_EDGE_SHARED_SECRET'].valueFrom | [0]" \
+              --output text
+          )"
+          if [ -z "$edge_secret" ] || [ "$edge_secret" = "None" ]; then
+            echo "The API task definition does not inject SECURITY_EDGE_SHARED_SECRET. Apply Terraform before release." >&2
+            exit 1
+          fi
 
       - name: Login to Amazon ECR
         id: ecr
@@ -74,14 +104,6 @@ jobs:
             services/certificate
           docker push "$REGISTRY/$ECR_CERTIFICATE_ENGINE_REPOSITORY:latest"
           docker push "$REGISTRY/$ECR_CERTIFICATE_ENGINE_REPOSITORY:${GITHUB_SHA}"
-
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
-
-      - name: Validate AWS dev infrastructure
-        working-directory: infra/terraform/envs/dev
-        run: |
-          terraform init -backend=false -input=false
-          terraform validate
 
       - name: Build ECS network configuration
         env:
@@ -170,7 +192,6 @@ jobs:
           fi
 
       - name: Force ECS service deployments
-        if: ${{ github.event_name == 'push' || inputs.deploy_api }}
         run: |
           active_services=()
           for service in \
@@ -228,68 +249,11 @@ jobs:
             fi
           fi
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: |
-            web/apps/staff/package-lock.json
-            web/apps/inspector/package-lock.json
-
-      - name: Build staff app
-        working-directory: web/apps/staff
+      - name: Verify API health through the configured public endpoint
         run: |
-          npm ci
-          npm test -- --run
-          npm run build
-          npm run build:portal
-
-      - name: Build inspector app
-        working-directory: web/apps/inspector
-        run: |
-          npm ci
-          npm test -- --run
-          npm run build
-
-      - name: Upload staff app to S3
-        env:
-          STAFF_BUCKET: ${{ vars.AWS_DEV_STAFF_BUCKET }}
-        run: |
-          aws s3 sync web/apps/staff/dist "s3://$STAFF_BUCKET" \
-            --delete \
-            --exclude "index.html" \
-            --exclude "portal/*" \
-            --cache-control "public,max-age=31536000,immutable"
-          aws s3 cp web/apps/staff/dist/index.html "s3://$STAFF_BUCKET/index.html" \
-            --cache-control "no-cache"
-
-      - name: Upload customer portal to S3
-        env:
-          STAFF_BUCKET: ${{ vars.AWS_DEV_STAFF_BUCKET }}
-        run: |
-          aws s3 sync web/apps/staff/dist-portal "s3://$STAFF_BUCKET/portal" \
-            --delete \
-            --exclude "index.html" \
-            --cache-control "public,max-age=31536000,immutable"
-          aws s3 cp web/apps/staff/dist-portal/portal.html "s3://$STAFF_BUCKET/portal/index.html" \
-            --cache-control "no-cache"
-
-      - name: Upload inspector app to S3
-        env:
-          INSPECTOR_BUCKET: ${{ vars.AWS_DEV_INSPECTOR_BUCKET }}
-        run: |
-          aws s3 sync web/apps/inspector/dist "s3://$INSPECTOR_BUCKET" \
-            --delete \
-            --exclude "index.html" \
-            --cache-control "public,max-age=31536000,immutable"
-          aws s3 cp web/apps/inspector/dist/index.html "s3://$INSPECTOR_BUCKET/index.html" \
-            --cache-control "no-cache"
-
-      - name: Invalidate CloudFront
-        run: |
-          aws cloudfront create-invalidation \
-            --distribution-id "${{ vars.AWS_DEV_STAFF_DISTRIBUTION_ID }}" \
-            --paths "/*"
-          aws cloudfront create-invalidation \
-            --distribution-id "${{ vars.AWS_DEV_INSPECTOR_DISTRIBUTION_ID }}" \
-            --paths "/*"
+          if [ -z "$API_HEALTH_URL" ]; then
+            echo "AWS_DEV_API_HEALTH_URL is required for application deployment." >&2
+            exit 1
+          fi
+          curl --fail --show-error --silent --retry 5 --retry-all-errors \
+            "$API_HEALTH_URL/health"

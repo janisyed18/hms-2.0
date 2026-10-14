@@ -2181,6 +2181,14 @@ async def cancel_inspection_booking(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only pending or approved inspection bookings can be cancelled",
         )
+    if (
+        booking.appointment is not None
+        and booking.appointment.status != InspectionAppointmentStatus.CONFIRMED.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only confirmed inspection appointments can be cancelled",
+        )
     before = booking.to_audit_dict()
     booking.status = InspectionBookingStatus.CANCELLED.value
     await record_update(
@@ -2189,6 +2197,9 @@ async def cancel_inspection_booking(
         actor_id=principal.user_id,
         action="inspection_booking.cancelled",
         before=before,
+    )
+    await _cancel_pending_booking_change_requests(
+        session, booking, actor_id=principal.user_id
     )
     if booking.appointment is not None:
         await _cancel_appointment(
@@ -2315,7 +2326,11 @@ async def create_inspection_booking_change_request(
     else:
         await emit_event(
             session,
-            category=NotificationCategory.INSPECTION_BOOKING_RESCHEDULE_REQUESTED,
+            category=(
+                NotificationCategory.INSPECTION_BOOKING_RESCHEDULE_REQUESTED
+                if customer_request
+                else NotificationCategory.INSPECTION_BOOKING_RESCHEDULE_PROPOSED
+            ),
             aggregate_type="inspection_booking",
             aggregate_id=booking.id,
             payload=_inspection_booking_event_payload(
@@ -2473,6 +2488,7 @@ async def update_inspection(
 ) -> InspectionRead:
     _require_inspection_write(principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    await _require_active_inspection_booking(session, inspection)
     if inspection.status != InspectionStatus.DRAFT.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2511,6 +2527,7 @@ async def submit_inspection(
 ) -> InspectionRead:
     _require_inspection_write(principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    await _require_active_inspection_booking(session, inspection)
     if inspection.status != InspectionStatus.DRAFT.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2553,6 +2570,7 @@ async def approve_inspection(
 ) -> InspectionRead:
     _require_certificate_approve(principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    await _require_active_inspection_booking(session, inspection)
     if inspection.status != InspectionStatus.SUBMITTED.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2604,6 +2622,7 @@ async def reject_inspection(
 ) -> InspectionRead:
     _require_certificate_approve(principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    await _require_active_inspection_booking(session, inspection)
     if inspection.status != InspectionStatus.SUBMITTED.value:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -2680,6 +2699,7 @@ async def issue_certificate(
 ) -> CertificateRead:
     _require_certificate_approve(principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    await _require_active_inspection_booking(session, inspection)
     if inspection.certificate is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -4213,8 +4233,9 @@ async def _assert_resource_available(
     resource_id: str,
     starts_at: datetime,
     ends_at: datetime,
+    exclude_revision_id: str | None = None,
 ) -> None:
-    conflict = await session.scalar(
+    statement = (
         select(InspectionResourceAllocation.id)
         .where(
             InspectionResourceAllocation.resource_type == resource_type,
@@ -4227,6 +4248,11 @@ async def _assert_resource_available(
         )
         .with_for_update()
     )
+    if exclude_revision_id is not None:
+        statement = statement.where(
+            InspectionResourceAllocation.revision_id != exclude_revision_id
+        )
+    conflict = await session.scalar(statement)
     if conflict is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -4244,13 +4270,24 @@ async def _assert_booking_resources_available(
     inspector_id: str,
     starts_at: datetime,
     ends_at: datetime,
+    exclude_revision_id: str | None = None,
 ) -> None:
     await _assert_resource_available(
-        session, "INSPECTOR", inspector_id, starts_at, ends_at
+        session,
+        "INSPECTOR",
+        inspector_id,
+        starts_at,
+        ends_at,
+        exclude_revision_id,
     )
     for booking_asset in booking.assets:
         await _assert_resource_available(
-            session, "ASSET", booking_asset.asset_id, starts_at, ends_at
+            session,
+            "ASSET",
+            booking_asset.asset_id,
+            starts_at,
+            ends_at,
+            exclude_revision_id,
         )
 
 
@@ -4415,6 +4452,50 @@ async def _cancel_appointment(
             )
 
 
+async def _cancel_pending_booking_change_requests(
+    session: AsyncSession,
+    booking: InspectionBooking,
+    *,
+    actor_id: str,
+) -> None:
+    pending_statuses = {
+        InspectionChangeRequestStatus.PENDING_ADMIN_APPROVAL.value,
+        InspectionChangeRequestStatus.PENDING_CUSTOMER_CONFIRMATION.value,
+    }
+    for change in booking.change_requests:
+        if change.status not in pending_statuses:
+            continue
+        before = change.to_audit_dict()
+        change.status = InspectionChangeRequestStatus.CANCELLED.value
+        change.reviewed_by_user_id = actor_id
+        change.reviewed_at = utc_now()
+        await record_update(
+            session,
+            change,
+            actor_id=actor_id,
+            action="inspection_booking_change.cancelled",
+            before=before,
+        )
+
+
+async def _require_active_inspection_booking(
+    session: AsyncSession, inspection: Inspection
+) -> None:
+    if inspection.booking_id is None:
+        return
+    booking_status = await session.scalar(
+        select(InspectionBooking.status).where(
+            InspectionBooking.id == inspection.booking_id,
+            InspectionBooking.deleted_at.is_(None),
+        )
+    )
+    if booking_status != InspectionBookingStatus.APPROVED.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The inspection booking is no longer active",
+        )
+
+
 async def _complete_booking_appointment_if_ready(
     session: AsyncSession,
     booking_id: str,
@@ -4484,7 +4565,16 @@ async def _apply_appointment_change(
     inspector: User | None,
     actor_id: str,
 ) -> None:
-    if inspector is None or booking.appointment is None:
+    if (
+        booking.status != InspectionBookingStatus.APPROVED.value
+        or booking.appointment is None
+        or booking.appointment.status != InspectionAppointmentStatus.CONFIRMED.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a confirmed inspection booking can be rescheduled",
+        )
+    if inspector is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="A confirmed appointment and active inspector are required",
@@ -4492,7 +4582,16 @@ async def _apply_appointment_change(
     quote = await _get_valid_availability_quote(
         session, booking, change.availability_quote_id
     )
-    if inspector.id not in quote.candidate_inspector_ids:
+    appointment = booking.appointment
+    current_revision = next(
+        item
+        for item in appointment.revisions
+        if item.revision_number == appointment.current_revision_number
+    )
+    if (
+        inspector.id not in quote.candidate_inspector_ids
+        and inspector.id != current_revision.inspector_user_id
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="The inspector is no longer available for the selected time",
@@ -4500,15 +4599,14 @@ async def _apply_appointment_change(
     starts_at = _as_utc(quote.starts_at)
     ends_at = _as_utc(quote.ends_at)
     await _assert_booking_resources_available(
-        session, booking, inspector.id, starts_at, ends_at
+        session,
+        booking,
+        inspector.id,
+        starts_at,
+        ends_at,
+        exclude_revision_id=current_revision.id,
     )
 
-    appointment = booking.appointment
-    current_revision = next(
-        item
-        for item in appointment.revisions
-        if item.revision_number == appointment.current_revision_number
-    )
     for allocation in current_revision.allocations:
         if allocation.state != InspectionAllocationState.CONFIRMED.value:
             continue
@@ -4532,6 +4630,9 @@ async def _apply_appointment_change(
         actor_id=actor_id,
         action="inspection_booking.rescheduled",
         before=booking_before,
+    )
+    await _reassign_draft_booking_inspections(
+        session, booking, inspector_id=inspector.id, actor_id=actor_id
     )
     appointment_before = appointment.to_audit_dict()
     appointment.current_revision_number += 1
@@ -4590,6 +4691,36 @@ async def _apply_appointment_change(
             reason=change.reason,
         ),
     )
+
+
+async def _reassign_draft_booking_inspections(
+    session: AsyncSession,
+    booking: InspectionBooking,
+    *,
+    inspector_id: str,
+    actor_id: str,
+) -> None:
+    inspections = (
+        await session.scalars(
+            select(Inspection).where(
+                Inspection.booking_id == booking.id,
+                Inspection.status == InspectionStatus.DRAFT.value,
+                Inspection.deleted_at.is_(None),
+            )
+        )
+    ).all()
+    for inspection in inspections:
+        if inspection.inspector_user_id == inspector_id:
+            continue
+        before = inspection.to_audit_dict()
+        inspection.inspector_user_id = inspector_id
+        await record_update(
+            session,
+            inspection,
+            actor_id=actor_id,
+            action="inspection.reassigned_from_booking",
+            before=before,
+        )
 
 
 async def _get_visible_change_request_or_404(

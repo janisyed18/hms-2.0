@@ -1,0 +1,52 @@
+name: Apply AWS Dev Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_infrastructure:
+        description: "Confirm that the Terraform plan has been reviewed and may be applied to aws-dev"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-dev-infrastructure
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-2
+
+jobs:
+  apply:
+    name: Plan and apply approved infrastructure
+    if: ${{ inputs.apply_infrastructure }}
+    runs-on: ubuntu-latest
+    # Configure this GitHub Environment with required reviewers. This is the
+    # approval gate before stateful AWS infrastructure can change.
+    environment: aws-dev
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEV_GITHUB_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+
+      - name: Plan reviewed infrastructure changes
+        working-directory: infra/terraform/envs/dev
+        run: |
+          terraform init -input=false
+          terraform validate
+          terraform plan -input=false -out=tfplan
+
+      - name: Apply reviewed infrastructure plan
+        working-directory: infra/terraform/envs/dev
+        run: terraform apply -input=false -auto-approve tfplan

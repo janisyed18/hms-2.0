@@ -58,7 +58,12 @@ function valuesFor(customer: CustomerRecord | null): CustomerFormValues {
         siteContactMobile: location.siteContactMobile ?? "",
         siteContactEmail: location.siteContactEmail ?? "",
         ppeRequirements: location.ppeRequirements,
-        additionalRequirements: location.additionalRequirements
+        additionalRequirements: location.additionalRequirements,
+        schedulingTimezone: location.schedulingTimezone,
+        schedulingOpenTime: location.schedulingOpenTime,
+        schedulingCloseTime: location.schedulingCloseTime,
+        schedulingWeekdays: location.schedulingWeekdays,
+        schedulingBlackoutDates: location.schedulingBlackoutDates
       }))
       : emptyValues().locations
   };
@@ -116,7 +121,12 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
           siteContactMobile: location.siteContactMobile?.trim() ?? "",
           siteContactEmail: location.siteContactEmail?.trim() ?? "",
           ppeRequirements: location.ppeRequirements,
-          additionalRequirements: location.additionalRequirements
+          additionalRequirements: location.additionalRequirements,
+          schedulingTimezone: location.schedulingTimezone,
+          schedulingOpenTime: location.schedulingOpenTime,
+          schedulingCloseTime: location.schedulingCloseTime,
+          schedulingWeekdays: location.schedulingWeekdays,
+          schedulingBlackoutDates: location.schedulingBlackoutDates
         }))
       });
     } catch {

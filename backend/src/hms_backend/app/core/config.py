@@ -165,8 +165,11 @@ class Settings(BaseSettings):
     auth_browser_reauth_max_age_seconds: int = 300
     # Max verification attempts against a single challenge before it is rejected.
     auth_browser_challenge_max_attempts: int = 5
-    # Login throttling (per normalised account and per source IP, independently).
+    # Login throttling: a low per-account threshold protects credentials while a
+    # higher per-IP threshold tolerates legitimate shared corporate networks.
     auth_login_rate_limit_max_attempts: int = 5
+    auth_login_account_rate_limit_max_attempts: int = 5
+    auth_login_ip_rate_limit_max_attempts: int = 50
     auth_login_rate_limit_window_seconds: int = 300
     auth_login_lockout_seconds: int = 60
 

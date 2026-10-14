@@ -41,7 +41,12 @@ from hms_backend.app.modules.identity.password_reset import (
 router = APIRouter(prefix="/auth/browser", tags=["auth-browser"])
 
 _service = BrowserAuthService()
-_login_limiter = LoginRateLimiter()
+_account_login_limiter = LoginRateLimiter(
+    max_attempts=settings.auth_login_account_rate_limit_max_attempts
+)
+_ip_login_limiter = LoginRateLimiter(
+    max_attempts=settings.auth_login_ip_rate_limit_max_attempts
+)
 
 
 class BaseModel(PydanticBaseModel):
@@ -223,8 +228,12 @@ async def browser_login(
 ):
     _, ip = _client_meta(request)
     account_key = f"account:{payload.email.strip().lower()}"
-    for key in (account_key, f"ip:{ip or 'unknown'}"):
-        decision = await _login_limiter.hit(key)
+    ip_key = f"ip:{ip or 'unknown'}"
+    for limiter, key in (
+        (_account_login_limiter, account_key),
+        (_ip_login_limiter, ip_key),
+    ):
+        decision = await limiter.hit(key)
         if not decision.allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -250,7 +259,8 @@ async def browser_login(
         # Persist the redacted failure audit + attempt counter, then fail generic.
         await session.commit()
         raise _unauthorized(exc) from exc
-    await _login_limiter.reset(account_key)
+    await _account_login_limiter.reset(account_key)
+    await _ip_login_limiter.reset(ip_key)
     await session.commit()
     if isinstance(result, AuthenticatedSession):
         return _authenticated_body(result, response)

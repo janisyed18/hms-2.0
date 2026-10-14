@@ -35,9 +35,13 @@ _CUSTOMER_FACING = {
     _Cat.INSPECTION_FAILED,
     _Cat.CERTIFICATE_ISSUED,
     _Cat.CERTIFICATE_REVOKED,
+    _Cat.INSPECTION_BOOKING_RESCHEDULE_PROPOSED,
 }
-# Categories that also notify the BAT account owner (HMS admins).
-_ACCOUNT_OWNER = _CUSTOMER_FACING | {_Cat.ASSET_RETIRED}
+# Categories that also notify the BAT account owner (HMS admins). An admin
+# reschedule proposal is intentionally customer-only while it awaits acceptance.
+_ACCOUNT_OWNER = (
+    _CUSTOMER_FACING - {_Cat.INSPECTION_BOOKING_RESCHEDULE_PROPOSED}
+) | {_Cat.ASSET_RETIRED}
 
 
 @dataclass(frozen=True)
@@ -111,6 +115,17 @@ async def _customer_contacts(
     return list(rows.all())
 
 
+async def _customer_users(session: AsyncSession, customer_id: str) -> list[User]:
+    rows = await session.scalars(
+        select(User).where(
+            User.customer_id == customer_id,
+            User.role == Role.CUSTOMER_USER.value,
+            User.deleted_at.is_(None),
+        )
+    )
+    return list(rows.all())
+
+
 async def resolve_recipients(
     session: AsyncSession,
     category: NotificationCategory,
@@ -181,6 +196,9 @@ async def resolve_recipients(
         for role in (Role.SUPER_ADMIN, Role.HMS_ADMIN):
             for user in await _users_by_role(session, role):
                 add(_from_user(user))
+    elif category is _Cat.INSPECTION_BOOKING_RESCHEDULE_PROPOSED and customer_id:
+        for user in await _customer_users(session, customer_id):
+            add(_from_user(user))
     elif category is _Cat.INSPECTION_FAILED:
         reviewer = await _user_by_id(session, payload.get("reviewer_user_id", ""))
         if reviewer is not None:

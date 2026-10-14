@@ -292,6 +292,55 @@ async def test_booking_notifications_route_to_admin_or_requester(
     } == {NotificationChannel.EMAIL.value, NotificationChannel.IN_APP.value}
 
 
+@pytest.mark.asyncio
+async def test_admin_reschedule_proposal_notifies_customer_not_admin(
+    session_factory: SessionFactory,
+) -> None:
+    async with session_factory() as session:
+        customer_id, _ = await _seed_customer_asset(session)
+        admin = User(
+            oidc_subject="admin-proposal-oidc",
+            email="admin-proposal@example.com",
+            role="HMS_ADMIN",
+            email_verified=True,
+        )
+        customer_user = User(
+            oidc_subject="customer-proposal-oidc",
+            customer_id=customer_id,
+            email="customer-proposal@example.com",
+            role="CUSTOMER_USER",
+            email_verified=True,
+        )
+        session.add_all([admin, customer_user])
+        await session.flush()
+        await emit_event(
+            session,
+            category=NotificationCategory.INSPECTION_BOOKING_RESCHEDULE_PROPOSED,
+            aggregate_type="inspection_booking",
+            aggregate_id="booking-proposal-1",
+            payload={
+                "booking_id": "booking-proposal-1",
+                "customer_id": customer_id,
+                "customer_name": "Acme",
+                "location_name": "Main Depot",
+                "scheduled_at": "2026-10-02T10:30:00+00:00",
+                "asset_count": 1,
+                "requested_by_user_id": admin.id,
+                "reason": "Inspector availability changed.",
+                "link": "https://hms.example/inspections",
+            },
+        )
+        await session.commit()
+
+    result = await relay_outbox(session_factory)
+    assert result["created"] == 4
+    async with session_factory() as session:
+        notifications = (await session.scalars(select(Notification))).all()
+    recipient_ids = {notification.recipient_id for notification in notifications}
+    assert admin.id not in recipient_ids
+    assert customer_user.id in recipient_ids
+
+
 # --- N-06: dispatch, retry, dead-letter ------------------------------------------
 
 

@@ -2,13 +2,12 @@ name: Deploy AWS Web
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "web/apps/staff/**"
-      - "web/apps/inspector/**"
-      - ".github/workflows/deploy-aws-web.yml"
+    inputs:
+      deploy_web:
+        description: "Confirm a manual staff, customer portal, and inspector web release"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -20,6 +19,7 @@ env:
 jobs:
   deploy:
     name: Build and deploy web applications
+    if: ${{ inputs.deploy_web }}
     runs-on: ubuntu-latest
     environment: aws-dev
 

@@ -3445,15 +3445,22 @@ async def test_customer_reschedule_request_creates_a_new_appointment_revision(
     seeded_session: dict[str, str],
 ) -> None:
     async with session_factory() as session:
-        session.add(
+        session.add_all([
             User(
                 id="inspector-reschedule-1",
                 oidc_subject="local:inspector-reschedule-1",
                 email="reschedule.inspector@example.test",
                 role=Role.INSPECTOR.value,
                 account_status=AccountStatus.ACTIVE.value,
-            )
-        )
+            ),
+            User(
+                id="inspector-reschedule-2",
+                oidc_subject="local:inspector-reschedule-2",
+                email="reschedule.second.inspector@example.test",
+                role=Role.INSPECTOR.value,
+                account_status=AccountStatus.ACTIVE.value,
+            ),
+        ])
         await session.commit()
 
     customer = Principal(
@@ -3517,7 +3524,7 @@ async def test_customer_reschedule_request_creates_a_new_appointment_revision(
             f"/api/v1/inspection-bookings/{booking.json()['id']}"
         )
 
-    assert applied.status_code == 200
+    assert applied.status_code == 200, applied.text
     assert applied.json()["status"] == "APPLIED"
     assert refreshed.status_code == 200
     assert refreshed.json()["appointment"]["revision_number"] == 2
@@ -3537,7 +3544,7 @@ async def test_customer_reschedule_request_creates_a_new_appointment_revision(
             f"/api/v1/inspection-bookings/{booking.json()['id']}/change-requests",
             json={
                 "availability_quote_id": admin_quote["quote_id"],
-                "inspector_user_id": "inspector-reschedule-1",
+                "inspector_user_id": "inspector-reschedule-2",
                 "reason": "Inspector requested a different time.",
             },
         )
@@ -3556,6 +3563,222 @@ async def test_customer_reschedule_request_creates_a_new_appointment_revision(
     assert confirmed.json()["status"] == "APPLIED"
     assert refreshed.json()["appointment"]["revision_number"] == 3
     assert refreshed.json()["appointment"]["tzdata_version"] == "2026e"
+    async with session_factory() as session:
+        inspection_inspector_id = await session.scalar(
+            select(Inspection.inspector_user_id).where(
+                Inspection.booking_id == booking.json()["id"]
+            )
+        )
+    assert inspection_inspector_id == "inspector-reschedule-2"
+
+
+async def _create_confirmed_booking(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+    *,
+    customer: Principal,
+    admin: Principal,
+    inspector_id: str,
+    local_date: str,
+) -> dict[str, object]:
+    params: dict[str, str | int] = {
+        "customer_id": seeded_session["vopak_id"],
+        "location_id": seeded_session["vopak_location_id"],
+        "local_date": local_date,
+        "duration_minutes": 60,
+    }
+    async with api_client(session_factory, customer) as client:
+        quote = (
+            await client.get("/api/v1/inspection-availability", params=params)
+        ).json()["items"][0]
+        booking = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["vopak_asset_id"]],
+                "availability_quote_id": quote["quote_id"],
+            },
+        )
+    assert booking.status_code == 201
+    async with api_client(session_factory, admin) as client:
+        approved = await client.post(
+            f"/api/v1/inspection-bookings/{booking.json()['id']}/approve",
+            json={"inspector_user_id": inspector_id},
+        )
+    assert approved.status_code == 200
+    return approved.json()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_booking_blocks_generated_inspection_transitions(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    inspector_id = "inspector-cancel-lifecycle-1"
+    async with session_factory() as session:
+        session.add(User(
+            id=inspector_id,
+            oidc_subject=f"local:{inspector_id}",
+            email="cancel.lifecycle.inspector@example.test",
+            role=Role.INSPECTOR.value,
+            account_status=AccountStatus.ACTIVE.value,
+        ))
+        await session.commit()
+    customer = Principal(
+        "customer-user-1",
+        frozenset({Role.CUSTOMER_USER}),
+        frozenset({seeded_session["vopak_id"]}),
+    )
+    admin = Principal("admin-1", frozenset({Role.HMS_ADMIN}), frozenset())
+    booking = await _create_confirmed_booking(
+        session_factory, seeded_session, customer=customer, admin=admin,
+        inspector_id=inspector_id, local_date="2027-10-12",
+    )
+    async with session_factory() as session:
+        inspection_id = await session.scalar(
+            select(Inspection.id).where(Inspection.booking_id == booking["id"])
+        )
+    assert inspection_id is not None
+    async with api_client(session_factory, customer) as client:
+        cancelled = await client.post(
+            f"/api/v1/inspection-bookings/{booking['id']}/cancel",
+            json={"reason": "Site shutdown"},
+        )
+    assert cancelled.status_code == 200
+    inspector = Principal(inspector_id, frozenset({Role.INSPECTOR}), frozenset())
+    async with api_client(session_factory, inspector) as client:
+        submitted = await client.post(f"/api/v1/inspections/{inspection_id}/submit")
+    assert submitted.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_completed_booking_appointment_cannot_be_cancelled(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    inspector_id = "inspector-completed-lifecycle-1"
+    async with session_factory() as session:
+        session.add(User(
+            id=inspector_id,
+            oidc_subject=f"local:{inspector_id}",
+            email="completed.lifecycle.inspector@example.test",
+            role=Role.INSPECTOR.value,
+            account_status=AccountStatus.ACTIVE.value,
+        ))
+        await session.commit()
+    customer = Principal(
+        "customer-user-1",
+        frozenset({Role.CUSTOMER_USER}),
+        frozenset({seeded_session["vopak_id"]}),
+    )
+    admin = Principal("admin-1", frozenset({Role.HMS_ADMIN}), frozenset())
+    booking = await _create_confirmed_booking(
+        session_factory, seeded_session, customer=customer, admin=admin,
+        inspector_id=inspector_id, local_date="2027-10-13",
+    )
+    async with session_factory() as session:
+        inspection_id = await session.scalar(
+            select(Inspection.id).where(Inspection.booking_id == booking["id"])
+        )
+    assert inspection_id is not None
+    inspector = Principal(inspector_id, frozenset({Role.INSPECTOR}), frozenset())
+    async with api_client(session_factory, inspector) as client:
+        submitted = await client.post(f"/api/v1/inspections/{inspection_id}/submit")
+    assert submitted.status_code == 200
+    reviewer = Principal("reviewer-1", frozenset({Role.REVIEWER}), frozenset())
+    async with api_client(session_factory, reviewer) as client:
+        approved = await client.post(f"/api/v1/inspections/{inspection_id}/approve")
+    async with api_client(session_factory, admin) as client:
+        cancelled = await client.post(
+            f"/api/v1/inspection-bookings/{booking['id']}/cancel",
+            json={"reason": "Too late"},
+        )
+    assert approved.status_code == 200
+    assert cancelled.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_cancellation_invalidates_pending_reschedule_requests(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    inspector_id = "inspector-stale-change-1"
+    async with session_factory() as session:
+        session.add(User(
+            id=inspector_id,
+            oidc_subject=f"local:{inspector_id}",
+            email="stale.change.inspector@example.test",
+            role=Role.INSPECTOR.value,
+            account_status=AccountStatus.ACTIVE.value,
+        ))
+        await session.commit()
+    customer = Principal(
+        "customer-user-1",
+        frozenset({Role.CUSTOMER_USER}),
+        frozenset({seeded_session["vopak_id"]}),
+    )
+    admin = Principal("admin-1", frozenset({Role.HMS_ADMIN}), frozenset())
+    booking = await _create_confirmed_booking(
+        session_factory, seeded_session, customer=customer, admin=admin,
+        inspector_id=inspector_id, local_date="2027-10-14",
+    )
+    params: dict[str, str | int] = {
+        "customer_id": seeded_session["vopak_id"],
+        "location_id": seeded_session["vopak_location_id"],
+        "local_date": "2027-10-14",
+        "duration_minutes": 60,
+    }
+    async with api_client(session_factory, customer) as client:
+        availability = await client.get(
+            "/api/v1/inspection-availability", params=params
+        )
+        quote = availability.json()["items"][0]
+        requested = await client.post(
+            f"/api/v1/inspection-bookings/{booking['id']}/change-requests",
+            json={"availability_quote_id": quote["quote_id"], "reason": "Weather"},
+        )
+        cancelled = await client.post(
+            f"/api/v1/inspection-bookings/{booking['id']}/cancel",
+            json={"reason": "Site closed"},
+        )
+    assert requested.status_code == 201
+    assert cancelled.status_code == 200
+    async with api_client(session_factory, admin) as client:
+        stale_approval = await client.post(
+            f"/api/v1/inspection-booking-change-requests/{requested.json()['id']}/approve",
+            json={"inspector_user_id": inspector_id},
+        )
+    assert stale_approval.status_code == 409
+
+    proposal_booking = await _create_confirmed_booking(
+        session_factory, seeded_session, customer=customer, admin=admin,
+        inspector_id=inspector_id, local_date="2027-10-15",
+    )
+    proposal_params = {**params, "local_date": "2027-10-15"}
+    async with api_client(session_factory, admin) as client:
+        proposal_quote = (
+            await client.get("/api/v1/inspection-availability", params=proposal_params)
+        ).json()["items"][0]
+        proposed = await client.post(
+            f"/api/v1/inspection-bookings/{proposal_booking['id']}/change-requests",
+            json={
+                "availability_quote_id": proposal_quote["quote_id"],
+                "inspector_user_id": inspector_id,
+                "reason": "Inspector availability changed",
+            },
+        )
+    assert proposed.status_code == 201
+    async with api_client(session_factory, customer) as client:
+        cancelled_proposal = await client.post(
+            f"/api/v1/inspection-bookings/{proposal_booking['id']}/cancel",
+            json={"reason": "Site closed"},
+        )
+        stale_confirmation = await client.post(
+            f"/api/v1/inspection-booking-change-requests/{proposed.json()['id']}/confirm"
+        )
+    assert cancelled_proposal.status_code == 200
+    assert stale_confirmation.status_code == 409
 
 
 @pytest.mark.asyncio

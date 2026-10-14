@@ -117,6 +117,14 @@ _TEMPLATES: dict[tuple[NotificationCategory, NotificationChannel], _Template] = 
     (_Cat.INSPECTION_BOOKING_RESCHEDULE_REQUESTED, _Ch.IN_APP): _Template(
         "Inspection reschedule awaiting approval", "{location_name}"
     ),
+    (_Cat.INSPECTION_BOOKING_RESCHEDULE_PROPOSED, _Ch.EMAIL): _Template(
+        "Inspection reschedule awaiting your confirmation",
+        "A new inspection time was proposed for {location_name} on "
+        "{scheduled_at}.\n\nReason: {reason}",
+    ),
+    (_Cat.INSPECTION_BOOKING_RESCHEDULE_PROPOSED, _Ch.IN_APP): _Template(
+        "Inspection reschedule awaiting your confirmation", "{location_name}"
+    ),
     (_Cat.INSPECTION_BOOKING_RESCHEDULED, _Ch.EMAIL): _Template(
         "Inspection booking rescheduled",
         "The inspection at {location_name} is now scheduled for "

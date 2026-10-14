@@ -16,9 +16,11 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from hms_backend.app.api import browser_auth
 from hms_backend.app.api.dependencies import get_session
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.passwords import hash_password
+from hms_backend.app.core.rate_limit import LoginRateLimiter
 from hms_backend.app.core.redis import set_redis_client
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
@@ -161,6 +163,43 @@ async def test_login_authenticates_without_mfa_when_disabled(
     assert response.json()["next_step"] == "AUTHENTICATED"
     assert response.json()["access_token"]
     assert COOKIE in response.headers.get("set-cookie", "")
+
+
+@pytest.mark.asyncio
+async def test_successful_login_resets_shared_ip_throttle(
+    client: httpx.AsyncClient,
+    session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _seed_user(session_factory, must_change=False)
+    monkeypatch.setattr(settings, "auth_mfa_required", False, raising=False)
+    monkeypatch.setattr(
+        browser_auth,
+        "_account_login_limiter",
+        LoginRateLimiter(max_attempts=3, window_seconds=300, lockout_seconds=60),
+    )
+    monkeypatch.setattr(
+        browser_auth,
+        "_ip_login_limiter",
+        LoginRateLimiter(max_attempts=3, window_seconds=300, lockout_seconds=60),
+    )
+
+    for email in ("wrong-one@example.test", "wrong-two@example.test"):
+        failed = await client.post(
+            "/api/v1/auth/browser/login", json={"email": email, "password": "wrong"}
+        )
+        assert failed.status_code == 401
+
+    successful = await client.post(
+        "/api/v1/auth/browser/login", json={"email": EMAIL, "password": PW}
+    )
+    assert successful.status_code == 200
+
+    after_success = await client.post(
+        "/api/v1/auth/browser/login",
+        json={"email": "wrong-three@example.test", "password": "wrong"},
+    )
+    assert after_success.status_code == 401
 
 
 @pytest.mark.asyncio
