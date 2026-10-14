@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
+from typing import cast
 
 import httpx
 import pytest
@@ -3607,7 +3608,9 @@ async def _create_confirmed_booking(
             json={"inspector_user_id": inspector_id},
         )
     assert approved.status_code == 200
-    return approved.json()
+    body = approved.json()
+    assert isinstance(body, dict)
+    return cast(dict[str, object], body)
 
 
 @pytest.mark.asyncio
