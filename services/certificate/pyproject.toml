@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "grpcio>=1.81.1,<1.82",
     "grpcio-health-checking>=1.81.1,<1.82",
-    "grpcio-reflection>=1.81.1,<1.82",
+    "grpcio-reflection>=1.81.1,<1.85",
     "protobuf>=6.33,<7",
     "reportlab>=4.1",
     "qrcode[pil]>=7.4",
