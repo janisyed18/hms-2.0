@@ -22,7 +22,7 @@ hms-certificate-engine = "hms_certificate.server:serve"
 
 [dependency-groups]
 dev = [
-    "grpcio-tools>=1.81.1,<1.82",
+    "grpcio-tools>=1.81.1,<1.85",
     "pypdf>=4.2",
     "pytest>=8.2",
     "ruff>=0.5",
