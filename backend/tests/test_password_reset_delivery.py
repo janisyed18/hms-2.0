@@ -35,6 +35,7 @@ from hms_backend.app.modules.notifications.channels.base import (
     DeliveryResult,
     OutgoingMessage,
 )
+from hms_backend.app.modules.notifications.enums import NotificationChannel
 from hms_backend.app.modules.notifications.password_reset_delivery import (
     dispatch_password_reset_deliveries,
 )
@@ -47,6 +48,8 @@ NOW = datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
 
 
 class FakeEmailAdapter:
+    channel = NotificationChannel.EMAIL
+
     def __init__(self, result: DeliveryResult | None = None) -> None:
         self.messages: list[OutgoingMessage] = []
         self.result = result or DeliveryResult(

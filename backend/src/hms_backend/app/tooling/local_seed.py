@@ -222,11 +222,11 @@ async def _seed_asset_configuration_lookups(session: AsyncSession) -> None:
             )
             is None
         ):
-            record = NominalBore(code=code, label=label, enabled=True)
-            session.add(record)
+            nominal_bore = NominalBore(code=code, label=label, enabled=True)
+            session.add(nominal_bore)
             await record_create(
                 session,
-                record,
+                nominal_bore,
                 actor_id=SEED_ACTOR_ID,
                 action="asset_configuration_lookup.seeded",
             )

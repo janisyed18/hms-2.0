@@ -26,6 +26,8 @@ x-backend: &backend
     AUTH_DEV_HEADERS_ENABLED: "false"
     AUTH_DEV_ALLOW_ROLE_FALLBACK: "false"
     AUTH_BROWSER_LOGIN_ENABLED: "true"
+    AUTH_MFA_REQUIRED: ${AUTH_MFA_REQUIRED:-false}
+    AUTH_LOGIN_RATE_LIMIT_MAX_ATTEMPTS: ${AUTH_LOGIN_RATE_LIMIT_MAX_ATTEMPTS:-5}
     # Development-only defaults. Shared/deployed environments must inject
     # independently generated values through their secret manager.
     AUTH_BEARER_HMAC_SECRET: ${AUTH_BEARER_HMAC_SECRET:-hms-local-only-signing-secret-change-before-any-shared-use}

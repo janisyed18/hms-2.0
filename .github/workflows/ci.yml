@@ -84,7 +84,7 @@ jobs:
         working-directory: web/apps/staff
       - run: npx playwright install --with-deps chromium
         working-directory: web/apps/staff
-      - run: docker compose --profile frontend up -d --build
+      - run: AUTH_MFA_REQUIRED=true AUTH_LOGIN_RATE_LIMIT_MAX_ATTEMPTS=100 docker compose --profile frontend up -d --build
       - run: curl --fail --retry 30 --retry-delay 2 http://127.0.0.1:8000/health/ready
       - run: npm run test:e2e
         working-directory: web/apps/staff
