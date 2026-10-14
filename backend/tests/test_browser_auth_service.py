@@ -25,6 +25,7 @@ from hms_backend.app.modules.identity.browser_auth import (
     AuthenticatedSession,
     BrowserAuthError,
     BrowserAuthService,
+    IssuedChallenge,
 )
 from hms_backend.app.modules.identity.models import (
     BrowserAuthStage,
@@ -74,6 +75,13 @@ def _service(now: datetime = NOW) -> BrowserAuthService:
     return BrowserAuthService(now=lambda: now)
 
 
+def _issued_challenge(
+    result: IssuedChallenge | AuthenticatedSession,
+) -> IssuedChallenge:
+    assert isinstance(result, IssuedChallenge)
+    return result
+
+
 async def _make_user(
     session: AsyncSession,
     *,
@@ -104,8 +112,8 @@ async def _make_user(
 @pytest.mark.asyncio
 async def test_login_routes_to_password_change(session: AsyncSession) -> None:
     await _make_user(session, must_change=True)
-    challenge = await _service().login(
-        session, email="USER@example.com", password=PASSWORD
+    challenge = _issued_challenge(
+        await _service().login(session, email="USER@example.com", password=PASSWORD)
     )
     assert challenge.stage == BrowserAuthStage.PASSWORD_CHANGE_REQUIRED.value
 
@@ -113,14 +121,18 @@ async def test_login_routes_to_password_change(session: AsyncSession) -> None:
 @pytest.mark.asyncio
 async def test_login_routes_to_mfa_enrollment(session: AsyncSession) -> None:
     await _make_user(session)
-    challenge = await _service().login(session, email=EMAIL, password=PASSWORD)
+    challenge = _issued_challenge(
+        await _service().login(session, email=EMAIL, password=PASSWORD)
+    )
     assert challenge.stage == BrowserAuthStage.MFA_ENROLLMENT_REQUIRED.value
 
 
 @pytest.mark.asyncio
 async def test_login_routes_to_mfa_required(session: AsyncSession) -> None:
     await _make_user(session, totp_secret=pyotp.random_base32())
-    challenge = await _service().login(session, email=EMAIL, password=PASSWORD)
+    challenge = _issued_challenge(
+        await _service().login(session, email=EMAIL, password=PASSWORD)
+    )
     assert challenge.stage == BrowserAuthStage.MFA_REQUIRED.value
 
 
@@ -173,9 +185,13 @@ async def test_change_password_advances_and_revokes_sessions(
     )
     await session.flush()
     service = _service()
-    challenge = await service.login(session, email=EMAIL, password=PASSWORD)
-    advanced = await service.change_password(
-        session, challenge=challenge.raw, new_password="A-New-Str0ng-Passphrase"
+    challenge = _issued_challenge(
+        await service.login(session, email=EMAIL, password=PASSWORD)
+    )
+    advanced = _issued_challenge(
+        await service.change_password(
+            session, challenge=challenge.raw, new_password="A-New-Str0ng-Passphrase"
+        )
     )
     assert advanced.stage == BrowserAuthStage.MFA_ENROLLMENT_REQUIRED.value
     assert user.must_change_password is False
@@ -191,7 +207,9 @@ async def test_change_password_advances_and_revokes_sessions(
 async def test_change_password_rejects_weak(session: AsyncSession) -> None:
     await _make_user(session, must_change=True)
     service = _service()
-    challenge = await service.login(session, email=EMAIL, password=PASSWORD)
+    challenge = _issued_challenge(
+        await service.login(session, email=EMAIL, password=PASSWORD)
+    )
     with pytest.raises(BrowserAuthError):
         await service.change_password(
             session, challenge=challenge.raw, new_password="short"
@@ -207,7 +225,9 @@ async def test_enrollment_encrypts_secret_and_returns_recovery_codes(
 ) -> None:
     user = await _make_user(session)
     service = _service()
-    challenge = await service.login(session, email=EMAIL, password=PASSWORD)
+    challenge = _issued_challenge(
+        await service.login(session, email=EMAIL, password=PASSWORD)
+    )
     enrollment = await service.start_mfa_enrollment(session, challenge=challenge.raw)
     assert enrollment.otpauth_uri.startswith("otpauth://totp/")
     assert user.mfa_secret_ciphertext is not None
@@ -231,12 +251,16 @@ async def test_verify_mfa_success_then_replay_rejected(session: AsyncSession) ->
     service = _service()
     code = pyotp.TOTP(secret).at(NOW)
 
-    challenge = await service.login(session, email=EMAIL, password=PASSWORD)
+    challenge = _issued_challenge(
+        await service.login(session, email=EMAIL, password=PASSWORD)
+    )
     result = await service.verify_mfa(session, challenge=challenge.raw, code=code)
     assert result.refresh_token
 
     # Fresh challenge, same 30s-step code -> replay must be rejected.
-    challenge2 = await service.login(session, email=EMAIL, password=PASSWORD)
+    challenge2 = _issued_challenge(
+        await service.login(session, email=EMAIL, password=PASSWORD)
+    )
     with pytest.raises(BrowserAuthError):
         await service.verify_mfa(session, challenge=challenge2.raw, code=code)
 
@@ -245,7 +269,9 @@ async def test_verify_mfa_success_then_replay_rejected(session: AsyncSession) ->
 async def test_wrong_stage_is_rejected(session: AsyncSession) -> None:
     await _make_user(session)  # enrollment stage
     service = _service()
-    challenge = await service.login(session, email=EMAIL, password=PASSWORD)
+    challenge = _issued_challenge(
+        await service.login(session, email=EMAIL, password=PASSWORD)
+    )
     with pytest.raises(BrowserAuthError):
         await service.verify_mfa(session, challenge=challenge.raw, code="000000")
 
@@ -255,7 +281,9 @@ async def test_challenge_expiry_is_rejected(session: AsyncSession) -> None:
     secret = pyotp.random_base32()
     await _make_user(session, totp_secret=secret)
     issuer = _service(now=NOW)
-    challenge = await issuer.login(session, email=EMAIL, password=PASSWORD)
+    challenge = _issued_challenge(
+        await issuer.login(session, email=EMAIL, password=PASSWORD)
+    )
     ttl = settings.auth_browser_challenge_ttl_seconds
     later = _service(now=NOW + timedelta(seconds=ttl + 1))
     with pytest.raises(BrowserAuthError):
@@ -276,7 +304,9 @@ async def test_recovery_code_login_consumes_code(session: AsyncSession) -> None:
     )
     await session.flush()
     service = _service()
-    challenge = await service.login(session, email=EMAIL, password=PASSWORD)
+    challenge = _issued_challenge(
+        await service.login(session, email=EMAIL, password=PASSWORD)
+    )
     result = await service.verify_recovery_code(
         session, challenge=challenge.raw, code=code
     )
@@ -297,7 +327,9 @@ async def test_refresh_rotates_and_reuse_revokes_family(session: AsyncSession) -
     secret = pyotp.random_base32()
     await _make_user(session, totp_secret=secret)
     service = _service()
-    challenge = await service.login(session, email=EMAIL, password=PASSWORD)
+    challenge = _issued_challenge(
+        await service.login(session, email=EMAIL, password=PASSWORD)
+    )
     authed = await service.verify_mfa(
         session, challenge=challenge.raw, code=pyotp.TOTP(secret).at(NOW)
     )
@@ -321,7 +353,9 @@ async def test_logout_is_idempotent(session: AsyncSession) -> None:
     secret = pyotp.random_base32()
     await _make_user(session, totp_secret=secret)
     service = _service()
-    challenge = await service.login(session, email=EMAIL, password=PASSWORD)
+    challenge = _issued_challenge(
+        await service.login(session, email=EMAIL, password=PASSWORD)
+    )
     authed = await service.verify_mfa(
         session, challenge=challenge.raw, code=pyotp.TOTP(secret).at(NOW)
     )

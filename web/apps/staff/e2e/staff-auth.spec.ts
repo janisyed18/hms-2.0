@@ -72,12 +72,8 @@ function decodeBase32(value: string): Buffer {
   return Buffer.from(bytes);
 }
 
-async function totp(secret: string): Promise<string> {
-  const seconds = Math.floor(Date.now() / 1000);
-  if (seconds % 30 >= 27) {
-    await new Promise((resolve) => setTimeout(resolve, 4_000));
-  }
-  const counter = BigInt(Math.floor(Date.now() / 1000 / 30));
+function totp(secret: string, stepOffset = 0): string {
+  const counter = BigInt(Math.floor(Date.now() / 1000 / 30) + stepOffset);
   const message = Buffer.alloc(8);
   message.writeBigUInt64BE(counter);
   const digest = createHmac("sha1", decodeBase32(secret)).update(message).digest();
@@ -88,7 +84,7 @@ async function totp(secret: string): Promise<string> {
 
 async function signIn(page: Page, email: string, password: string) {
   await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(password);
+  await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
 }
 
@@ -111,7 +107,7 @@ test.describe("staff browser authentication and role workspaces", () => {
 
       await expect(page.getByRole("heading", { name: "Set up authenticator" })).toBeVisible();
       const secret = (await page.locator(".auth-manual-key code").innerText()).trim();
-      await page.getByLabel("Authentication code").fill(await totp(secret));
+      await page.getByLabel("Authentication code").fill(totp(secret));
       await page.getByRole("button", { name: "Verify & finish" }).click();
 
       await expect(page.getByRole("heading", { name: "Save your recovery codes" })).toBeVisible();
@@ -128,17 +124,17 @@ test.describe("staff browser authentication and role workspaces", () => {
       }
 
       await page.getByRole("button", { name: "Sign out" }).first().click();
-      await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
 
       await signIn(page, account.email, permanentPassword);
       await expect(page.getByRole("heading", { name: "Two-factor authentication" })).toBeVisible();
-      await page.getByLabel("Authentication code").fill(await totp(secret));
+      await page.getByLabel("Authentication code").fill(totp(secret, 1));
       await page.getByRole("button", { name: "Verify" }).click();
       await expect(page.getByRole("heading", { name: "Dashboard" }).first()).toBeVisible();
 
       await page.getByRole("button", { name: "User menu" }).click();
-      await page.getByRole("dialog", { name: "Account" }).getByRole("button", { name: "Sign out" }).click();
-      await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+      await page.getByRole("dialog", { name: "User menu" }).getByRole("button", { name: "Sign out" }).click();
+      await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
     });
   }
 });

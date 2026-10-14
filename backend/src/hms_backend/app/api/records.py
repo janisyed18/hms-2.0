@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
@@ -12,6 +12,7 @@ from sqlalchemy.sql import Select
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.api.schemas import (
+    AdditionalRequirement,
     AnalyticsCertificateCoverageRead,
     AnalyticsCustomerRiskRead,
     AnalyticsFleetPostureRead,
@@ -59,6 +60,7 @@ from hms_backend.app.api.schemas import (
     LocationSummary,
     LookupListResponse,
     LookupRead,
+    PpeRequirement,
     PressureTestRead,
     PressureTestWrite,
     ProductCreate,
@@ -1020,7 +1022,7 @@ async def update_customer(
         }
         for location_payload in payload.locations:
             if location_payload.id is None:
-                location = CustomerLocation(
+                new_location = CustomerLocation(
                     customer=customer,
                     name=location_payload.name.strip(),
                     site_contact_name=_clean_optional(
@@ -1033,34 +1035,34 @@ async def update_customer(
                         location_payload.site_contact_email
                     ),
                 )
-                session.add(location)
+                session.add(new_location)
                 await record_create(
                     session,
-                    location,
+                    new_location,
                     actor_id=principal.user_id,
                     action="customer_location.created",
                 )
                 continue
-            location = visible_locations.get(location_payload.id)
-            if location is None:
+            existing_location = visible_locations.get(location_payload.id)
+            if existing_location is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Location not found",
                 )
-            location_before = location.to_audit_dict()
-            location.name = location_payload.name.strip()
-            location.site_contact_name = _clean_optional(
+            location_before = existing_location.to_audit_dict()
+            existing_location.name = location_payload.name.strip()
+            existing_location.site_contact_name = _clean_optional(
                 location_payload.site_contact_name
             )
-            location.site_contact_mobile = _clean_optional(
+            existing_location.site_contact_mobile = _clean_optional(
                 location_payload.site_contact_mobile
             )
-            location.site_contact_email = _clean_optional(
+            existing_location.site_contact_email = _clean_optional(
                 location_payload.site_contact_email
             )
             await record_update(
                 session,
-                location,
+                existing_location,
                 actor_id=principal.user_id,
                 action="customer_location.updated",
                 before=location_before,
@@ -1540,7 +1542,7 @@ async def get_analytics_overview(
         else:
             row["due_soon"] += 1
 
-    inspection_outcomes: dict[str, dict[str, int | str]] = {}
+    inspection_outcomes: dict[str, AnalyticsInspectionOutcomeRead] = {}
     awaiting_review = 0
     for inspection in inspections:
         if reporting_window and not _inspection_in_reporting_window(
@@ -1555,16 +1557,21 @@ async def get_analytics_overview(
             InspectionStatus.REJECTED.value,
         }:
             continue
-        row = inspection_outcomes.setdefault(
+        outcome = inspection_outcomes.setdefault(
             inspection.inspection_type,
-            {
-                "inspection_type": inspection.inspection_type,
-                "submitted": 0,
-                "approved": 0,
-                "rejected": 0,
-            },
+            AnalyticsInspectionOutcomeRead(
+                inspection_type=inspection.inspection_type,
+                submitted=0,
+                approved=0,
+                rejected=0,
+            ),
         )
-        row[inspection.status.lower()] += 1
+        if inspection.status == InspectionStatus.SUBMITTED.value:
+            outcome.submitted += 1
+        elif inspection.status == InspectionStatus.APPROVED.value:
+            outcome.approved += 1
+        else:
+            outcome.rejected += 1
 
     risk_rows = sorted(
         customer_risk.values(),
@@ -1599,10 +1606,7 @@ async def get_analytics_overview(
             )
             for row in risk_rows
         ],
-        inspection_outcomes=[
-            AnalyticsInspectionOutcomeRead(**row)
-            for _, row in sorted(inspection_outcomes.items())
-        ],
+        inspection_outcomes=[row for _, row in sorted(inspection_outcomes.items())],
     )
 
 
@@ -3121,8 +3125,10 @@ def _customer_read(customer: Customer) -> CustomerRead:
         notes=customer.notes,
         retest_enabled=customer.retest_enabled,
         default_retest_months=customer.default_retest_months,
-        ppe_requirements=customer.ppe_requirements,
-        additional_requirements=customer.additional_requirements,
+        ppe_requirements=cast("list[PpeRequirement]", customer.ppe_requirements),
+        additional_requirements=cast(
+            "list[AdditionalRequirement]", customer.additional_requirements
+        ),
         locations=[_customer_location_read(location) for location in locations],
         contacts=[_customer_contact_read(contact) for contact in contacts],
     )
@@ -3212,7 +3218,7 @@ async def _get_visible_customer_location_or_404(
     customer_id: str,
     location_id: str,
     principal: Principal,
-) -> CustomerLocation | None:
+) -> CustomerLocation:
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
     location = await session.get(CustomerLocation, location_id)
     if (

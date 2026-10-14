@@ -199,14 +199,23 @@ def _unauthorized(exc: BrowserAuthError) -> HTTPException:
 
 
 @router.post(
-    "/login", response_model=BrowserChallengeResponse | BrowserAuthenticatedResponse
+    "/login",
+    response_model=(
+        BrowserChallengeResponse
+        | BrowserAuthenticatedResponse
+        | BrowserRecoveryCodesResponse
+    ),
 )
 async def browser_login(
     payload: BrowserLoginRequest,
     request: Request,
     session: SessionDep,
     response: Response,
-) -> BrowserChallengeResponse | BrowserAuthenticatedResponse:
+) -> (
+    BrowserChallengeResponse
+    | BrowserAuthenticatedResponse
+    | BrowserRecoveryCodesResponse
+):
     _, ip = _client_meta(request)
     account_key = f"account:{payload.email.strip().lower()}"
     for key in (account_key, f"ip:{ip or 'unknown'}"):
@@ -300,14 +309,23 @@ async def browser_password_reset_confirm(
 
 
 @router.post(
-    "/password", response_model=BrowserChallengeResponse | BrowserAuthenticatedResponse
+    "/password",
+    response_model=(
+        BrowserChallengeResponse
+        | BrowserAuthenticatedResponse
+        | BrowserRecoveryCodesResponse
+    ),
 )
 async def browser_change_password(
     payload: BrowserPasswordChangeRequest,
     request: Request,
     session: SessionDep,
     response: Response,
-) -> BrowserChallengeResponse | BrowserAuthenticatedResponse:
+) -> (
+    BrowserChallengeResponse
+    | BrowserAuthenticatedResponse
+    | BrowserRecoveryCodesResponse
+):
     user_agent, ip = _client_meta(request)
     try:
         result = await _service.change_password(

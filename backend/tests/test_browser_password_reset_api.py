@@ -144,6 +144,7 @@ async def test_legacy_reset_alias_uses_one_time_password_reset_service(
         delivery = await session.scalar(select(PasswordResetDelivery))
         user = await session.scalar(select(User).where(User.email == EMAIL))
         assert delivery is not None and user is not None
+        assert delivery.ciphertext is not None
         token = decrypt_password_reset_delivery(
             EncryptedPasswordResetDelivery(delivery.ciphertext, delivery.key_version),
             reset_id=delivery.reset_id,
