@@ -97,11 +97,11 @@ function decodeBase32(value: string): Buffer {
   return Buffer.from(bytes);
 }
 
-async function totp(secret: string): Promise<string> {
+async function totp(secret: string, stepOffset = 0): Promise<string> {
   const seconds = Math.floor(Date.now() / 1000);
   if (seconds % 30 >= 27) await new Promise((resolve) => setTimeout(resolve, 4_000));
   const message = Buffer.alloc(8);
-  message.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 1000 / 30)));
+  message.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 1000 / 30) + stepOffset));
   const digest = createHmac("sha1", decodeBase32(secret)).update(message).digest();
   const offset = digest[digest.length - 1] & 0x0f;
   return String((digest.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, "0");
@@ -142,7 +142,7 @@ async function finishAuthentication(
   } else {
     const secret = authenticatorSecrets.get(email);
     if (!secret) throw new Error(`Authenticator secret is unavailable for ${email}.`);
-    await page.getByLabel("Authentication code").fill(await totp(secret));
+    await page.getByLabel("Authentication code").fill(await totp(secret, 1));
     await page.getByRole("button", { name: "Verify" }).click();
   }
   await expect(primaryNavigation).toBeVisible({ timeout: 60_000 });
