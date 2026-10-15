@@ -25,11 +25,24 @@ Do not run `terraform apply` directly against shared `aws-dev`. Infrastructure
 changes use two manual GitHub workflows so the exact plan is reviewed before
 state changes are made.
 
-Before the first release, configure the `aws-dev` GitHub Environment with at
-least one independent required reviewer and enable prevention of self-review.
-Also protect `main` with pull-request-only changes and the six required CI
-checks. These repository settings are operational gates and are not managed by
-Terraform.
+Before the first release, protect `main` with pull-request-only changes and
+the six required CI checks. Restrict the `aws-dev` GitHub Environment to
+protected branches and disable administrator bypass. These repository settings
+are operational gates and are not managed by Terraform.
+
+`aws-dev` currently operates under an explicitly accepted single-maintainer
+exception: GitHub cannot provide an independent environment reviewer for this
+repository. A technical review of the exact encrypted plan and explicit
+operator approval remain required before Apply. This exception is not suitable
+for staging or production, where independent environment approval and
+self-review prevention are mandatory.
+
+The infrastructure workflows use the dedicated bootstrap-managed Terraform
+role in `AWS_DEV_TERRAFORM_ROLE_ARN`. API and web workflows continue to use
+`AWS_DEV_GITHUB_ROLE_ARN`, which must remain limited to application delivery.
+Do not add Terraform permissions to the application deployment role. Follow
+[the Terraform role bootstrap procedure](bootstrap-terraform-role.md) before
+running an infrastructure Plan.
 
 1. From `main`, run **Plan AWS Dev Infrastructure** in GitHub Actions.
 2. Review the encrypted plan artifact from that run. It contains
