@@ -19,23 +19,41 @@ terraform version
 gh auth status
 ```
 
-## Provision Dev Infrastructure
+## Review And Apply Dev Infrastructure
 
-```bash
-cd infra/terraform/envs/dev
-cp terraform.tfvars.example terraform.tfvars
-terraform init
-terraform fmt -recursive
-terraform validate
-terraform plan -out dev.tfplan
-terraform apply dev.tfplan
-```
+Do not run `terraform apply` directly against shared `aws-dev`. Infrastructure
+changes use two manual GitHub workflows so the exact plan is reviewed before
+state changes are made.
+
+Before the first release, configure the `aws-dev` GitHub Environment with at
+least one independent required reviewer and enable prevention of self-review.
+Also protect `main` with pull-request-only changes and the six required CI
+checks. These repository settings are operational gates and are not managed by
+Terraform.
+
+1. From `main`, run **Plan AWS Dev Infrastructure** in GitHub Actions.
+2. Review the encrypted plan artifact from that run. It contains
+   `tfplan.age` and `tfplan.txt.age`, their ciphertext checksums, and a
+   `plan-manifest.json` that records the commit, workflow run, Terraform
+   version, and provider lockfile hash. The Plan job never uploads plaintext
+   Terraform output. Treat both decrypted files as sensitive infrastructure
+   data; the artifact is retained for one day only.
+3. Confirm all creates, changes, and deletes are expected. Pay particular
+   attention to ECS task definitions, Secrets Manager, CloudFront, ALB, IAM,
+   networking, and database resources.
+4. Run **Apply AWS Dev Infrastructure**, set `apply_infrastructure` to true,
+   and enter the reviewed Plan workflow run ID. The protected `aws-dev`
+   Environment approval happens before the plan is downloaded. The workflow
+   verifies the plan belongs to the current `main` commit, verifies the
+   ciphertext checksums, decrypts the plan with the `aws-dev` Environment
+   secret, and applies that artifact without generating a new plan.
 
 This creates billable AWS resources. The dev defaults use small instance sizes, but RDS, ElastiCache, ECS, ALB, S3, and CloudFront can still incur charges.
 
 ## Configure GitHub Repository Variables
 
-After `terraform apply`, copy the Terraform outputs into GitHub repository variables:
+After the reviewed Apply workflow completes, copy the Terraform outputs into
+GitHub repository variables:
 
 ```bash
 gh variable set AWS_DEV_GITHUB_ROLE_ARN --body "$(terraform output -raw github_actions_role_arn)"
@@ -50,16 +68,34 @@ gh variable set AWS_DEV_STAFF_BUCKET --body "$(terraform output -raw staff_bucke
 gh variable set AWS_DEV_INSPECTOR_BUCKET --body "$(terraform output -raw inspector_bucket)"
 gh variable set AWS_DEV_STAFF_DISTRIBUTION_ID --body "$(terraform output -raw staff_cloudfront_distribution_id)"
 gh variable set AWS_DEV_INSPECTOR_DISTRIBUTION_ID --body "$(terraform output -raw inspector_cloudfront_distribution_id)"
+gh variable set AWS_DEV_API_HEALTH_URL --body "$(terraform output -raw api_url)/health"
 terraform output -json ecs_subnet_ids | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)))' | gh variable set AWS_DEV_ECS_SUBNET_IDS --body-file -
 ```
 
+## Configure Plan Encryption
+
+Generate an age key pair in an approved secrets-management workspace. Keep the
+private key out of the repository, local shell history, workflow logs, and
+repository-level secrets. Store it only as the `aws-dev` Environment secret
+`AWS_DEV_TERRAFORM_PLAN_AGE_PRIVATE_KEY`. Store the matching public recipient
+as the repository variable `AWS_DEV_TERRAFORM_PLAN_AGE_RECIPIENT`.
+
+Both workflows download age `v1.2.1` from its tagged upstream release and
+verify the archive SHA-256 before using it. Do not replace this with a mutable
+package-manager install or an unverified installer.
+
+The independent reviewer must have an approved, auditable method to inspect
+the encrypted readable plan before approving Apply. A public repository cannot
+use unencrypted GitHub Actions artifacts or logs for this review. Do not run
+either infrastructure workflow until that review process is in place.
+
 ## Deploy From GitHub Actions
 
-Run the workflow from GitHub:
-
-```bash
-gh workflow run deploy-aws-dev.yml --ref codex/aws-dev-deployment-foundation
-```
+Run **Deploy AWS Dev** manually after the infrastructure plan has been applied.
+That workflow refuses to publish images or run migrations when
+Terraform drift exists, the edge secret is absent from the API task definition,
+or `AWS_DEV_API_HEALTH_URL` is not configured. Run **Deploy AWS Web**
+manually only after the API health and scheduling smoke checks pass.
 
 The workflow:
 
@@ -162,13 +198,9 @@ switch delivery mode:
 notification_channel_mode = "live"
 ```
 
-Then apply and redeploy:
-
-```bash
-terraform plan -out dev.tfplan
-terraform apply dev.tfplan
-gh workflow run deploy-aws-dev.yml --ref codex/aws-dev-deployment-foundation
-```
+Then run the reviewed **Plan AWS Dev Infrastructure** → **Apply AWS Dev
+Infrastructure** procedure above, followed by the manual API release. Do not
+apply a locally generated Terraform plan to the shared environment.
 
 Verification:
 

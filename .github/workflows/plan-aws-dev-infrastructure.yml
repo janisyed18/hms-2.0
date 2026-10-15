@@ -1,0 +1,128 @@
+name: Plan AWS Dev Infrastructure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  id-token: write
+
+concurrency:
+  group: aws-dev-infrastructure-plan
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-southeast-2
+  TERRAFORM_VERSION: 1.15.8
+  # This is an age public recipient, not a secret. The corresponding private
+  # key is available only to the protected aws-dev Apply environment.
+  TERRAFORM_PLAN_AGE_RECIPIENT: ${{ vars.AWS_DEV_TERRAFORM_PLAN_AGE_RECIPIENT }}
+  # Terraform defaults to the hf-dev CLI profile for local commands. GitHub
+  # Actions must instead use the short-lived OIDC credentials configured below.
+  TF_VAR_aws_profile: ""
+
+jobs:
+  plan:
+    name: Produce reviewable infrastructure plan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.1.7
+        with:
+          fetch-depth: 1
+
+      - name: Require main
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main" || {
+            echo "Plans for shared aws-dev infrastructure must be created from main." >&2
+            exit 1
+          }
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEV_GITHUB_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Install verified plan encryption tool
+        run: bash .github/scripts/install-age.sh
+
+      - name: Create Terraform plan
+        working-directory: infra/terraform/envs/dev
+        run: |
+          test -n "$TERRAFORM_PLAN_AGE_RECIPIENT" || {
+            echo "AWS_DEV_TERRAFORM_PLAN_AGE_RECIPIENT is required." >&2
+            exit 1
+          }
+          terraform init -input=false
+          terraform fmt -check
+          terraform validate
+          terraform plan -input=false -out=tfplan
+          terraform show -no-color tfplan > tfplan.txt
+          age --recipient "$TERRAFORM_PLAN_AGE_RECIPIENT" --output tfplan.age tfplan
+          age --recipient "$TERRAFORM_PLAN_AGE_RECIPIENT" --output tfplan.txt.age tfplan.txt
+          sha256sum tfplan.age > tfplan.age.sha256
+          sha256sum tfplan.txt.age > tfplan.txt.age.sha256
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          manifest = {
+              "commit_sha": os.environ["GITHUB_SHA"],
+              "plan_run_id": os.environ["GITHUB_RUN_ID"],
+              "terraform_version": json.loads(
+                  subprocess.check_output(["terraform", "version", "-json"], text=True)
+              )["terraform_version"],
+              "lockfile_sha256": hashlib.sha256(
+                  Path(".terraform.lock.hcl").read_bytes()
+              ).hexdigest(),
+              "plan_ciphertext_sha256": hashlib.sha256(
+                  Path("tfplan.age").read_bytes()
+              ).hexdigest(),
+              "readable_plan_ciphertext_sha256": hashlib.sha256(
+                  Path("tfplan.txt.age").read_bytes()
+              ).hexdigest(),
+          }
+          Path("plan-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+          shred --remove --zero --iterations=1 tfplan tfplan.txt
+
+      - name: Upload reviewed plan
+        id: upload_plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aws-dev-terraform-plan-${{ github.run_id }}
+          path: |
+            infra/terraform/envs/dev/tfplan.age
+            infra/terraform/envs/dev/tfplan.txt.age
+            infra/terraform/envs/dev/tfplan.age.sha256
+            infra/terraform/envs/dev/tfplan.txt.age.sha256
+            infra/terraform/envs/dev/plan-manifest.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Publish review instructions
+        env:
+          ARTIFACT_URL: ${{ steps.upload_plan.outputs.artifact-url }}
+        run: |
+          {
+            echo "## AWS Dev Terraform plan"
+            echo
+            echo "Review the encrypted artifact before triggering Apply AWS Dev Infrastructure."
+            echo "The executable and readable plan files are age-encrypted; do not copy decrypted output into logs or issues."
+            echo
+            echo "- Plan run ID: \`$GITHUB_RUN_ID\`"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Artifact: $ARTIFACT_URL"
+            echo "- Retention: 1 day"
+          } >> "$GITHUB_STEP_SUMMARY"

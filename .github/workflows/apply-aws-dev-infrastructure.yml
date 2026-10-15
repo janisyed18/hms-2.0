@@ -4,12 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       apply_infrastructure:
-        description: "Confirm that the Terraform plan has been reviewed and may be applied to aws-dev"
+        description: "Confirm that the reviewed Terraform plan may be applied to aws-dev"
         required: true
         default: false
         type: boolean
+      plan_run_id:
+        description: "Successful Plan AWS Dev Infrastructure workflow run ID to apply"
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
   id-token: write
 
@@ -19,18 +24,76 @@ concurrency:
 
 env:
   AWS_REGION: ap-southeast-2
+  TERRAFORM_VERSION: 1.15.8
+  # Terraform defaults to the hf-dev CLI profile for local commands. GitHub
+  # Actions must instead use the short-lived OIDC credentials configured below.
+  TF_VAR_aws_profile: ""
 
 jobs:
   apply:
-    name: Plan and apply approved infrastructure
+    name: Apply reviewed infrastructure plan
     if: ${{ inputs.apply_infrastructure }}
     runs-on: ubuntu-latest
-    # Configure this GitHub Environment with required reviewers. This is the
-    # approval gate before stateful AWS infrastructure can change.
+    # Configure this GitHub Environment with an independent required reviewer
+    # and prevent self-review. This gate occurs before the plan is downloaded.
     environment: aws-dev
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.1.7
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Verify reviewed plan source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$PLAN_RUN_ID" \
+            > /tmp/plan-run.json
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          run = json.load(open("/tmp/plan-run.json", encoding="utf-8"))
+          expected_sha = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+          expected = {
+              "name": "Plan AWS Dev Infrastructure",
+              "event": "workflow_dispatch",
+              "status": "completed",
+              "conclusion": "success",
+              "head_branch": "main",
+              "head_sha": expected_sha,
+          }
+          mismatches = {
+              key: {"expected": value, "actual": run.get(key)}
+              for key, value in expected.items()
+              if run.get(key) != value
+          }
+          if mismatches:
+              print(json.dumps(mismatches, indent=2), file=sys.stderr)
+              raise SystemExit(
+                  "The supplied plan run is not a successful plan for the current main commit."
+              )
+          print(f"Verified plan run {os.environ['PLAN_RUN_ID']} for {expected_sha}.")
+          PY
+
+      - name: Download reviewed Terraform plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: aws-dev-terraform-plan-${{ inputs.plan_run_id }}
+          path: infra/terraform/envs/dev
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.plan_run_id }}
+          digest-mismatch: error
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
@@ -38,15 +101,52 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEV_GITHUB_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Plan reviewed infrastructure changes
+      - name: Install verified plan decryption tool
+        run: bash .github/scripts/install-age.sh
+
+      - name: Verify reviewed plan integrity
         working-directory: infra/terraform/envs/dev
         run: |
           terraform init -input=false
           terraform validate
-          terraform plan -input=false -out=tfplan
+          sha256sum --check tfplan.age.sha256
+          sha256sum --check tfplan.txt.age.sha256
+          python3 "$GITHUB_WORKSPACE/.github/scripts/verify-terraform-plan-artifact.py" \
+            --directory . \
+            --plan-run-id "${{ inputs.plan_run_id }}" \
+            --commit-sha "$(git rev-parse HEAD)" \
+            --terraform-version "$(terraform version -json | python3 -c 'import json, sys; print(json.load(sys.stdin)["terraform_version"])')"
+
+      - name: Decrypt reviewed infrastructure plan
+        working-directory: infra/terraform/envs/dev
+        env:
+          TERRAFORM_PLAN_AGE_PRIVATE_KEY: ${{ secrets.AWS_DEV_TERRAFORM_PLAN_AGE_PRIVATE_KEY }}
+        run: |
+          test -n "$TERRAFORM_PLAN_AGE_PRIVATE_KEY" || {
+            echo "AWS_DEV_TERRAFORM_PLAN_AGE_PRIVATE_KEY is required." >&2
+            exit 1
+          }
+          umask 077
+          key_file="$(mktemp)"
+          printf '%s\n' "$TERRAFORM_PLAN_AGE_PRIVATE_KEY" > "$key_file"
+          cleanup() {
+            status=$?
+            shred --remove --zero --iterations=1 "$key_file" 2>/dev/null || rm -f "$key_file"
+            if [ "$status" -ne 0 ]; then
+              shred --remove --zero --iterations=1 tfplan 2>/dev/null || rm -f tfplan
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+          age --decrypt --identity "$key_file" --output tfplan tfplan.age
+          test -s tfplan
 
       - name: Apply reviewed infrastructure plan
         working-directory: infra/terraform/envs/dev
-        run: terraform apply -input=false -auto-approve tfplan
+        run: |
+          trap 'shred --remove --zero --iterations=1 tfplan 2>/dev/null || rm -f tfplan' EXIT
+          terraform apply -input=false -auto-approve tfplan
