@@ -68,14 +68,24 @@ jobs:
       - name: Create Terraform plan
         working-directory: infra/terraform/envs/dev
         run: |
+          set -euo pipefail
           test -n "$TERRAFORM_PLAN_AGE_RECIPIENT" || {
             echo "AWS_DEV_TERRAFORM_PLAN_AGE_RECIPIENT is required." >&2
             exit 1
           }
+          plan_log="$(mktemp)"
+          cleanup() {
+            shred --remove --zero --iterations=1 tfplan tfplan.txt "$plan_log" 2>/dev/null \
+              || rm -f tfplan tfplan.txt "$plan_log"
+          }
+          trap cleanup EXIT
           terraform init -input=false
           terraform fmt -check
           terraform validate
-          terraform plan -input=false -out=tfplan
+          if ! terraform plan -input=false -out=tfplan >"$plan_log" 2>&1; then
+            echo "Terraform plan failed. Detailed output was suppressed because it may contain sensitive infrastructure data." >&2
+            exit 1
+          fi
           terraform show -no-color tfplan > tfplan.txt
           age --recipient "$TERRAFORM_PLAN_AGE_RECIPIENT" --output tfplan.age tfplan
           age --recipient "$TERRAFORM_PLAN_AGE_RECIPIENT" --output tfplan.txt.age tfplan.txt
@@ -109,6 +119,8 @@ jobs:
           )
           PY
           shred --remove --zero --iterations=1 tfplan tfplan.txt
+          rm -f "$plan_log"
+          trap - EXIT
 
       - name: Upload reviewed plan
         id: upload_plan

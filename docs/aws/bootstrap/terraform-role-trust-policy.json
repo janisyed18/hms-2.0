@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowGitHubActionsFromMainOrAwsDev",
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::558215002582:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": [
+            "repo:janisyed18/hms-2.0:ref:refs/heads/main",
+            "repo:janisyed18/hms-2.0:environment:aws-dev"
+          ]
+        }
+      }
+    }
+  ]
+}
