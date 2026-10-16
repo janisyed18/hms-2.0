@@ -75,6 +75,20 @@ class TerraformPlanArtifactVerifierTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("plan_ciphertext_sha256", result.stderr)
 
+    def test_rejects_plan_failure_diagnostic_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            (directory / "tfplan.failure.txt.age").write_bytes(b"encrypted-diagnostic")
+            (directory / "plan-failure-manifest.json").write_text(
+                json.dumps({"diagnostic_type": "terraform-plan-output"}),
+                encoding="utf-8",
+            )
+
+            result = self.verify(directory)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("plan-manifest.json", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

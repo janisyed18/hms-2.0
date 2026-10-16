@@ -61,6 +61,14 @@ running an infrastructure Plan.
    ciphertext checksums, decrypts the plan with the `aws-dev` Environment
    secret, and applies that artifact without generating a new plan.
 
+If `terraform plan` itself fails, the workflow retains a separate one-day
+encrypted diagnostic artifact containing only `tfplan.failure.txt.age`, its
+ciphertext checksum, and `plan-failure-manifest.json`. The workflow never
+prints this output or uploads a plaintext copy. An authorized operator may
+decrypt it only in the approved offline review workspace to diagnose the
+failure. A failure artifact is not a reviewed plan and can never be supplied
+to the Apply workflow.
+
 This creates billable AWS resources. The dev defaults use small instance sizes, but RDS, ElastiCache, ECS, ALB, S3, and CloudFront can still incur charges.
 
 ## Configure GitHub Repository Variables

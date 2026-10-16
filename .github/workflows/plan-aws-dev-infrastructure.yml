@@ -66,6 +66,7 @@ jobs:
         run: bash .github/scripts/install-age.sh
 
       - name: Create Terraform plan
+        id: create_plan
         working-directory: infra/terraform/envs/dev
         run: |
           set -euo pipefail
@@ -82,9 +83,46 @@ jobs:
           terraform init -input=false
           terraform fmt -check
           terraform validate
-          if ! terraform plan -input=false -out=tfplan >"$plan_log" 2>&1; then
+          plan_exit_code=0
+          terraform plan -input=false -out=tfplan >"$plan_log" 2>&1 || plan_exit_code=$?
+          if [ "$plan_exit_code" -ne 0 ]; then
+            if ! age --recipient "$TERRAFORM_PLAN_AGE_RECIPIENT" \
+              --output tfplan.failure.txt.age.partial "$plan_log"; then
+              rm -f tfplan.failure.txt.age.partial
+              echo "Terraform plan failed and encrypted diagnostic preparation failed." >&2
+              exit "$plan_exit_code"
+            fi
+            mv tfplan.failure.txt.age.partial tfplan.failure.txt.age
+            sha256sum tfplan.failure.txt.age > tfplan.failure.txt.age.sha256
+            PLAN_EXIT_CODE="$plan_exit_code" python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          manifest = {
+              "commit_sha": os.environ["GITHUB_SHA"],
+              "diagnostic_ciphertext_sha256": hashlib.sha256(
+                  Path("tfplan.failure.txt.age").read_bytes()
+              ).hexdigest(),
+              "diagnostic_type": "terraform-plan-output",
+              "lockfile_sha256": hashlib.sha256(
+                  Path(".terraform.lock.hcl").read_bytes()
+              ).hexdigest(),
+              "plan_run_id": os.environ["GITHUB_RUN_ID"],
+              "terraform_plan_exit_code": int(os.environ["PLAN_EXIT_CODE"]),
+              "terraform_version": json.loads(
+                  subprocess.check_output(["terraform", "version", "-json"], text=True)
+              )["terraform_version"],
+          }
+          Path("plan-failure-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+            echo "plan_diagnostics_ready=true" >> "$GITHUB_OUTPUT"
             echo "Terraform plan failed. Detailed output was suppressed because it may contain sensitive infrastructure data." >&2
-            exit 1
+            exit "$plan_exit_code"
           fi
           terraform show -no-color tfplan > tfplan.txt
           age --recipient "$TERRAFORM_PLAN_AGE_RECIPIENT" --output tfplan.age tfplan
@@ -121,6 +159,32 @@ jobs:
           shred --remove --zero --iterations=1 tfplan tfplan.txt
           rm -f "$plan_log"
           trap - EXIT
+
+      - name: Upload encrypted plan failure diagnostics
+        if: ${{ failure() && steps.create_plan.outputs.plan_diagnostics_ready == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aws-dev-terraform-plan-failure-${{ github.run_id }}
+          path: |
+            infra/terraform/envs/dev/tfplan.failure.txt.age
+            infra/terraform/envs/dev/tfplan.failure.txt.age.sha256
+            infra/terraform/envs/dev/plan-failure-manifest.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Publish encrypted failure diagnostic instructions
+        if: ${{ failure() && steps.create_plan.outputs.plan_diagnostics_ready == 'true' }}
+        run: |
+          {
+            echo "## AWS Dev Terraform plan failure"
+            echo
+            echo "An encrypted diagnostic artifact was retained for authorized offline review."
+            echo "It is not an Apply input and must not be decrypted into GitHub logs, issues, or pull requests."
+            echo
+            echo "- Plan run ID: \`$GITHUB_RUN_ID\`"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Retention: 1 day"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload reviewed plan
         id: upload_plan
