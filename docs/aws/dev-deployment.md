@@ -93,6 +93,10 @@ gh variable set AWS_DEV_API_HEALTH_URL --body "$(terraform output -raw api_url)/
 terraform output -json ecs_subnet_ids | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)))' | gh variable set AWS_DEV_ECS_SUBNET_IDS --body-file -
 ```
 
+`AWS_DEV_API_HEALTH_URL` is the complete public health endpoint, including the
+`/health` path. The API release workflow probes that exact URL and does not
+append another path segment.
+
 ## Configure Plan Encryption
 
 Generate an age key pair in an approved secrets-management workspace. Keep the
