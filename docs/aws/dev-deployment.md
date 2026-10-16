@@ -98,8 +98,23 @@ terraform output -json ecs_subnet_ids | python3 -c 'import json,sys; print(",".j
 Generate an age key pair in an approved secrets-management workspace. Keep the
 private key out of the repository, local shell history, workflow logs, and
 repository-level secrets. Store it only as the `aws-dev` Environment secret
-`AWS_DEV_TERRAFORM_PLAN_AGE_PRIVATE_KEY`. Store the matching public recipient
-as the repository variable `AWS_DEV_TERRAFORM_PLAN_AGE_RECIPIENT`.
+`AWS_DEV_TERRAFORM_PLAN_AGE_PRIVATE_KEY` as a single-line, base64-encoded age
+identity file. Store the matching public recipient as the repository variable
+`AWS_DEV_TERRAFORM_PLAN_AGE_RECIPIENT`.
+
+Encode the identity without printing it, and retain the encoded form in the
+approved reviewer key store as well as the protected GitHub Environment secret:
+
+```bash
+base64 < hms-aws-dev-plan.agekey | tr -d '\n' > hms-aws-dev-plan.agekey.base64
+gh secret set AWS_DEV_TERRAFORM_PLAN_AGE_PRIVATE_KEY \
+  --env aws-dev \
+  --body "$(<hms-aws-dev-plan.agekey.base64)"
+```
+
+The Apply workflow strictly decodes this value and verifies that it contains an
+age private identity before using it. It rejects raw, malformed, or non-age
+payloads without logging the secret.
 
 Both workflows download age `v1.2.1` from its tagged upstream release and
 verify the archive SHA-256 before using it. Do not replace this with a mutable

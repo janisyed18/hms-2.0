@@ -145,7 +145,6 @@ jobs:
           }
           umask 077
           key_file="$(mktemp)"
-          printf '%s\n' "$TERRAFORM_PLAN_AGE_PRIVATE_KEY" > "$key_file"
           cleanup() {
             status=$?
             shred --remove --zero --iterations=1 "$key_file" 2>/dev/null || rm -f "$key_file"
@@ -155,6 +154,8 @@ jobs:
             exit "$status"
           }
           trap cleanup EXIT
+          printf '%s' "$TERRAFORM_PLAN_AGE_PRIVATE_KEY" | \
+            python3 "$GITHUB_WORKSPACE/.github/scripts/decode-age-identity.py" --output "$key_file"
           age --decrypt --identity "$key_file" --output tfplan tfplan.age
           test -s tfplan
 
