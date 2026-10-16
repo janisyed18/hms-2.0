@@ -12,6 +12,9 @@ WORKFLOW = (
 
 
 class DeployAwsDevWorkflowTests(unittest.TestCase):
+    def test_terraform_preflight_clears_the_local_profile_default(self) -> None:
+        self.assertIn('TF_VAR_aws_profile: ""', WORKFLOW)
+
     def test_terraform_preflight_uses_the_dedicated_role(self) -> None:
         preflight = WORKFLOW.index("Configure Terraform preflight credentials")
         application = WORKFLOW.index("Configure application deployment credentials")

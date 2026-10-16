@@ -15,6 +15,8 @@ permissions:
 
 env:
   AWS_REGION: ap-southeast-2
+  # Prevent Terraform from resolving the local-only hf-dev AWS CLI profile.
+  TF_VAR_aws_profile: ""
   ECR_API_REPOSITORY: hms-dev-api
   ECR_CERTIFICATE_ENGINE_REPOSITORY: hms-dev-certificate-engine
   ECS_CLUSTER: ${{ vars.AWS_DEV_ECS_CLUSTER || 'hms-dev' }}
