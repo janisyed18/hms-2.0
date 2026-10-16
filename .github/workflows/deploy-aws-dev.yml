@@ -35,10 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
-      - name: Configure AWS credentials
+      - name: Configure Terraform preflight credentials
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
         with:
-          role-to-assume: ${{ vars.AWS_DEV_GITHUB_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_DEV_TERRAFORM_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
@@ -46,17 +46,36 @@ jobs:
       - name: Verify Terraform infrastructure is already applied
         working-directory: infra/terraform/envs/dev
         run: |
+          set -euo pipefail
+          plan_log="$(mktemp)"
+          cleanup() {
+            shred --remove --zero --iterations=1 tfplan "$plan_log" 2>/dev/null \
+              || rm -f tfplan "$plan_log"
+          }
+          trap cleanup EXIT
           terraform init -input=false
           terraform validate
-          set +e
-          terraform plan -detailed-exitcode -input=false -out=tfplan
-          result=$?
-          set -e
-          if [ "$result" -eq 2 ]; then
-            echo "Terraform changes are pending. Run the approved infrastructure workflow before an application release." >&2
-            exit 1
-          fi
-          exit "$result"
+          plan_exit_code=0
+          terraform plan -detailed-exitcode -input=false -out=tfplan >"$plan_log" 2>&1 \
+            || plan_exit_code=$?
+          case "$plan_exit_code" in
+            0)
+              ;;
+            2)
+              echo "Terraform changes are pending. Run the reviewed infrastructure workflow before application deployment." >&2
+              exit 1
+              ;;
+            *)
+              echo "Terraform preflight failed. Detailed output was suppressed because it may contain sensitive infrastructure data." >&2
+              exit "$plan_exit_code"
+              ;;
+          esac
+
+      - name: Configure application deployment credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEV_GITHUB_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Verify required task definitions and edge secret injection
         run: |
@@ -256,4 +275,4 @@ jobs:
             exit 1
           fi
           curl --fail --show-error --silent --retry 5 --retry-all-errors \
-            "$API_HEALTH_URL/health"
+            "$API_HEALTH_URL"
