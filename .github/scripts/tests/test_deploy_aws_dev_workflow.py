@@ -45,6 +45,18 @@ class DeployAwsDevWorkflowTests(unittest.TestCase):
         self.assertIn('"$API_HEALTH_URL"', WORKFLOW)
         self.assertNotIn('"$API_HEALTH_URL/health"', WORKFLOW)
 
+    def test_edge_secret_check_selects_the_api_container_before_its_secret(self) -> None:
+        self.assertIn(
+            "taskDefinition.containerDefinitions[?name=='api'] | "
+            "[0].secrets[?name=='SECURITY_EDGE_SHARED_SECRET'].valueFrom | [0]",
+            WORKFLOW,
+        )
+        self.assertNotIn(
+            "taskDefinition.containerDefinitions[?name=='api'].secrets[?name=="
+            "'SECURITY_EDGE_SHARED_SECRET'].valueFrom | [0]",
+            WORKFLOW,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

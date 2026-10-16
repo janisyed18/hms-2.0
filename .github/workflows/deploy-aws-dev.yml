@@ -95,7 +95,7 @@ jobs:
           edge_secret="$(
             aws ecs describe-task-definition \
               --task-definition "$api_task_definition" \
-              --query "taskDefinition.containerDefinitions[?name=='api'].secrets[?name=='SECURITY_EDGE_SHARED_SECRET'].valueFrom | [0]" \
+              --query "taskDefinition.containerDefinitions[?name=='api'] | [0].secrets[?name=='SECURITY_EDGE_SHARED_SECRET'].valueFrom | [0]" \
               --output text
           )"
           if [ -z "$edge_secret" ] || [ "$edge_secret" = "None" ]; then
