@@ -1707,6 +1707,7 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
         Action = [
           "ecs:DescribeClusters",
           "ecs:DescribeServices",
+          "ecs:DescribeTaskDefinition",
           "ecs:DescribeTasks",
           "ecs:RunTask",
           "ecs:UpdateService",
