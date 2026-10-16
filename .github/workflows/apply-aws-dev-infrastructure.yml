@@ -124,8 +124,6 @@ jobs:
       - name: Verify reviewed plan integrity
         working-directory: infra/terraform/envs/dev
         run: |
-          terraform init -input=false
-          terraform validate
           sha256sum --check tfplan.age.sha256
           sha256sum --check tfplan.txt.age.sha256
           python3 "$GITHUB_WORKSPACE/.github/scripts/verify-terraform-plan-artifact.py" \
@@ -133,6 +131,8 @@ jobs:
             --plan-run-id "${{ inputs.plan_run_id }}" \
             --commit-sha "$(git rev-parse HEAD)" \
             --terraform-version "$(terraform version -json | python3 -c 'import json, sys; print(json.load(sys.stdin)["terraform_version"])')"
+          terraform init -input=false -lockfile=readonly
+          terraform validate
 
       - name: Decrypt reviewed infrastructure plan
         working-directory: infra/terraform/envs/dev

@@ -80,7 +80,13 @@ jobs:
               || rm -f tfplan tfplan.txt "$plan_log"
           }
           trap cleanup EXIT
-          terraform init -input=false
+          lockfile_sha_before="$(sha256sum .terraform.lock.hcl | awk '{print $1}')"
+          terraform init -input=false -lockfile=readonly
+          lockfile_sha_after="$(sha256sum .terraform.lock.hcl | awk '{print $1}')"
+          test "$lockfile_sha_before" = "$lockfile_sha_after" || {
+            echo "Terraform init changed the reviewed dependency lock file." >&2
+            exit 1
+          }
           terraform fmt -check
           terraform validate
           plan_exit_code=0

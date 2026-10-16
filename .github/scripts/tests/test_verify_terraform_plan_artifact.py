@@ -75,6 +75,19 @@ class TerraformPlanArtifactVerifierTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("plan_ciphertext_sha256", result.stderr)
 
+    def test_rejects_a_lockfile_different_from_the_reviewed_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            self.create_artifact(directory)
+            (directory / ".terraform.lock.hcl").write_text(
+                'provider "aws" { version = "different" }\n', encoding="utf-8"
+            )
+
+            result = self.verify(directory)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("lockfile_sha256", result.stderr)
+
     def test_rejects_plan_failure_diagnostic_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
