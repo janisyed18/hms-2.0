@@ -4,8 +4,26 @@ import { ScanUnavailable } from "./components/ScanUnavailable";
 import { SyncQueue } from "./components/SyncQueue";
 import { WorkQueue } from "./components/WorkQueue";
 import { useInspectorWorkspace } from "./hooks/useInspectorWorkspace";
+import {
+  InspectorAuthGate,
+  type BrowserAuthClient
+} from "./auth/InspectorAuthGate";
 
-export default function App() {
+interface AppProps {
+  authClient?: BrowserAuthClient;
+  /** Explicit test seam. Production callers must use browser authentication. */
+  initialAccessToken?: string;
+}
+
+export default function App({ authClient, initialAccessToken }: AppProps = {}) {
+  return (
+    <InspectorAuthGate client={authClient} initialAccessToken={initialAccessToken}>
+      <InspectorWorkspace />
+    </InspectorAuthGate>
+  );
+}
+
+function InspectorWorkspace() {
   const workspace = useInspectorWorkspace();
   const sourceLabel =
     workspace.source === "api" ? workspace.lastSyncLabel : "Mock data loaded";

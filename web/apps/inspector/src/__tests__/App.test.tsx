@@ -2,28 +2,98 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
+import type { BrowserAuthClient } from "../auth/browserAuthClient";
 import { mockBootstrapResponse } from "../data/mockSync";
+
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null,
+    key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, value)
+  };
+}
+
+function createAuthClient(roles: string[]): BrowserAuthClient {
+  return {
+    login: vi.fn().mockResolvedValue({
+      next_step: "AUTHENTICATED",
+      access_token: "inspector-access-token",
+      token_type: "bearer",
+      expires_in: 900
+    }),
+    requestPasswordReset: vi.fn(),
+    changePassword: vi.fn(),
+    startEnrollment: vi.fn(),
+    confirmMfa: vi.fn(),
+    verifyMfa: vi.fn(),
+    verifyRecovery: vi.fn(),
+    refresh: vi.fn().mockRejectedValue(new Error("No refresh session")),
+    logout: vi.fn().mockResolvedValue(undefined),
+    me: vi.fn().mockResolvedValue({
+      user_id: "inspector-1",
+      email: "inspector@example.test",
+      display_name: "Field Inspector",
+      roles
+    })
+  };
+}
 
 describe("Inspector app", () => {
   beforeEach(() => {
-    localStorage.clear();
-    vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.stubGlobal("localStorage", createMemoryStorage());
   });
 
-  it("opens to the queue-first work dashboard", async () => {
+  it("requires secure inspector sign-in before showing field work", async () => {
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", { name: "Inspector" })
+      await screen.findByRole("heading", { name: "Inspector sign in" })
     ).toBeInTheDocument();
-    expect(screen.getByText("Assigned")).toBeInTheDocument();
-    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.queryByText("Assigned")).not.toBeInTheDocument();
+    expect(screen.queryByText("Queued")).not.toBeInTheDocument();
+  });
+
+  it("opens the workspace only after browser authentication confirms the Inspector role", async () => {
+    const user = userEvent.setup();
+    const authClient = createAuthClient(["INSPECTOR"]);
+    render(<App authClient={authClient} />);
+
+    await user.type(screen.getByLabelText("Email"), "inspector@example.test");
+    await user.type(screen.getByLabelText("Password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(await screen.findByRole("heading", { name: "Inspector" })).toBeInTheDocument();
+    expect(authClient.me).toHaveBeenCalledWith("inspector-access-token");
+  });
+
+  it("denies an authenticated user without the Inspector role", async () => {
+    const authClient = createAuthClient(["HMS_ADMIN"]);
+    vi.mocked(authClient.refresh).mockResolvedValueOnce({
+      next_step: "AUTHENTICATED",
+      access_token: "admin-access-token",
+      token_type: "bearer",
+      expires_in: 900
+    });
+    render(<App authClient={authClient} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Inspector access required" })
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Assigned")).not.toBeInTheDocument();
+    expect(authClient.logout).toHaveBeenCalledOnce();
   });
 
   it("saves a pressure test draft into the local queue", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App initialAccessToken="test-access-token" />);
 
     await user.click(
       await screen.findByRole("button", { name: /open HOS-2024-0891/i })
@@ -41,7 +111,7 @@ describe("Inspector app", () => {
 
   it("queues asset metadata changes from capture", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App initialAccessToken="test-access-token" />);
 
     await user.click(
       await screen.findByRole("button", { name: /open HOS-2024-0891/i })
@@ -59,7 +129,7 @@ describe("Inspector app", () => {
 
   it("filters the field work queue by search text and urgency", async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App initialAccessToken="test-access-token" />);
 
     await screen.findByRole("heading", { name: "Inspector" });
 
@@ -123,7 +193,7 @@ describe("Inspector app", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    render(<App initialAccessToken="test-access-token" />);
 
     await user.click(
       await screen.findByRole("button", { name: /open HOS-2024-0891/i })
@@ -181,7 +251,7 @@ describe("Inspector app", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    render(<App initialAccessToken="test-access-token" />);
 
     await user.click(
       await screen.findByRole("button", { name: /open HOS-2024-0891/i })
@@ -240,7 +310,7 @@ describe("Inspector app", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<App />);
+    render(<App initialAccessToken="test-access-token" />);
 
     const assetBefore = await screen.findByRole("heading", {
       name: "HOS-2024-0891"

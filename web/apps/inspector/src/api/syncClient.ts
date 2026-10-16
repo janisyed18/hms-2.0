@@ -9,16 +9,61 @@ import type {
   WorkUrgency
 } from "../domain/types";
 
-const HMS_HEADERS = {
-  "Content-Type": "application/json",
-  "X-HMS-User-Id": "inspector-ui-dev",
-  "X-HMS-Roles": "INSPECTOR",
-  "X-HMS-Device-Id": "inspector-browser-dev",
+const HMS_DEVICE_HEADERS = {
   "X-HMS-Device-Platform": "web",
   "X-HMS-App-Version": "0.1.0"
 };
 
 type FetchLike = typeof fetch;
+
+export interface SyncRuntimeAuth {
+  getAccessToken: () => string | null;
+  refreshAccessToken?: () => Promise<string>;
+  onAuthFailure?: () => void;
+}
+
+interface SyncClientOptions extends SyncRuntimeAuth {
+  fetchImpl?: FetchLike;
+  deviceId?: string;
+}
+
+let runtimeAuth: SyncRuntimeAuth | null = null;
+
+export class SyncAuthenticationError extends Error {
+  constructor(message = "Your session has expired. Please sign in again.") {
+    super(message);
+    this.name = "SyncAuthenticationError";
+  }
+}
+
+export function configureSyncRuntimeAuth(auth: SyncRuntimeAuth): () => void {
+  runtimeAuth = auth;
+  return () => {
+    if (runtimeAuth === auth) {
+      runtimeAuth = null;
+    }
+  };
+}
+
+function browserDeviceId(): string {
+  const storageKey = "hms.inspector.device-id";
+  if (typeof window === "undefined" || !window.localStorage) {
+    return "inspector-browser-unavailable";
+  }
+
+  const existing = window.localStorage.getItem(storageKey);
+  if (existing) {
+    return existing;
+  }
+
+  const suffix =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const deviceId = `inspector-browser-${suffix}`;
+  window.localStorage.setItem(storageKey, deviceId);
+  return deviceId;
+}
 
 interface ApiCustomerSummary {
   id: string;
@@ -209,17 +254,44 @@ function asPressureTestPayload(value: unknown): ApiPressureTestPayload | null {
 async function requestJson<TResponse>(
   fetchImpl: FetchLike,
   path: string,
-  init: RequestInit = {}
+  init: RequestInit,
+  auth: SyncRuntimeAuth,
+  deviceId: string
 ): Promise<TResponse> {
-  const response = await fetchImpl(path, {
-    ...init,
-    headers: {
-      ...HMS_HEADERS,
-      ...init.headers
+  async function send(accessToken: string) {
+    return fetchImpl(path, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...HMS_DEVICE_HEADERS,
+        "X-HMS-Device-Id": deviceId,
+        Authorization: `Bearer ${accessToken}`,
+        ...init.headers
+      }
+    });
+  }
+
+  const accessToken = auth.getAccessToken();
+  if (!accessToken) {
+    auth.onAuthFailure?.();
+    throw new SyncAuthenticationError();
+  }
+
+  let response = await send(accessToken);
+  if (response.status === 401 && auth.refreshAccessToken) {
+    try {
+      response = await send(await auth.refreshAccessToken());
+    } catch {
+      auth.onAuthFailure?.();
+      throw new SyncAuthenticationError();
     }
-  });
+  }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      auth.onAuthFailure?.();
+      throw new SyncAuthenticationError();
+    }
     const detail = await response.text();
     throw new Error(
       `Sync request failed with ${response.status}: ${detail || response.statusText}`
@@ -423,26 +495,30 @@ export function applySyncChangesToRecords(
   });
 }
 
-export function createSyncClient(options: { fetchImpl?: FetchLike } = {}) {
+export function createSyncClient(options: Partial<SyncClientOptions> = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
+  const auth: SyncRuntimeAuth = {
+    getAccessToken: options.getAccessToken ?? runtimeAuth?.getAccessToken ?? (() => null),
+    refreshAccessToken: options.refreshAccessToken ?? runtimeAuth?.refreshAccessToken,
+    onAuthFailure: options.onAuthFailure ?? runtimeAuth?.onAuthFailure
+  };
+  const deviceId = options.deviceId ?? browserDeviceId();
+
+  function request<TResponse>(path: string, init: RequestInit = {}) {
+    return requestJson<TResponse>(fetchImpl, path, init, auth, deviceId);
+  }
 
   return {
     bootstrap() {
-      return requestJson<SyncBootstrapResponse>(
-        fetchImpl,
-        "/api/v1/sync/bootstrap"
-      );
+      return request<SyncBootstrapResponse>("/api/v1/sync/bootstrap");
     },
 
     changes(since: number) {
-      return requestJson<SyncChangesResponse>(
-        fetchImpl,
-        `/api/v1/sync/changes?since=${since}`
-      );
+      return request<SyncChangesResponse>(`/api/v1/sync/changes?since=${since}`);
     },
 
     push(operations: OutboxOperation[]) {
-      return requestJson<SyncPushResponse>(fetchImpl, "/api/v1/sync/push", {
+      return request<SyncPushResponse>("/api/v1/sync/push", {
         method: "POST",
         body: JSON.stringify({
           operations: operations.map(toApiOperation)
@@ -451,7 +527,7 @@ export function createSyncClient(options: { fetchImpl?: FetchLike } = {}) {
     },
 
     operations(operations: OutboxOperation[]) {
-      return requestJson<SyncPushResponse>(fetchImpl, "/api/v1/sync/operations", {
+      return request<SyncPushResponse>("/api/v1/sync/operations", {
         method: "POST",
         body: JSON.stringify({
           operations: operations.map(toApiOperation)
