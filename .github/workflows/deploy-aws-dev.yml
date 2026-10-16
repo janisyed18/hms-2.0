@@ -15,6 +15,7 @@ permissions:
 
 env:
   AWS_REGION: ap-southeast-2
+  TERRAFORM_VERSION: 1.15.8
   # Prevent Terraform from resolving the local-only hf-dev AWS CLI profile.
   TF_VAR_aws_profile: ""
   ECR_API_REPOSITORY: hms-dev-api
@@ -44,6 +45,8 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Verify Terraform infrastructure is already applied
         working-directory: infra/terraform/envs/dev
@@ -55,7 +58,7 @@ jobs:
               || rm -f tfplan "$plan_log"
           }
           trap cleanup EXIT
-          terraform init -input=false
+          terraform init -input=false -lockfile=readonly
           terraform validate
           plan_exit_code=0
           terraform plan -detailed-exitcode -input=false -out=tfplan >"$plan_log" 2>&1 \
