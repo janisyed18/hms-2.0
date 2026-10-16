@@ -3,8 +3,13 @@ name: Deploy AWS Web
 on:
   workflow_dispatch:
     inputs:
-      deploy_web:
-        description: "Confirm a manual staff, customer portal, and inspector web release"
+      deploy_staff_portal:
+        description: "Confirm a manual staff and customer portal web release"
+        required: true
+        default: false
+        type: boolean
+      deploy_inspector:
+        description: "Inspector web release (blocked until bearer authentication is implemented)"
         required: true
         default: false
         type: boolean
@@ -13,52 +18,89 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: aws-dev-web
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ap-southeast-2
 
 jobs:
   deploy:
     name: Build and deploy web applications
-    if: ${{ inputs.deploy_web }}
+    if: ${{ inputs.deploy_staff_portal || inputs.deploy_inspector }}
     runs-on: ubuntu-latest
     environment: aws-dev
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
+      - name: Enforce web release gates
+        env:
+          STAFF_BUCKET: ${{ vars.AWS_DEV_STAFF_BUCKET }}
+          STAFF_DISTRIBUTION_ID: ${{ vars.AWS_DEV_STAFF_DISTRIBUTION_ID }}
+          API_HEALTH_URL: ${{ vars.AWS_DEV_API_HEALTH_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ inputs.deploy_inspector }}" = "true" ]; then
+            echo "Inspector web deployment is blocked: the current inspector client uses development identity headers, while AWS dev requires bearer authentication." >&2
+            exit 1
+          fi
+
+          if [ "${{ inputs.deploy_staff_portal }}" = "true" ]; then
+            test -n "$STAFF_BUCKET" || {
+              echo "AWS_DEV_STAFF_BUCKET is required." >&2
+              exit 1
+            }
+            case "$STAFF_BUCKET" in
+              hms-dev-staff-*) ;;
+              *)
+                echo "AWS_DEV_STAFF_BUCKET is not an HMS dev staff bucket." >&2
+                exit 1
+                ;;
+            esac
+
+            test -n "$STAFF_DISTRIBUTION_ID" || {
+              echo "AWS_DEV_STAFF_DISTRIBUTION_ID is required." >&2
+              exit 1
+            }
+            test -n "$API_HEALTH_URL" || {
+              echo "AWS_DEV_API_HEALTH_URL is required for post-deploy verification." >&2
+              exit 1
+            }
+          fi
+
       - name: Configure AWS credentials
+        if: ${{ inputs.deploy_staff_portal }}
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
         with:
           role-to-assume: ${{ vars.AWS_DEV_GITHUB_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ inputs.deploy_staff_portal }}
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: |
-            web/apps/staff/package-lock.json
-            web/apps/inspector/package-lock.json
+          cache-dependency-path: web/apps/staff/package-lock.json
 
-      - name: Build staff app
+      - name: Build staff and customer portal apps
+        if: ${{ inputs.deploy_staff_portal }}
         working-directory: web/apps/staff
         run: |
+          set -euo pipefail
           npm ci
           npm test -- --run
           npm run build
           npm run build:portal
 
-      - name: Build inspector app
-        working-directory: web/apps/inspector
-        run: |
-          npm ci
-          npm test -- --run
-          npm run build
-
       - name: Upload staff app
+        if: ${{ inputs.deploy_staff_portal }}
         env:
           STAFF_BUCKET: ${{ vars.AWS_DEV_STAFF_BUCKET }}
         run: |
+          set -euo pipefail
           aws s3 sync web/apps/staff/dist "s3://$STAFF_BUCKET" \
             --delete \
             --exclude "index.html" \
@@ -68,9 +110,11 @@ jobs:
             --cache-control "no-cache"
 
       - name: Upload customer portal
+        if: ${{ inputs.deploy_staff_portal }}
         env:
           STAFF_BUCKET: ${{ vars.AWS_DEV_STAFF_BUCKET }}
         run: |
+          set -euo pipefail
           aws s3 sync web/apps/staff/dist-portal "s3://$STAFF_BUCKET/portal" \
             --delete \
             --exclude "index.html" \
@@ -78,22 +122,31 @@ jobs:
           aws s3 cp web/apps/staff/dist-portal/portal.html "s3://$STAFF_BUCKET/portal/index.html" \
             --cache-control "no-cache"
 
-      - name: Upload inspector app
+      - name: Invalidate staff CloudFront distribution
+        if: ${{ inputs.deploy_staff_portal }}
         env:
-          INSPECTOR_BUCKET: ${{ vars.AWS_DEV_INSPECTOR_BUCKET }}
+          STAFF_DISTRIBUTION_ID: ${{ vars.AWS_DEV_STAFF_DISTRIBUTION_ID }}
         run: |
-          aws s3 sync web/apps/inspector/dist "s3://$INSPECTOR_BUCKET" \
-            --delete \
-            --exclude "index.html" \
-            --cache-control "public,max-age=31536000,immutable"
-          aws s3 cp web/apps/inspector/dist/index.html "s3://$INSPECTOR_BUCKET/index.html" \
-            --cache-control "no-cache"
+          set -euo pipefail
+          aws cloudfront create-invalidation \
+            --distribution-id "$STAFF_DISTRIBUTION_ID" \
+            --paths "/*"
 
-      - name: Invalidate CloudFront
+      - name: Verify public staff, portal, and API endpoints
+        if: ${{ inputs.deploy_staff_portal }}
+        env:
+          API_HEALTH_URL: ${{ vars.AWS_DEV_API_HEALTH_URL }}
         run: |
-          aws cloudfront create-invalidation \
-            --distribution-id "${{ vars.AWS_DEV_STAFF_DISTRIBUTION_ID }}" \
-            --paths "/*"
-          aws cloudfront create-invalidation \
-            --distribution-id "${{ vars.AWS_DEV_INSPECTOR_DISTRIBUTION_ID }}" \
-            --paths "/*"
+          set -euo pipefail
+          case "$API_HEALTH_URL" in
+            */health) STAFF_BASE_URL="${API_HEALTH_URL%/health}" ;;
+            *)
+              echo "AWS_DEV_API_HEALTH_URL must end in /health." >&2
+              exit 1
+              ;;
+          esac
+
+          curl --fail --silent --show-error --retry 12 --retry-delay 5 "$STAFF_BASE_URL/" >/dev/null
+          curl --fail --silent --show-error --retry 12 --retry-delay 5 "$STAFF_BASE_URL/portal/" >/dev/null
+          curl --fail --silent --show-error --retry 12 --retry-delay 5 "$API_HEALTH_URL" >/dev/null
+          echo "Verified staff app, customer portal, and API health endpoints."
