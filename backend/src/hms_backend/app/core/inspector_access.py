@@ -27,7 +27,7 @@ def assigned_bookings(principal: Principal) -> Select[tuple[str]]:
             InspectionAppointment.booking_id == InspectionBooking.id,
         )
         .where(
-            InspectionBooking.inspector_user_id == principal.user_id,
+            InspectionBooking.inspector_user_id == principal.assignment_user_id,
             InspectionBooking.status == InspectionBookingStatus.APPROVED.value,
             InspectionBooking.deleted_at.is_(None),
             InspectionAppointment.status == InspectionAppointmentStatus.CONFIRMED.value,

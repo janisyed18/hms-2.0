@@ -8,7 +8,11 @@ import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from hms_backend.app.api.dependencies import get_current_principal, get_session
+from hms_backend.app.api.dependencies import (
+    _persisted_user_principal,
+    get_current_principal,
+    get_session,
+)
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
@@ -20,6 +24,7 @@ from hms_backend.app.models.foundation import (
 )
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
 from hms_backend.app.modules.customers.models import Customer, CustomerLocation
+from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.inspections.models import (
     Inspection,
     InspectionAppointment,
@@ -200,6 +205,50 @@ async def assigned_inspector_booking(
         )
         await session.commit()
         return booking.id
+
+
+@pytest.mark.asyncio
+async def test_persisted_subject_resolves_assigned_database_user(
+    session_factory: async_sessionmaker[AsyncSession],
+    assigned_inspector_booking: str,
+) -> None:
+    async with session_factory() as session:
+        session.add_all(
+            [
+                User(
+                    id="inspector-1",
+                    oidc_subject="external-inspector-subject",
+                    email="inspector@example.test",
+                    role=Role.INSPECTOR.value,
+                ),
+                User(
+                    id="inspector-2",
+                    oidc_subject="inspector-1",
+                    email="other-inspector@example.test",
+                    role=Role.INSPECTOR.value,
+                ),
+            ]
+        )
+        await session.commit()
+        principal = await _persisted_user_principal(
+            session, "external-inspector-subject"
+        )
+        assert principal is not None
+        other_principal = await _persisted_user_principal(session, "inspector-1")
+        assert other_principal is not None
+    async with api_client(session_factory, principal) as client:
+        bootstrap = await client.get("/api/v1/sync/bootstrap", headers=sync_headers())
+        bookings = await client.get("/api/v1/inspection-bookings")
+        assert bootstrap.status_code == 200
+        assert [item["booking_id"] for item in bootstrap.json()["work_contexts"]] == [
+            assigned_inspector_booking
+        ]
+        assert [item["id"] for item in bookings.json()["items"]] == [
+            assigned_inspector_booking
+        ]
+    async with api_client(session_factory, other_principal) as client:
+        bootstrap = await client.get("/api/v1/sync/bootstrap", headers=sync_headers())
+        assert bootstrap.json()["work_contexts"] == []
 
 
 @pytest.mark.asyncio

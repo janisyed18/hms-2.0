@@ -2505,7 +2505,11 @@ async def create_inspection(
         inspection_type=payload.inspection_type,
         status=InspectionStatus.DRAFT.value,
         result=_clean_optional(payload.result),
-        inspector_user_id=principal.user_id,
+        inspector_user_id=(
+            principal.assignment_user_id
+            if is_inspector_scoped(principal)
+            else principal.user_id
+        ),
     )
     session.add(inspection)
     await record_create(

@@ -538,7 +538,8 @@ async def _inspector_work_contexts(
                 InspectionAppointment.booking_id.in_(assigned_bookings(principal)),
                 InspectionAppointmentRevision.revision_number
                 == InspectionAppointment.current_revision_number,
-                InspectionAppointmentRevision.inspector_user_id == principal.user_id,
+                InspectionAppointmentRevision.inspector_user_id
+                == principal.assignment_user_id,
                 InspectionAppointmentRevision.deleted_at.is_(None),
                 InspectionBookingAsset.deleted_at.is_(None),
             )
@@ -816,7 +817,11 @@ async def _create_inspection_from_sync(
         inspection_type=inspection_type,
         status=InspectionStatus.DRAFT.value,
         result=_optional_string_payload(operation, "result"),
-        inspector_user_id=principal.user_id,
+        inspector_user_id=(
+            principal.assignment_user_id
+            if is_inspector_scoped(principal)
+            else principal.user_id
+        ),
     )
     session.add(inspection)
     await record_create(

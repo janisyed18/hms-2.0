@@ -155,6 +155,7 @@ async def _provision_oidc_user(
         user_id=user.oidc_subject,
         roles=frozenset({Role.CUSTOMER_USER}),
         customer_ids=frozenset(),
+        record_user_id=user.id,
     )
 
 
@@ -199,6 +200,7 @@ async def _persisted_user_principal(
         user_id=user.oidc_subject,
         roles=frozenset({role}),
         customer_ids=frozenset({user.customer_id} if user.customer_id else ()),
+        record_user_id=user.id,
     )
 
 
