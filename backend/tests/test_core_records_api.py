@@ -33,7 +33,10 @@ from hms_backend.app.modules.customers.models import (
 from hms_backend.app.modules.identity.models import AccountStatus, User
 from hms_backend.app.modules.inspections.models import (
     Inspection,
+    InspectionAppointment,
     InspectionAppointmentRevision,
+    InspectionBooking,
+    InspectionBookingAsset,
     InspectionStatus,
     InspectionType,
     PressureTestResult,
@@ -2624,10 +2627,42 @@ async def test_customer_user_cannot_create_inspection(
     assert response.status_code == 403
 
 
+@pytest_asyncio.fixture
+async def inspector_assignment(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> str:
+    async with session_factory() as session:
+        asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        assert asset is not None and asset.location_id is not None
+        booking = InspectionBooking(
+            customer_id=asset.customer_id,
+            location_id=asset.location_id,
+            scheduled_at=datetime(2026, 10, 20, tzinfo=UTC),
+            status="APPROVED",
+            requested_by_user_id="customer",
+            inspector_user_id="inspector-1",
+        )
+        session.add(booking)
+        await session.flush()
+        session.add_all([
+            InspectionBookingAsset(booking_id=booking.id, asset_id=asset.id),
+            InspectionAppointment(
+                booking_id=booking.id,
+                customer_id=asset.customer_id,
+                location_id=asset.location_id,
+                status="CONFIRMED",
+            ),
+        ])
+        await session.commit()
+        return booking.id
+
+
 @pytest.mark.asyncio
 async def test_create_service_inspection_with_pressure_test_writes_audit_and_sync(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
+    inspector_assignment: str,
 ) -> None:
     principal = Principal(
         user_id="inspector-1",
@@ -3652,7 +3687,7 @@ async def test_cancelled_booking_blocks_generated_inspection_transitions(
     inspector = Principal(inspector_id, frozenset({Role.INSPECTOR}), frozenset())
     async with api_client(session_factory, inspector) as client:
         submitted = await client.post(f"/api/v1/inspections/{inspection_id}/submit")
-    assert submitted.status_code == 409
+    assert submitted.status_code == 404
 
 
 @pytest.mark.asyncio
@@ -3936,10 +3971,12 @@ async def test_inspections_endpoint_filters_by_result_and_product(
 async def test_patch_draft_inspection_updates_result_and_pressure_test_with_audit(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
+    inspector_assignment: str,
 ) -> None:
     async with session_factory() as session:
         inspection = Inspection(
             asset_id=seeded_session["vopak_asset_id"],
+            booking_id=inspector_assignment,
             inspection_type=InspectionType.SERVICE.value,
             status=InspectionStatus.DRAFT.value,
             result="REVIEW",
@@ -4009,10 +4046,12 @@ async def test_patch_draft_inspection_updates_result_and_pressure_test_with_audi
 async def test_patch_inspection_rejects_non_draft_status(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
+    inspector_assignment: str,
 ) -> None:
     async with session_factory() as session:
         inspection = Inspection(
             asset_id=seeded_session["vopak_asset_id"],
+            booking_id=inspector_assignment,
             inspection_type=InspectionType.SERVICE.value,
             status=InspectionStatus.SUBMITTED.value,
             result="PASS",
@@ -4042,10 +4081,12 @@ async def test_patch_inspection_rejects_non_draft_status(
 async def test_submit_and_approve_inspection_transitions_with_audit(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
+    inspector_assignment: str,
 ) -> None:
     async with session_factory() as session:
         inspection = Inspection(
             asset_id=seeded_session["vopak_asset_id"],
+            booking_id=inspector_assignment,
             inspection_type=InspectionType.SERVICE.value,
             status=InspectionStatus.DRAFT.value,
             result="PASS",

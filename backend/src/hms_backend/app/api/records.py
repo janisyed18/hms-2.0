@@ -93,6 +93,12 @@ from hms_backend.app.core.cache import (
     cache_set_json,
 )
 from hms_backend.app.core.config import settings
+from hms_backend.app.core.inspector_access import (
+    assigned_assets,
+    assigned_bookings,
+    is_inspector_scoped,
+    lock_assigned_bookings,
+)
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
@@ -760,7 +766,10 @@ async def list_customers(
         total=total,
         limit=limit,
         offset=offset,
-        items=[_customer_read(customer) for customer in customers],
+        items=[
+            await _customer_read_for_principal(session, customer, principal)
+            for customer in customers
+        ],
     )
 
 
@@ -1098,7 +1107,7 @@ async def update_customer(
             )
     await session.commit()
     _set_etag(response, customer.version)
-    return _customer_read(customer)
+    return await _customer_read_for_principal(session, customer, principal)
 
 
 @router.delete("/customers/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1131,7 +1140,7 @@ async def get_customer(
     _require_customer_read(principal)
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
     _set_etag(response, customer.version)
-    return _customer_read(customer)
+    return await _customer_read_for_principal(session, customer, principal)
 
 
 @router.post(
@@ -1277,6 +1286,11 @@ async def get_dashboard(
     end_at: ReportingEndParam = None,
 ) -> DashboardRead:
     _require_asset_read(principal)
+    if is_inspector_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Dashboard is not available to inspectors",
+        )
     reporting_window = _reporting_window(start_at, end_at)
     reporting_dates = _reporting_dates(reporting_window)
     today = datetime.now(UTC).date()
@@ -1415,6 +1429,11 @@ async def get_analytics_overview(
 ) -> AnalyticsOverviewRead:
     """Return scoped operational analytics for the requested reporting window."""
     _require_asset_read(principal)
+    if is_inspector_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Analytics is not available to inspectors",
+        )
     reporting_window = _reporting_window(start_at, end_at)
     reporting_dates = _reporting_dates(reporting_window)
     today = datetime.now(UTC).date()
@@ -1808,6 +1827,10 @@ async def list_inspections(
     _require_asset_read(principal)
     statement = _inspection_statement()
     statement = _apply_asset_scope(statement, principal)
+    if is_inspector_scoped(principal):
+        statement = statement.where(
+            Inspection.booking_id.in_(assigned_bookings(principal)),
+        )
     if status_filter:
         statement = statement.where(Inspection.status == status_filter)
     if inspection_type:
@@ -1870,6 +1893,10 @@ async def list_inspection_bookings(
 ) -> InspectionBookingListResponse:
     _require_asset_read(principal)
     statement = _apply_customer_scope(_inspection_booking_statement(), principal)
+    if is_inspector_scoped(principal):
+        statement = statement.where(
+            InspectionBooking.id.in_(assigned_bookings(principal))
+        )
     if status_filter:
         statement = statement.where(InspectionBooking.status == status_filter)
     if customer_id:
@@ -2443,9 +2470,38 @@ async def create_inspection(
     principal: PrincipalDep,
 ) -> InspectionRead:
     _require_inspection_write(principal)
+    await lock_assigned_bookings(session, principal)
     asset = await _get_visible_asset_or_404(session, asset_id, principal)
+    booking_id = None
+    if is_inspector_scoped(principal):
+        booking_ids = (await session.scalars(
+            select(InspectionBookingAsset.booking_id).where(
+                InspectionBookingAsset.asset_id == asset_id,
+                InspectionBookingAsset.booking_id.in_(assigned_bookings(principal)),
+                InspectionBookingAsset.deleted_at.is_(None),
+            ).limit(2)
+        )).all()
+        if len(booking_ids) != 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A single active assignment is required",
+            )
+        booking_id = booking_ids[0]
+        existing_assigned_inspection = await session.scalar(
+            select(Inspection.id).where(
+                Inspection.booking_id == booking_id,
+                Inspection.asset_id == asset_id,
+                Inspection.deleted_at.is_(None),
+            ).limit(1)
+        )
+        if existing_assigned_inspection is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The assignment already has an inspection",
+            )
     inspection = Inspection(
         asset=asset,
+        booking_id=booking_id,
         inspection_type=payload.inspection_type,
         status=InspectionStatus.DRAFT.value,
         result=_clean_optional(payload.result),
@@ -2487,6 +2543,7 @@ async def update_inspection(
     principal: PrincipalDep,
 ) -> InspectionRead:
     _require_inspection_write(principal)
+    await lock_assigned_bookings(session, principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
     await _require_active_inspection_booking(session, inspection)
     if inspection.status != InspectionStatus.DRAFT.value:
@@ -2526,6 +2583,7 @@ async def submit_inspection(
     principal: PrincipalDep,
 ) -> InspectionRead:
     _require_inspection_write(principal)
+    await lock_assigned_bookings(session, principal)
     inspection = await _get_inspection_or_404(session, inspection_id, principal)
     await _require_active_inspection_booking(session, inspection)
     if inspection.status != InspectionStatus.DRAFT.value:
@@ -2798,6 +2856,10 @@ async def list_certificates(
     _require_asset_read(principal)
     statement = _certificate_statement()
     statement = _apply_asset_scope(statement, principal)
+    if is_inspector_scoped(principal):
+        statement = statement.where(
+            Inspection.booking_id.in_(assigned_bookings(principal)),
+        )
     if status_filter:
         statement = statement.where(Certificate.status == status_filter)
     if asset_id:
@@ -3101,7 +3163,10 @@ async def list_assets(
         total=total,
         limit=limit,
         offset=offset,
-        items=[_asset_read(asset) for asset in assets],
+        items=[
+            await _asset_read_for_principal(session, asset, principal)
+            for asset in assets
+        ],
     )
 
 
@@ -3277,7 +3342,7 @@ async def get_asset(
             detail="Asset not found",
         )
     _set_etag(response, asset.version)
-    return _asset_read(asset)
+    return await _asset_read_for_principal(session, asset, principal)
 
 
 def _asset_statement() -> Select[tuple[Asset]]:
@@ -3378,6 +3443,8 @@ def _apply_asset_scope[StatementT: Select[Any]](
     statement: StatementT,
     principal: Principal,
 ) -> StatementT:
+    if is_inspector_scoped(principal):
+        return statement.where(Asset.id.in_(assigned_assets(principal)))
     if not is_customer_scoped(principal):
         return statement
     if not principal.customer_ids:
@@ -3396,6 +3463,14 @@ def _apply_customer_scope[StatementT: Select[Any]](
     statement: StatementT,
     principal: Principal,
 ) -> StatementT:
+    if is_inspector_scoped(principal):
+        return statement.where(
+            Customer.id.in_(
+                select(InspectionBooking.customer_id).where(
+                    InspectionBooking.id.in_(assigned_bookings(principal))
+                )
+            )
+        )
     if not is_customer_scoped(principal):
         return statement
     if not principal.customer_ids:
@@ -3605,6 +3680,26 @@ def _customer_read(customer: Customer) -> CustomerRead:
         locations=[_customer_location_read(location) for location in locations],
         contacts=[_customer_contact_read(contact) for contact in contacts],
     )
+
+
+async def _customer_read_for_principal(
+    session: AsyncSession, customer: Customer, principal: Principal
+) -> CustomerRead:
+    result = _customer_read(customer)
+    if not is_inspector_scoped(principal):
+        return result
+    location_ids = set((await session.scalars(
+        select(InspectionBooking.location_id).where(
+            InspectionBooking.id.in_(assigned_bookings(principal)),
+            InspectionBooking.customer_id == customer.id,
+        )
+    )).all())
+    return result.model_copy(update={
+        "locations": [
+            location for location in result.locations if location.id in location_ids
+        ],
+        "contacts": [],
+    })
 
 
 def _customer_code(value: str | None) -> str:
@@ -3830,6 +3925,10 @@ async def _get_visible_inspection_booking_or_404(
         _inspection_booking_statement().where(InspectionBooking.id == booking_id),
         principal,
     )
+    if is_inspector_scoped(principal):
+        statement = statement.where(
+            InspectionBooking.id.in_(assigned_bookings(principal))
+        )
     booking = (await session.scalars(statement)).first()
     if booking is None:
         raise HTTPException(
@@ -3862,6 +3961,10 @@ async def _get_inspection_or_404(
 ) -> Inspection:
     statement = _inspection_statement().where(Inspection.id == inspection_id)
     statement = _apply_asset_scope(statement, principal)
+    if is_inspector_scoped(principal):
+        statement = statement.where(
+            Inspection.booking_id.in_(assigned_bookings(principal)),
+        )
     inspection = (await session.scalars(statement)).first()
     if inspection is None:
         raise HTTPException(
@@ -3878,6 +3981,10 @@ async def _get_certificate_or_404(
 ) -> Certificate:
     statement = _certificate_statement().where(Certificate.id == certificate_id)
     statement = _apply_asset_scope(statement, principal)
+    if is_inspector_scoped(principal):
+        statement = statement.where(
+            Inspection.booking_id.in_(assigned_bookings(principal)),
+        )
     certificate = (await session.scalars(statement)).first()
     if certificate is None:
         raise HTTPException(
@@ -4935,6 +5042,38 @@ def _asset_end_read(configuration: AssetEndConfiguration | None) -> AssetEndRead
         coupling=_lookup_read(configuration.coupling),
         coupling_add_on=_lookup_read(configuration.coupling_add_on),
         attach_method=_lookup_read(configuration.attach_method),
+    )
+
+
+async def _asset_read_for_principal(
+    session: AsyncSession, asset: Asset, principal: Principal
+) -> AssetRead:
+    result = _asset_read(asset)
+    if not is_inspector_scoped(principal):
+        return result
+    inspection_ids = set((await session.scalars(
+        select(Inspection.id).where(
+            Inspection.asset_id == asset.id,
+            Inspection.booking_id.in_(assigned_bookings(principal)),
+            Inspection.deleted_at.is_(None),
+        )
+    )).all())
+    certificate_ids = {
+        certificate.id
+        for certificate in asset.certificates
+        if certificate.inspection_id in inspection_ids
+    }
+    return result.model_copy(
+        update={
+            "inspection_history": [
+                item for item in result.inspection_history if item.id in inspection_ids
+            ],
+            "certificate_history": [
+                item
+                for item in result.certificate_history
+                if item.id in certificate_ids
+            ],
+        }
     )
 
 

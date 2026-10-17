@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -53,6 +53,12 @@ describe("Inspector app", () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     vi.stubGlobal("localStorage", createMemoryStorage());
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify(mockBootstrapResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    ));
   });
 
   it("requires secure inspector sign-in before showing field work", async () => {
@@ -63,6 +69,64 @@ describe("Inspector app", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Assigned")).not.toBeInTheDocument();
     expect(screen.queryByText("Queued")).not.toBeInTheDocument();
+  });
+
+  it("does not display mock jobs when bootstrap fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Offline")));
+    render(<App initialAccessToken="test-access-token" />);
+
+    expect(await screen.findByText(/unable to load assigned work/i)).toBeInTheDocument();
+    expect(screen.queryByText("HOS-2024-0891")).not.toBeInTheDocument();
+    expect(screen.queryByText("HOS-2025-0201")).not.toBeInTheDocument();
+  });
+
+  it("hides reassigned work on reconnect without deleting its queued draft", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(mockBootstrapResponse), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...mockBootstrapResponse, records: [], work_contexts: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App initialAccessToken="test-access-token" />);
+
+    await user.click(await screen.findByRole("button", { name: /open HOS-2024-0891/i }));
+    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    fireEvent(window, new Event("online"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    expect(await screen.findByText("No queued work")).toBeInTheDocument();
+    expect(screen.getByText(/draft.*preserved.*cannot be submitted/i)).toBeInTheDocument();
+    expect(screen.queryByText("HOS-2024-0891")).not.toBeInTheDocument();
+    expect(localStorage.getItem(outboxStorageKey("test-inspector"))).toContain("HOS-2024-0891");
+  });
+
+  it("closes the selected work item when its appointment revision changes", async () => {
+    const user = userEvent.setup();
+    const revised = {
+      ...mockBootstrapResponse,
+      work_contexts: mockBootstrapResponse.work_contexts?.map((context) => ({
+        ...context, revision_id: `new-${context.revision_id}`
+      }))
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(mockBootstrapResponse), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(revised), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App initialAccessToken="test-access-token" />);
+    await user.click(await screen.findByRole("button", { name: /open HOS-2024-0891/i }));
+    fireEvent(window, new Event("online"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: "Save Draft" })).not.toBeInTheDocument();
+  });
+
+  it("expires access after the server-provided offline window", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...mockBootstrapResponse,
+      device: { ...mockBootstrapResponse.device, offline_window_days: 0 }
+    }), { status: 200 })));
+    render(<App initialAccessToken="test-access-token" />);
+
+    expect(await screen.findByText(/offline access expired/i)).toBeInTheDocument();
+    expect(screen.queryByText("HOS-2024-0891")).not.toBeInTheDocument();
   });
 
   it("opens the workspace only after browser authentication confirms the Inspector role", async () => {
@@ -172,6 +236,17 @@ describe("Inspector app", () => {
 
     expect(screen.getByText("1 pending")).toBeInTheDocument();
     expect(screen.getByText("Asset · update · asset-0891")).toBeInTheDocument();
+  });
+
+  it("keeps a pressure result queued with its unsynced inspection", async () => {
+    const user = userEvent.setup();
+    render(<App initialAccessToken="test-access-token" />);
+    await user.click(await screen.findByRole("button", { name: /open HOS-2024-0891/i }));
+    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    await user.click(screen.getByRole("button", { name: "Queue Test Result" }));
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    expect(screen.getByText("2 pending")).toBeInTheDocument();
+    expect(screen.queryByText(/draft.*preserved.*cannot be submitted/i)).not.toBeInTheDocument();
   });
 
   it("filters the field work queue by search text and urgency", async () => {
@@ -317,40 +392,21 @@ describe("Inspector app", () => {
 
   it("pulls backend changes into the visible work queue", async () => {
     const user = userEvent.setup();
+    let bootstraps = 0;
     const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
       const path = String(url);
 
       if (path.endsWith("/api/v1/sync/bootstrap")) {
-        return new Response(JSON.stringify(mockBootstrapResponse), {
+        bootstraps += 1;
+        const records = mockBootstrapResponse.records.map((record) =>
+          bootstraps > 1 && record.entity_id === "schedule-0891"
+            ? { ...record, payload: { ...record.payload, status: "DUE", due_at: "2026-07-04" } }
+            : record
+        );
+        return new Response(JSON.stringify({ ...mockBootstrapResponse, records }), {
           status: 200,
           headers: { "Content-Type": "application/json" }
         });
-      }
-
-      if (path.endsWith("/api/v1/sync/changes?since=8")) {
-        return new Response(
-          JSON.stringify({
-            cursor: 9,
-            has_more: false,
-            changes: [
-              {
-                seq: 9,
-                entity: "RetestSchedule",
-                entity_id: "schedule-0891",
-                op: "upsert",
-                version: 3,
-                changed_at: "2026-07-04T01:00:00.000Z",
-                payload: {
-                  id: "schedule-0891",
-                  asset_id: "asset-0891",
-                  due_at: "2026-07-04",
-                  status: "DUE"
-                }
-              }
-            ]
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        );
       }
 
       return new Response("Not found", { status: 404 });

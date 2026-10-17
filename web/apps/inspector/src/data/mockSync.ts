@@ -12,6 +12,13 @@ export const mockBootstrapResponse: SyncBootstrapResponse = {
   },
   cursor: 8,
   has_more: false,
+  work_contexts: ["asset-0891", "asset-0201", "asset-0156"].map((asset) => ({
+    appointment_id: `appointment-${asset}`,
+    booking_id: `booking-${asset}`,
+    revision_id: `revision-${asset}`,
+    assignment_id: `assignment-${asset}`,
+    asset_id: asset
+  })),
   records: [
     {
       seq: 1,
@@ -153,6 +160,7 @@ export const mockBootstrapResponse: SyncBootstrapResponse = {
       payload: {
         id: "inspection-0156",
         asset_id: "asset-0156",
+        booking_id: "booking-asset-0156",
         status: "DRAFT",
         inspection_type: "SERVICE"
       }

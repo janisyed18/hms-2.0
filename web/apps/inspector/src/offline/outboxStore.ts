@@ -105,6 +105,7 @@ export function createInspectionOperation(
     opId,
     idempotencyKey: makeId("idem"),
     entity: "Inspection",
+    workContext: input.workContext,
     entityId: input.inspectionId,
     assetId: input.assetId,
     assetNumber: input.assetNumber,
@@ -139,6 +140,7 @@ export function createAssetUpdateOperation(
     opId: makeId("op"),
     idempotencyKey: makeId("idem"),
     entity: "Asset",
+    workContext: input.workContext,
     entityId: input.assetId,
     assetId: input.assetId,
     assetNumber: input.assetNumber,
@@ -165,6 +167,7 @@ export function createPressureTestOperation(
     opId: makeId("op"),
     idempotencyKey: makeId("idem"),
     entity: "PressureTestResult",
+    workContext: input.workContext,
     entityId: input.pressureTestId,
     assetId: input.assetId,
     assetNumber: input.assetNumber,
@@ -189,7 +192,10 @@ export function createPressureTestOperation(
 export function upsertOutboxOperation(userId: string, operation: OutboxOperation) {
   const state = loadOutbox(userId);
   const existingIndex = state.operations.findIndex(
-    (item) => item.entityId === operation.entityId
+    (item) => item.entity === operation.entity && item.entityId === operation.entityId &&
+      item.workContext?.appointment_id === operation.workContext?.appointment_id &&
+      item.workContext?.revision_id === operation.workContext?.revision_id &&
+      item.workContext?.assignment_id === operation.workContext?.assignment_id
   );
 
   if (existingIndex === -1) {
@@ -254,6 +260,8 @@ export function resolveOperationConflict(
     if (resolution === "keep-local") {
       return {
         ...operation,
+        baseVersion: operation.currentVersion ?? operation.baseVersion,
+        idempotencyKey: makeId("idem"),
         status: "pending",
         lastError: undefined,
         updatedAt: nowIso()
