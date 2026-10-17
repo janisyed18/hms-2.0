@@ -1,13 +1,18 @@
 name: Prepare AWS Dev Certificate Engine Image
 
 # Build-only bootstrap/recovery workflow. It builds services/certificate from
-# main, proves the image refuses to start without signing material, pushes an
-# immutable commit tag and then `latest`, and verifies both resolve to one digest.
+# main, validates the image locally, only then acquires AWS credentials, refuses to
+# overwrite an existing commit tag, pushes the commit tag and then `latest`, and
+# verifies both resolve to one digest.
 #
 # It deliberately does nothing else: no service is updated, no task is started,
 # no secret is read and no infrastructure is touched. Use it before scaling the
 # certificate engine up, so a stale engine image is never started against the
 # real signing keys.
+#
+# The ECR repository allows tag overwrites, so the commit tag is only as stable
+# as this guard: the workflow refuses to push if the tag already exists, and runs
+# are serialised. Nothing in ECR itself prevents another writer re-tagging it.
 
 on:
   workflow_dispatch:
@@ -54,6 +59,32 @@ jobs:
             exit 1
           }
 
+      # Build and validate before any AWS credential is acquired: the delivery
+      # role can do far more than push images, so it is assumed as late as possible.
+      - name: Build the certificate engine image
+        run: |
+          docker build \
+            --tag "hms-certificate-engine:${GITHUB_SHA}" \
+            services/certificate
+
+      # Evidence from the built artifact itself, before anything is pushed.
+      - name: Verify the image before publishing
+        run: |
+          image="hms-certificate-engine:${GITHUB_SHA}"
+          docker run --rm --entrypoint python "$image" \
+            -c 'import hms_certificate.pki, hms_certificate.signing'
+          # With no signing material and autogeneration off, the engine must exit
+          # with an error instead of serving. Exit 124 would mean it kept running.
+          exit_code=0
+          timeout 60 docker run --rm \
+            --env HMS_CERT_DEV_AUTOGENERATE_SIGNER=false \
+            "$image" >/dev/null 2>&1 || exit_code=$?
+          if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 124 ]; then
+            echo "The image started without signing material (exit status $exit_code)." >&2
+            exit 1
+          fi
+          echo "Image checks passed."
+
       - name: Require the application delivery role
         env:
           DEPLOY_ROLE_ARN: ${{ vars.AWS_DEV_GITHUB_ROLE_ARN }}
@@ -73,41 +104,40 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
 
-      - name: Build the certificate engine image
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
+      # Fail closed: only a definite "no such tag" answer allows the push. Any
+      # other outcome (tag present, access denied, API error) stops the run.
+      - name: Refuse to overwrite an existing commit tag
         run: |
-          docker build \
-            --tag "$REGISTRY/$ECR_CERTIFICATE_ENGINE_REPOSITORY:${GITHUB_SHA}" \
-            --tag "$REGISTRY/$ECR_CERTIFICATE_ENGINE_REPOSITORY:latest" \
-            services/certificate
-
-      # Evidence from the built artifact itself, before anything is pushed.
-      - name: Verify the image before publishing
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
-        run: |
-          image="$REGISTRY/$ECR_CERTIFICATE_ENGINE_REPOSITORY:${GITHUB_SHA}"
-          docker run --rm --entrypoint python "$image" \
-            -c 'import hms_certificate.pki, hms_certificate.signing'
-          # With no signing material and autogeneration off, the engine must exit
-          # with an error instead of serving. Exit 124 would mean it kept running.
-          exit_code=0
-          timeout 60 docker run --rm \
-            --env HMS_CERT_DEV_AUTOGENERATE_SIGNER=false \
-            "$image" >/dev/null 2>&1 || exit_code=$?
-          if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 124 ]; then
-            echo "The image started without signing material (exit status $exit_code)." >&2
+          set +e
+          output="$(
+            aws ecr describe-images \
+              --repository-name "$ECR_CERTIFICATE_ENGINE_REPOSITORY" \
+              --image-ids "imageTag=${GITHUB_SHA}" 2>&1
+          )"
+          lookup_status=$?
+          set -e
+          if [ "$lookup_status" -eq 0 ]; then
+            echo "The commit tag ${GITHUB_SHA} already exists in ECR; refusing to overwrite it." >&2
             exit 1
           fi
-          echo "Image checks passed."
+          case "$output" in
+            *ImageNotFoundException*) echo "Commit tag is free; proceeding." ;;
+            *)
+              echo "Could not confirm that the commit tag is free; refusing to push." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Publish the commit tag, then latest
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          docker push "$REGISTRY/$ECR_CERTIFICATE_ENGINE_REPOSITORY:${GITHUB_SHA}"
-          docker push "$REGISTRY/$ECR_CERTIFICATE_ENGINE_REPOSITORY:latest"
+          local_image="hms-certificate-engine:${GITHUB_SHA}"
+          remote="$REGISTRY/$ECR_CERTIFICATE_ENGINE_REPOSITORY"
+          docker tag "$local_image" "$remote:${GITHUB_SHA}"
+          docker tag "$local_image" "$remote:latest"
+          docker push "$remote:${GITHUB_SHA}"
+          docker push "$remote:latest"
 
       - name: Verify latest resolves to the commit tag
         run: |

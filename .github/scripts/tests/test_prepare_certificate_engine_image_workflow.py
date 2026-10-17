@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -18,6 +21,34 @@ def step(name: str) -> str:
     start = WORKFLOW.index(f"- name: {name}")
     nxt = WORKFLOW.find("\n      - ", start + 1)
     return WORKFLOW[start : nxt if nxt != -1 else len(WORKFLOW)]
+
+
+def run_block(name: str) -> str:
+    """The shell body of a step, de-indented (GitHub runs it with bash)."""
+    body = step(name).split("run: |\n", 1)[1]
+    return "\n".join(line[10:] if line.startswith(" " * 10) else line
+                     for line in body.splitlines())
+
+
+def run_guard(fake_aws_script: str) -> subprocess.CompletedProcess:
+    """Run the overwrite guard with a fake `aws` that behaves as scripted."""
+    with tempfile.TemporaryDirectory() as directory:
+        fake = Path(directory) / "aws"
+        fake.write_text("#!/bin/bash\n" + fake_aws_script + "\n", encoding="utf-8")
+        fake.chmod(0o755)
+        env = {
+            **os.environ,
+            "PATH": f"{directory}:{os.environ['PATH']}",
+            "ECR_CERTIFICATE_ENGINE_REPOSITORY": "hms-dev-certificate-engine",
+            "GITHUB_SHA": "abc123",
+        }
+        return subprocess.run(
+            ["bash", "-e", "-c", run_block("Refuse to overwrite an existing commit tag")],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
 
 
 class PrepareCertificateEngineImageWorkflowTests(unittest.TestCase):
@@ -102,6 +133,47 @@ class PrepareCertificateEngineImageWorkflowTests(unittest.TestCase):
         self.assertIn("digest_of latest", check)
         self.assertIn('[ "$sha_digest" != "$latest_digest" ]', check)
         self.assertIn("sha256:*", check)
+
+    def test_the_commit_tag_is_not_called_immutable(self) -> None:
+        # The ECR repository allows overwrites; the guard is best-effort.
+        self.assertNotIn("immutable", WORKFLOW.lower())
+
+    def test_image_is_built_and_verified_before_any_aws_credential(self) -> None:
+        credentials = WORKFLOW.index("- name: Configure AWS credentials")
+        self.assertLess(WORKFLOW.index("- name: Build the certificate engine image"), credentials)
+        self.assertLess(WORKFLOW.index("- name: Verify the image before publishing"), credentials)
+        self.assertNotIn("ecr.outputs.registry", step("Build the certificate engine image"))
+
+    def test_overwrite_guard_runs_before_any_push(self) -> None:
+        self.assertLess(
+            WORKFLOW.index("- name: Refuse to overwrite an existing commit tag"),
+            WORKFLOW.index("docker push"),
+        )
+
+    def test_guard_refuses_when_the_commit_tag_already_exists(self) -> None:
+        result = run_guard('echo \'{"imageDetails": []}\'; exit 0')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("refusing to overwrite", result.stderr)
+
+    def test_guard_allows_only_a_definite_image_not_found(self) -> None:
+        result = run_guard(
+            "echo 'An error occurred (ImageNotFoundException) when calling "
+            "the DescribeImages operation' >&2; exit 254"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("free", result.stdout)
+
+    def test_guard_fails_closed_on_any_other_lookup_error(self) -> None:
+        for message in (
+            "An error occurred (AccessDeniedException) when calling DescribeImages",
+            "An error occurred (RepositoryNotFoundException) when calling DescribeImages",
+            "Could not connect to the endpoint URL",
+            "",
+        ):
+            with self.subTest(message=message):
+                result = run_guard(f"echo '{message}' >&2; exit 254")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("refusing to push", result.stderr)
 
     def test_no_credentials_are_printed(self) -> None:
         for forbidden in ("get-login-password", "docker login", "set -x", "AWS_SECRET"):
