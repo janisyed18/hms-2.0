@@ -6,8 +6,13 @@ whose signatures validate as *trusted* (the CA acts as the trust anchor) with
 zero setup. This is for local development and tests ONLY.
 
 In staging/production set ``HMS_CERT_SIGNING_CERT_PATH`` / ``_KEY_PATH`` /
-``_CHAIN_PATH`` from OCI Vault and leave ``HMS_CERT_DEV_AUTOGENERATE_SIGNER=false``.
+``_CHAIN_PATH`` from your secret manager (e.g. AWS Secrets Manager) and leave
+``HMS_CERT_DEV_AUTOGENERATE_SIGNER=false``.
 Existing key material is never overwritten.
+
+The root CA's *private* key is deliberately not persisted: the DEV root signs
+exactly one leaf and cannot issue a renewal. Rotating the leaf means standing up
+a new root and updating the backend's trust anchor.
 """
 
 from __future__ import annotations
@@ -48,7 +53,16 @@ def ensure_dev_signer(
     ca_cert_path = key_dir / _CA_CERT
     leaf_cert_path = key_dir / _LEAF_CERT
     leaf_key_path = key_dir / _LEAF_KEY
-    if all(p.exists() for p in (ca_cert_path, leaf_cert_path, leaf_key_path)):
+    existing = [p for p in (ca_cert_path, leaf_cert_path, leaf_key_path) if p.exists()]
+    if existing and len(existing) != 3:
+        # A partial set means something deleted or lost part of the PKI. Never
+        # mint a replacement CA silently: every certificate signed so far would
+        # stop verifying against the trust anchor the backend has configured.
+        raise RuntimeError(
+            f"incomplete development signing material in {key_dir}; restore the "
+            "missing files or remove the directory deliberately to start a new CA"
+        )
+    if len(existing) == 3:
         return SignerMaterial(
             cert_path=leaf_cert_path,
             key_path=leaf_key_path,
@@ -165,3 +179,31 @@ def ensure_dev_signer(
         chain_paths=(),
         trust_anchor_path=ca_cert_path,
     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Provision the DEV signing PKI once and print the public trust anchor path.
+
+    Idempotent and never overwrites existing material. Store the key/cert in your
+    secret manager and mount them via ``HMS_CERT_SIGNING_*``; give the backend only
+    the public ``dev-ca.cert.pem`` as ``CERTIFICATE_TRUST_ANCHOR_PATH``.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description=main.__doc__)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--organization", default="BAT Engineering Pty Ltd")
+    args = parser.parse_args(argv)
+    material = ensure_dev_signer(
+        args.out,
+        common_name=f"{args.organization} Certificate Signer",
+        organization=args.organization,
+    )
+    print(f"trust anchor (public): {material.trust_anchor_path}")
+    print(f"signing certificate:   {material.cert_path}")
+    print(f"signing key (SECRET):  {material.key_path}")
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

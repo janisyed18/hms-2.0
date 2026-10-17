@@ -21,6 +21,7 @@ dependencies = [
     "grpcio>=1.64.0",
     "protobuf>=5.26.0",
     "pydantic-settings>=2.14.2",
+    "pyhanko>=0.25",
     "pyjwt[crypto]>=2.9.0",
     "pyotp>=2.9.0",
     "redis>=5.0.0",
@@ -80,9 +81,11 @@ ignore_missing_imports = true
 module = [
     "test_certificate_bulk_jobs",
     "test_certificate_generation",
+    "test_certificate_integrity",
     "test_redis_cache",
     "tests.test_certificate_bulk_jobs",
     "tests.test_certificate_generation",
+    "tests.test_certificate_integrity",
     "tests.test_redis_cache",
 ]
 disallow_untyped_defs = false

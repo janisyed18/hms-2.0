@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 import httpx
 import pytest
 import pytest_asyncio
+from certificate_support import SigningFakeEngine, build_pki
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -20,12 +21,12 @@ import hms_backend.app.api.jobs as jobs_module
 import hms_backend.app.core.object_storage as storage_module
 import hms_backend.app.modules.certificates.issuance as issuance_module
 from hms_backend.app.api.dependencies import get_current_principal, get_session
+from hms_backend.app.core.config import settings as app_settings
 from hms_backend.app.core.object_storage import LocalObjectStorage
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
-from hms_backend.app.modules.certificates.engine_client import RenderedCertificate
 from hms_backend.app.modules.certificates.models import Certificate
 from hms_backend.app.modules.certificates.tasks import _run_batch
 from hms_backend.app.modules.customers.models import Customer
@@ -36,23 +37,6 @@ from hms_backend.app.modules.inspections.models import (
 )
 from hms_backend.app.modules.jobs.models import CertificateBatchJob, JobStatus
 from hms_backend.app.modules.products.models import Product
-
-
-class _FakeEngine:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def render(self, certificate) -> RenderedCertificate:  # noqa: ANN001
-        self.calls += 1
-        return RenderedCertificate(
-            pdf=b"%PDF-1.7\n%bulk\n",
-            verification_hash=f"hash-{certificate.certificate_number}",
-            page_count=1,
-            signer_common_name="Test Signer",
-            signed_at="2026-07-07T00:00:00Z",
-            signed=True,
-        )
-
 
 _REVIEWER = Principal(
     user_id="reviewer-1", roles=frozenset({Role.REVIEWER}), customer_ids=frozenset()
@@ -70,8 +54,12 @@ async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
 
 
 @pytest.fixture(autouse=True)
-def _wire_engine_and_storage(tmp_path, monkeypatch) -> _FakeEngine:
-    fake = _FakeEngine()
+def _wire_engine_and_storage(tmp_path, monkeypatch) -> SigningFakeEngine:
+    pki = build_pki(tmp_path / "pki")
+    monkeypatch.setattr(
+        app_settings, "certificate_trust_anchor_path", str(pki.anchor_path)
+    )
+    fake = SigningFakeEngine(pki.signer)
     monkeypatch.setattr(issuance_module, "get_certificate_engine", lambda: fake)
     monkeypatch.setattr(
         storage_module, "_storage", LocalObjectStorage(tmp_path / "objects")

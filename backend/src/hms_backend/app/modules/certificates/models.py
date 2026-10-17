@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hms_backend.app.models.base import Base, SyncableMixin, utc_now
@@ -68,6 +68,20 @@ class Certificate(SyncableMixin, Base):
         nullable=False,
         default=CertificateStatus.DRAFT.value,
     )
+    # Integrity evidence captured at issuance. All NULL on certificates issued
+    # before this existed (or imported with a pre-rendered artifact); those are
+    # LEGACY_UNVERIFIED and can never be reported as authentic automatically.
+    #   issuance_facts - exactly what was printed, so later edits to customer /
+    #                    asset / product master data cannot alter verification.
+    #   pdf_sha256     - digest of the stored signed PDF artifact.
+    #   signer_*       - signature evidence read from the PDF at issuance; the
+    #                    public verifier re-validates it rather than trusting it.
+    issuance_facts: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    pdf_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    signer_common_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    signed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     inspection: Mapped[Inspection] = relationship(
         back_populates="certificate",
@@ -86,6 +100,11 @@ class Certificate(SyncableMixin, Base):
         public_token: str,
         issued_by_user_id: str,
         valid_until: date | None,
+        certificate_id: str | None = None,
+        issuance_facts: dict[str, Any] | None = None,
+        pdf_sha256: str | None = None,
+        signer_common_name: str | None = None,
+        signed_at: datetime | None = None,
     ) -> Certificate:
         if inspection.status != InspectionStatus.APPROVED.value:
             raise CertificateIssueError(
@@ -101,7 +120,9 @@ class Certificate(SyncableMixin, Base):
                 f"{asset.lifecycle_status.lower()} asset"
             )
 
+        extra: dict[str, Any] = {"id": certificate_id} if certificate_id else {}
         return cls(
+            **extra,
             inspection=inspection,
             asset=inspection.asset,
             number=number,
@@ -112,4 +133,8 @@ class Certificate(SyncableMixin, Base):
             public_token=public_token,
             issued_by_user_id=issued_by_user_id,
             status=CertificateStatus.ISSUED.value,
+            issuance_facts=issuance_facts,
+            pdf_sha256=pdf_sha256,
+            signer_common_name=signer_common_name,
+            signed_at=signed_at,
         )

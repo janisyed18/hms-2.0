@@ -8,10 +8,14 @@ on the session but does not commit.
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from datetime import UTC, date, datetime
 
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid6 import uuid7
 
 from hms_backend.app.core.config import Settings
 from hms_backend.app.core.config import settings as default_settings
@@ -21,12 +25,18 @@ from hms_backend.app.modules.certificates.engine_client import (
     CertificateEngineClient,
     get_certificate_engine,
 )
-from hms_backend.app.modules.certificates.mapping import build_facts, to_proto
+from hms_backend.app.modules.certificates.integrity import pdf_sha256
+from hms_backend.app.modules.certificates.mapping import (
+    build_facts,
+    facts_to_snapshot,
+    to_proto,
+)
 from hms_backend.app.modules.certificates.models import (
     NON_CERTIFIABLE_ASSET_STATUSES,
     Certificate,
     CertificateStatus,
 )
+from hms_backend.app.modules.certificates.signature import averify_pdf_signature
 from hms_backend.app.modules.inspections.models import Inspection, InspectionStatus
 from hms_backend.app.modules.notifications.enums import NotificationCategory
 from hms_backend.app.modules.notifications.outbox import emit_event
@@ -42,6 +52,14 @@ class InspectionNotApprovedError(RuntimeError):
 
 class AssetNotCertifiableError(RuntimeError):
     """The asset's lifecycle state forbids issuing a certificate (e.g. condemned)."""
+
+
+class CertificateConflictError(RuntimeError):
+    """The certificate number or public token is already in use."""
+
+
+class CertificateSignatureError(RuntimeError):
+    """The rendered PDF is not signed by a signer the configured CA trusts."""
 
 
 def generate_public_token() -> str:
@@ -68,7 +86,8 @@ async def generate_and_store_certificate(
     """Render, sign, store and stage a certificate for an approved inspection.
 
     Raises :class:`CertificateAlreadyIssuedError`,
-    :class:`InspectionNotApprovedError`, :class:`AssetNotCertifiableError`, or
+    :class:`InspectionNotApprovedError`, :class:`AssetNotCertifiableError`,
+    :class:`CertificateConflictError`, :class:`CertificateSignatureError`, or
     :class:`~hms_backend.app.modules.certificates.engine_client.CertificateEngineError`.
     Does not commit.
     """
@@ -77,9 +96,7 @@ async def generate_and_store_certificate(
     storage = storage or get_object_storage()
 
     if inspection.certificate is not None:
-        raise CertificateAlreadyIssuedError(
-            "Certificate already issued for inspection"
-        )
+        raise CertificateAlreadyIssuedError("Certificate already issued for inspection")
     if inspection.status != InspectionStatus.APPROVED.value:
         raise InspectionNotApprovedError(
             "certificate can only be issued from an approved inspection"
@@ -89,8 +106,7 @@ async def generate_and_store_certificate(
         # Fail before the expensive render/sign/store so we never produce an
         # orphaned PDF for an asset that can't hold a certificate.
         raise AssetNotCertifiableError(
-            "cannot issue a certificate for a "
-            f"{asset.lifecycle_status.lower()} asset"
+            f"cannot issue a certificate for a {asset.lifecycle_status.lower()} asset"
         )
 
     issued_at = datetime.now(UTC).replace(microsecond=0)
@@ -115,10 +131,27 @@ async def generate_and_store_certificate(
         issuer_name=settings.issuer_name,
         issuer_identifier=settings.issuer_identifier,
     )
-    rendered = await engine.render(to_proto(facts))
-    pdf_object_key = f"certificates/{number}-v1.pdf"
-    storage.put(pdf_object_key, rendered.pdf)
+    # Fail before any external write when the number is already taken. The unique
+    # constraint (enforced at the flush below) remains the arbiter for races.
+    if await session.scalar(select(Certificate.id).where(Certificate.number == number)):
+        raise CertificateConflictError(f"Certificate number {number} already exists")
 
+    rendered = await engine.render(to_proto(facts))
+    # Never record or report a signature we have not verified ourselves.
+    # Trust is judged at the backend-chosen issue instant, not the PDF's own claim.
+    evidence = await averify_pdf_signature(
+        rendered.pdf, settings.certificate_trust_anchor_path, issued_at
+    )
+    if not rendered.signed or not evidence.verified:
+        raise CertificateSignatureError(
+            "certificate PDF is not signed by a trusted signer: "
+            f"{evidence.reason or 'engine reported signing disabled'}"
+        )
+
+    # The object key is opaque and unique per certificate, so no issuance (failed
+    # or otherwise) can ever overwrite another certificate's artifact.
+    certificate_id = str(uuid7())
+    pdf_object_key = f"certificates/{certificate_id}/v1.pdf"
     certificate = Certificate.issue_from_inspection(
         inspection,
         number=number,
@@ -127,9 +160,23 @@ async def generate_and_store_certificate(
         public_token=public_token,
         issued_by_user_id=actor_id,
         valid_until=valid_until,
+        certificate_id=certificate_id,
+        issuance_facts=facts_to_snapshot(facts),
+        pdf_sha256=pdf_sha256(rendered.pdf),
+        signer_common_name=evidence.signer_common_name,
+        signed_at=evidence.signed_at,
     )
     certificate.issued_at = issued_at
     session.add(certificate)
+    # Reserve the unique number / token / hash in the database BEFORE touching
+    # storage: a duplicate fails here and writes nothing externally.
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        raise CertificateConflictError(
+            "Certificate number, token or hash is already in use"
+        ) from exc
+    await asyncio.to_thread(storage.put, pdf_object_key, rendered.pdf)
     await record_create(
         session,
         certificate,
@@ -174,6 +221,10 @@ async def regenerate_certificate_pdf(
     """
     if certificate.status != CertificateStatus.ISSUED.value:
         raise ValueError("only issued certificates can have their PDF regenerated")
+    if certificate.issuance_facts is not None:
+        # Certificates with integrity evidence are immutable: re-rendering from
+        # current master data would silently replace what was actually issued.
+        raise ValueError("a certificate with issuance evidence cannot be regenerated")
 
     settings = settings or default_settings
     engine = engine or get_certificate_engine()

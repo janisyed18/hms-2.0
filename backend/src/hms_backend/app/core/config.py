@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     certificate_service_address: str = "127.0.0.1:50051"
     certificate_service_timeout_seconds: float = 30.0
 
+    # PEM file holding the public CA certificate that signed certificate PDFs must
+    # chain to. Issuance and public verification fail closed when it is unset, so
+    # a certificate is never reported as signed without a trust anchor to check
+    # against. It is public material: keep it stable across engine restarts.
+    certificate_trust_anchor_path: str = ""
+
     # Object storage for certificate PDFs and media.
     #   local - filesystem-backed store (dev/single-node; not multi-task safe)
     #   s3    - Amazon S3 (multi-task safe; required for ECS/Fargate)

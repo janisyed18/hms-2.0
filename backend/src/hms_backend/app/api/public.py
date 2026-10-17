@@ -22,16 +22,19 @@ from hms_backend.app.api.schemas import CertificateVerifyResponse
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.object_storage import (
     ObjectNotFoundError,
+    ObjectStorage,
     PresignedObjectStorage,
     get_object_storage,
 )
 from hms_backend.app.modules.assets.models import Asset
-from hms_backend.app.modules.certificates.mapping import (
-    build_facts,
-    to_verification_input,
+from hms_backend.app.modules.certificates.integrity import (
+    assess_certificate,
+    check_artifact,
+    snapshot_issued_at,
+    snapshot_valid_until,
 )
-from hms_backend.app.modules.certificates.models import Certificate, CertificateStatus
-from hms_backend.app.modules.certificates.verification import compute_verification_hash
+from hms_backend.app.modules.certificates.mapping import facts_from_snapshot
+from hms_backend.app.modules.certificates.models import Certificate
 
 router = APIRouter(prefix="/certificates", tags=["public-verification"])
 
@@ -64,58 +67,55 @@ async def verify_certificate(
     session: SessionDep,
 ) -> CertificateVerifyResponse:
     certificate = await _load_by_token(session, public_token)
-    inspection = certificate.inspection
-
-    facts = build_facts(
-        inspection,
-        certificate_number=certificate.number,
-        certificate_version=certificate.certificate_version,
-        status=certificate.status,
-        issued_at=certificate.issued_at,
-        valid_until=certificate.valid_until,
-        public_token=certificate.public_token,
-        verify_url="",  # not part of the hash
-        issued_by_name=certificate.issued_by_user_id,
-        issuer_name=settings.issuer_name,
-        issuer_identifier=settings.issuer_identifier,
+    assessment = await assess_certificate(
+        certificate, storage=get_object_storage(), settings=settings
     )
-    recomputed = compute_verification_hash(to_verification_input(facts))
-    hash_matches = recomputed == certificate.verification_hash
 
-    is_active = certificate.status == CertificateStatus.ISSUED.value
-    valid = hash_matches and is_active
-    product = certificate.asset.product
-    standard = getattr(product, "standard", None)
-
-    if not hash_matches:
-        message = (
-            "Verification FAILED: the certificate content does not match its "
-            "recorded hash. Do not rely on this document."
-        )
-    elif not is_active:
-        message = (
-            f"This certificate is {certificate.status.lower()} and is no longer "
-            "valid, though its content is authentic."
-        )
+    facts = assessment.facts
+    number = certificate.number
+    version = certificate.certificate_version
+    issued_at = certificate.issued_at
+    valid_until = certificate.valid_until
+    if facts is not None:
+        # Verified against the issuance snapshot, never today's master data or
+        # mutable columns: the signed values are what the public sees.
+        number = facts.certificate_number
+        version = facts.certificate_version
+        issued_at = snapshot_issued_at(facts)
+        valid_until = snapshot_valid_until(facts)
+        asset_number = facts.asset_number
+        customer_name = facts.customer_name
+        product_name = facts.product_name
+        standard_code: str | None = facts.standard_code or None
+        inspection_result: str | None = facts.inspection_result or None
     else:
-        message = "Certificate is authentic and active."
+        asset = certificate.asset
+        product = asset.product
+        asset_number = asset.asset_number
+        customer_name = asset.customer.name
+        product_name = product.name
+        standard_code = getattr(getattr(product, "standard", None), "code", None)
+        inspection_result = certificate.inspection.result
 
     return CertificateVerifyResponse(
-        valid=valid,
+        valid=assessment.valid,
         status=certificate.status,
-        hash_matches=hash_matches,
-        signed=True,
-        certificate_number=certificate.number,
-        certificate_version=certificate.certificate_version,
-        issued_at=certificate.issued_at,
-        valid_until=certificate.valid_until,
+        integrity=assessment.integrity.value,
+        hash_matches=assessment.hash_matches,
+        artifact_verified=assessment.artifact_verified,
+        signed=assessment.signature_verified,
+        expired=assessment.expired,
+        certificate_number=number,
+        certificate_version=version,
+        issued_at=issued_at,
+        valid_until=valid_until,
         verification_hash=certificate.verification_hash,
-        asset_number=certificate.asset.asset_number,
-        customer_name=certificate.asset.customer.name,
-        product_name=product.name,
-        standard_code=getattr(standard, "code", None),
-        inspection_result=inspection.result,
-        message=message,
+        asset_number=asset_number,
+        customer_name=customer_name,
+        product_name=product_name,
+        standard_code=standard_code,
+        inspection_result=inspection_result,
+        message=assessment.message,
     )
 
 
@@ -127,7 +127,48 @@ async def download_certificate_pdf(
 ) -> Response:
     certificate = await _load_by_token(session, public_token)
     storage = get_object_storage()
+    filename = f"{certificate.number}.pdf"
 
+    if certificate.issuance_facts is None or not certificate.pdf_sha256:
+        # LEGACY_UNVERIFIED: no recorded evidence to check against. Still
+        # downloadable (it is reported as unverified by /verify), served as before.
+        return _legacy_pdf_response(certificate, storage, filename, download)
+
+    # Fail closed: only hand out an artifact that matches its issuance evidence.
+    # Authenticity gates the download, not business validity, so an expired or
+    # revoked certificate's genuine PDF stays available (/verify reports it is no
+    # longer valid). The verified bytes are served directly rather than redirected
+    # so what is sent is exactly what was checked.
+    artifact = await check_artifact(
+        certificate,
+        facts=facts_from_snapshot(certificate.issuance_facts),
+        storage=storage,
+        settings=settings,
+    )
+    if artifact.pdf is None:
+        if not artifact.exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Certificate PDF is not available",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Certificate PDF failed integrity verification",
+        )
+    disposition = "attachment" if download else "inline"
+    return Response(
+        content=artifact.pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
+    )
+
+
+def _legacy_pdf_response(
+    certificate: Certificate,
+    storage: ObjectStorage,
+    filename: str,
+    download: bool,
+) -> Response:
     # With an S3-backed store, redirect the client straight to a short-lived
     # presigned URL so the (potentially large) PDF is served by S3 rather than
     # streamed through the API task. Missing objects surface as a clean 404.
@@ -137,7 +178,6 @@ async def download_certificate_pdf(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Certificate PDF is not available",
             )
-        filename = f"{certificate.number}.pdf"
         url = storage.presigned_get_url(
             certificate.pdf_object_key,
             download_filename=filename if download else None,
@@ -151,7 +191,6 @@ async def download_certificate_pdf(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Certificate PDF is not available",
         ) from exc
-    filename = f"{certificate.number}.pdf"
     disposition = "attachment" if download else "inline"
     return Response(
         content=pdf,

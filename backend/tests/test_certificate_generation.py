@@ -1,9 +1,9 @@
 """Certificate generation + public verification integration tests.
 
-The certificate engine (gRPC) is mocked so these run without a live service, but
-the mock computes the verification hash with the SAME backend algorithm the
-public verify endpoint uses — so the round-trip (issue → verify) is exercised
-end to end, including hash agreement and tamper detection.
+The certificate engine (gRPC) is faked so these run without a live service, but
+the fake computes the verification hash with the SAME backend algorithm the public
+verify endpoint uses and returns a genuinely signed PDF, so the round-trip
+(issue → verify) exercises hash agreement and real signature validation.
 """
 
 from collections.abc import AsyncGenerator
@@ -12,28 +12,22 @@ from contextlib import asynccontextmanager
 import httpx
 import pytest
 import pytest_asyncio
+from certificate_support import Pki, SigningFakeEngine, build_pki
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import hms_backend.app.api.records as records_module
 import hms_backend.app.core.object_storage as storage_module
 from hms_backend.app.api.dependencies import get_current_principal, get_session
+from hms_backend.app.core.config import settings as app_settings
 from hms_backend.app.core.object_storage import LocalObjectStorage
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
 from hms_backend.app.models.foundation import AuditEvent
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
-from hms_backend.app.modules.certificates.engine_client import RenderedCertificate
-from hms_backend.app.modules.certificates.enginepb import certificate_pb2 as pb
 from hms_backend.app.modules.certificates.issuance import regenerate_certificate_pdf
 from hms_backend.app.modules.certificates.models import Certificate
-from hms_backend.app.modules.certificates.verification import (
-    EndInput,
-    PressureInput,
-    VerificationInput,
-    compute_verification_hash,
-)
 from hms_backend.app.modules.customers.models import Customer, CustomerLocation
 from hms_backend.app.modules.inspections.models import (
     Inspection,
@@ -45,74 +39,17 @@ from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Standard
 
 
-def _hash_from_proto(cert: pb.CertificateData) -> str:
-    """Reproduce the engine's hash from the proto using the backend algorithm."""
-    pt = cert.pressure_test if cert.HasField("pressure_test") else None
-    return compute_verification_hash(
-        VerificationInput(
-            certificate_number=cert.certificate_number,
-            certificate_version=cert.certificate_version,
-            issued_at=cert.issued_at,
-            valid_until=cert.valid_until,
-            public_token=cert.public_token,
-            customer_code=cert.customer_code,
-            customer_name=cert.customer_name,
-            asset_number=cert.asset_number,
-            asset_tag=cert.asset_tag,
-            customer_serial_no=cert.customer_serial_no,
-            manufacture_date=cert.manufacture_date,
-            length_m=cert.length_m,
-            product_code=cert.product_code,
-            product_name=cert.product_name,
-            product_category=cert.product_category,
-            standard_code=cert.standard_code,
-            ends=tuple(
-                EndInput(
-                    end=e.end,
-                    nominal_bore=e.nominal_bore,
-                    material=e.material,
-                    coupling=e.coupling,
-                    coupling_add_on=e.coupling_add_on,
-                    attach_method=e.attach_method,
-                )
-                for e in cert.ends
-            ),
-            pressure_test=(
-                None
-                if pt is None
-                else PressureInput(
-                    working_pressure_kpa=pt.working_pressure_kpa,
-                    test_pressure_kpa=pt.test_pressure_kpa,
-                    applied_pressure_kpa=pt.applied_pressure_kpa,
-                    hold_time_seconds=pt.hold_time_seconds,
-                    passed=pt.passed,
-                    medium=pt.medium,
-                )
-            ),
-            inspection_id=cert.inspection_id,
-            inspection_type=cert.inspection_type,
-            inspection_result=cert.inspection_result,
-            approved_at=cert.approved_at,
-            issuer_name=cert.issuer.name,
-            issuer_identifier=cert.issuer.identifier,
-        )
+@pytest.fixture(scope="module")
+def _pki(tmp_path_factory) -> Pki:
+    return build_pki(tmp_path_factory.mktemp("pki"))
+
+
+@pytest.fixture(autouse=True)
+def _trust_anchor(_pki, monkeypatch) -> None:
+    # One shared settings singleton backs issuance, the routes and verification.
+    monkeypatch.setattr(
+        app_settings, "certificate_trust_anchor_path", str(_pki.anchor_path)
     )
-
-
-class _FakeEngine:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def render(self, certificate: pb.CertificateData) -> RenderedCertificate:
-        self.calls += 1
-        return RenderedCertificate(
-            pdf=b"%PDF-1.7\n%fake signed pdf\n",
-            verification_hash=_hash_from_proto(certificate),
-            page_count=1,
-            signer_common_name="BAT Engineering Pty Ltd Certificate Signer",
-            signed_at="2026-07-07T00:00:00Z",
-            signed=True,
-        )
 
 
 @pytest_asyncio.fixture
@@ -136,7 +73,10 @@ async def approved_inspection_id(
         )
         customer = Customer(code="ACME", name="Acme Mining Pty Ltd")
         location = CustomerLocation(
-            customer=customer, name="North Pit", city="Kalgoorlie", state="WA",
+            customer=customer,
+            name="North Pit",
+            city="Kalgoorlie",
+            state="WA",
             country="Australia",
         )
         asset = Asset(
@@ -198,8 +138,8 @@ def _storage(tmp_path, monkeypatch) -> LocalObjectStorage:
 
 
 @pytest.fixture
-def _engine(monkeypatch) -> _FakeEngine:
-    fake = _FakeEngine()
+def _engine(monkeypatch, _pki) -> SigningFakeEngine:
+    fake = SigningFakeEngine(_pki.signer)
     monkeypatch.setattr(records_module, "get_certificate_engine", lambda: fake)
     return fake
 
@@ -240,7 +180,11 @@ async def test_generate_certificate_renders_signs_stores_and_verifies(
         assert verify.status_code == 200, verify.text
         result = verify.json()
         assert result["valid"] is True
+        assert result["integrity"] == "VERIFIED"
         assert result["hash_matches"] is True
+        assert result["artifact_verified"] is True
+        assert result["signed"] is True
+        assert result["expired"] is False
         assert result["verification_hash"] == stored_hash
         assert result["asset_number"] == "HA-00123"
         assert result["customer_name"] == "Acme Mining Pty Ltd"
@@ -258,41 +202,6 @@ async def test_generate_certificate_renders_signs_stores_and_verifies(
         assert downloaded_pdf.headers["content-disposition"] == (
             f'attachment; filename="{body["number"]}.pdf"'
         )
-
-
-@pytest.mark.asyncio
-async def test_tampered_certificate_fails_verification(
-    session_factory, approved_inspection_id, _storage, _engine
-) -> None:
-    async with _client(session_factory, _REVIEWER) as client:
-        issue = await client.post(
-            f"/api/v1/inspections/{approved_inspection_id}/certificate",
-            json={},
-        )
-        assert issue.status_code == 201
-
-    # Tamper with the stored asset number after issuance.
-    async with session_factory() as session:
-        cert = (
-            await session.scalars(
-                select(Certificate).where(
-                    Certificate.inspection_id == approved_inspection_id
-                )
-            )
-        ).one()
-        token = cert.public_token
-        asset = (
-            await session.scalars(select(Asset).where(Asset.id == cert.asset_id))
-        ).one()
-        asset.asset_number = "HA-TAMPERED"
-        await session.commit()
-
-    async with _client(session_factory, _REVIEWER) as client:
-        verify = await client.get(f"/api/v1/certificates/verify/{token}")
-        assert verify.status_code == 200
-        result = verify.json()
-        assert result["hash_matches"] is False
-        assert result["valid"] is False
 
 
 @pytest.mark.asyncio
@@ -316,6 +225,9 @@ async def test_regenerate_certificate_pdf_repairs_legacy_storage_and_hash(
         original_token = certificate.public_token
         original_object_key = certificate.pdf_object_key
         original_issued_at = certificate.issued_at
+        # Only certificates without issuance evidence (legacy) may be re-rendered.
+        certificate.issuance_facts = None
+        certificate.pdf_sha256 = None
         certificate.verification_hash = "stale-hash"
         await session.commit()
 
@@ -352,8 +264,9 @@ async def test_regenerate_certificate_pdf_repairs_legacy_storage_and_hash(
     async with _client(session_factory, _REVIEWER) as client:
         verify = await client.get(f"/api/v1/certificates/verify/{original_token}")
         assert verify.status_code == 200
-        assert verify.json()["valid"] is True
-        assert verify.json()["hash_matches"] is True
+        # Repaired legacy records stay unverified: no issuance evidence exists.
+        assert verify.json()["valid"] is False
+        assert verify.json()["integrity"] == "LEGACY_UNVERIFIED"
 
 
 @pytest.mark.asyncio
@@ -421,9 +334,7 @@ async def test_generate_refused_for_condemned_or_retired_asset(
     async with session_factory() as session:
         certs = (
             await session.scalars(
-                select(Certificate).where(
-                    Certificate.inspection_id == inspection_id
-                )
+                select(Certificate).where(Certificate.inspection_id == inspection_id)
             )
         ).all()
         assert certs == []

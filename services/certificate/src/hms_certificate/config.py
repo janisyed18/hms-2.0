@@ -1,8 +1,9 @@
 """Runtime configuration for the certificate engine.
 
 All values can be overridden via environment variables (prefix ``HMS_CERT_``) or
-a local ``.env`` file. In production the signing key material must come from OCI
-Vault / a mounted secret — never from a committed file.
+a local ``.env`` file. In production the signing key material must come from a
+secret manager (e.g. AWS Secrets Manager) / a mounted secret, never from a
+committed file.
 """
 
 from __future__ import annotations
