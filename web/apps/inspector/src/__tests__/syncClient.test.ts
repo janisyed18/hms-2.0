@@ -12,25 +12,68 @@ describe("syncClient", () => {
     vi.restoreAllMocks();
   });
 
-  it("sends development identity and device headers to bootstrap", async () => {
+  it("sends a bearer token and device headers to bootstrap without development identity headers", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => mockBootstrapResponse
     });
 
-    const client = createSyncClient({ fetchImpl: fetchMock });
+    const client = createSyncClient({
+      fetchImpl: fetchMock,
+      getAccessToken: () => "inspector-access-token",
+      deviceId: "inspector-browser-test"
+    });
     await client.bootstrap();
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/sync/bootstrap",
       expect.objectContaining({
         headers: expect.objectContaining({
-          "X-HMS-User-Id": "inspector-ui-dev",
-          "X-HMS-Roles": "INSPECTOR",
-          "X-HMS-Device-Id": "inspector-browser-dev",
+          Authorization: "Bearer inspector-access-token",
+          "X-HMS-Device-Id": "inspector-browser-test",
           "X-HMS-Device-Platform": "web",
           "X-HMS-App-Version": "0.1.0"
         })
+      })
+    );
+
+    const [, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(request.headers).not.toHaveProperty("X-HMS-User-Id");
+    expect(request.headers).not.toHaveProperty("X-HMS-Roles");
+  });
+
+  it("refreshes an expired bearer token once before retrying a sync request", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        text: async () => "Expired bearer token"
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockBootstrapResponse
+      });
+    const refreshAccessToken = vi.fn().mockResolvedValue("renewed-access-token");
+    const client = createSyncClient({
+      fetchImpl: fetchMock,
+      getAccessToken: () => "expired-access-token",
+      refreshAccessToken,
+      deviceId: "inspector-browser-test"
+    });
+
+    await client.bootstrap();
+
+    expect(refreshAccessToken).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer expired-access-token" })
+      })
+    );
+    expect(fetchMock.mock.calls[1][1]).toEqual(
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer renewed-access-token" })
       })
     );
   });
@@ -201,7 +244,10 @@ describe("syncClient", () => {
       ok: true,
       json: async () => ({ cursor: 9, results: [] })
     });
-    const client = createSyncClient({ fetchImpl: fetchMock });
+    const client = createSyncClient({
+      fetchImpl: fetchMock,
+      getAccessToken: () => "inspector-access-token"
+    });
 
     const operation: OutboxOperation = {
       opId: "op-1",
@@ -247,7 +293,10 @@ describe("syncClient", () => {
       ok: true,
       json: async () => ({ cursor: 12, results: [] })
     });
-    const client = createSyncClient({ fetchImpl: fetchMock });
+    const client = createSyncClient({
+      fetchImpl: fetchMock,
+      getAccessToken: () => "inspector-access-token"
+    });
 
     const operations: OutboxOperation[] = [
       {
@@ -330,7 +379,10 @@ describe("syncClient", () => {
       status: 409,
       text: async () => "Version conflict"
     });
-    const client = createSyncClient({ fetchImpl: fetchMock });
+    const client = createSyncClient({
+      fetchImpl: fetchMock,
+      getAccessToken: () => "inspector-access-token"
+    });
 
     await expect(client.bootstrap()).rejects.toThrow(
       "Sync request failed with 409: Version conflict"

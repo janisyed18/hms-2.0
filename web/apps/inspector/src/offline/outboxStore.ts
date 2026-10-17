@@ -40,20 +40,38 @@ function normalizeOperations(value: unknown): OutboxOperation[] {
   });
 }
 
+export function outboxStorageKey(userId: string): string {
+  const normalizedUserId = userId.trim();
+  if (!normalizedUserId) {
+    throw new Error("An authenticated inspector user ID is required for offline storage.");
+  }
+
+  return `${OUTBOX_STORAGE_KEY}:${encodeURIComponent(normalizedUserId)}`;
+}
+
+function removeLegacyOutbox() {
+  // Never attribute pre-authentication development data to a real inspector.
+  localStorage.removeItem(OUTBOX_STORAGE_KEY);
+}
+
 function replaceOperation(
+  userId: string,
   opId: string,
   update: (operation: OutboxOperation) => OutboxOperation
 ) {
-  const state = loadOutbox();
+  const state = loadOutbox(userId);
   saveOutbox(
+    userId,
     state.operations.map((operation) =>
       operation.opId === opId ? update(operation) : operation
     )
   );
 }
 
-export function loadOutbox(): OutboxState {
-  const raw = localStorage.getItem(OUTBOX_STORAGE_KEY);
+export function loadOutbox(userId: string): OutboxState {
+  removeLegacyOutbox();
+  const storageKey = outboxStorageKey(userId);
+  const raw = localStorage.getItem(storageKey);
 
   if (!raw) {
     return { operations: [] };
@@ -66,13 +84,14 @@ export function loadOutbox(): OutboxState {
     );
     return { operations };
   } catch {
-    localStorage.removeItem(OUTBOX_STORAGE_KEY);
+    localStorage.removeItem(storageKey);
     return { operations: [], warning: RESET_WARNING };
   }
 }
 
-export function saveOutbox(operations: OutboxOperation[]) {
-  localStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify({ operations }));
+export function saveOutbox(userId: string, operations: OutboxOperation[]) {
+  removeLegacyOutbox();
+  localStorage.setItem(outboxStorageKey(userId), JSON.stringify({ operations }));
 }
 
 export function createInspectionOperation(
@@ -167,24 +186,24 @@ export function createPressureTestOperation(
   };
 }
 
-export function upsertOutboxOperation(operation: OutboxOperation) {
-  const state = loadOutbox();
+export function upsertOutboxOperation(userId: string, operation: OutboxOperation) {
+  const state = loadOutbox(userId);
   const existingIndex = state.operations.findIndex(
     (item) => item.entityId === operation.entityId
   );
 
   if (existingIndex === -1) {
-    saveOutbox([operation, ...state.operations]);
+    saveOutbox(userId, [operation, ...state.operations]);
     return;
   }
 
   const next = [...state.operations];
   next[existingIndex] = operation;
-  saveOutbox(next);
+  saveOutbox(userId, next);
 }
 
-export function markOperationApplied(opId: string, serverVersion: number) {
-  replaceOperation(opId, (operation) => ({
+export function markOperationApplied(userId: string, opId: string, serverVersion: number) {
+  replaceOperation(userId, opId, (operation) => ({
     ...operation,
     status: "applied",
     serverVersion,
@@ -195,10 +214,11 @@ export function markOperationApplied(opId: string, serverVersion: number) {
 }
 
 export function markOperationConflict(
+  userId: string,
   opId: string,
   conflict: { currentVersion: number; payload: Record<string, unknown> }
 ) {
-  replaceOperation(opId, (operation) => ({
+  replaceOperation(userId, opId, (operation) => ({
     ...operation,
     status: "conflict",
     currentVersion: conflict.currentVersion,
@@ -207,8 +227,8 @@ export function markOperationConflict(
   }));
 }
 
-export function markOperationRejected(opId: string, error: string) {
-  replaceOperation(opId, (operation) => ({
+export function markOperationRejected(userId: string, opId: string, error: string) {
+  replaceOperation(userId, opId, (operation) => ({
     ...operation,
     status: "rejected",
     lastError: error,
@@ -216,8 +236,8 @@ export function markOperationRejected(opId: string, error: string) {
   }));
 }
 
-export function markOperationPushing(opId: string) {
-  replaceOperation(opId, (operation) => ({
+export function markOperationPushing(userId: string, opId: string) {
+  replaceOperation(userId, opId, (operation) => ({
     ...operation,
     status: "pushing",
     lastError: undefined,
@@ -226,10 +246,11 @@ export function markOperationPushing(opId: string) {
 }
 
 export function resolveOperationConflict(
+  userId: string,
   opId: string,
   resolution: ConflictResolution
 ) {
-  replaceOperation(opId, (operation) => {
+  replaceOperation(userId, opId, (operation) => {
     if (resolution === "keep-local") {
       return {
         ...operation,

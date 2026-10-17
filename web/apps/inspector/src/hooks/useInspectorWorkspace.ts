@@ -62,21 +62,21 @@ function pendingOperations(operations: OutboxOperation[]) {
   );
 }
 
-function applyResultToOutbox(result: SyncOperationResult) {
+function applyResultToOutbox(userId: string, result: SyncOperationResult) {
   if (result.status === "applied" && result.version !== null) {
-    markOperationApplied(result.op_id, result.version);
+    markOperationApplied(userId, result.op_id, result.version);
     return;
   }
 
   if (result.status === "conflict" && result.current_version !== null) {
-    markOperationConflict(result.op_id, {
+    markOperationConflict(userId, result.op_id, {
       currentVersion: result.current_version,
       payload: result.payload ?? {}
     });
     return;
   }
 
-  markOperationRejected(result.op_id, result.error ?? "Sync operation rejected.");
+  markOperationRejected(userId, result.op_id, result.error ?? "Sync operation rejected.");
 }
 
 function localInspectionStatus(operation: OutboxOperation): InspectionStatus | null {
@@ -114,14 +114,14 @@ function applyLocalOutboxState(
   });
 }
 
-export function useInspectorWorkspace() {
+export function useInspectorWorkspace(userId: string) {
   const [view, setView] = useState<InspectorView>("work");
   const [syncRecords, setSyncRecords] = useState(
     () => mockBootstrapResponse.records
   );
   const [source, setSource] = useState<DataSource>("mock");
   const [cursor, setCursor] = useState(mockBootstrapResponse.cursor);
-  const [outbox, setOutbox] = useState<OutboxState>(() => loadOutbox());
+  const [outbox, setOutbox] = useState<OutboxState>(() => loadOutbox(userId));
   const [selectedWorkItem, setSelectedWorkItem] = useState<WorkItem | null>(
     null
   );
@@ -190,7 +190,7 @@ export function useInspectorWorkspace() {
   }, []);
 
   function refreshOutbox() {
-    setOutbox(loadOutbox());
+    setOutbox(loadOutbox(userId));
   }
 
   function openWorkItem(item: WorkItem) {
@@ -218,7 +218,7 @@ export function useInspectorWorkspace() {
       inspectionType: "SERVICE"
     });
 
-    upsertOutboxOperation(operation);
+    upsertOutboxOperation(userId, operation);
     refreshOutbox();
   }
 
@@ -232,7 +232,7 @@ export function useInspectorWorkspace() {
       tag: input.tag
     });
 
-    upsertOutboxOperation(operation);
+    upsertOutboxOperation(userId, operation);
     refreshOutbox();
   }
 
@@ -256,7 +256,7 @@ export function useInspectorWorkspace() {
       passed: input.passed
     });
 
-    upsertOutboxOperation(operation);
+    upsertOutboxOperation(userId, operation);
     refreshOutbox();
   }
 
@@ -265,7 +265,7 @@ export function useInspectorWorkspace() {
       return;
     }
 
-    const queue = pendingOperations(loadOutbox().operations).filter(
+    const queue = pendingOperations(loadOutbox(userId).operations).filter(
       (operation) =>
         operation.status === "pending" || operation.status === "rejected"
     );
@@ -275,20 +275,21 @@ export function useInspectorWorkspace() {
     }
 
     for (const operation of queue) {
-      markOperationPushing(operation.opId);
+      markOperationPushing(userId, operation.opId);
     }
     refreshOutbox();
 
     try {
       const result = await createSyncClient().push(queue);
       for (const item of result.results) {
-        applyResultToOutbox(item);
+        applyResultToOutbox(userId, item);
       }
       setCursor(result.cursor);
       setLastSyncLabel("Last sync just now");
     } catch (error) {
       for (const operation of queue) {
         markOperationRejected(
+          userId,
           operation.opId,
           error instanceof Error ? error.message : "Sync push failed."
         );
@@ -312,7 +313,7 @@ export function useInspectorWorkspace() {
   }
 
   function resolveConflict(opId: string, resolution: "keep-local" | "accept-server") {
-    resolveOperationConflict(opId, resolution);
+    resolveOperationConflict(userId, opId, resolution);
     refreshOutbox();
   }
 
