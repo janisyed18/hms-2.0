@@ -735,8 +735,13 @@ class CertificateVerifyResponse(BaseModel):
 
     valid: bool
     status: str
+    # VERIFIED, LEGACY_UNVERIFIED (no integrity evidence) or FAILED.
+    integrity: str
     hash_matches: bool
+    artifact_verified: bool
+    # True only when the PDF signature was validated against the trust anchor.
     signed: bool
+    expired: bool
     certificate_number: str
     certificate_version: int
     issued_at: datetime

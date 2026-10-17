@@ -10,9 +10,10 @@ timestamp/date passes through :func:`format_ts` / :func:`format_date`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any, cast
 
 from hms_backend.app.modules.certificates.enginepb import certificate_pb2 as pb
 from hms_backend.app.modules.certificates.verification import (
@@ -105,6 +106,23 @@ class CertificateFacts:
     issuer_identifier: str
     ends: tuple[EndFacts, ...] = ()
     pressure: PressureFacts | None = None
+
+
+def facts_to_snapshot(facts: CertificateFacts) -> dict[str, object]:
+    """JSON-safe copy of the facts, stored immutably at issuance."""
+    return asdict(facts)
+
+
+def facts_from_snapshot(snapshot: dict[str, object]) -> CertificateFacts:
+    data = dict(snapshot)
+    raw_ends = cast(list[dict[str, str]], data.pop("ends", None) or [])
+    ends = tuple(EndFacts(**e) for e in raw_ends)
+    pressure = cast(dict[str, Any] | None, data.pop("pressure", None))
+    return CertificateFacts(
+        **data,  # type: ignore[arg-type]
+        ends=ends,
+        pressure=PressureFacts(**pressure) if pressure else None,
+    )
 
 
 def _lookup_name(obj: object | None, *attrs: str) -> str:

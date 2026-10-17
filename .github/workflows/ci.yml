@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:15
+        image: postgres:16
         env:
           POSTGRES_USER: hms
           POSTGRES_PASSWORD: hms
@@ -36,8 +36,10 @@ jobs:
         run: uv run alembic upgrade head
         env:
           DATABASE_URL: postgresql+asyncpg://hms:hms@127.0.0.1:5432/hms_inspector_test
-      - name: Test inspector races on PostgreSQL
-        run: uv run pytest tests/test_inspector_postgres_races.py -v
+      - name: Test inspector and certificate races on PostgreSQL
+        run: >-
+          uv run pytest tests/test_inspector_postgres_races.py
+          tests/test_certificate_postgres_races.py -v
         env:
           POSTGRES_TEST_DATABASE_URL: postgresql+asyncpg://hms:hms@127.0.0.1:5432/hms_inspector_test
 

@@ -76,3 +76,24 @@ def test_disabled_signing_returns_unsigned(
     result = signer.sign(_unsigned(sample_data, settings))
     assert result.signed is False
     assert result.pdf.startswith(b"%PDF")
+
+
+def test_partial_dev_pki_is_never_silently_replaced(tmp_path) -> None:
+    import pytest
+
+    from hms_certificate.dev_ca import ensure_dev_signer
+
+    first = ensure_dev_signer(tmp_path, common_name="Signer", organization="Org")
+    anchor = first.trust_anchor_path
+    assert anchor is not None
+    original = anchor.read_bytes()
+
+    # Idempotent: a restart reuses the same CA.
+    again = ensure_dev_signer(tmp_path, common_name="Signer", organization="Org")
+    assert again.trust_anchor_path is not None
+    assert again.trust_anchor_path.read_bytes() == original
+
+    first.key_path.unlink()
+    with pytest.raises(RuntimeError, match="incomplete"):
+        ensure_dev_signer(tmp_path, common_name="Signer", organization="Org")
+    assert anchor.read_bytes() == original

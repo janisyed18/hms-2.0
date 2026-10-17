@@ -115,6 +115,8 @@ from hms_backend.app.modules.certificates.engine_client import (
 from hms_backend.app.modules.certificates.issuance import (
     AssetNotCertifiableError,
     CertificateAlreadyIssuedError,
+    CertificateConflictError,
+    CertificateSignatureError,
     InspectionNotApprovedError,
     generate_and_store_certificate,
     generate_certificate_number,
@@ -2826,8 +2828,14 @@ async def issue_certificate(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Certificate engine unavailable: {exc}",
             ) from exc
+        except CertificateSignatureError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Certificate signing could not be verified: {exc}",
+            ) from exc
         except (
             CertificateAlreadyIssuedError,
+            CertificateConflictError,
             InspectionNotApprovedError,
             AssetNotCertifiableError,
             CertificateIssueError,
