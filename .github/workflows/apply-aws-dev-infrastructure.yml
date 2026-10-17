@@ -36,8 +36,13 @@ jobs:
     name: Apply reviewed infrastructure plan
     if: ${{ inputs.apply_infrastructure }}
     runs-on: ubuntu-latest
-    # Configure this GitHub Environment with an independent required reviewer
-    # and prevent self-review. This gate occurs before the plan is downloaded.
+    # DEV runs under the single-maintainer exception documented in
+    # docs/aws/dev-deployment.md: GitHub cannot provide an independent reviewer
+    # for this environment, so the gate before this job is the technical review of
+    # the exact plan (Review AWS Dev Infrastructure Plan) plus the operator's
+    # explicit decision to dispatch it. Staging and production must instead
+    # configure an independent required reviewer, prevent self-review and disable
+    # administrator bypass.
     environment: aws-dev
 
     steps:

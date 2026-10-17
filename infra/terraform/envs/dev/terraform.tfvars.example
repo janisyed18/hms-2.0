@@ -48,9 +48,10 @@ notification_email_from_address = "no-reply@hftechnologies.com.au"
 # the verification email for notification_email_from_address.
 notification_create_ses_email_identity = true
 
-# Signing PKI (docs/aws/dev-signing-pki.md). Keep pki_enabled = false until
-# the secrets have been provisioned; flip it in a reviewed change afterwards.
-pki_enabled = false
+# Signing PKI (docs/aws/dev-signing-pki.md). The DEV PKI has been provisioned, so
+# the trust anchor is injected into backend tasks. A new environment must
+# provision the PKI secrets before enabling this.
+pki_enabled = true
 
 # IAM principals (with MFA) allowed to assume the PKI provisioner role that can
 # write the root CA key secret. Leave empty to provision with an admin session.

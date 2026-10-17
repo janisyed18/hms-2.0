@@ -110,9 +110,9 @@ variable "certificate_engine_desired_count" {
 }
 
 variable "pki_enabled" {
-  description = "Inject the signing-PKI trust anchor into backend tasks. Leave false until the DEV signing PKI secrets have been provisioned (docs/aws/dev-signing-pki.md): ECS cannot start a task whose secret has no value."
+  description = "Inject the signing-PKI trust anchor into backend tasks. The DEV signing PKI secrets have been provisioned (docs/aws/dev-signing-pki.md), so this is true; a new environment must provision them first because ECS cannot start a task whose secret has no value."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "pki_provisioner_principal_arns" {
