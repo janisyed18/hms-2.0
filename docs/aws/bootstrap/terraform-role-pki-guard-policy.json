@@ -1,0 +1,53 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageResourcePoliciesOnlyOnHmsDevPkiSecrets",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:PutResourcePolicy",
+        "secretsmanager:DeleteResourcePolicy",
+        "secretsmanager:ValidateResourcePolicy"
+      ],
+      "Resource": "arn:aws:secretsmanager:ap-southeast-2:558215002582:secret:hms-dev-pki-*"
+    },
+    {
+      "Sid": "NeverReadOrWriteSigningKeyMaterial",
+      "Effect": "Deny",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:UpdateSecret",
+        "secretsmanager:RestoreSecret",
+        "secretsmanager:ReplicateSecretToRegions",
+        "secretsmanager:UpdateSecretVersionStage"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:ap-southeast-2:558215002582:secret:hms-dev-pki-root-ca-key-*",
+        "arn:aws:secretsmanager:ap-southeast-2:558215002582:secret:hms-dev-pki-signer-*"
+      ]
+    },
+    {
+      "Sid": "NeverChangeTheTrustAnchorValue",
+      "Effect": "Deny",
+      "Action": [
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:UpdateSecret",
+        "secretsmanager:RestoreSecret",
+        "secretsmanager:ReplicateSecretToRegions",
+        "secretsmanager:UpdateSecretVersionStage"
+      ],
+      "Resource": "arn:aws:secretsmanager:ap-southeast-2:558215002582:secret:hms-dev-pki-root-ca-cert-*"
+    },
+    {
+      "Sid": "NeverDeletePkiSecretContainers",
+      "Effect": "Deny",
+      "Action": "secretsmanager:DeleteSecret",
+      "Resource": [
+        "arn:aws:secretsmanager:ap-southeast-2:558215002582:secret:hms-dev-pki-root-ca-key-*",
+        "arn:aws:secretsmanager:ap-southeast-2:558215002582:secret:hms-dev-pki-signer-*",
+        "arn:aws:secretsmanager:ap-southeast-2:558215002582:secret:hms-dev-pki-root-ca-cert-*"
+      ]
+    }
+  ]
+}

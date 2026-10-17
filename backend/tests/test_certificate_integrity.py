@@ -832,3 +832,58 @@ async def test_public_verification_ignores_backdated_signing_time(
     assert body["valid"] is False
     assert body["signed"] is False
     assert download.status_code == 409
+
+
+# --------------------------------------------------- inline PEM trust anchor (ECS)
+
+
+def test_inline_pem_trust_anchor_verifies_and_wins_over_path(
+    pki: Pki, other_pki: Pki
+) -> None:
+    from hms_backend.app.modules.certificates.signature import verify_pdf_signature
+
+    pdf = sign_pdf(blank_pdf("pem"), pki.signer)
+    now = datetime.now(UTC)
+    pem = pki.anchor_path.read_text()
+
+    assert verify_pdf_signature(pdf, "", now, trust_anchor_pem=pem).verified is True
+    # Inline PEM takes precedence over a (wrong) path.
+    assert (
+        verify_pdf_signature(
+            pdf, str(other_pki.anchor_path), now, trust_anchor_pem=pem
+        ).verified
+        is True
+    )
+    # The wrong anchor supplied inline is rejected.
+    wrong = other_pki.anchor_path.read_text()
+    assert verify_pdf_signature(pdf, "", now, trust_anchor_pem=wrong).verified is False
+
+
+@pytest.mark.parametrize(
+    "garbage",
+    ["not a pem", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----"],
+)
+def test_invalid_inline_pem_fails_closed(pki: Pki, garbage: str) -> None:
+    from hms_backend.app.modules.certificates.signature import verify_pdf_signature
+
+    pdf = sign_pdf(blank_pdf("pem"), pki.signer)
+    result = verify_pdf_signature(pdf, "", datetime.now(UTC), trust_anchor_pem=garbage)
+    assert result.verified is False
+
+
+@pytest.mark.asyncio
+async def test_issue_and_verify_with_only_inline_pem_configured(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    engine: SigningFakeEngine,
+    pki: Pki,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_settings, "certificate_trust_anchor_path", "")
+    monkeypatch.setattr(
+        app_settings, "certificate_trust_anchor_pem", pki.anchor_path.read_text()
+    )
+    async with api(factory) as client:
+        _, cert = await issued(client, factory, "T1")
+        body = await verify(client, cert.public_token)
+    assert body["valid"] is True and body["signed"] is True

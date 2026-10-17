@@ -8,6 +8,7 @@ last page. The signer is loaded once and reused. Signing can be disabled
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -18,6 +19,9 @@ from pyhanko.sign.fields import SigFieldSpec, SigSeedSubFilter, append_signature
 
 from hms_certificate.config import Settings
 from hms_certificate.dev_ca import SignerMaterial, ensure_dev_signer
+from hms_certificate.pki import load_certs, load_key, validate_signer_material
+
+logger = logging.getLogger("hms_certificate.signing")
 
 _SIG_FIELD_NAME = "CertificateSignature"
 
@@ -59,6 +63,7 @@ class PdfSigner:
             if settings.signing_key_passphrase
             else None
         )
+        _validate_material(material, settings, passphrase)
         signer = signers.SimpleSigner.load(
             str(material.key_path),
             str(material.cert_path),
@@ -108,7 +113,44 @@ def build_signer(settings: Settings) -> PdfSigner | NullSigner:
     return PdfSigner(settings)
 
 
+def _validate_material(
+    material: SignerMaterial, settings: Settings, passphrase: bytes | None
+) -> None:
+    """Refuse to start on unusable or untrusted signing material (fail closed)."""
+    anchor_file = settings.trust_anchor_path or (
+        str(material.trust_anchor_path) if material.trust_anchor_path else ""
+    )
+    anchor = None
+    if anchor_file:
+        anchor_path = Path(anchor_file)
+        if not anchor_path.is_file():
+            raise SigningDisabledError("configured trust_anchor_path does not exist")
+        anchor = load_certs(anchor_path.read_bytes())[0]
+    chain = tuple(
+        cert for path in material.chain_paths for cert in load_certs(path.read_bytes())
+    )
+    report = validate_signer_material(
+        cert=load_certs(material.cert_path.read_bytes())[0],
+        key=load_key(material.key_path.read_bytes(), passphrase),
+        chain=chain,
+        anchor=anchor,
+    )
+    logger.info(
+        "signer %s valid until %s (%d days)%s",
+        report.subject,
+        f"{report.not_after:%Y-%m-%d}",
+        report.days_remaining,
+        "" if anchor else " [trust anchor not configured: chain not checked]",
+    )
+
+
 def _resolve_signer_paths(settings: Settings) -> SignerMaterial:
+    if bool(settings.signing_cert_path) != bool(settings.signing_key_path):
+        # Half-configured explicit material must never fall through to
+        # auto-generating a different (untrusted) signer.
+        raise SigningDisabledError(
+            "signing_cert_path and signing_key_path must be set together"
+        )
     if settings.signing_cert_path and settings.signing_key_path:
         cert_path = Path(settings.signing_cert_path)
         key_path = Path(settings.signing_key_path)

@@ -61,6 +61,25 @@ locals {
 
   app_secret_arn          = aws_secretsmanager_secret.app.arn
   notification_secret_arn = aws_secretsmanager_secret.notifications.arn
+
+  # Certificate signing PKI (see docs/aws/dev-signing-pki.md). Only the public
+  # root CA certificate reaches backend tasks; the signer key reaches only the
+  # certificate engine; the root CA key reaches no ECS task.
+  pki_root_ca_cert_secret_arn = aws_secretsmanager_secret.pki_root_ca_cert.arn
+  pki_signer_secret_arn       = aws_secretsmanager_secret.pki_signer.arn
+  pki_root_ca_key_secret_arn  = aws_secretsmanager_secret.pki_root_ca_key.arn
+
+  # Bootstrap-managed (outside this state) Terraform execution role. Referenced
+  # by ARN only so the secret policies can deny it key-material access too.
+  terraform_execution_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-github-actions-terraform"
+  pki_value_access_actions = [
+    "secretsmanager:GetSecretValue",
+    "secretsmanager:PutSecretValue",
+    "secretsmanager:UpdateSecret",
+    "secretsmanager:RestoreSecret",
+    "secretsmanager:ReplicateSecretToRegions",
+    "secretsmanager:UpdateSecretVersionStage",
+  ]
   notification_ses_configuration_set_name = (
     var.notification_ses_configuration_set_name != ""
     ? var.notification_ses_configuration_set_name
@@ -94,7 +113,17 @@ locals {
     },
   ]
 
-  backend_secret_environment = concat([
+  # The trust anchor is injected only once var.pki_enabled is true, i.e. after the
+  # signing PKI has been provisioned. ECS refuses to start a task whose secret has
+  # no value, so injecting it earlier would wedge the API rollout.
+  pki_trust_anchor_secret_environment = var.pki_enabled ? [
+    {
+      name      = "CERTIFICATE_TRUST_ANCHOR_PEM"
+      valueFrom = local.pki_root_ca_cert_secret_arn
+    },
+  ] : []
+
+  backend_secret_environment = concat(local.pki_trust_anchor_secret_environment, [
     {
       name      = "DATABASE_URL"
       valueFrom = "${local.app_secret_arn}:DATABASE_URL::"
@@ -620,6 +649,127 @@ resource "aws_secretsmanager_secret_version" "notifications" {
   }
 }
 
+# --- Certificate signing PKI ------------------------------------------------
+#
+# Terraform creates only the empty secret *containers*. Their values are loaded
+# out of band by the PKI provisioning procedure so that no key material, public or
+# private, is ever written to Terraform state or plan output. ECS tasks that
+# reference a secret with no value fail to start, which is the intended
+# fail-closed behaviour until provisioning has been done.
+#
+# prevent_destroy: replacing any of these would silently orphan every certificate
+# signed under the old root, so removing them must be a deliberate, separate act.
+
+resource "aws_secretsmanager_secret" "pki_root_ca_cert" {
+  name        = "${local.name}-pki-root-ca-cert"
+  description = "HMS ${upper(var.environment)} Root CA certificate (public). Backend trust anchor."
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_secretsmanager_secret" "pki_signer" {
+  name        = "${local.name}-pki-signer"
+  description = "HMS ${upper(var.environment)} Certificate Signer: JSON {certificate_pem, private_key_pem}. Certificate engine only."
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_secretsmanager_secret" "pki_root_ca_key" {
+  name        = "${local.name}-pki-root-ca-key"
+  description = "HMS ${upper(var.environment)} Root CA PRIVATE key. Provisioning role only; never mounted into ECS."
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# Belt and braces on top of "no policy grants access": explicitly deny every
+# runtime and deployment role, so a future over-broad grant cannot expose the root
+# key, and the signer key cannot reach backend tasks.
+resource "aws_secretsmanager_secret_policy" "pki_root_ca_key" {
+  secret_arn = aws_secretsmanager_secret.pki_root_ca_key.arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyRuntimeAndDeploymentRoles"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "secretsmanager:*"
+        Resource  = "*"
+        Condition = {
+          ArnEquals = {
+            "aws:PrincipalArn" = [
+              aws_iam_role.ecs_task_execution.arn,
+              aws_iam_role.ecs_task.arn,
+              aws_iam_role.ecs_task_execution_certificate_engine.arn,
+              aws_iam_role.ecs_task_certificate_engine.arn,
+              aws_iam_role.github_actions_deploy.arn,
+            ]
+          }
+        }
+      },
+      {
+        # Terraform manages the container and this policy, never the value.
+        Sid       = "DenyTerraformKeyMaterialAccess"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = local.pki_value_access_actions
+        Resource  = "*"
+        Condition = {
+          ArnEquals = {
+            "aws:PrincipalArn" = [local.terraform_execution_role_arn]
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_secretsmanager_secret_policy" "pki_signer" {
+  secret_arn = aws_secretsmanager_secret.pki_signer.arn
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyEverythingButTheCertificateEngineRead"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "secretsmanager:GetSecretValue"
+        Resource  = "*"
+        Condition = {
+          ArnEquals = {
+            "aws:PrincipalArn" = [
+              aws_iam_role.ecs_task_execution.arn,
+              aws_iam_role.ecs_task.arn,
+              aws_iam_role.ecs_task_certificate_engine.arn,
+              aws_iam_role.github_actions_deploy.arn,
+            ]
+          }
+        }
+      },
+      {
+        Sid       = "DenyTerraformKeyMaterialAccess"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = local.pki_value_access_actions
+        Resource  = "*"
+        Condition = {
+          ArnEquals = {
+            "aws:PrincipalArn" = [local.terraform_execution_role_arn]
+          }
+        }
+      }
+    ]
+  })
+}
+
 resource "aws_sns_topic" "notification_events" {
   name = "${local.name}-notification-events"
 }
@@ -756,6 +906,7 @@ resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
         Resource = [
           aws_secretsmanager_secret.app.arn,
           aws_secretsmanager_secret.notifications.arn,
+          aws_secretsmanager_secret.pki_root_ca_cert.arn,
         ]
       }
     ]
@@ -820,6 +971,122 @@ resource "aws_iam_role_policy" "ecs_task_notifications" {
           "ses:SendRawEmail",
         ]
         Resource = "*"
+      }
+    ]
+  })
+}
+
+# The certificate engine gets its own roles. Its execution role is the only
+# identity that can read the signer private key; its task role has no permissions
+# at all (it needs no AWS API access to render and sign PDFs).
+resource "aws_iam_role" "ecs_task_execution_certificate_engine" {
+  name = "${local.name}-ecs-execution-certificate-engine"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_task_execution_certificate_engine" {
+  role       = aws_iam_role.ecs_task_execution_certificate_engine.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "ecs_task_execution_certificate_engine_secrets" {
+  name = "${local.name}-ecs-execution-certificate-engine-secrets"
+  role = aws_iam_role.ecs_task_execution_certificate_engine.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+        ]
+        Resource = [
+          aws_secretsmanager_secret.pki_signer.arn,
+          aws_secretsmanager_secret.pki_root_ca_cert.arn,
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "ecs_task_certificate_engine" {
+  name = "${local.name}-ecs-task-certificate-engine"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+# Optional: the only identity intended to touch the root CA key. Assumable only
+# by the principals listed in var.pki_provisioner_principal_arns, and only with
+# MFA. Empty list = no such role; provisioning then uses an administrator session.
+resource "aws_iam_role" "pki_provisioner" {
+  count = length(var.pki_provisioner_principal_arns) > 0 ? 1 : 0
+
+  name = "${local.name}-pki-provisioner"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = var.pki_provisioner_principal_arns
+        }
+        Action = "sts:AssumeRole"
+        Condition = {
+          Bool = {
+            "aws:MultiFactorAuthPresent" = "true"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "pki_provisioner" {
+  count = length(var.pki_provisioner_principal_arns) > 0 ? 1 : 0
+
+  name = "${local.name}-pki-provisioner"
+  role = aws_iam_role.pki_provisioner[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:PutSecretValue",
+        ]
+        Resource = [
+          aws_secretsmanager_secret.pki_root_ca_cert.arn,
+          aws_secretsmanager_secret.pki_signer.arn,
+          aws_secretsmanager_secret.pki_root_ca_key.arn,
+        ]
       }
     ]
   })
@@ -1089,8 +1356,8 @@ resource "aws_ecs_task_definition" "certificate_engine" {
   network_mode             = "awsvpc"
   cpu                      = "512"
   memory                   = "1024"
-  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-  task_role_arn            = aws_iam_role.ecs_task.arn
+  execution_role_arn       = aws_iam_role.ecs_task_execution_certificate_engine.arn
+  task_role_arn            = aws_iam_role.ecs_task_certificate_engine.arn
 
   runtime_platform {
     operating_system_family = "LINUX"
@@ -1102,16 +1369,56 @@ resource "aws_ecs_task_definition" "certificate_engine" {
       name      = "certificate-engine"
       image     = local.certificate_engine_image
       essential = true
+      # ECS injects secrets as environment variables; materialise them as 0600
+      # files for the engine, then drop the variables so the private key does not
+      # linger in the process environment. The engine validates the material at
+      # startup (key matches certificate, chains to the trust anchor, in date) and
+      # exits if anything is wrong; it cannot generate a replacement CA because
+      # HMS_CERT_DEV_AUTOGENERATE_SIGNER is false.
       command = [
         "sh",
         "-c",
-        "umask 077 && mkdir -p \"$HOME\" && exec hms-certificate-engine",
+        join(" && ", [
+          "umask 077",
+          "mkdir -p /tmp/hms-pki",
+          "printf '%s\\n' \"$HMS_PKI_SIGNER_CERT_PEM\" > /tmp/hms-pki/signer.cert.pem",
+          "printf '%s\\n' \"$HMS_PKI_SIGNER_KEY_PEM\" > /tmp/hms-pki/signer.key.pem",
+          "printf '%s\\n' \"$HMS_PKI_ROOT_CA_PEM\" > /tmp/hms-pki/root-ca.cert.pem",
+          "unset HMS_PKI_SIGNER_CERT_PEM HMS_PKI_SIGNER_KEY_PEM HMS_PKI_ROOT_CA_PEM",
+          "exec hms-certificate-engine",
+        ]),
       ]
       environment = [
         {
-          name  = "HOME"
-          value = "/tmp/hms"
-        }
+          name  = "HMS_CERT_DEV_AUTOGENERATE_SIGNER"
+          value = "false"
+        },
+        {
+          name  = "HMS_CERT_SIGNING_CERT_PATH"
+          value = "/tmp/hms-pki/signer.cert.pem"
+        },
+        {
+          name  = "HMS_CERT_SIGNING_KEY_PATH"
+          value = "/tmp/hms-pki/signer.key.pem"
+        },
+        {
+          name  = "HMS_CERT_TRUST_ANCHOR_PATH"
+          value = "/tmp/hms-pki/root-ca.cert.pem"
+        },
+      ]
+      secrets = [
+        {
+          name      = "HMS_PKI_SIGNER_CERT_PEM"
+          valueFrom = "${local.pki_signer_secret_arn}:certificate_pem::"
+        },
+        {
+          name      = "HMS_PKI_SIGNER_KEY_PEM"
+          valueFrom = "${local.pki_signer_secret_arn}:private_key_pem::"
+        },
+        {
+          name      = "HMS_PKI_ROOT_CA_PEM"
+          valueFrom = local.pki_root_ca_cert_secret_arn
+        },
       ]
       portMappings = [
         {
@@ -1722,6 +2029,18 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
           "ecs:UpdateService",
         ]
         Resource = "*"
+      },
+      {
+        # Metadata only (no GetSecretValue): lets the deploy preflight confirm the
+        # PKI secrets have been provisioned. The secret policies deny reads anyway.
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:DescribeSecret",
+        ]
+        Resource = [
+          aws_secretsmanager_secret.pki_root_ca_cert.arn,
+          aws_secretsmanager_secret.pki_signer.arn,
+        ]
       },
       {
         Effect = "Allow"

@@ -59,7 +59,8 @@
       ],
       "Resource": [
         "arn:aws:iam::558215002582:role/hms-dev-ecs-*",
-        "arn:aws:iam::558215002582:role/hms-dev-github-actions-deploy"
+        "arn:aws:iam::558215002582:role/hms-dev-github-actions-deploy",
+        "arn:aws:iam::558215002582:role/hms-dev-pki-provisioner"
       ]
     },
     {
@@ -69,7 +70,10 @@
         "iam:AttachRolePolicy",
         "iam:DetachRolePolicy"
       ],
-      "Resource": "arn:aws:iam::558215002582:role/hms-dev-ecs-execution",
+      "Resource": [
+        "arn:aws:iam::558215002582:role/hms-dev-ecs-execution",
+        "arn:aws:iam::558215002582:role/hms-dev-ecs-execution-certificate-engine"
+      ],
       "Condition": {
         "ArnEquals": {
           "iam:PolicyARN": "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"

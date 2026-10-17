@@ -103,6 +103,95 @@ jobs:
             exit 1
           fi
 
+      - name: Verify the signing PKI has been provisioned
+        env:
+          PKI_SECRET_PREFIX: ${{ vars.AWS_DEV_PKI_SECRET_PREFIX || 'hms-dev' }}
+        run: |
+          set -euo pipefail
+          # Certificate issuance fails closed without a trust anchor and signer.
+          # Never release the API until both secrets hold a current value (the
+          # values are loaded out of band; see docs/aws/dev-signing-pki.md).
+          for suffix in pki-root-ca-cert pki-signer; do
+            stages="$(
+              aws secretsmanager describe-secret \
+                --secret-id "${PKI_SECRET_PREFIX}-${suffix}" \
+                --query 'VersionIdsToStages' \
+                --output text
+            )"
+            case "$stages" in
+              *AWSCURRENT*) ;;
+              *)
+                echo "Secret ${PKI_SECRET_PREFIX}-${suffix} has no current value. Provision the DEV signing PKI before releasing the API." >&2
+                exit 1
+                ;;
+            esac
+          done
+          api_task_definition="$(
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_API_SERVICE" \
+              --query 'services[0].taskDefinition' \
+              --output text
+          )"
+          trust_anchor="$(
+            aws ecs describe-task-definition \
+              --task-definition "$api_task_definition" \
+              --query "taskDefinition.containerDefinitions[?name=='api'] | [0].secrets[?name=='CERTIFICATE_TRUST_ANCHOR_PEM'].valueFrom | [0]" \
+              --output text
+          )"
+          if [ -z "$trust_anchor" ] || [ "$trust_anchor" = "None" ]; then
+            echo "The API task definition does not inject CERTIFICATE_TRUST_ANCHOR_PEM. Apply Terraform before release." >&2
+            exit 1
+          fi
+
+          # The certificate engine must be running with the PKI wired in, or every
+          # issuance would be refused. Its own startup validation then gives the
+          # post-deploy stability wait real signal.
+          engine_desired="$(
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_CERTIFICATE_ENGINE_SERVICE" \
+              --query 'services[0].desiredCount' \
+              --output text
+          )"
+          if [ "$engine_desired" = "None" ] || [ "${engine_desired:-0}" -lt 1 ]; then
+            echo "The certificate engine service has desired count ${engine_desired}. Set certificate_engine_desired_count to at least 1 (reviewed Terraform apply) before releasing the API." >&2
+            exit 1
+          fi
+          engine_task_definition="$(
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_CERTIFICATE_ENGINE_SERVICE" \
+              --query 'services[0].taskDefinition' \
+              --output text
+          )"
+          engine_container="taskDefinition.containerDefinitions[?name=='certificate-engine'] | [0]"
+          autogenerate="$(
+            aws ecs describe-task-definition \
+              --task-definition "$engine_task_definition" \
+              --query "${engine_container}.environment[?name=='HMS_CERT_DEV_AUTOGENERATE_SIGNER'].value | [0]" \
+              --output text
+          )"
+          if [ "$autogenerate" != "false" ]; then
+            echo "The certificate engine task definition must set HMS_CERT_DEV_AUTOGENERATE_SIGNER=false." >&2
+            exit 1
+          fi
+          engine_secrets="$(
+            aws ecs describe-task-definition \
+              --task-definition "$engine_task_definition" \
+              --query "${engine_container}.secrets[].name" \
+              --output text
+          )"
+          for required in HMS_PKI_SIGNER_CERT_PEM HMS_PKI_SIGNER_KEY_PEM HMS_PKI_ROOT_CA_PEM; do
+            case " $engine_secrets " in
+              *[[:space:]]"$required"[[:space:]]*) ;;
+              *)
+                echo "The certificate engine task definition does not inject $required." >&2
+                exit 1
+                ;;
+            esac
+          done
+
       - name: Login to Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2

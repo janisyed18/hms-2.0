@@ -13,7 +13,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
+from asn1crypto import pem, x509  # type: ignore[import-untyped]
 from pyhanko.keys import load_cert_from_pemder
 from pyhanko.pdf_utils.reader import PdfFileReader
 from pyhanko.sign.validation import validate_pdf_signature
@@ -33,8 +35,25 @@ def _fail(reason: str) -> SignatureEvidence:
     return SignatureEvidence(verified=False, reason=reason)
 
 
+def _load_trust_root(trust_anchor_path: str, trust_anchor_pem: str) -> Any:
+    """Inline PEM (when set) wins over a file path; raises ValueError if unusable."""
+    if trust_anchor_pem.strip():
+        try:
+            _, _, der = pem.unarmor(trust_anchor_pem.encode("ascii"))
+            return x509.Certificate.load(der)
+        except (ValueError, UnicodeEncodeError) as exc:
+            raise ValueError("the configured trust anchor PEM is invalid") from exc
+    anchor = Path(trust_anchor_path)
+    if not anchor.is_file():
+        raise ValueError("the configured certificate trust anchor is not readable")
+    return load_cert_from_pemder(str(anchor))  # type: ignore[no-untyped-call]
+
+
 def verify_pdf_signature(
-    pdf: bytes, trust_anchor_path: str, validation_moment: datetime
+    pdf: bytes,
+    trust_anchor_path: str,
+    validation_moment: datetime,
+    trust_anchor_pem: str = "",
 ) -> SignatureEvidence:
     """Verify the PDF's signature is intact, trusted and covers the whole file.
 
@@ -44,13 +63,13 @@ def verify_pdf_signature(
     attacker-influenced for anyone holding the key, so it is only returned as
     informational ``signed_at`` and never decides trust.
     """
-    if not trust_anchor_path:
+    if not trust_anchor_path and not trust_anchor_pem.strip():
         return _fail("no certificate trust anchor is configured")
-    anchor = Path(trust_anchor_path)
-    if not anchor.is_file():
-        return _fail("the configured certificate trust anchor is not readable")
     try:
-        trust_root = load_cert_from_pemder(str(anchor))  # type: ignore[no-untyped-call]
+        trust_root = _load_trust_root(trust_anchor_path, trust_anchor_pem)
+    except (ValueError, OSError) as exc:
+        return _fail(str(exc))
+    try:
         reader = PdfFileReader(BytesIO(pdf))
         signatures = reader.embedded_signatures
         if len(signatures) != 1:
@@ -91,9 +110,16 @@ def verify_pdf_signature(
 
 
 async def averify_pdf_signature(
-    pdf: bytes, trust_anchor_path: str, validation_moment: datetime
+    pdf: bytes,
+    trust_anchor_path: str,
+    validation_moment: datetime,
+    trust_anchor_pem: str = "",
 ) -> SignatureEvidence:
     # Validation is CPU-bound; keep it off the event loop.
     return await asyncio.to_thread(
-        verify_pdf_signature, pdf, trust_anchor_path, validation_moment
+        verify_pdf_signature,
+        pdf,
+        trust_anchor_path,
+        validation_moment,
+        trust_anchor_pem,
     )
