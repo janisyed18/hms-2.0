@@ -33,8 +33,17 @@ def _fail(reason: str) -> SignatureEvidence:
     return SignatureEvidence(verified=False, reason=reason)
 
 
-def verify_pdf_signature(pdf: bytes, trust_anchor_path: str) -> SignatureEvidence:
-    """Verify the PDF's signature is intact, trusted and covers the whole file."""
+def verify_pdf_signature(
+    pdf: bytes, trust_anchor_path: str, validation_moment: datetime
+) -> SignatureEvidence:
+    """Verify the PDF's signature is intact, trusted and covers the whole file.
+
+    ``validation_moment`` is when the signer's certificate chain is evaluated. It
+    must come from a source the signer does not control (HMS passes the
+    server-issued ``issued_at``). The signature's own self-reported signing time is
+    attacker-influenced for anyone holding the key, so it is only returned as
+    informational ``signed_at`` and never decides trust.
+    """
     if not trust_anchor_path:
         return _fail("no certificate trust anchor is configured")
     anchor = Path(trust_anchor_path)
@@ -51,10 +60,8 @@ def verify_pdf_signature(pdf: bytes, trust_anchor_path: str) -> SignatureEvidenc
                 else "the PDF carries an unexpected number of signatures"
             )
         signature = signatures[0]
-        # Validate as at the claimed signing time so a leaf certificate that has
-        # since expired does not invalidate certificates it legitimately signed.
-        reported = signature.self_reported_timestamp or datetime.now(UTC)
-        moment = reported.astimezone(UTC)
+        reported = signature.self_reported_timestamp
+        moment = validation_moment.astimezone(UTC)
         context = ValidationContext(
             trust_roots=[trust_root],
             allow_fetching=False,
@@ -79,12 +86,14 @@ def verify_pdf_signature(pdf: bytes, trust_anchor_path: str) -> SignatureEvidenc
         verified=True,
         reason="",
         signer_common_name=str(subject or ""),
-        signed_at=moment,
+        signed_at=reported.astimezone(UTC) if reported else None,
     )
 
 
 async def averify_pdf_signature(
-    pdf: bytes, trust_anchor_path: str
+    pdf: bytes, trust_anchor_path: str, validation_moment: datetime
 ) -> SignatureEvidence:
     # Validation is CPU-bound; keep it off the event loop.
-    return await asyncio.to_thread(verify_pdf_signature, pdf, trust_anchor_path)
+    return await asyncio.to_thread(
+        verify_pdf_signature, pdf, trust_anchor_path, validation_moment
+    )

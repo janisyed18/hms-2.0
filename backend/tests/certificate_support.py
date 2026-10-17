@@ -12,7 +12,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+from unittest import mock
 
+import pyhanko.sign.signers.pdf_cms as pdf_cms_module
+import pyhanko.sign.signers.pdf_signer as pdf_signer_module
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -69,7 +72,13 @@ class Pki:
     signer: signers.SimpleSigner
 
 
-def build_pki(directory: Path, *, label: str = "HMS Test") -> Pki:
+def build_pki(
+    directory: Path,
+    *,
+    label: str = "HMS Test",
+    leaf_valid_days: tuple[int, int] = (-1, 825),
+    ca_valid_days: tuple[int, int] = (-1, 3650),
+) -> Pki:
     """Create a CA + leaf signer under ``directory`` (2048-bit keys for speed)."""
     directory.mkdir(parents=True, exist_ok=True)
     now = dt.datetime.now(dt.UTC)
@@ -81,8 +90,8 @@ def build_pki(directory: Path, *, label: str = "HMS Test") -> Pki:
         .issuer_name(ca_name)
         .public_key(ca_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now - dt.timedelta(days=1))
-        .not_valid_after(now + dt.timedelta(days=3650))
+        .not_valid_before(now + dt.timedelta(days=ca_valid_days[0]))
+        .not_valid_after(now + dt.timedelta(days=ca_valid_days[1]))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .add_extension(
             x509.KeyUsage(
@@ -107,8 +116,8 @@ def build_pki(directory: Path, *, label: str = "HMS Test") -> Pki:
         .issuer_name(ca_name)
         .public_key(leaf_key.public_key())
         .serial_number(x509.random_serial_number())
-        .not_valid_before(now - dt.timedelta(days=1))
-        .not_valid_after(now + dt.timedelta(days=825))
+        .not_valid_before(now + dt.timedelta(days=leaf_valid_days[0]))
+        .not_valid_after(now + dt.timedelta(days=leaf_valid_days[1]))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(
             x509.KeyUsage(
@@ -167,7 +176,35 @@ def blank_pdf(marker: str) -> bytes:
     return bytes(out)
 
 
-def sign_pdf(pdf: bytes, signer: signers.SimpleSigner) -> bytes:
+def sign_pdf(
+    pdf: bytes,
+    signer: signers.SimpleSigner,
+    *,
+    claimed_signing_time: dt.datetime | None = None,
+) -> bytes:
+    """Sign ``pdf``; ``claimed_signing_time`` forges the self-reported signing time.
+
+    pyHanko stamps "now" into the signature; anyone holding the key can claim any
+    time, which is exactly the attack the verifier must not trust.
+    """
+    if claimed_signing_time is None:
+        return _sign_pdf(pdf, signer)
+
+    forged_epoch = claimed_signing_time.timestamp()
+
+    class _Forged(dt.datetime):
+        @classmethod
+        def now(cls, tz: dt.tzinfo | None = None) -> _Forged:
+            return cls.fromtimestamp(forged_epoch, tz or dt.UTC)
+
+    with (
+        mock.patch.object(pdf_signer_module, "datetime", _Forged),
+        mock.patch.object(pdf_cms_module, "datetime", _Forged),
+    ):
+        return _sign_pdf(pdf, signer)
+
+
+def _sign_pdf(pdf: bytes, signer: signers.SimpleSigner) -> bytes:
     writer = IncrementalPdfFileWriter(BytesIO(pdf))
     append_signature_field(
         writer,
@@ -241,10 +278,16 @@ def hash_from_proto(cert: pb.CertificateData) -> str:
 class SigningFakeEngine(CertificateEngineClient):
     """Stands in for the gRPC engine but returns a genuinely signed PDF."""
 
-    def __init__(self, signer: signers.SimpleSigner | None) -> None:
+    def __init__(
+        self,
+        signer: signers.SimpleSigner | None,
+        *,
+        claimed_signing_time: dt.datetime | None = None,
+    ) -> None:
         super().__init__("fake:0", 0.0)
         self.calls = 0
         self._signer = signer
+        self._claimed_signing_time = claimed_signing_time
         # Hook for tests to interleave work between "render" and the caller's flush.
         self.on_render: Callable[[], Awaitable[None]] | None = None
 
@@ -255,7 +298,13 @@ class SigningFakeEngine(CertificateEngineClient):
         pdf = blank_pdf(f"{certificate.certificate_number}-{self.calls}")
         signed = self._signer is not None
         if self._signer is not None:
-            pdf = await asyncio.to_thread(sign_pdf, pdf, self._signer)
+            pdf = await asyncio.to_thread(
+                lambda: sign_pdf(
+                    pdf,
+                    self._signer,  # type: ignore[arg-type]
+                    claimed_signing_time=self._claimed_signing_time,
+                )
+            )
         return RenderedCertificate(
             pdf=pdf,
             verification_hash=hash_from_proto(certificate),

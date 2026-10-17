@@ -30,7 +30,10 @@ from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.certificates.integrity import (
     assess_certificate,
     check_artifact,
+    snapshot_issued_at,
+    snapshot_valid_until,
 )
+from hms_backend.app.modules.certificates.mapping import facts_from_snapshot
 from hms_backend.app.modules.certificates.models import Certificate
 
 router = APIRouter(prefix="/certificates", tags=["public-verification"])
@@ -69,8 +72,17 @@ async def verify_certificate(
     )
 
     facts = assessment.facts
+    number = certificate.number
+    version = certificate.certificate_version
+    issued_at = certificate.issued_at
+    valid_until = certificate.valid_until
     if facts is not None:
-        # Verified against the issuance snapshot, never today's master data.
+        # Verified against the issuance snapshot, never today's master data or
+        # mutable columns: the signed values are what the public sees.
+        number = facts.certificate_number
+        version = facts.certificate_version
+        issued_at = snapshot_issued_at(facts)
+        valid_until = snapshot_valid_until(facts)
         asset_number = facts.asset_number
         customer_name = facts.customer_name
         product_name = facts.product_name
@@ -93,10 +105,10 @@ async def verify_certificate(
         artifact_verified=assessment.artifact_verified,
         signed=assessment.signature_verified,
         expired=assessment.expired,
-        certificate_number=certificate.number,
-        certificate_version=certificate.certificate_version,
-        issued_at=certificate.issued_at,
-        valid_until=certificate.valid_until,
+        certificate_number=number,
+        certificate_version=version,
+        issued_at=issued_at,
+        valid_until=valid_until,
         verification_hash=certificate.verification_hash,
         asset_number=asset_number,
         customer_name=customer_name,
@@ -127,7 +139,12 @@ async def download_certificate_pdf(
     # revoked certificate's genuine PDF stays available (/verify reports it is no
     # longer valid). The verified bytes are served directly rather than redirected
     # so what is sent is exactly what was checked.
-    artifact = await check_artifact(certificate, storage=storage, settings=settings)
+    artifact = await check_artifact(
+        certificate,
+        facts=facts_from_snapshot(certificate.issuance_facts),
+        storage=storage,
+        settings=settings,
+    )
     if artifact.pdf is None:
         if not artifact.exists:
             raise HTTPException(

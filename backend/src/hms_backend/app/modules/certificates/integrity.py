@@ -27,6 +27,8 @@ from hms_backend.app.core.object_storage import ObjectNotFoundError, ObjectStora
 from hms_backend.app.modules.certificates.mapping import (
     CertificateFacts,
     facts_from_snapshot,
+    format_date,
+    format_ts,
     to_verification_input,
 )
 from hms_backend.app.modules.certificates.models import Certificate, CertificateStatus
@@ -54,6 +56,35 @@ class CertificateAssessment:
 
 def pdf_sha256(pdf: bytes) -> str:
     return hashlib.sha256(pdf).hexdigest()
+
+
+def snapshot_issued_at(facts: CertificateFacts) -> datetime:
+    """Server-issued instant from the immutable snapshot (UTC, second resolution)."""
+    return datetime.strptime(facts.issued_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+
+
+def snapshot_valid_until(facts: CertificateFacts) -> date | None:
+    return date.fromisoformat(facts.valid_until) if facts.valid_until else None
+
+
+def snapshot_mismatch(certificate: Certificate, facts: CertificateFacts) -> str | None:
+    """Name the first mutable column that disagrees with the signed snapshot.
+
+    The relational columns are only an indexed projection of what was issued; for
+    evidence-backed certificates the snapshot is authoritative and any divergence
+    (e.g. an extended ``valid_until``) is an integrity failure, not a new fact.
+    """
+    checks = (
+        ("certificate number", certificate.number, facts.certificate_number),
+        ("version", certificate.certificate_version, facts.certificate_version),
+        ("public token", certificate.public_token, facts.public_token),
+        ("issue date", format_ts(certificate.issued_at), facts.issued_at),
+        ("validity period", format_date(certificate.valid_until), facts.valid_until),
+    )
+    for label, recorded, signed in checks:
+        if recorded != signed:
+            return label
+    return None
 
 
 def is_expired(valid_until: date | None, today: date) -> bool:
@@ -98,7 +129,11 @@ class ArtifactCheck:
 
 
 async def check_artifact(
-    certificate: Certificate, *, storage: ObjectStorage, settings: Settings
+    certificate: Certificate,
+    *,
+    facts: CertificateFacts,
+    storage: ObjectStorage,
+    settings: Settings,
 ) -> ArtifactCheck:
     """Fetch the stored PDF once and verify its digest and signature.
 
@@ -125,7 +160,11 @@ async def check_artifact(
                 "Verification FAILED: the stored certificate document has been altered."
             ),
         )
-    evidence = await averify_pdf_signature(pdf, settings.certificate_trust_anchor_path)
+    # The signer's certificate is judged at the server-issued instant recorded in
+    # the snapshot, never at a time the PDF itself claims.
+    evidence = await averify_pdf_signature(
+        pdf, settings.certificate_trust_anchor_path, snapshot_issued_at(facts)
+    )
     if not evidence.verified:
         return ArtifactCheck(
             pdf=None,
@@ -145,9 +184,9 @@ async def assess_certificate(
     today: date | None = None,
 ) -> CertificateAssessment:
     today = today or datetime.now(UTC).date()
-    expired = is_expired(certificate.valid_until, today)
 
     if certificate.issuance_facts is None or not certificate.pdf_sha256:
+        expired = is_expired(certificate.valid_until, today)
         return CertificateAssessment(
             integrity=IntegrityStatus.LEGACY_UNVERIFIED,
             valid=False,
@@ -163,6 +202,8 @@ async def assess_certificate(
         )
 
     facts = facts_from_snapshot(certificate.issuance_facts)
+    # Expiry comes from the signed snapshot so the database cannot extend it.
+    expired = is_expired(snapshot_valid_until(facts), today)
     recomputed = compute_verification_hash(to_verification_input(facts))
     if recomputed != certificate.verification_hash:
         return _failed(
@@ -172,7 +213,19 @@ async def assess_certificate(
             expired=expired,
         )
 
-    artifact = await check_artifact(certificate, storage=storage, settings=settings)
+    diverged = snapshot_mismatch(certificate, facts)
+    if diverged is not None:
+        return _failed(
+            f"Verification FAILED: the recorded {diverged} differs from the signed "
+            "certificate. Do not rely on this document.",
+            facts=facts,
+            hash_matches=True,
+            expired=expired,
+        )
+
+    artifact = await check_artifact(
+        certificate, facts=facts, storage=storage, settings=settings
+    )
     if not artifact.ok:
         return _failed(
             artifact.message,
@@ -197,7 +250,7 @@ async def assess_certificate(
         )
     if expired:
         return _failed(
-            f"This certificate expired on {certificate.valid_until:%d %B %Y}, "
+            f"This certificate expired on {snapshot_valid_until(facts):%d %B %Y}, "
             "though its content is authentic.",
             **common,  # type: ignore[arg-type]
         )

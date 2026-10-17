@@ -6,8 +6,13 @@ whose signatures validate as *trusted* (the CA acts as the trust anchor) with
 zero setup. This is for local development and tests ONLY.
 
 In staging/production set ``HMS_CERT_SIGNING_CERT_PATH`` / ``_KEY_PATH`` /
-``_CHAIN_PATH`` from OCI Vault and leave ``HMS_CERT_DEV_AUTOGENERATE_SIGNER=false``.
+``_CHAIN_PATH`` from your secret manager (e.g. AWS Secrets Manager) and leave
+``HMS_CERT_DEV_AUTOGENERATE_SIGNER=false``.
 Existing key material is never overwritten.
+
+The root CA's *private* key is deliberately not persisted: the DEV root signs
+exactly one leaf and cannot issue a renewal. Rotating the leaf means standing up
+a new root and updating the backend's trust anchor.
 """
 
 from __future__ import annotations

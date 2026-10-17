@@ -475,22 +475,84 @@ async def test_tampered_issuance_snapshot_fails(factory, storage, engine) -> Non
 )
 @pytest.mark.asyncio
 async def test_valid_until_boundaries(
-    factory, storage, engine, offset_days, expect_valid
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    engine: SigningFakeEngine,
+    offset_days: int,
+    expect_valid: bool,
 ) -> None:
-    today = datetime.now(UTC).date()
+    valid_until = datetime.now(UTC).date() + timedelta(days=offset_days)
     async with api(factory) as client:
-        _, cert = await issued(client, factory, f"K{offset_days + 1}")
-        # valid_until is deliberately outside the hash (renewal metadata), so it
-        # can be set directly; expiry is enforced from the column.
-        async with factory() as session:
-            row = await session.get(Certificate, cert.id)
-            row.valid_until = today + timedelta(days=offset_days)
-            await session.commit()
+        _, cert = await issued(
+            client,
+            factory,
+            f"K{offset_days + 1}",
+            valid_until=valid_until.isoformat(),
+        )
         body = await verify(client, cert.public_token)
     assert body["valid"] is expect_valid
     assert body["expired"] is (not expect_valid)
+    assert body["valid_until"] == valid_until.isoformat()
     if not expect_valid:
         assert body["signed"] is True and "expired" in body["message"]
+
+
+@pytest.mark.parametrize("new_value", ["extended", "cleared"])
+@pytest.mark.asyncio
+async def test_database_cannot_extend_signed_validity(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    engine: SigningFakeEngine,
+    new_value: str,
+) -> None:
+    """The signed snapshot, not the mutable column, decides expiry."""
+    yesterday = datetime.now(UTC).date() - timedelta(days=1)
+    async with api(factory) as client:
+        _, cert = await issued(
+            client, factory, f"Q-{new_value}", valid_until=yesterday.isoformat()
+        )
+        async with factory() as session:
+            row = await session.get(Certificate, cert.id)
+            assert row is not None
+            row.valid_until = (
+                yesterday + timedelta(days=365) if new_value == "extended" else None
+            )
+            await session.commit()
+        body = await verify(client, cert.public_token)
+    assert body["valid"] is False
+    assert body["integrity"] == "FAILED"
+    assert "validity period" in body["message"]
+    # Whatever the column says, the response reports the signed expiry.
+    assert body["valid_until"] == yesterday.isoformat()
+
+
+@pytest.mark.parametrize("column", ["number", "issued_at", "public_token"])
+@pytest.mark.asyncio
+async def test_database_cannot_rewrite_signed_identity(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    engine: SigningFakeEngine,
+    column: str,
+) -> None:
+    async with api(factory) as client:
+        _, cert = await issued(client, factory, f"R-{column[:3]}")
+        async with factory() as session:
+            row = await session.get(Certificate, cert.id)
+            assert row is not None
+            if column == "issued_at":
+                row.issued_at = row.issued_at + timedelta(days=30)
+            else:
+                setattr(row, column, f"{getattr(row, column)}-edited")
+            await session.commit()
+        # Verification is keyed by the public token; keep a way in after editing it.
+        token = (
+            f"{cert.public_token}-edited"
+            if column == "public_token"
+            else (cert.public_token)
+        )
+        body = await verify(client, token)
+    assert body["valid"] is False
+    assert body["integrity"] == "FAILED"
 
 
 # --------------------------------------------------------------- public download
@@ -569,14 +631,17 @@ async def test_authentic_artifact_stays_downloadable_when_no_longer_valid(
     factory, storage, engine, state
 ) -> None:
     async with api(factory) as client:
-        _, cert = await issued(client, factory, f"P6{state[:3]}")
-        async with factory() as session:
-            row = await session.get(Certificate, cert.id)
-            if state == "expired":
-                row.valid_until = datetime.now(UTC).date() - timedelta(days=1)
-            else:
+        valid_until = (
+            {"valid_until": (datetime.now(UTC).date() - timedelta(days=1)).isoformat()}
+            if state == "expired"
+            else {}
+        )
+        _, cert = await issued(client, factory, f"P6{state[:3]}", **valid_until)
+        if state != "expired":
+            async with factory() as session:
+                row = await session.get(Certificate, cert.id)
                 row.status = state
-            await session.commit()
+                await session.commit()
         verified = await verify(client, cert.public_token)
         response = await _download(client, cert.public_token)
     assert verified["valid"] is False
@@ -675,3 +740,95 @@ def test_snapshot_round_trips_nested_facts() -> None:
     )
     restored = facts_from_snapshot(json.loads(json.dumps(facts_to_snapshot(facts))))
     assert restored == facts
+
+
+# ----------------------------------------------- signer cannot choose its own time
+
+
+def _expired_signer_pki(tmp_path: Path) -> Pki:
+    """Leaf valid only in the distant past, under a CA that was valid then too."""
+    return build_pki(
+        tmp_path,
+        label="Expired",
+        leaf_valid_days=(-3000, -2000),
+        ca_valid_days=(-4000, 3650),
+    )
+
+
+def test_signature_trust_uses_supplied_moment_not_self_reported_time(
+    tmp_path: Path,
+) -> None:
+    from hms_backend.app.modules.certificates.signature import verify_pdf_signature
+
+    pki = _expired_signer_pki(tmp_path)
+    backdated = datetime.now(UTC) - timedelta(days=2500)  # inside the leaf's life
+    pdf = sign_pdf(blank_pdf("x"), pki.signer, claimed_signing_time=backdated)
+
+    # The attacker's claimed time is genuinely embedded in the PDF...
+    from io import BytesIO
+
+    from pyhanko.pdf_utils.reader import PdfFileReader
+
+    reported = (
+        PdfFileReader(BytesIO(pdf)).embedded_signatures[0].self_reported_timestamp
+    )
+    assert reported is not None and abs((reported - backdated).total_seconds()) < 2
+
+    # ...but trust is decided at the moment the caller supplies.
+    now = datetime.now(UTC)
+    assert verify_pdf_signature(pdf, str(pki.anchor_path), now).verified is False
+    assert verify_pdf_signature(pdf, str(pki.anchor_path), backdated).verified is True
+
+
+@pytest.mark.asyncio
+async def test_issuance_rejects_backdated_signature_from_expired_signer(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pki = _expired_signer_pki(tmp_path / "expired")
+    monkeypatch.setattr(
+        app_settings, "certificate_trust_anchor_path", str(pki.anchor_path)
+    )
+    forging = SigningFakeEngine(
+        pki.signer, claimed_signing_time=datetime.now(UTC) - timedelta(days=2500)
+    )
+    inspection_id = await seed(factory, "S1")
+    async with factory() as session:
+        inspection = await session.get(Inspection, inspection_id)
+        assert inspection is not None
+        with pytest.raises(CertificateSignatureError):
+            await generate_and_store_certificate(
+                session, inspection, actor_id="a", engine=forging
+            )
+    assert stored_objects(storage) == []
+
+
+@pytest.mark.asyncio
+async def test_public_verification_ignores_backdated_signing_time(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    engine: SigningFakeEngine,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Swap in a forged-time PDF from an expired signer (digest updated to match)."""
+    pki = _expired_signer_pki(tmp_path / "expired")
+    async with api(factory) as client:
+        _, cert = await issued(client, factory, "S2")
+        forged = await asyncio.to_thread(
+            sign_pdf,
+            blank_pdf("forged"),
+            pki.signer,
+            claimed_signing_time=datetime.now(UTC) - timedelta(days=2500),
+        )
+        await _replace_artifact(factory, storage, cert, forged)
+        monkeypatch.setattr(
+            app_settings, "certificate_trust_anchor_path", str(pki.anchor_path)
+        )
+        body = await verify(client, cert.public_token)
+        download = await _download(client, cert.public_token)
+    assert body["valid"] is False
+    assert body["signed"] is False
+    assert download.status_code == 409
