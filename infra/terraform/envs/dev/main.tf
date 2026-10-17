@@ -55,6 +55,7 @@ locals {
   )
   cloudfront_api_origin_domain = local.custom_domain_enabled ? var.api_origin_hostname : aws_lb.api.dns_name
   staff_public_url             = local.custom_domain_enabled ? "https://${var.staff_hostname}" : "https://${aws_cloudfront_distribution.staff.domain_name}"
+  inspector_public_url         = "https://${aws_cloudfront_distribution.inspector.domain_name}"
 
   certificate_service_dns = "certificate-engine.${aws_service_discovery_private_dns_namespace.this.name}"
 
@@ -182,7 +183,7 @@ locals {
     },
     {
       name  = "AUTH_BROWSER_ALLOWED_ORIGINS"
-      value = jsonencode([local.staff_public_url])
+      value = jsonencode([local.staff_public_url, local.inspector_public_url])
     },
     {
       name  = "AUTH_BROWSER_STAFF_PUBLIC_URL"
@@ -1531,7 +1532,15 @@ resource "aws_cloudfront_distribution" "inspector" {
 
     forwarded_values {
       query_string = true
-      headers      = ["Authorization", "Content-Type", "If-Match", "X-HMS-Roles", "X-HMS-User-Id"]
+      headers = [
+        "Authorization",
+        "Content-Type",
+        "If-Match",
+        "Origin",
+        "X-HMS-App-Version",
+        "X-HMS-Device-Id",
+        "X-HMS-Device-Platform",
+      ]
       cookies {
         forward = "all"
       }
@@ -1743,6 +1752,7 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
         Effect = "Allow"
         Action = [
           "cloudfront:CreateInvalidation",
+          "cloudfront:GetDistribution",
         ]
         Resource = [
           aws_cloudfront_distribution.staff.arn,
