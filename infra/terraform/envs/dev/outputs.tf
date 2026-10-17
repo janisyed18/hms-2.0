@@ -122,3 +122,12 @@ output "github_actions_role_arn" {
   description = "IAM role ARN for GitHub Actions OIDC deployment."
   value       = aws_iam_role.github_actions_deploy.arn
 }
+
+output "pki_secret_ids" {
+  description = "Secrets Manager secrets the DEV signing PKI is loaded into (values are provisioned out of band; see docs/aws/dev-signing-pki.md)."
+  value = {
+    root_ca_cert = aws_secretsmanager_secret.pki_root_ca_cert.name
+    signer       = aws_secretsmanager_secret.pki_signer.name
+    root_ca_key  = aws_secretsmanager_secret.pki_root_ca_key.name
+  }
+}

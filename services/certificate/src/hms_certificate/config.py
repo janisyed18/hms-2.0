@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     signing_chain_path: str = ""  # PEM bundle of intermediate/root CA certs
     signing_key_passphrase: str = ""
     dev_autogenerate_signer: bool = True
+    # Public root CA certificate the signing certificate must chain to. When set,
+    # the engine validates that at startup and refuses to run if it does not, so a
+    # signer the backend would reject can never go live. Deployed environments set
+    # this (and dev_autogenerate_signer=false); it is public material.
+    trust_anchor_path: str = ""
     key_dir: Path = _DEFAULT_KEY_DIR
 
     # Issuer identity shown on the certificate and in the signature.

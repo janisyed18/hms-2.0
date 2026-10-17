@@ -109,6 +109,18 @@ variable "certificate_engine_desired_count" {
   default     = 0
 }
 
+variable "pki_enabled" {
+  description = "Inject the signing-PKI trust anchor into backend tasks. Leave false until the DEV signing PKI secrets have been provisioned (docs/aws/dev-signing-pki.md): ECS cannot start a task whose secret has no value."
+  type        = bool
+  default     = false
+}
+
+variable "pki_provisioner_principal_arns" {
+  description = "IAM principals allowed (with MFA) to assume the PKI provisioner role that can write the signing PKI secrets, including the root CA key. Empty creates no role; provisioning then uses an administrator session."
+  type        = list(string)
+  default     = []
+}
+
 variable "image_tag" {
   description = "Container image tag used by ECS task definitions. CI pushes latest and forces new deployments."
   type        = string

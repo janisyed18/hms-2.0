@@ -140,7 +140,10 @@ async def generate_and_store_certificate(
     # Never record or report a signature we have not verified ourselves.
     # Trust is judged at the backend-chosen issue instant, not the PDF's own claim.
     evidence = await averify_pdf_signature(
-        rendered.pdf, settings.certificate_trust_anchor_path, issued_at
+        rendered.pdf,
+        settings.certificate_trust_anchor_path,
+        issued_at,
+        settings.certificate_trust_anchor_pem,
     )
     if not rendered.signed or not evidence.verified:
         raise CertificateSignatureError(

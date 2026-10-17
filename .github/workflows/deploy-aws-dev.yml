@@ -103,6 +103,47 @@ jobs:
             exit 1
           fi
 
+      - name: Verify the signing PKI has been provisioned
+        env:
+          PKI_SECRET_PREFIX: ${{ vars.AWS_DEV_PKI_SECRET_PREFIX || 'hms-dev' }}
+        run: |
+          set -euo pipefail
+          # Certificate issuance fails closed without a trust anchor and signer.
+          # Never release the API until both secrets hold a current value (the
+          # values are loaded out of band; see docs/aws/dev-signing-pki.md).
+          for suffix in pki-root-ca-cert pki-signer; do
+            stages="$(
+              aws secretsmanager describe-secret \
+                --secret-id "${PKI_SECRET_PREFIX}-${suffix}" \
+                --query 'VersionIdsToStages' \
+                --output text
+            )"
+            case "$stages" in
+              *AWSCURRENT*) ;;
+              *)
+                echo "Secret ${PKI_SECRET_PREFIX}-${suffix} has no current value. Provision the DEV signing PKI before releasing the API." >&2
+                exit 1
+                ;;
+            esac
+          done
+          api_task_definition="$(
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_API_SERVICE" \
+              --query 'services[0].taskDefinition' \
+              --output text
+          )"
+          trust_anchor="$(
+            aws ecs describe-task-definition \
+              --task-definition "$api_task_definition" \
+              --query "taskDefinition.containerDefinitions[?name=='api'] | [0].secrets[?name=='CERTIFICATE_TRUST_ANCHOR_PEM'].valueFrom | [0]" \
+              --output text
+          )"
+          if [ -z "$trust_anchor" ] || [ "$trust_anchor" = "None" ]; then
+            echo "The API task definition does not inject CERTIFICATE_TRUST_ANCHOR_PEM. Apply Terraform before release." >&2
+            exit 1
+          fi
+
       - name: Login to Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2

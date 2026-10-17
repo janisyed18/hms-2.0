@@ -163,7 +163,10 @@ async def check_artifact(
     # The signer's certificate is judged at the server-issued instant recorded in
     # the snapshot, never at a time the PDF itself claims.
     evidence = await averify_pdf_signature(
-        pdf, settings.certificate_trust_anchor_path, snapshot_issued_at(facts)
+        pdf,
+        settings.certificate_trust_anchor_path,
+        snapshot_issued_at(facts),
+        settings.certificate_trust_anchor_pem,
     )
     if not evidence.verified:
         return ArtifactCheck(
