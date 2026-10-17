@@ -170,8 +170,98 @@ class SummarizeTerraformPlanTests(unittest.TestCase):
 
     def test_address_cannot_break_the_markdown_table_or_smuggle_data(self) -> None:
         report = run_summarizer(PLAN).stdout
-        self.assertIn('aws_s3_bucket.logs["a?b"]', report)
+        self.assertIn('aws_s3_bucket.logs["redacted"]', report)
         self.assertNotIn("a|b", report)
+
+    def test_quoted_address_indexes_are_redacted_everywhere(self) -> None:
+        plan = {
+            "terraform_version": "1.15.8",
+            "resource_changes": [
+                resource(
+                    f'module.site["{CANARIES[1]}"].aws_x.y["{CANARIES[0]}"]',
+                    "aws_x",
+                    ["create"],
+                    None,
+                    {},
+                ),
+                resource("aws_n.counted[3]", "aws_n", ["create"], None, {}),
+                resource(
+                    'aws_e.k["has \\"quote\\" " ' + CANARIES[2] + '"]',
+                    "aws_e",
+                    ["create"],
+                    None,
+                    {},
+                ),
+                resource(
+                    'aws_u.unbalanced["' + CANARIES[3],
+                    "aws_u",
+                    ["create"],
+                    None,
+                    {},
+                ),
+            ],
+            "resource_drift": [
+                resource(
+                    f'aws_d.z["{CANARIES[4]}"]',
+                    "aws_d",
+                    ["update"],
+                    {"a": 1},
+                    {"a": 2},
+                )
+            ],
+        }
+        result = run_summarizer(plan)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = result.stdout + result.stderr
+        for canary in CANARIES:
+            self.assertNotIn(canary, output)
+        self.assertIn('module.site["redacted"].aws_x.y["redacted"]', output)
+        self.assertIn("aws_n.counted[3]", output)  # numeric count index kept
+        self.assertIn('aws_u.unbalanced["redacted"]', output)
+        self.assertIn('aws_d.z["redacted"]', output)
+
+    def test_unrecognised_action_fails_closed_without_echoing_values(self) -> None:
+        for actions in (["frobnicate"], ["create", "update"], [], None, "create", [1]):
+            with self.subTest(actions=actions):
+                plan = {
+                    "resource_changes": [
+                        resource(
+                            f'aws_x.y["{CANARIES[0]}"]',
+                            "aws_x",
+                            actions,
+                            {"k": CANARIES[1]},
+                            {"k": CANARIES[2]},
+                        )
+                    ]
+                }
+                result = run_summarizer(plan)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                for canary in CANARIES:
+                    self.assertNotIn(canary, result.stdout + result.stderr)
+                self.assertIn("incomplete report", result.stderr)
+
+    def test_unrecognised_action_in_drift_or_outputs_also_fails_closed(self) -> None:
+        for key, value in (
+            ("resource_drift", [resource("aws_x.y", "aws_x", ["weird"], {}, {})]),
+            ("output_changes", {"o": {"actions": ["weird"]}}),
+        ):
+            with self.subTest(key=key):
+                self.assertNotEqual(run_summarizer({key: value}).returncode, 0)
+
+    def test_missing_actions_key_fails_closed(self) -> None:
+        plan = {"resource_changes": [{"address": "aws_x.y", "type": "aws_x"}]}
+        self.assertNotEqual(run_summarizer(plan).returncode, 0)
+
+    def test_forget_is_a_known_mutation_and_is_reported(self) -> None:
+        plan = {
+            "resource_changes": [
+                resource("aws_x.y", "aws_x", ["forget"], {"k": 1}, None)
+            ]
+        }
+        result = run_summarizer(plan)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("| forget | `aws_x.y` |", result.stdout)
 
     def test_clean_plan_reports_nothing_to_do(self) -> None:
         report = run_summarizer({"terraform_version": "1.15.8"}).stdout
@@ -194,6 +284,7 @@ class SummarizeTerraformPlanTests(unittest.TestCase):
 class VerifyTerraformPlanRunTests(unittest.TestCase):
     RUN = {
         "name": "Plan AWS Dev Infrastructure",
+        "path": ".github/workflows/plan-aws-dev-infrastructure.yml",
         "event": "workflow_dispatch",
         "status": "completed",
         "conclusion": "success",
@@ -225,6 +316,7 @@ class VerifyTerraformPlanRunTests(unittest.TestCase):
     def test_rejects_every_deviation(self) -> None:
         for key, value in {
             "name": "Apply AWS Dev Infrastructure",
+            "path": ".github/workflows/apply-aws-dev-infrastructure.yml",
             "event": "push",
             "status": "in_progress",
             "conclusion": "failure",
@@ -233,6 +325,14 @@ class VerifyTerraformPlanRunTests(unittest.TestCase):
         }.items():
             with self.subTest(key=key):
                 self.assertEqual(self.verify({**self.RUN, key: value}), 1)
+
+    def test_rejects_same_name_from_a_different_workflow_file(self) -> None:
+        impostor = {**self.RUN, "path": ".github/workflows/something-else.yml"}
+        self.assertEqual(self.verify(impostor), 1)
+
+    def test_rejects_a_run_without_a_path(self) -> None:
+        missing = {k: v for k, v in self.RUN.items() if k != "path"}
+        self.assertEqual(self.verify(missing), 1)
 
     def test_rejects_plan_for_an_older_main_commit(self) -> None:
         self.assertEqual(self.verify(self.RUN, sha="newer-main"), 1)

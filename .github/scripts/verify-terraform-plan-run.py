@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 
 EXPECTED_WORKFLOW = "Plan AWS Dev Infrastructure"
+# A workflow *name* is not an identity; the file path is.
+EXPECTED_PATH = ".github/workflows/plan-aws-dev-infrastructure.yml"
 
 
 def main() -> int:
@@ -25,6 +27,7 @@ def main() -> int:
 
     expected = {
         "name": EXPECTED_WORKFLOW,
+        "path": EXPECTED_PATH,
         "event": "workflow_dispatch",
         "status": "completed",
         "conclusion": "success",

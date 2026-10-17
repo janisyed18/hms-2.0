@@ -18,28 +18,61 @@ from pathlib import Path
 from typing import Any
 
 _SAFE = re.compile(r'[^A-Za-z0-9_.\[\]"\-:/ ]')
+# A quoted resource-address index, e.g. ["customer-123"] with escapes allowed.
+_QUOTED_INDEX = re.compile(r'\["(?:[^"\\]|\\.)*"\]')
 
-# Terraform's action lists, collapsed to what a reviewer cares about.
-_REPLACE = (["delete", "create"], ["create", "delete"])
+# Every action sequence Terraform can emit that we understand. Anything else is a
+# release-gate failure, never a silently dropped change.
+_ACTIONS = {
+    ("no-op",): "no-op",
+    ("read",): "read",
+    ("create",): "create",
+    ("update",): "update",
+    ("delete",): "delete",
+    ("delete", "create"): "replace",
+    ("create", "delete"): "replace",
+    ("forget",): "forget",
+}
+
+
+class UnrecognisedPlanError(Exception):
+    """The plan contains something this report cannot faithfully describe."""
 
 
 def clean(text: object) -> str:
-    """Keep addresses/names readable but strip anything that could carry data."""
+    """Keep names readable but strip anything that could carry data."""
     return _SAFE.sub("?", str(text)).replace("|", "?")
 
 
-def action_of(actions: list[str]) -> str | None:
-    if actions in _REPLACE:
-        return "replace"
-    if actions == ["create"]:
-        return "create"
-    if actions == ["update"]:
-        return "update"
-    if actions == ["delete"]:
-        return "delete"
-    if actions == ["read"]:
-        return "read"
-    return None  # no-op and anything unrecognised is not a planned change
+def clean_address(address: object) -> str:
+    """Sanitise a resource address and redact every quoted index.
+
+    ``for_each`` keys are runtime data (customer ids, names, tokens, ...), so
+    ``module.a["customer-123"].x.y["k"]`` is published as
+    ``module.a["redacted"].x.y["redacted"]``. Numeric ``count`` indexes stay.
+    """
+    marker = "\x00"
+    text = _QUOTED_INDEX.sub(marker, str(address).replace(marker, "?"))
+    stray = text.find('"')
+    if stray != -1:
+        # An unbalanced quote means we cannot tell where an index ends: drop the
+        # remainder rather than risk publishing part of a key.
+        text = text[:stray].rstrip("[") + marker
+    return '["redacted"]'.join(clean(part) for part in text.split(marker))
+
+
+def action_of(actions: object) -> str:
+    """Map Terraform's action list to a name, or fail closed."""
+    if isinstance(actions, list) and all(isinstance(a, str) for a in actions):
+        known = _ACTIONS.get(tuple(actions))
+        if known is not None:
+            return known
+    shown = (
+        "/".join(clean(a) for a in actions)
+        if isinstance(actions, list)
+        else "malformed"
+    )
+    raise UnrecognisedPlanError(f"unrecognised Terraform action sequence: {shown}")
 
 
 def changed_attributes(change: dict[str, Any]) -> list[str]:
@@ -67,11 +100,11 @@ def summarize(plan: dict[str, Any]) -> dict[str, Any]:
     changes: list[dict[str, Any]] = []
     for resource in plan.get("resource_changes") or []:
         change = resource.get("change") or {}
-        action = action_of(change.get("actions") or [])
-        if action is None or action == "read":
+        action = action_of(change.get("actions"))
+        if action in ("no-op", "read"):
             continue
         entry: dict[str, Any] = {
-            "address": clean(resource.get("address", "?")),
+            "address": clean_address(resource.get("address", "?")),
             "type": clean(resource.get("type", "?")),
             "action": action,
         }
@@ -84,12 +117,12 @@ def summarize(plan: dict[str, Any]) -> dict[str, Any]:
     drift: list[dict[str, Any]] = []
     for resource in plan.get("resource_drift") or []:
         change = resource.get("change") or {}
-        action = action_of(change.get("actions") or [])
-        if action is None:
+        action = action_of(change.get("actions"))
+        if action in ("no-op", "read"):
             continue
         drift.append(
             {
-                "address": clean(resource.get("address", "?")),
+                "address": clean_address(resource.get("address", "?")),
                 "action": action,
                 "attributes": [clean(n) for n in changed_attributes(change)],
             }
@@ -97,8 +130,8 @@ def summarize(plan: dict[str, Any]) -> dict[str, Any]:
 
     outputs = []
     for name, change in sorted((plan.get("output_changes") or {}).items()):
-        action = action_of(change.get("actions") or [])
-        if action is not None:
+        action = action_of(change.get("actions"))
+        if action != "no-op":
             outputs.append({"name": clean(name), "action": action})
 
     counts = {"add": 0, "change": 0, "destroy": 0}
@@ -212,7 +245,14 @@ def main() -> int:
         # Never echo the file contents; the type of error is enough.
         print(f"Could not read plan input: {type(error).__name__}", file=sys.stderr)
         return 1
-    sys.stdout.write(render(summarize(plan), manifest))
+    try:
+        report = render(summarize(plan), manifest)
+    except UnrecognisedPlanError as error:
+        # Refuse to publish a report that might omit a change. Only the action
+        # tokens are named; no plan value is echoed.
+        print(f"Refusing to publish an incomplete report: {error}", file=sys.stderr)
+        return 1
+    sys.stdout.write(report)
     return 0
 
 

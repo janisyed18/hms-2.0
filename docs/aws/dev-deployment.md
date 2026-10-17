@@ -26,7 +26,7 @@ changes use two manual GitHub workflows so the exact plan is reviewed before
 state changes are made.
 
 Before the first release, protect `main` with pull-request-only changes and
-the six required CI checks. Restrict the `aws-dev` GitHub Environment to
+the required CI checks (including `workflow-scripts`). Restrict the `aws-dev` GitHub Environment to
 protected branches and disable administrator bypass. These repository settings
 are operational gates and are not managed by Terraform.
 
