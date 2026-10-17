@@ -55,9 +55,19 @@ The order matters: ECS will not start a task whose secret has no value.
 3. **Verify** the loaded material (below).
 4. **Set `pki_enabled` default to `true`** in a reviewed PR, plan, review, apply.
    Backend task definitions now inject `CERTIFICATE_TRUST_ANCHOR_PEM`.
-5. Set `certificate_engine_desired_count` to `1` (reviewed apply). The engine starts
+5. **Prepare the engine image first.** Run **Prepare AWS Dev Certificate Engine Image**
+   (manual, from `main`). It builds `services/certificate`, refuses to publish unless
+   the image imports the PKI validation modules and refuses to start without signing
+   material, pushes the commit tag then `latest`, and verifies both resolve to one
+   digest. It updates no service and reads no secret. Confirm in ECR that `latest`
+   carries the current commit tag. This is required because *Deploy AWS Dev* only
+   builds the engine image when the service is already running, and an old image
+   (built before the startup validation existed) must never be started against the
+   real signing keys. It is also the recovery path whenever the engine is scaled to
+   zero.
+6. Set `certificate_engine_desired_count` to `1` (reviewed apply). The engine starts
    only if its material validates.
-6. Only then run **Deploy AWS Dev**. Its preflight checks that both secrets hold a
+7. Only then run **Deploy AWS Dev**. Its preflight checks that both secrets hold a
    current value, that the API task definition injects the trust anchor, that the
    certificate engine service has a desired count of at least 1, and that its task
    definition sets `HMS_CERT_DEV_AUTOGENERATE_SIGNER=false` and injects the signer
