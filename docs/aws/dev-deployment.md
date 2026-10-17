@@ -51,10 +51,22 @@ running an infrastructure Plan.
    version, and provider lockfile hash. The Plan job never uploads plaintext
    Terraform output. Treat both decrypted files as sensitive infrastructure
    data; the artifact is retained for one day only.
-3. Confirm all creates, changes, and deletes are expected. Pay particular
+3. Run **Review AWS Dev Infrastructure Plan** with the Plan run ID. It is
+   review-only: it runs in the protected `aws-dev` Environment from `main`,
+   holds no AWS credentials, never applies, and decrypts the exact binary plan
+   that Apply would consume. It publishes only a sanitized *structural* report to
+   the run summary: the add/change/destroy counts, every resource address, the
+   action (`create`, `update`, `delete`, `replace`), the names (never values) of
+   changed top-level attributes, replacement causes, IAM/secret/KMS resources,
+   refresh drift and output names. The decrypted plan is shredded when the job
+   ends. This removes the need to export the age private key or to run Apply to
+   obtain review evidence.
+4. Confirm all creates, changes, and deletes are expected. Pay particular
    attention to ECS task definitions, Secrets Manager, CloudFront, ALB, IAM,
-   networking, and database resources.
-4. Run **Apply AWS Dev Infrastructure**, set `apply_infrastructure` to true,
+   networking, and database resources. The structural report cannot show *what*
+   an IAM or task-definition attribute changes to; check those against the
+   reviewed source diff.
+5. Run **Apply AWS Dev Infrastructure**, set `apply_infrastructure` to true,
    and enter the reviewed Plan workflow run ID. The protected `aws-dev`
    Environment approval happens before the plan is downloaded. The workflow
    verifies the plan belongs to the current `main` commit, verifies the
