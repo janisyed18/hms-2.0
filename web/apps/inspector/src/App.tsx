@@ -18,13 +18,13 @@ interface AppProps {
 export default function App({ authClient, initialAccessToken }: AppProps = {}) {
   return (
     <InspectorAuthGate client={authClient} initialAccessToken={initialAccessToken}>
-      <InspectorWorkspace />
+      {(userId) => <InspectorWorkspace key={userId} userId={userId} />}
     </InspectorAuthGate>
   );
 }
 
-function InspectorWorkspace() {
-  const workspace = useInspectorWorkspace();
+function InspectorWorkspace({ userId }: { userId: string }) {
+  const workspace = useInspectorWorkspace(userId);
   const sourceLabel =
     workspace.source === "api" ? workspace.lastSyncLabel : "Mock data loaded";
 

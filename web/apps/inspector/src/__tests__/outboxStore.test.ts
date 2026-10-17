@@ -7,9 +7,13 @@ import {
   markOperationApplied,
   markOperationConflict,
   markOperationRejected,
+  outboxStorageKey,
   resolveOperationConflict,
   saveOutbox
 } from "../offline/outboxStore";
+
+const INSPECTOR_A = "inspector-a";
+const INSPECTOR_B = "inspector-b";
 
 beforeEach(() => {
   localStorage.clear();
@@ -35,10 +39,10 @@ describe("outboxStore", () => {
   it("adds an inspection operation and persists it", () => {
     const operation = makeDraftOperation();
 
-    saveOutbox([operation]);
+    saveOutbox(INSPECTOR_A, [operation]);
 
-    expect(loadOutbox().operations).toHaveLength(1);
-    expect(loadOutbox().operations[0]).toMatchObject({
+    expect(loadOutbox(INSPECTOR_A).operations).toHaveLength(1);
+    expect(loadOutbox(INSPECTOR_A).operations[0]).toMatchObject({
       entity: "Inspection",
       entityId: "local-inspection-1",
       status: "pending"
@@ -103,11 +107,11 @@ describe("outboxStore", () => {
 
   it("marks operations applied with the server version", () => {
     const operation = makeDraftOperation();
-    saveOutbox([operation]);
+    saveOutbox(INSPECTOR_A, [operation]);
 
-    markOperationApplied(operation.opId, 3);
+    markOperationApplied(INSPECTOR_A, operation.opId, 3);
 
-    expect(loadOutbox().operations[0]).toMatchObject({
+    expect(loadOutbox(INSPECTOR_A).operations[0]).toMatchObject({
       status: "applied",
       serverVersion: 3
     });
@@ -115,14 +119,14 @@ describe("outboxStore", () => {
 
   it("marks conflicts with current server payload", () => {
     const operation = makeDraftOperation();
-    saveOutbox([operation]);
+    saveOutbox(INSPECTOR_A, [operation]);
 
-    markOperationConflict(operation.opId, {
+    markOperationConflict(INSPECTOR_A, operation.opId, {
       currentVersion: 4,
       payload: { result: "server copy" }
     });
 
-    expect(loadOutbox().operations[0]).toMatchObject({
+    expect(loadOutbox(INSPECTOR_A).operations[0]).toMatchObject({
       status: "conflict",
       currentVersion: 4,
       serverPayload: { result: "server copy" }
@@ -131,11 +135,11 @@ describe("outboxStore", () => {
 
   it("marks rejected operations with the server error", () => {
     const operation = makeDraftOperation();
-    saveOutbox([operation]);
+    saveOutbox(INSPECTOR_A, [operation]);
 
-    markOperationRejected(operation.opId, "Unsupported asset");
+    markOperationRejected(INSPECTOR_A, operation.opId, "Unsupported asset");
 
-    expect(loadOutbox().operations[0]).toMatchObject({
+    expect(loadOutbox(INSPECTOR_A).operations[0]).toMatchObject({
       status: "rejected",
       lastError: "Unsupported asset"
     });
@@ -143,26 +147,50 @@ describe("outboxStore", () => {
 
   it("resolves a conflict by accepting the server state locally", () => {
     const operation = makeDraftOperation();
-    saveOutbox([operation]);
-    markOperationConflict(operation.opId, {
+    saveOutbox(INSPECTOR_A, [operation]);
+    markOperationConflict(INSPECTOR_A, operation.opId, {
       currentVersion: 4,
       payload: { result: "server copy" }
     });
 
-    resolveOperationConflict(operation.opId, "accept-server");
+    resolveOperationConflict(INSPECTOR_A, operation.opId, "accept-server");
 
-    expect(loadOutbox().operations[0]).toMatchObject({
+    expect(loadOutbox(INSPECTOR_A).operations[0]).toMatchObject({
       status: "applied",
       serverVersion: 4
     });
   });
 
   it("resets corrupt stored JSON and reports a warning", () => {
-    localStorage.setItem("bat-hms-inspector-outbox", "{bad");
+    localStorage.setItem(outboxStorageKey(INSPECTOR_A), "{bad");
 
-    expect(loadOutbox()).toMatchObject({
+    expect(loadOutbox(INSPECTOR_A)).toMatchObject({
       operations: [],
       warning: "Local queue was reset because stored data was unreadable."
     });
+  });
+
+  it("keeps offline work private to the authenticated inspector", () => {
+    const operation = makeDraftOperation();
+    saveOutbox(INSPECTOR_A, [operation]);
+
+    expect(loadOutbox(INSPECTOR_B).operations).toEqual([]);
+    expect(loadOutbox(INSPECTOR_B).operations.filter(({ status }) => status === "pending"))
+      .toEqual([]);
+    expect(loadOutbox(INSPECTOR_A).operations).toMatchObject([
+      { opId: operation.opId, entityId: operation.entityId, status: "pending" }
+    ]);
+  });
+
+  it("removes the legacy anonymous queue instead of assigning it to a signed-in user", () => {
+    const operation = makeDraftOperation();
+    localStorage.setItem(
+      "bat-hms-inspector-outbox",
+      JSON.stringify({ operations: [operation] })
+    );
+
+    expect(loadOutbox(INSPECTOR_A).operations).toEqual([]);
+    expect(localStorage.getItem("bat-hms-inspector-outbox")).toBeNull();
+    expect(localStorage.getItem(outboxStorageKey(INSPECTOR_A))).toBeNull();
   });
 });

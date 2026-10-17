@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { BrowserAuthClient } from "../auth/browserAuthClient";
 import { mockBootstrapResponse } from "../data/mockSync";
+import { outboxStorageKey } from "../offline/outboxStore";
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -19,7 +20,10 @@ function createMemoryStorage(): Storage {
   };
 }
 
-function createAuthClient(roles: string[]): BrowserAuthClient {
+function createAuthClient(
+  roles: string[],
+  userId = "inspector-1"
+): BrowserAuthClient {
   return {
     login: vi.fn().mockResolvedValue({
       next_step: "AUTHENTICATED",
@@ -36,7 +40,7 @@ function createAuthClient(roles: string[]): BrowserAuthClient {
     refresh: vi.fn().mockRejectedValue(new Error("No refresh session")),
     logout: vi.fn().mockResolvedValue(undefined),
     me: vi.fn().mockResolvedValue({
-      user_id: "inspector-1",
+      user_id: userId,
       email: "inspector@example.test",
       display_name: "Field Inspector",
       roles
@@ -89,6 +93,49 @@ describe("Inspector app", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Assigned")).not.toBeInTheDocument();
     expect(authClient.logout).toHaveBeenCalledOnce();
+  });
+
+  it("isolates offline work between inspector sessions on a shared browser", async () => {
+    const user = userEvent.setup();
+    const inspectorA = createAuthClient(["INSPECTOR"], "inspector-a");
+    const firstSession = render(<App authClient={inspectorA} />);
+
+    await user.type(screen.getByLabelText("Email"), "a@example.test");
+    await user.type(screen.getByLabelText("Password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.click(
+      await screen.findByRole("button", { name: /open HOS-2024-0891/i })
+    );
+    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+
+    expect(screen.getByText("1 pending")).toBeInTheDocument();
+    expect(localStorage.getItem(outboxStorageKey("inspector-a"))).not.toBeNull();
+
+    firstSession.unmount();
+
+    const inspectorB = createAuthClient(["INSPECTOR"], "inspector-b");
+    const secondSession = render(<App authClient={inspectorB} />);
+
+    await user.type(screen.getByLabelText("Email"), "b@example.test");
+    await user.type(screen.getByLabelText("Password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+
+    expect(await screen.findByText("No queued work")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Push Changes" })).toBeDisabled();
+
+    secondSession.unmount();
+
+    const returnSession = render(<App authClient={createAuthClient(["INSPECTOR"], "inspector-a")} />);
+
+    await user.type(screen.getByLabelText("Email"), "a@example.test");
+    await user.type(screen.getByLabelText("Password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+
+    expect(await screen.findByText("1 pending")).toBeInTheDocument();
+    returnSession.unmount();
   });
 
   it("saves a pressure test draft into the local queue", async () => {

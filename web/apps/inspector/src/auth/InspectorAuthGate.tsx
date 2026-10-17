@@ -28,12 +28,12 @@ type AuthState =
   | { status: "password-change"; challenge: string; message?: string }
   | { status: "mfa-enrollment"; challenge: string; manualKey?: string; message?: string }
   | { status: "mfa-challenge"; challenge: string; recovery: boolean; message?: string }
-  | { status: "recovery-codes"; recoveryCodes: string[] }
-  | { status: "authenticated" }
+  | { status: "recovery-codes"; userId: string; recoveryCodes: string[] }
+  | { status: "authenticated"; userId: string }
   | { status: "access-denied" };
 
 interface InspectorAuthGateProps {
-  children: ReactNode;
+  children: (userId: string) => ReactNode;
   client?: BrowserAuthClient;
   /** Test-only seam. Production authentication always begins with refresh/login. */
   initialAccessToken?: string;
@@ -123,8 +123,8 @@ export function InspectorAuthGate({
       }
       setState(
         recoveryCodes
-          ? { status: "recovery-codes", recoveryCodes }
-          : { status: "authenticated" }
+          ? { status: "recovery-codes", userId: profile.user_id, recoveryCodes }
+          : { status: "authenticated", userId: profile.user_id }
       );
     },
     [client]
@@ -142,7 +142,7 @@ export function InspectorAuthGate({
     let active = true;
     if (initialAccessToken) {
       tokenRef.current = initialAccessToken;
-      setState({ status: "authenticated" });
+      setState({ status: "authenticated", userId: "test-inspector" });
       return () => {
         active = false;
       };
@@ -240,7 +240,7 @@ export function InspectorAuthGate({
   }, [client, signOut]);
 
   if (state.status === "authenticated") {
-    return <>{children}</>;
+    return <>{children(state.userId)}</>;
   }
 
   if (state.status === "access-denied") {
@@ -293,7 +293,7 @@ export function InspectorAuthGate({
         <ul className="inspector-auth__codes">
           {state.recoveryCodes.map((code) => <li key={code}>{code}</li>)}
         </ul>
-        <button className="inspector-auth__button" onClick={() => setState({ status: "authenticated" })} type="button">I saved these codes</button>
+        <button className="inspector-auth__button" onClick={() => setState({ status: "authenticated", userId: state.userId })} type="button">I saved these codes</button>
       </AuthLayout>
     );
   }
