@@ -3,6 +3,7 @@ import type { OutboxOperation } from "../domain/types";
 import { StatusPill } from "./StatusPill";
 
 interface SyncQueueProps {
+  hasPreservedDrafts: boolean;
   outbox: OutboxOperation[];
   isOnline: boolean;
   onPush: () => void;
@@ -42,6 +43,7 @@ function statusLabel(status: OutboxOperation["status"]) {
 }
 
 export function SyncQueue({
+  hasPreservedDrafts,
   outbox,
   isOnline,
   onPush,
@@ -90,6 +92,9 @@ export function SyncQueue({
       </div>
 
       <div className="queue-list">
+        {hasPreservedDrafts ? (
+          <p role="status">A draft was preserved but cannot be submitted. Reconnect or contact scheduling.</p>
+        ) : null}
         {visibleOperations.length === 0 ? (
           <article className="empty-state">
             <CloudUpload aria-hidden="true" size={28} />

@@ -10,6 +10,7 @@ import {
   outboxStorageKey,
   resolveOperationConflict,
   saveOutbox
+  , upsertOutboxOperation
 } from "../offline/outboxStore";
 
 const INSPECTOR_A = "inspector-a";
@@ -36,6 +37,21 @@ function makeDraftOperation() {
 }
 
 describe("outboxStore", () => {
+  it("preserves an old asset update when a later assignment uses the same asset", () => {
+    const oldOperation = createAssetUpdateOperation({
+      assetId: "asset-1", assetNumber: "A", customerName: "Customer", baseVersion: 1,
+      customerSerialNo: "old", tag: "old",
+      workContext: { appointment_id: "a", booking_id: "a", revision_id: "a", assignment_id: "a", asset_id: "asset-1" }
+    });
+    const newOperation = createAssetUpdateOperation({
+      assetId: "asset-1", assetNumber: "A", customerName: "Customer", baseVersion: 1,
+      customerSerialNo: "new", tag: "new",
+      workContext: { appointment_id: "b", booking_id: "b", revision_id: "b", assignment_id: "b", asset_id: "asset-1" }
+    });
+    upsertOutboxOperation(INSPECTOR_A, oldOperation);
+    upsertOutboxOperation(INSPECTOR_A, newOperation);
+    expect(loadOutbox(INSPECTOR_A).operations).toHaveLength(2);
+  });
   it("adds an inspection operation and persists it", () => {
     const operation = makeDraftOperation();
 
@@ -143,6 +159,16 @@ describe("outboxStore", () => {
       status: "rejected",
       lastError: "Unsupported asset"
     });
+  });
+
+  it("retries a conflict with a new key and the server version", () => {
+    const operation = makeDraftOperation();
+    saveOutbox(INSPECTOR_A, [operation]);
+    markOperationConflict(INSPECTOR_A, operation.opId, { currentVersion: 4, payload: {} });
+    resolveOperationConflict(INSPECTOR_A, operation.opId, "keep-local");
+    const resolved = loadOutbox(INSPECTOR_A).operations[0];
+    expect(resolved.baseVersion).toBe(4);
+    expect(resolved.idempotencyKey).not.toBe(operation.idempotencyKey);
   });
 
   it("resolves a conflict by accepting the server state locally", () => {

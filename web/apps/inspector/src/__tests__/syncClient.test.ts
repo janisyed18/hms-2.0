@@ -88,9 +88,22 @@ describe("syncClient", () => {
     });
   });
 
+  it("keeps separate appointment contexts for the same asset", () => {
+    const contexts = ["appointment-a", "appointment-b"].map((appointmentId) => ({
+      appointment_id: appointmentId,
+      booking_id: `booking-${appointmentId}`,
+      revision_id: `revision-${appointmentId}`,
+      assignment_id: `assignment-${appointmentId}`,
+      asset_id: "asset-0891"
+    }));
+    const items = mapBootstrapToWorkItems({ ...mockBootstrapResponse, work_contexts: contexts });
+    expect(items.filter((item) => item.assetId === "asset-0891")).toHaveLength(2);
+  });
+
   it("maps normalized backend sync records into queue-first work items", () => {
     const backendBootstrap: SyncBootstrapResponse = {
       ...mockBootstrapResponse,
+      work_contexts: [{ appointment_id: "appointment-1", booking_id: "booking-1", revision_id: "revision-1", assignment_id: "assignment-1", asset_id: "asset-1" }],
       records: [
         {
           seq: null,
@@ -178,6 +191,7 @@ describe("syncClient", () => {
           payload: {
             id: "inspection-1",
             asset_id: "asset-1",
+            booking_id: "booking-1",
             status: "DRAFT",
             inspection_type: "SERVICE"
           }

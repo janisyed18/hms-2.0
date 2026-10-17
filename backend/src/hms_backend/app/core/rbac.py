@@ -86,6 +86,12 @@ class Principal:
     # claim), used to gate privileged actions on a recent sign-in. None for
     # dev-header identities.
     auth_time: int | None = None
+    # Scheduling references the database user ID, not the authentication subject.
+    record_user_id: str | None = None
+
+    @property
+    def assignment_user_id(self) -> str:
+        return self.record_user_id or self.user_id
 
 
 def has_permission(principal: Principal, permission: Permission) -> bool:

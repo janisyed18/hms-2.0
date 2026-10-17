@@ -1,4 +1,3 @@
-export type DataSource = "api" | "mock";
 
 export type InspectionStatus = "DRAFT" | "SUBMITTED";
 
@@ -23,6 +22,7 @@ export interface PressureTestDraft {
 }
 
 export interface InspectionDraftInput extends PressureTestDraft {
+  workContext?: SyncWorkContext;
   assetId: string;
   assetNumber: string;
   customerName: string;
@@ -34,6 +34,7 @@ export interface InspectionDraftInput extends PressureTestDraft {
 }
 
 export interface AssetUpdateInput {
+  workContext?: SyncWorkContext;
   assetId: string;
   assetNumber: string;
   customerName: string;
@@ -43,6 +44,7 @@ export interface AssetUpdateInput {
 }
 
 export interface PressureTestOperationInput extends PressureTestDraft {
+  workContext?: SyncWorkContext;
   assetId: string;
   assetNumber: string;
   customerName: string;
@@ -52,6 +54,7 @@ export interface PressureTestOperationInput extends PressureTestDraft {
 }
 
 export interface WorkItem {
+  workContext?: SyncWorkContext;
   id: string;
   assetId: string;
   assetNumber: string;
@@ -95,6 +98,15 @@ export interface SyncBootstrapResponse {
   cursor: number;
   has_more: boolean;
   records: SyncRecordRead[];
+  work_contexts?: SyncWorkContext[];
+}
+
+export interface SyncWorkContext {
+  appointment_id: string;
+  booking_id: string;
+  revision_id: string;
+  assignment_id: string;
+  asset_id: string;
 }
 
 export interface SyncChangesResponse {
@@ -121,6 +133,7 @@ export interface SyncPushResponse {
 }
 
 export interface OutboxOperation {
+  workContext?: SyncWorkContext;
   opId: string;
   idempotencyKey: string;
   entity: "Asset" | "Inspection" | "PressureTestResult";

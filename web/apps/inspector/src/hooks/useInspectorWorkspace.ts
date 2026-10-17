@@ -1,16 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  applySyncChangesToRecords,
   createSyncClient,
   mapBootstrapToWorkItems
 } from "../api/syncClient";
-import { mockBootstrapResponse } from "../data/mockSync";
 import type {
-  DataSource,
   InspectionStatus,
   OutboxOperation,
   OutboxState,
   SyncOperationResult,
+  SyncRecordRead,
+  SyncWorkContext,
   WorkItem
 } from "../domain/types";
 import {
@@ -62,6 +61,34 @@ function pendingOperations(operations: OutboxOperation[]) {
   );
 }
 
+function sameWorkContext(left: SyncWorkContext | undefined, right: SyncWorkContext | undefined) {
+  return Boolean(left && right && left.appointment_id === right.appointment_id &&
+    left.booking_id === right.booking_id && left.revision_id === right.revision_id &&
+    left.assignment_id === right.assignment_id && left.asset_id === right.asset_id);
+}
+
+function operationIsAssigned(operation: OutboxOperation, records: SyncRecordRead[], contexts: SyncWorkContext[], localOperations: OutboxOperation[] = []) {
+  const context = operation.workContext;
+  if (!context || operation.assetId !== context.asset_id ||
+      !contexts.some((item) => sameWorkContext(item, context))) return false;
+  const hasRecord = (entity: string, id: string) => records.some(
+    (record) => record.entity === entity && record.entity_id === id && record.op !== "delete"
+  );
+  if (!hasRecord("Asset", operation.assetId)) return false;
+  if (operation.entity === "Inspection" && operation.op !== "create") {
+    return hasRecord("Inspection", operation.entityId);
+  }
+  if (operation.entity === "PressureTestResult") {
+    if (operation.op !== "create") return hasRecord("PressureTestResult", operation.entityId);
+    return typeof operation.payload.inspection_id === "string" &&
+      (hasRecord("Inspection", operation.payload.inspection_id) ||
+       localOperations.some((candidate) => candidate.entity === "Inspection" &&
+         candidate.entityId === operation.payload.inspection_id &&
+         candidate.op === "create" && sameWorkContext(candidate.workContext, context)));
+  }
+  return true;
+}
+
 function applyResultToOutbox(userId: string, result: SyncOperationResult) {
   if (result.status === "applied" && result.version !== null) {
     markOperationApplied(userId, result.op_id, result.version);
@@ -96,12 +123,12 @@ function applyLocalOutboxState(
 
   for (const operation of operations) {
     if (operation.status !== "applied") {
-      localOperationsByAsset.set(operation.assetId, operation);
+      localOperationsByAsset.set(operation.workContext?.assignment_id ?? "", operation);
     }
   }
 
   return workItems.map((item) => {
-    const operation = localOperationsByAsset.get(item.assetId);
+    const operation = localOperationsByAsset.get(item.workContext?.assignment_id ?? "");
     if (!operation) {
       return item;
     }
@@ -116,11 +143,8 @@ function applyLocalOutboxState(
 
 export function useInspectorWorkspace(userId: string) {
   const [view, setView] = useState<InspectorView>("work");
-  const [syncRecords, setSyncRecords] = useState(
-    () => mockBootstrapResponse.records
-  );
-  const [source, setSource] = useState<DataSource>("mock");
-  const [cursor, setCursor] = useState(mockBootstrapResponse.cursor);
+  const [syncRecords, setSyncRecords] = useState<SyncRecordRead[]>([]);
+  const [workContexts, setWorkContexts] = useState<SyncWorkContext[]>([]);
   const [outbox, setOutbox] = useState<OutboxState>(() => loadOutbox(userId));
   const [selectedWorkItem, setSelectedWorkItem] = useState<WorkItem | null>(
     null
@@ -128,56 +152,76 @@ export function useInspectorWorkspace(userId: string) {
   const [isOnline, setIsOnline] = useState(() =>
     typeof navigator === "undefined" ? true : navigator.onLine
   );
-  const [lastSyncLabel, setLastSyncLabel] = useState("Mock data loaded");
+  const [lastSyncLabel, setLastSyncLabel] = useState("Loading assigned work");
+  const [offlineExpiresAt, setOfflineExpiresAt] = useState<number | null>(null);
+  const refreshGeneration = useRef(0);
+
+  const visibleOutbox = useMemo(
+    () => ({ ...outbox, operations: outbox.operations.filter((operation) => operationIsAssigned(operation, syncRecords, workContexts, outbox.operations)) }),
+    [syncRecords, outbox, workContexts]
+  );
 
   const workItems = useMemo(
     () =>
       applyLocalOutboxState(
-        mapBootstrapToWorkItems({ records: syncRecords }),
-        outbox.operations
+        mapBootstrapToWorkItems({ records: syncRecords, work_contexts: workContexts }),
+        visibleOutbox.operations
       ),
-    [outbox.operations, syncRecords]
+    [visibleOutbox.operations, syncRecords, workContexts]
   );
 
   const queuedCount = useMemo(
-    () => pendingOperations(outbox.operations).length,
-    [outbox.operations]
+    () => pendingOperations(visibleOutbox.operations).length,
+    [visibleOutbox.operations]
   );
 
-  useEffect(() => {
-    const syncClient = createSyncClient();
-    let cancelled = false;
-
-    syncClient
-      .bootstrap()
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-        setSyncRecords(response.records);
-        setSource("api");
-        setCursor(response.cursor);
-        setLastSyncLabel("Last sync just now");
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSource("mock");
-          setLastSyncLabel("Mock data loaded");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
+  const refreshAssignments = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
+    const response = await createSyncClient().bootstrap();
+    if (generation !== refreshGeneration.current) {
+      throw new Error("Assignment refresh was superseded");
+    }
+    const contexts = response.work_contexts ?? [];
+    setSyncRecords(response.records);
+    setWorkContexts(contexts);
+    setOfflineExpiresAt(Date.now() + Math.max(0, Math.min(response.device.offline_window_days, 7)) * 86400000);
+    setSelectedWorkItem((item) => item && contexts.some(
+      (context) => sameWorkContext(context, item.workContext)
+    ) ? item : null);
+    setLastSyncLabel("Last sync just now");
+    return response;
   }, []);
+
+  useEffect(() => {
+    void refreshAssignments().catch(() => setLastSyncLabel("Unable to load assigned work"));
+    return () => { refreshGeneration.current += 1; };
+  }, [refreshAssignments]);
+
+  useEffect(() => {
+    if (offlineExpiresAt === null) return;
+    const expire = () => {
+      setSyncRecords([]);
+      setWorkContexts([]);
+      setSelectedWorkItem(null);
+      setLastSyncLabel("Offline access expired; reconnect to refresh assignments");
+    };
+    const timeout = window.setTimeout(expire, Math.max(0, offlineExpiresAt - Date.now()));
+    return () => window.clearTimeout(timeout);
+  }, [offlineExpiresAt]);
 
   useEffect(() => {
     function handleOnline() {
       setIsOnline(true);
+      setSyncRecords([]);
+      setWorkContexts([]);
+      setSelectedWorkItem(null);
+      setLastSyncLabel("Refreshing assignments");
+      void refreshAssignments().catch(() => setLastSyncLabel("Unable to load assigned work"));
     }
 
     function handleOffline() {
       setIsOnline(false);
+      refreshGeneration.current += 1;
     }
 
     window.addEventListener("online", handleOnline);
@@ -187,10 +231,24 @@ export function useInspectorWorkspace(userId: string) {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, []);
+  }, [refreshAssignments]);
 
   function refreshOutbox() {
     setOutbox(loadOutbox(userId));
+  }
+
+  function localInspectionId(item: WorkItem): string {
+    if (item.inspectionId) return item.inspectionId;
+    const matching = loadOutbox(userId).operations.filter((operation) =>
+      sameWorkContext(operation.workContext, item.workContext)
+    );
+    const inspection = matching.find((operation) => operation.entity === "Inspection");
+    if (inspection) return inspection.entityId;
+    const pressure = matching.find((operation) => operation.entity === "PressureTestResult");
+    if (pressure && typeof pressure.payload.inspection_id === "string") {
+      return pressure.payload.inspection_id;
+    }
+    return crypto.randomUUID();
   }
 
   function openWorkItem(item: WorkItem) {
@@ -200,12 +258,11 @@ export function useInspectorWorkspace(userId: string) {
 
   function saveInspection(input: SaveInspectionInput) {
     const operation = createInspectionOperation({
+      workContext: input.workItem.workContext,
       assetId: input.workItem.assetId,
       assetNumber: input.workItem.assetNumber,
       customerName: input.workItem.customerName,
-      inspectionId:
-        input.workItem.inspectionId ??
-        `local-${input.workItem.assetNumber.toLowerCase()}`,
+      inspectionId: localInspectionId(input.workItem),
       baseVersion: input.workItem.inspectionId
         ? input.workItem.serverVersion
         : null,
@@ -224,6 +281,7 @@ export function useInspectorWorkspace(userId: string) {
 
   function queueAssetUpdate(input: QueueAssetUpdateInput) {
     const operation = createAssetUpdateOperation({
+      workContext: input.workItem.workContext,
       assetId: input.workItem.assetId,
       assetNumber: input.workItem.assetNumber,
       customerName: input.workItem.customerName,
@@ -237,13 +295,15 @@ export function useInspectorWorkspace(userId: string) {
   }
 
   function queuePressureTest(input: QueuePressureTestInput) {
-    const inspectionId =
-      input.workItem.inspectionId ??
-      `local-${input.workItem.assetNumber.toLowerCase()}`;
+    const inspectionId = localInspectionId(input.workItem);
     const pressureTestId =
       input.workItem.pressureTestId ??
-      `local-pressure-${input.workItem.assetNumber.toLowerCase()}`;
+      loadOutbox(userId).operations.find((operation) =>
+        operation.entity === "PressureTestResult" &&
+        sameWorkContext(operation.workContext, input.workItem.workContext)
+      )?.entityId ?? crypto.randomUUID();
     const operation = createPressureTestOperation({
+      workContext: input.workItem.workContext,
       assetId: input.workItem.assetId,
       assetNumber: input.workItem.assetNumber,
       customerName: input.workItem.customerName,
@@ -265,9 +325,21 @@ export function useInspectorWorkspace(userId: string) {
       return;
     }
 
-    const queue = pendingOperations(loadOutbox(userId).operations).filter(
+    let permitted: { records: SyncRecordRead[]; work_contexts?: SyncWorkContext[] };
+    try {
+      permitted = await refreshAssignments();
+    } catch {
+      setSyncRecords([]);
+      setWorkContexts([]);
+      setSelectedWorkItem(null);
+      setLastSyncLabel("Unable to verify assignments");
+      return;
+    }
+    const localOperations = loadOutbox(userId).operations;
+    const queue = pendingOperations(localOperations).filter(
       (operation) =>
-        operation.status === "pending" || operation.status === "rejected"
+        operationIsAssigned(operation, permitted.records, permitted.work_contexts ?? []) &&
+        (operation.status === "pending" || operation.status === "rejected")
     );
 
     if (queue.length === 0) {
@@ -284,7 +356,6 @@ export function useInspectorWorkspace(userId: string) {
       for (const item of result.results) {
         applyResultToOutbox(userId, item);
       }
-      setCursor(result.cursor);
       setLastSyncLabel("Last sync just now");
     } catch (error) {
       for (const operation of queue) {
@@ -297,18 +368,24 @@ export function useInspectorWorkspace(userId: string) {
     } finally {
       refreshOutbox();
     }
+    try {
+      await refreshAssignments();
+    } catch {
+      setSyncRecords([]);
+      setWorkContexts([]);
+      setSelectedWorkItem(null);
+      setLastSyncLabel("Unable to load assigned work");
+    }
   }
 
   async function pullChanges() {
     try {
-      const result = await createSyncClient().changes(cursor);
-      setSyncRecords((records) =>
-        applySyncChangesToRecords(records, result.changes)
-      );
-      setCursor(result.cursor);
-      setLastSyncLabel("Last sync just now");
+      setSyncRecords([]);
+      setWorkContexts([]);
+      setSelectedWorkItem(null);
+      await refreshAssignments();
     } catch {
-      setLastSyncLabel("Pull failed; using local data");
+      setLastSyncLabel("Unable to load assigned work");
     }
   }
 
@@ -322,8 +399,10 @@ export function useInspectorWorkspace(userId: string) {
     setView,
     workItems,
     selectedWorkItem,
-    outbox,
-    source,
+    outbox: visibleOutbox,
+    hasPreservedDrafts: pendingOperations(outbox.operations).some(
+      (operation) => !operationIsAssigned(operation, syncRecords, workContexts, outbox.operations)
+    ),
     isOnline,
     lastSyncLabel,
     queuedCount,

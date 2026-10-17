@@ -113,6 +113,7 @@ interface ApiRetestSchedulePayload {
 interface ApiInspectionPayload {
   id: string;
   asset_id: string;
+  booking_id: string | null;
   status: "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
   inspection_type: string;
 }
@@ -310,6 +311,7 @@ function toApiOperation(operation: OutboxOperation) {
     op: operation.op,
     base_version: operation.baseVersion,
     payload: operation.payload
+    , work_context: operation.workContext
   };
 }
 
@@ -341,7 +343,7 @@ function inspectionStatus(status: string | undefined): InspectionStatus | null {
 }
 
 export function mapBootstrapToWorkItems(
-  response: Pick<SyncBootstrapResponse, "records">
+  response: Pick<SyncBootstrapResponse, "records" | "work_contexts">
 ): WorkItem[] {
   const customersById = new Map<string, ApiCustomerSummary>();
   const productsById = new Map<string, ApiProductSummary>();
@@ -402,7 +404,7 @@ export function mapBootstrapToWorkItems(
     if (record.entity === "Inspection") {
       const inspection = asInspectionPayload(record.payload);
       if (inspection) {
-        inspectionsByAsset.set(inspection.asset_id, {
+        inspectionsByAsset.set(`${inspection.asset_id}:${inspection.booking_id}`, {
           payload: inspection,
           version: record.version
         });
@@ -421,9 +423,11 @@ export function mapBootstrapToWorkItems(
   }
 
   return assets
-    .map(({ record, payload }) => {
+    .flatMap(({ record, payload }) => (response.work_contexts ?? [])
+      .filter((context) => context.asset_id === payload.id)
+      .map((context) => {
       const schedule = schedulesByAsset.get(payload.id);
-      const inspection = inspectionsByAsset.get(payload.id);
+      const inspection = inspectionsByAsset.get(`${payload.id}:${context.booking_id}`);
       const pressureTest = inspection
         ? pressureTestsByInspection.get(inspection.payload.id)
         : undefined;
@@ -438,7 +442,8 @@ export function mapBootstrapToWorkItems(
         (payload.location_id ? locationsById.get(payload.location_id) ?? null : null);
 
       return {
-        id: payload.id,
+        id: context.assignment_id,
+        workContext: context,
         assetId: payload.id,
         assetNumber: payload.asset_number,
         customerSerialNo: payload.customer_serial_no,
@@ -457,7 +462,7 @@ export function mapBootstrapToWorkItems(
         pressureTestId: pressureTest?.payload.id ?? null,
         pressureTestVersion: pressureTest?.version ?? null
       } satisfies WorkItem;
-    })
+    }))
     .sort((left, right) => {
       const priority = { overdue: 0, "due-today": 1, draft: 2, synced: 3 };
       return priority[left.urgency] - priority[right.urgency];

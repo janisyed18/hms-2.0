@@ -29,11 +29,20 @@ class SyncRecordRead(BaseModel):
     payload: dict[str, Any] | None
 
 
+class SyncWorkContext(BaseModel):
+    appointment_id: str
+    booking_id: str
+    revision_id: str
+    assignment_id: str
+    asset_id: str
+
+
 class SyncBootstrapResponse(BaseModel):
     device: SyncDeviceRead
     cursor: int
     has_more: bool = False
     records: list[SyncRecordRead]
+    work_contexts: list[SyncWorkContext] = Field(default_factory=list)
 
 
 class SyncChangesResponse(BaseModel):
@@ -50,6 +59,7 @@ class SyncOperationWrite(BaseModel):
     op: Literal["create", "update", "delete"]
     base_version: int | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+    work_context: SyncWorkContext | None = None
 
 
 class SyncPushRequest(BaseModel):
@@ -66,6 +76,7 @@ class SyncOperationResult(BaseModel):
     current_version: int | None = None
     payload: dict[str, Any] | None = None
     error: str | None = None
+    error_code: str | None = None
 
 
 class SyncPushResponse(BaseModel):

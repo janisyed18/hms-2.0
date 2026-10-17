@@ -25,8 +25,7 @@ export default function App({ authClient, initialAccessToken }: AppProps = {}) {
 
 function InspectorWorkspace({ userId }: { userId: string }) {
   const workspace = useInspectorWorkspace(userId);
-  const sourceLabel =
-    workspace.source === "api" ? workspace.lastSyncLabel : "Mock data loaded";
+  const sourceLabel = workspace.lastSyncLabel;
 
   let content;
 
@@ -48,6 +47,7 @@ function InspectorWorkspace({ userId }: { userId: string }) {
   } else if (workspace.view === "queue") {
     content = (
       <SyncQueue
+        hasPreservedDrafts={workspace.hasPreservedDrafts}
         isOnline={workspace.isOnline}
         onPull={workspace.pullChanges}
         onPush={workspace.pushQueuedOperations}

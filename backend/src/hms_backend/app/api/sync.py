@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Annotated, Any, Protocol, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
@@ -18,9 +20,16 @@ from hms_backend.app.api.sync_schemas import (
     SyncPushRequest,
     SyncPushResponse,
     SyncRecordRead,
+    SyncWorkContext,
 )
 from hms_backend.app.core.audit import normalise_for_json
 from hms_backend.app.core.config import settings
+from hms_backend.app.core.inspector_access import (
+    assigned_assets,
+    assigned_bookings,
+    is_inspector_scoped,
+    lock_assigned_bookings,
+)
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
@@ -38,6 +47,10 @@ from hms_backend.app.modules.customers.models import (
 )
 from hms_backend.app.modules.inspections.models import (
     Inspection,
+    InspectionAppointment,
+    InspectionAppointmentRevision,
+    InspectionBooking,
+    InspectionBookingAsset,
     InspectionStatus,
     PressureTestResult,
 )
@@ -69,8 +82,7 @@ class SyncableRow(Protocol):
     version: int
     deleted_at: datetime | None
 
-    def to_audit_dict(self) -> dict[str, object | None]:
-        ...
+    def to_audit_dict(self) -> dict[str, object | None]: ...
 
 
 SYNC_MODELS: dict[str, type[Any]] = {
@@ -141,11 +153,13 @@ async def sync_bootstrap(
     )
     cursor = await _max_sync_seq(session)
     records = await _bootstrap_records(session, principal)
+    work_contexts = await _inspector_work_contexts(session, principal)
     await session.commit()
     return SyncBootstrapResponse(
         device=_device_read(device),
         cursor=cursor,
         records=records,
+        work_contexts=work_contexts,
     )
 
 
@@ -197,16 +211,21 @@ async def sync_push(
     app_version: AppVersionHeader = None,
 ) -> SyncPushResponse:
     _require_sync_push(principal)
-    await _upsert_sync_device(
+    device = await _upsert_sync_device(
         session,
         principal,
         device_id=device_id,
         platform=platform,
         app_version=app_version,
     )
+    await lock_assigned_bookings(session, principal)
     results: list[SyncOperationResult] = []
     for operation in payload.operations:
-        results.append(await _apply_idempotent_operation(session, principal, operation))
+        results.append(
+            await _apply_idempotent_operation(
+                session, principal, operation, device.device_id
+            )
+        )
     await session.commit()
     return SyncPushResponse(cursor=await _max_sync_seq(session), results=results)
 
@@ -303,9 +322,7 @@ async def _bootstrap_records(
         model = SYNC_MODELS[entity_name]
         rows = (
             await session.scalars(
-                select(model)
-                .where(model.deleted_at.is_(None))
-                .order_by(model.id)
+                select(model).where(model.deleted_at.is_(None)).order_by(model.id)
             )
         ).all()
         for row in rows:
@@ -335,11 +352,7 @@ async def _visible_change_records(
         if not await _row_visible(session, principal, change.entity, change.entity_id):
             continue
         row = await _get_sync_row(session, change.entity, change.entity_id)
-        is_delete = (
-            row is None
-            or row.deleted_at is not None
-            or change.op == "delete"
-        )
+        is_delete = row is None or row.deleted_at is not None or change.op == "delete"
         records.append(
             SyncRecordRead(
                 seq=change.seq,
@@ -376,6 +389,66 @@ async def _row_visible(
 ) -> bool:
     if entity_name in UNSCOPED_ENTITIES:
         return True
+    if is_inspector_scoped(principal):
+        if entity_name == "Asset":
+            return entity_id in set(
+                (await session.scalars(assigned_assets(principal))).all()
+            )
+        if entity_name == "Customer":
+            return bool(
+                await session.scalar(
+                    select(InspectionBooking.id)
+                    .where(
+                        InspectionBooking.id.in_(assigned_bookings(principal)),
+                        InspectionBooking.customer_id == entity_id,
+                    )
+                    .limit(1)
+                )
+            )
+        if entity_name == "CustomerLocation":
+            return bool(
+                await session.scalar(
+                    select(InspectionBooking.id)
+                    .where(
+                        InspectionBooking.id.in_(assigned_bookings(principal)),
+                        InspectionBooking.location_id == entity_id,
+                    )
+                    .limit(1)
+                )
+            )
+        if entity_name == "RetestSchedule":
+            return bool(
+                await session.scalar(
+                    select(RetestSchedule.id)
+                    .where(
+                        RetestSchedule.id == entity_id,
+                        RetestSchedule.asset_id.in_(assigned_assets(principal)),
+                    )
+                    .limit(1)
+                )
+            )
+        if entity_name == "Inspection":
+            return bool(
+                await session.scalar(
+                    select(Inspection.id)
+                    .where(
+                        Inspection.id == entity_id,
+                        Inspection.booking_id.in_(assigned_bookings(principal)),
+                        Inspection.asset_id.in_(assigned_assets(principal)),
+                    )
+                    .limit(1)
+                )
+            )
+        if entity_name == "PressureTestResult":
+            inspection_id = await session.scalar(
+                select(PressureTestResult.inspection_id).where(
+                    PressureTestResult.id == entity_id,
+                )
+            )
+            return inspection_id is not None and await _row_visible(
+                session, principal, "Inspection", inspection_id
+            )
+        return False
     customer_id = await _customer_id_for_entity(session, entity_name, entity_id)
     if customer_id is None:
         return False
@@ -438,20 +511,196 @@ async def _customer_id_for_entity(
     return None
 
 
+async def _inspector_work_contexts(
+    session: AsyncSession, principal: Principal
+) -> list[SyncWorkContext]:
+    if not is_inspector_scoped(principal):
+        return []
+    rows = (
+        await session.execute(
+            select(
+                InspectionAppointment.id,
+                InspectionAppointment.booking_id,
+                InspectionAppointmentRevision.id,
+                InspectionBookingAsset.id,
+                InspectionBookingAsset.asset_id,
+            )
+            .join(
+                InspectionAppointmentRevision,
+                InspectionAppointmentRevision.appointment_id
+                == InspectionAppointment.id,
+            )
+            .join(
+                InspectionBookingAsset,
+                InspectionBookingAsset.booking_id == InspectionAppointment.booking_id,
+            )
+            .where(
+                InspectionAppointment.booking_id.in_(assigned_bookings(principal)),
+                InspectionAppointmentRevision.revision_number
+                == InspectionAppointment.current_revision_number,
+                InspectionAppointmentRevision.inspector_user_id
+                == principal.assignment_user_id,
+                InspectionAppointmentRevision.deleted_at.is_(None),
+                InspectionBookingAsset.deleted_at.is_(None),
+            )
+        )
+    ).all()
+    return [
+        SyncWorkContext(
+            appointment_id=a, booking_id=b, revision_id=r, assignment_id=i, asset_id=s
+        )
+        for a, b, r, i, s in rows
+    ]
+
+
 async def _apply_idempotent_operation(
     session: AsyncSession,
     principal: Principal,
     operation: SyncOperationWrite,
+    device_id: str,
 ) -> SyncOperationResult:
-    existing_key = await session.get(IdempotencyKey, operation.idempotency_key)
+    key = operation.idempotency_key
+    fingerprint = ""
+    if is_inspector_scoped(principal):
+        context = operation.work_context
+        if context is None:
+            return _rejected(
+                operation, "A work context is required", "WORK_CONTEXT_STALE"
+            )
+        allowed = await _inspector_work_contexts(session, principal)
+        if context not in allowed:
+            return _rejected(
+                operation, "Work context is no longer valid", "WORK_CONTEXT_STALE"
+            )
+        if operation.entity == "Asset" and operation.entity_id != context.asset_id:
+            return _rejected(
+                operation, "Asset is outside the assignment", "ASSET_SCOPE_CHANGED"
+            )
+        if operation.entity == "Inspection" and operation.op == "create":
+            if _string_payload(operation, "asset_id") != context.asset_id:
+                return _rejected(
+                    operation, "Asset is outside the assignment", "ASSET_SCOPE_CHANGED"
+                )
+        if operation.entity == "Inspection" and operation.op != "create":
+            inspection = await session.get(Inspection, operation.entity_id)
+            appointment = await session.get(
+                InspectionAppointment, context.appointment_id
+            )
+            if (
+                inspection is None
+                or appointment is None
+                or (
+                    inspection.booking_id != appointment.booking_id
+                    or inspection.asset_id != context.asset_id
+                )
+            ):
+                return _rejected(
+                    operation,
+                    "Inspection is outside the assignment",
+                    "WORK_CONTEXT_STALE",
+                )
+        if operation.entity == "PressureTestResult":
+            pressure = await session.get(PressureTestResult, operation.entity_id)
+            inspection_id = (
+                _string_payload(operation, "inspection_id")
+                if operation.op == "create"
+                else pressure.inspection_id
+                if pressure
+                else None
+            )
+            inspection = (
+                await session.get(Inspection, inspection_id) if inspection_id else None
+            )
+            appointment = await session.get(
+                InspectionAppointment, context.appointment_id
+            )
+            if (
+                inspection is None
+                or appointment is None
+                or (
+                    inspection.booking_id != appointment.booking_id
+                    or inspection.asset_id != context.asset_id
+                )
+            ):
+                return _rejected(
+                    operation,
+                    "Inspection is outside the assignment",
+                    "WORK_CONTEXT_STALE",
+                )
+        fingerprint = sha256(
+            json.dumps(
+                {
+                    "user_id": principal.user_id,
+                    "device_id": device_id,
+                    "entity": operation.entity,
+                    "entity_id": operation.entity_id,
+                    "operation": operation.op,
+                    "base_version": operation.base_version,
+                    "work_context": context.model_dump(mode="json"),
+                    "payload": operation.payload,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode()
+        ).hexdigest()
+        if operation.entity == "Asset":
+            visible = await _row_visible(
+                session, principal, "Asset", operation.entity_id
+            )
+        elif operation.entity == "Inspection" and operation.op == "create":
+            asset_id = _string_payload(operation, "asset_id")
+            visible = asset_id is not None and await _row_visible(
+                session, principal, "Asset", asset_id
+            )
+        elif operation.entity == "PressureTestResult" and operation.op == "create":
+            inspection_id = _string_payload(operation, "inspection_id")
+            visible = inspection_id is not None and await _row_visible(
+                session, principal, "Inspection", inspection_id
+            )
+        else:
+            visible = await _row_visible(
+                session, principal, operation.entity, operation.entity_id
+            )
+        if not visible:
+            return _rejected(operation, "Record is not visible for sync push")
+        key = (
+            "inspector:"
+            + sha256(
+                (principal.user_id + "\0" + operation.idempotency_key).encode()
+            ).hexdigest()
+        )
+    existing_key = await session.get(IdempotencyKey, key)
     if existing_key is not None and existing_key.result_json is not None:
-        return SyncOperationResult.model_validate(existing_key.result_json)
+        saved = existing_key.result_json
+        if is_inspector_scoped(principal):
+            if saved.get("fingerprint") != fingerprint:
+                return _rejected(
+                    operation, "Idempotency key was reused", "IDEMPOTENCY_KEY_REUSED"
+                )
+            saved = cast(dict[str, object], saved.get("result"))
+        cached = SyncOperationResult.model_validate(saved)
+        if is_inspector_scoped(principal):
+            if (
+                cached.entity != operation.entity
+                or cached.entity_id != operation.entity_id
+            ):
+                return _rejected(operation, "Idempotency key belongs to another record")
+            if cached.payload is not None and not await _row_visible(
+                session, principal, cached.entity, cached.entity_id
+            ):
+                return _rejected(operation, "Record is not visible for sync push")
+        return cached
 
     result = await _apply_sync_operation(session, principal, operation)
     session.add(
         IdempotencyKey(
-            key=operation.idempotency_key,
-            result_json=result.model_dump(mode="json"),
+            key=key,
+            result_json=(
+                {"fingerprint": fingerprint, "result": result.model_dump(mode="json")}
+                if is_inspector_scoped(principal)
+                else result.model_dump(mode="json")
+            ),
         )
     )
     await session.flush()
@@ -542,13 +791,37 @@ async def _create_inspection_from_sync(
     if asset is None:
         return _rejected(operation, "Asset is not visible for sync push")
 
+    booking_id = None
+    if is_inspector_scoped(principal):
+        assert operation.work_context is not None
+        appointment = await session.get(
+            InspectionAppointment, operation.work_context.appointment_id
+        )
+        assert appointment is not None
+        booking_id = appointment.booking_id
+        existing_assigned_inspection = await session.scalar(
+            select(Inspection.id)
+            .where(
+                Inspection.booking_id == booking_id,
+                Inspection.asset_id == asset_id,
+                Inspection.deleted_at.is_(None),
+            )
+            .limit(1)
+        )
+        if existing_assigned_inspection is not None:
+            return _rejected(operation, "The assignment already has an inspection")
     inspection = Inspection(
         id=operation.entity_id,
         asset=asset,
+        booking_id=booking_id,
         inspection_type=inspection_type,
         status=InspectionStatus.DRAFT.value,
         result=_optional_string_payload(operation, "result"),
-        inspector_user_id=principal.user_id,
+        inspector_user_id=(
+            principal.assignment_user_id
+            if is_inspector_scoped(principal)
+            else principal.user_id
+        ),
     )
     session.add(inspection)
     await record_create(
@@ -742,6 +1015,10 @@ async def _visible_asset_or_none(
     asset = await session.get(Asset, asset_id)
     if asset is None or asset.deleted_at is not None:
         return None
+    if is_inspector_scoped(principal) and not await _row_visible(
+        session, principal, "Asset", asset_id
+    ):
+        return None
     if (
         is_customer_scoped(principal)
         and asset.customer_id not in principal.customer_ids
@@ -757,6 +1034,10 @@ async def _visible_inspection_or_none(
 ) -> Inspection | None:
     inspection = await session.get(Inspection, inspection_id)
     if inspection is None or inspection.deleted_at is not None:
+        return None
+    if is_inspector_scoped(principal) and not await _row_visible(
+        session, principal, "Inspection", inspection_id
+    ):
         return None
     asset = await session.get(Asset, inspection.asset_id)
     if asset is None or asset.deleted_at is not None:
@@ -875,13 +1156,16 @@ def _conflict(
     )
 
 
-def _rejected(operation: SyncOperationWrite, reason: str) -> SyncOperationResult:
+def _rejected(
+    operation: SyncOperationWrite, reason: str, code: str | None = None
+) -> SyncOperationResult:
     return SyncOperationResult(
         op_id=operation.op_id,
         idempotency_key=operation.idempotency_key,
         entity=operation.entity,
         entity_id=operation.entity_id,
         status="rejected",
+        error_code=code,
         error=reason,
     )
 
