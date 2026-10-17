@@ -20,7 +20,7 @@ output "staff_url" {
 
 output "inspector_url" {
   description = "Temporary CloudFront URL for the inspector app."
-  value       = "https://${aws_cloudfront_distribution.inspector.domain_name}"
+  value       = local.inspector_public_url
 }
 
 output "media_bucket" {
