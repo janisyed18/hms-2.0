@@ -31,8 +31,10 @@ jobs:
   review:
     name: Review reviewed infrastructure plan
     runs-on: ubuntu-latest
-    # Holds the plan decryption key, so it sits behind the same protected
-    # environment (independent required reviewer) as Apply.
+    # Holds the plan decryption key, so it uses the same protected environment as
+    # Apply. DEV runs under the single-maintainer exception documented in
+    # docs/aws/dev-deployment.md (no independent environment reviewer); staging and
+    # production must require an independent reviewer and prevent self-review.
     environment: aws-dev
 
     steps:
