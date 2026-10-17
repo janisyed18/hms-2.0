@@ -68,6 +68,18 @@ locals {
   pki_root_ca_cert_secret_arn = aws_secretsmanager_secret.pki_root_ca_cert.arn
   pki_signer_secret_arn       = aws_secretsmanager_secret.pki_signer.arn
   pki_root_ca_key_secret_arn  = aws_secretsmanager_secret.pki_root_ca_key.arn
+
+  # Bootstrap-managed (outside this state) Terraform execution role. Referenced
+  # by ARN only so the secret policies can deny it key-material access too.
+  terraform_execution_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${local.name}-github-actions-terraform"
+  pki_value_access_actions = [
+    "secretsmanager:GetSecretValue",
+    "secretsmanager:PutSecretValue",
+    "secretsmanager:UpdateSecret",
+    "secretsmanager:RestoreSecret",
+    "secretsmanager:ReplicateSecretToRegions",
+    "secretsmanager:UpdateSecretVersionStage",
+  ]
   notification_ses_configuration_set_name = (
     var.notification_ses_configuration_set_name != ""
     ? var.notification_ses_configuration_set_name
@@ -701,6 +713,19 @@ resource "aws_secretsmanager_secret_policy" "pki_root_ca_key" {
             ]
           }
         }
+      },
+      {
+        # Terraform manages the container and this policy, never the value.
+        Sid       = "DenyTerraformKeyMaterialAccess"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = local.pki_value_access_actions
+        Resource  = "*"
+        Condition = {
+          ArnEquals = {
+            "aws:PrincipalArn" = [local.terraform_execution_role_arn]
+          }
+        }
       }
     ]
   })
@@ -726,6 +751,18 @@ resource "aws_secretsmanager_secret_policy" "pki_signer" {
               aws_iam_role.ecs_task_certificate_engine.arn,
               aws_iam_role.github_actions_deploy.arn,
             ]
+          }
+        }
+      },
+      {
+        Sid       = "DenyTerraformKeyMaterialAccess"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = local.pki_value_access_actions
+        Resource  = "*"
+        Condition = {
+          ArnEquals = {
+            "aws:PrincipalArn" = [local.terraform_execution_role_arn]
           }
         }
       }

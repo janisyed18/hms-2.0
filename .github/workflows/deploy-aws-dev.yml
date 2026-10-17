@@ -144,6 +144,54 @@ jobs:
             exit 1
           fi
 
+          # The certificate engine must be running with the PKI wired in, or every
+          # issuance would be refused. Its own startup validation then gives the
+          # post-deploy stability wait real signal.
+          engine_desired="$(
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_CERTIFICATE_ENGINE_SERVICE" \
+              --query 'services[0].desiredCount' \
+              --output text
+          )"
+          if [ "$engine_desired" = "None" ] || [ "${engine_desired:-0}" -lt 1 ]; then
+            echo "The certificate engine service has desired count ${engine_desired}. Set certificate_engine_desired_count to at least 1 (reviewed Terraform apply) before releasing the API." >&2
+            exit 1
+          fi
+          engine_task_definition="$(
+            aws ecs describe-services \
+              --cluster "$ECS_CLUSTER" \
+              --services "$ECS_CERTIFICATE_ENGINE_SERVICE" \
+              --query 'services[0].taskDefinition' \
+              --output text
+          )"
+          engine_container="taskDefinition.containerDefinitions[?name=='certificate-engine'] | [0]"
+          autogenerate="$(
+            aws ecs describe-task-definition \
+              --task-definition "$engine_task_definition" \
+              --query "${engine_container}.environment[?name=='HMS_CERT_DEV_AUTOGENERATE_SIGNER'].value | [0]" \
+              --output text
+          )"
+          if [ "$autogenerate" != "false" ]; then
+            echo "The certificate engine task definition must set HMS_CERT_DEV_AUTOGENERATE_SIGNER=false." >&2
+            exit 1
+          fi
+          engine_secrets="$(
+            aws ecs describe-task-definition \
+              --task-definition "$engine_task_definition" \
+              --query "${engine_container}.secrets[].name" \
+              --output text
+          )"
+          for required in HMS_PKI_SIGNER_CERT_PEM HMS_PKI_SIGNER_KEY_PEM HMS_PKI_ROOT_CA_PEM; do
+            case " $engine_secrets " in
+              *[[:space:]]"$required"[[:space:]]*) ;;
+              *)
+                echo "The certificate engine task definition does not inject $required." >&2
+                exit 1
+                ;;
+            esac
+          done
+
       - name: Login to Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2

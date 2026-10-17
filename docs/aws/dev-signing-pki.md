@@ -26,6 +26,7 @@ HMS DEV Certificate Signer   (RSA 3072, 825 days, issued by the root)
 | backend execution/task roles | denied | denied | read |
 | certificate engine execution role | denied | read | read |
 | certificate engine task role | denied | denied | none |
+| Terraform execution role | denied (explicit Deny, identity and resource policy) | denied (same) | read; writes denied |
 | GitHub deploy role | denied | denied (`DescribeSecret` metadata only) | `DescribeSecret` metadata only |
 | PKI provisioner (MFA, optional role or admin session) | read/write | read/write | read/write |
 
@@ -40,6 +41,13 @@ private, enters Terraform state or plan output.**
 
 The order matters: ECS will not start a task whose secret has no value.
 
+0. **Update the bootstrap Terraform-role policies** (SSO administrator; see
+   [`bootstrap-terraform-role.md`](bootstrap-terraform-role.md#reviewed-policy-update-signing-pki)).
+   This is a prerequisite for the first Plan that includes the PKI resources: it lets
+   the role manage the secret resource policies and the new engine roles, and adds
+   identity-policy **Denies** so the Terraform role can never read or write the root
+   key or signer value, nor change the trust anchor value. Verify with the
+   `simulate-principal-policy` commands in that document before planning.
 1. **Apply infrastructure with `pki_enabled = false`** (the default). This creates
    the secrets, roles and policies and the engine task definition. Backend tasks do
    not reference the trust anchor yet, so nothing wedges. Review the plan first.
@@ -50,7 +58,11 @@ The order matters: ECS will not start a task whose secret has no value.
 5. Set `certificate_engine_desired_count` to `1` (reviewed apply). The engine starts
    only if its material validates.
 6. Only then run **Deploy AWS Dev**. Its preflight checks that both secrets hold a
-   current value and that the API task definition injects the trust anchor.
+   current value, that the API task definition injects the trust anchor, that the
+   certificate engine service has a desired count of at least 1, and that its task
+   definition sets `HMS_CERT_DEV_AUTOGENERATE_SIGNER=false` and injects the signer
+   certificate, signer key and root CA secrets. The post-deploy stability wait then
+   exercises the engine's own startup validation.
 
 ## Provision (first time)
 
