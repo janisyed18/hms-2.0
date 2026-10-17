@@ -19,6 +19,10 @@ beat_desired_count         = 1
 enable_deletion_protection = false
 auth_mfa_key_version       = 1
 
+# The certificate engine signs certificates and needs the provisioned signing PKI
+# and the hardened engine image in ECR (see docs/aws/dev-signing-pki.md).
+certificate_engine_desired_count = 1
+
 # Keep all six values empty to retain the temporary CloudFront development URLs.
 # For production, request and DNS-validate the ALB certificate in ap-southeast-2
 # and the CloudFront certificate in us-east-1 before setting these values.

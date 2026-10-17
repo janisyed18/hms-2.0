@@ -104,9 +104,9 @@ variable "beat_desired_count" {
 }
 
 variable "certificate_engine_desired_count" {
-  description = "Desired count for the certificate engine ECS service. Zero pauses certificate rendering in dev."
+  description = "Desired count for the certificate engine ECS service. Certificate issuance needs the engine running; zero pauses certificate rendering and signing in dev. The engine validates its signing material at startup and exits if it is wrong, so raise this only once the signing PKI is provisioned and the hardened engine image is in ECR."
   type        = number
-  default     = 0
+  default     = 1
 }
 
 variable "pki_enabled" {
