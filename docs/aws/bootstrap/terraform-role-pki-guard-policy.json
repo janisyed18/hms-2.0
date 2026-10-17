@@ -38,6 +38,16 @@
         "secretsmanager:UpdateSecretVersionStage"
       ],
       "Resource": "arn:aws:secretsmanager:ap-southeast-2:558215002582:secret:hms-dev-pki-root-ca-cert-*"
+    },
+    {
+      "Sid": "NeverDeletePkiSecretContainers",
+      "Effect": "Deny",
+      "Action": "secretsmanager:DeleteSecret",
+      "Resource": [
+        "arn:aws:secretsmanager:ap-southeast-2:558215002582:secret:hms-dev-pki-root-ca-key-*",
+        "arn:aws:secretsmanager:ap-southeast-2:558215002582:secret:hms-dev-pki-signer-*",
+        "arn:aws:secretsmanager:ap-southeast-2:558215002582:secret:hms-dev-pki-root-ca-cert-*"
+      ]
     }
   ]
 }

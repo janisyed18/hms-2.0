@@ -90,8 +90,10 @@ includes the PKI resources. It changes one existing policy and adds one:
   *resource policy* actions on `hms-dev-pki-*` only, and carries explicit **Denies**
   so the Terraform role can never read or change the signing key material:
   `GetSecretValue`/`PutSecretValue`/`UpdateSecret` and related on the root CA key and
-  signer secrets, and any write to the root CA certificate (the trust anchor). An
-  identity-policy Deny holds even if a secret resource policy is later altered.
+  signer secrets, any write to the root CA certificate (the trust anchor), and
+  `DeleteSecret` on all three PKI secrets (`prevent_destroy` only guards Terraform,
+  not a direct API call; deleting a trust root needs a deliberate administrator
+  action). An identity-policy Deny holds even if a secret resource policy is later altered.
 
 ```bash
 ROLE_NAME=hms-dev-github-actions-terraform
@@ -122,6 +124,14 @@ for ARN in \
   aws iam simulate-principal-policy --policy-source-arn "$ROLE_ARN" \
     --action-names secretsmanager:GetSecretValue secretsmanager:PutSecretValue \
     --resource-arns "$ARN" \
+    --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text
+done   # every line must read explicitDeny
+for ARN in \
+  "arn:aws:secretsmanager:ap-southeast-2:${ACCOUNT_ID}:secret:hms-dev-pki-root-ca-key-AbCdEf" \
+  "arn:aws:secretsmanager:ap-southeast-2:${ACCOUNT_ID}:secret:hms-dev-pki-signer-AbCdEf" \
+  "arn:aws:secretsmanager:ap-southeast-2:${ACCOUNT_ID}:secret:hms-dev-pki-root-ca-cert-AbCdEf"; do
+  aws iam simulate-principal-policy --policy-source-arn "$ROLE_ARN" \
+    --action-names secretsmanager:DeleteSecret --resource-arns "$ARN" \
     --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text
 done   # every line must read explicitDeny
 aws iam simulate-principal-policy --policy-source-arn "$ROLE_ARN" \
