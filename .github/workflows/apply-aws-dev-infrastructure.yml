@@ -37,12 +37,12 @@ jobs:
     if: ${{ inputs.apply_infrastructure }}
     runs-on: ubuntu-latest
     # DEV runs under the single-maintainer exception documented in
-    # docs/aws/dev-deployment.md: GitHub cannot provide an independent reviewer
-    # for this environment, so the gate before this job is the technical review of
-    # the exact plan (Review AWS Dev Infrastructure Plan) plus the operator's
-    # explicit decision to dispatch it. Staging and production must instead
-    # configure an independent required reviewer, prevent self-review and disable
-    # administrator bypass.
+    # docs/aws/dev-deployment.md: there is no independent Environment reviewer.
+    # Before an operator dispatches Apply, the DEV release process requires the
+    # exact plan to be technically reviewed with Review AWS Dev Infrastructure Plan
+    # and an explicit Apply decision. Apply does not independently verify a Review
+    # run. Staging and production must require an independent reviewer, prevent
+    # self-review and disable administrator bypass.
     environment: aws-dev
 
     steps:
