@@ -42,7 +42,8 @@ class CertificateEngineClient:
                 )
         except grpc.aio.AioRpcError as exc:  # pragma: no cover - network path
             raise CertificateEngineError(
-                f"certificate engine call failed ({exc.code().name}): {exc.details()}"
+                f"certificate engine call failed "
+                f"({exc.code().name}): {exc.details()}"
             ) from exc
 
         return RenderedCertificate(
