@@ -2542,7 +2542,12 @@ async def create_inspection(
         )
 
     await session.commit()
-    return _inspection_read(inspection)
+    # A just-created Inspection has no relationships loaded (``pressure_test`` is
+    # unset when none was supplied), and the session does not expire on commit, so
+    # serialising it directly lazy-loads outside an async greenlet. Reload it with
+    # the eager-loading query, as ``update_inspection`` does.
+    loaded = await _get_inspection_or_404(session, inspection.id, principal)
+    return _inspection_read(loaded)
 
 
 @router.patch("/inspections/{inspection_id}", response_model=InspectionRead)

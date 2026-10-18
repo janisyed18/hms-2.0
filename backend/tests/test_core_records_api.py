@@ -2735,6 +2735,63 @@ async def test_create_service_inspection_with_pressure_test_writes_audit_and_syn
 
 
 @pytest.mark.asyncio
+async def test_create_inspection_without_pressure_test_returns_the_draft(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+    inspector_assignment: str,
+) -> None:
+    """Omitting pressure_test must not lazy-load an unset relationship (500).
+
+    A newly created Inspection has no ``pressure_test`` / ``certificate`` loaded;
+    serialising it straight after the commit touched them outside an async greenlet
+    (``MissingGreenlet``). The response is built from a freshly loaded row instead.
+    """
+    principal = Principal(
+        user_id="inspector-1",
+        roles=frozenset({Role.INSPECTOR}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.post(
+            f"/api/v1/assets/{seeded_session['vopak_asset_id']}/inspections",
+            json={"inspection_type": "SERVICE", "result": "PASS"},
+        )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["asset_id"] == seeded_session["vopak_asset_id"]
+    assert body["status"] == "DRAFT"
+    assert body["result"] == "PASS"
+    assert body["pressure_test"] is None
+    assert body["customer"]["id"] == seeded_session["vopak_id"]
+
+    async with session_factory() as session:
+        inspection = (
+            await session.scalars(
+                select(Inspection).where(
+                    Inspection.asset_id == seeded_session["vopak_asset_id"]
+                )
+            )
+        ).one()
+        assert inspection.id == body["id"]
+        assert (
+            await session.scalars(
+                select(PressureTestResult).where(
+                    PressureTestResult.inspection_id == inspection.id
+                )
+            )
+        ).first() is None
+        actions = [
+            event.action
+            for event in (await session.scalars(select(AuditEvent))).all()
+            if event.entity_id == inspection.id
+        ]
+        assert actions == ["inspection.created"]
+
+
+
+@pytest.mark.asyncio
 async def test_customer_booking_approval_creates_per_asset_drafts(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
