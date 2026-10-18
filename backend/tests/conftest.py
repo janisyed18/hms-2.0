@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from zoneinfo import reset_tzpath
+import os
+
+# Local/test operation must be selected explicitly: an unset ENVIRONMENT is treated
+# as an under-configured deployment (see Settings.auth_config_errors). Set before any
+# application module builds the global ``settings``.
+os.environ.setdefault("ENVIRONMENT", "test")
+
+from zoneinfo import reset_tzpath  # noqa: E402
 
 import pytest
 

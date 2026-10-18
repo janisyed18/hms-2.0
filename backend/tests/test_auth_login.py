@@ -35,6 +35,8 @@ async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
 @pytest.fixture(autouse=True)
 def _configure_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_bearer_hmac_secret", _SECRET)
+    # The legacy login is off by default; these tests exercise it deliberately.
+    monkeypatch.setattr(settings, "auth_password_login_enabled", True)
 
 
 @pytest_asyncio.fixture
@@ -143,9 +145,7 @@ async def test_change_own_password(
 @pytest.mark.asyncio
 async def test_admin_set_password(session_factory: SessionFactory) -> None:
     async with session_factory() as session:
-        member = User(
-            oidc_subject="m2", email="m2@example.com", role="INSPECTOR"
-        )
+        member = User(oidc_subject="m2", email="m2@example.com", role="INSPECTOR")
         admin = User(oidc_subject="a2", email="a2@example.com", role="HMS_ADMIN")
         session.add_all([member, admin])
         await session.commit()
@@ -183,3 +183,26 @@ async def test_admin_set_password_requires_permission(
             json={"new_password": "should-be-forbidden"},
         )
     assert r.status_code == 403
+
+
+def test_legacy_password_login_is_off_by_default() -> None:
+    from hms_backend.app.core.config import Settings
+
+    assert Settings.model_fields["auth_password_login_enabled"].default is False
+
+
+@pytest.mark.asyncio
+async def test_login_is_refused_unless_deliberately_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    session_factory: SessionFactory,
+    users: dict[str, str],
+) -> None:
+    monkeypatch.setattr(settings, "auth_password_login_enabled", False)
+    async with _client(session_factory) as client:
+        r = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "member@example.com", "password": _PASSWORD},
+        )
+    # Correct credentials still receive no token.
+    assert r.status_code == 403
+    assert "access_token" not in r.text

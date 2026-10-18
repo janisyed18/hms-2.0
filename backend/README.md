@@ -334,17 +334,28 @@ docker compose logs worker | grep -E "\[EMAIL\]|\[SMS\]"
 
 Three modes, selected by `AUTH_MODE`:
 
-- **`dev`** (default, local only) — `X-HMS-User-Id` resolves a persisted user
-  (its DB role is authoritative); `X-HMS-Roles` is a fallback for unseeded ids.
+- **`dev`** (default, explicit `ENVIRONMENT=local|test` only) — `X-HMS-User-Id`
+  resolves a persisted user (its DB role is authoritative); `X-HMS-Roles` is a
+  fallback for unseeded ids.
 - **`bearer`** — locally issued **HS256** access tokens from the Argon2
-  **password login** below. Verifies signature, issuer, audience and expiry.
+  **password login** below (legacy; disabled unless `AUTH_PASSWORD_LOGIN_ENABLED=true`). Verifies signature, issuer, audience and expiry.
 - **`oidc`** — real **OIDC** tokens from an external IdP (Keycloak / OCI Identity
   Domains). Tokens are **RS256/ES256** and verified against the provider's
   **JWKS** (asymmetric; the server holds no signing secret), checking `iss`,
   `aud` and `exp`. Identity comes from the token; the **HMS role comes from the
   persisted user**, so authorization stays DB-authoritative.
 
-Passwords are **Argon2**-hashed and never returned in any response. Login flow:
+**Fail-closed startup.** `ENVIRONMENT` must be set explicitly. Header-based `dev`
+auth is only permitted when `ENVIRONMENT` is explicitly `local` or `test`; any other
+value, **including an unset `ENVIRONMENT`**, is treated as a deployment and the API
+refuses to start with `AUTH_MODE=dev`, `AUTH_DEV_HEADERS_ENABLED=true`,
+`AUTH_DEV_ALLOW_ROLE_FALLBACK=true`, a missing bearer signing secret, or missing OIDC
+issuer/audience. The legacy `POST /auth/login` is **disabled by default**
+(`AUTH_PASSWORD_LOGIN_ENABLED=false`); it has no lockout or MFA, cannot be enabled
+together with `AUTH_MFA_REQUIRED=true`, and browser sign-in (`/auth/browser/*`) is
+the supported flow.
+
+Passwords are **Argon2**-hashed and never returned in any response. Legacy login flow (requires `AUTH_PASSWORD_LOGIN_ENABLED=true`):
 
 ```bash
 # set an admin's password first (admin only), then log in
