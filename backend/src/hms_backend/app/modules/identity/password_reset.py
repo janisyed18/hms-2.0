@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.core.audit import append_audit_event
+from hms_backend.app.core.client_identity import rate_limit_key
 from hms_backend.app.core.config import Settings, settings
 from hms_backend.app.core.password_reset_tokens import (
     encrypt_password_reset_delivery,
@@ -60,7 +61,7 @@ class PasswordResetService:
     ) -> str:
         normalized = email.strip().lower()
         account_key = "account:" + hashlib.sha256(normalized.encode()).hexdigest()
-        ip_key = "ip:" + (ip or "unknown")
+        ip_key = "ip:" + rate_limit_key(ip)
         decisions = await self._rate_limiter.hit(account_key)
         ip_decision = await self._rate_limiter.hit(ip_key)
         if not decisions.allowed or not ip_decision.allowed:

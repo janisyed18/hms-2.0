@@ -1129,6 +1129,10 @@ resource "aws_lb" "api" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = [for subnet in aws_subnet.public : subnet.id]
+  # Pin the default explicitly: the API resolves the viewer as the second entry from
+  # the right (CloudFront, then this ALB, each append one hop). See
+  # backend/src/hms_backend/app/core/client_identity.py.
+  xff_header_processing_mode = "append"
 }
 
 resource "aws_lb_target_group" "api" {
@@ -1218,8 +1222,15 @@ resource "aws_ecs_task_definition" "api" {
           protocol      = "tcp"
         }
       ]
-      environment = local.backend_environment
-      secrets     = local.api_secret_environment
+      environment = concat(local.backend_environment, [
+        # Only the API sits behind CloudFront + ALB and holds the edge secret that
+        # authenticates forwarded client addresses.
+        {
+          name  = "SECURITY_TRUSTED_PROXY_HOPS"
+          value = "2"
+        },
+      ])
+      secrets = local.api_secret_environment
       logConfiguration = {
         logDriver = "awslogs"
         options = {

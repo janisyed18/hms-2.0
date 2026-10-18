@@ -46,6 +46,7 @@ def test_deployed_http_security_accepts_an_edge_secret() -> None:
         {
             "environment": "production",
             "security_edge_shared_secret": "edge-secret",
+            "security_trusted_proxy_hops": 2,
         }
     )
 

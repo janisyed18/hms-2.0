@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.core.auth import TokenValidationError, encode_hs256_bearer_token
+from hms_backend.app.core.client_identity import client_address
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.passwords import (
     hash_password,
@@ -192,7 +193,7 @@ async def request_password_reset(
     await PasswordResetService().request(
         session,
         email=payload.email,
-        ip=request.client.host if request.client else None,
+        ip=client_address(request),
         user_agent=request.headers.get("user-agent"),
     )
     await session.commit()

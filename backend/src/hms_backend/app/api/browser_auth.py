@@ -21,6 +21,7 @@ from hms_backend.app.api.dependencies import (
     PrincipalDep,
     SessionDep,
 )
+from hms_backend.app.core.client_identity import client_address, rate_limit_key
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.rate_limit import LoginRateLimiter
 from hms_backend.app.core.rbac import ROLE_PERMISSIONS
@@ -147,8 +148,7 @@ class BrowserMeResponse(BaseModel):
 
 def _client_meta(request: Request) -> tuple[str | None, str | None]:
     user_agent = request.headers.get("user-agent")
-    ip = request.client.host if request.client else None
-    return user_agent, ip
+    return user_agent, client_address(request)
 
 
 def _set_refresh_cookie(response: Response, token: str) -> None:
@@ -228,7 +228,7 @@ async def browser_login(
 ):
     _, ip = _client_meta(request)
     account_key = f"account:{payload.email.strip().lower()}"
-    ip_key = f"ip:{ip or 'unknown'}"
+    ip_key = f"ip:{rate_limit_key(ip)}"
     for limiter, key in (
         (_account_login_limiter, account_key),
         (_ip_login_limiter, ip_key),
