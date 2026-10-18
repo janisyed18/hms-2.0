@@ -267,7 +267,7 @@ async def _upsert_sync_device(
     if device is None:
         device = Device(
             device_id=device_id,
-            user_id=principal.user_id,
+            user_id=principal.persisted_user_id,
             platform=platform,
             app_version=app_version,
             offline_window_days=7,
@@ -291,7 +291,7 @@ async def _upsert_sync_device(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Sync device has been revoked",
         )
-    device.user_id = principal.user_id
+    device.user_id = principal.persisted_user_id
     device.platform = platform
     device.app_version = app_version
     device.last_sync_at = datetime.now(UTC)
@@ -817,11 +817,7 @@ async def _create_inspection_from_sync(
         inspection_type=inspection_type,
         status=InspectionStatus.DRAFT.value,
         result=_optional_string_payload(operation, "result"),
-        inspector_user_id=(
-            principal.assignment_user_id
-            if is_inspector_scoped(principal)
-            else principal.user_id
-        ),
+        inspector_user_id=principal.persisted_user_id,
     )
     session.add(inspection)
     await record_create(

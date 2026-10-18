@@ -123,7 +123,7 @@ async def bulk_generate_certificates(
 
     job = CertificateBatchJob(
         status=JobStatus.PENDING.value,
-        requested_by_user_id=principal.user_id,
+        requested_by_user_id=principal.persisted_user_id,
         total=len(inspection_ids),
         inspection_ids=inspection_ids,
         results=[],

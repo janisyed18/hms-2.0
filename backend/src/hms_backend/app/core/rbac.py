@@ -86,12 +86,24 @@ class Principal:
     # claim), used to gate privileged actions on a recent sign-in. None for
     # dev-header identities.
     auth_time: int | None = None
-    # Scheduling references the database user ID, not the authentication subject.
+    # Persisted domain references use the database user ID, not the authentication
+    # subject. ``user_id`` is the external identity (e.g. ``local:<uuid>`` or an OIDC
+    # subject) and may exceed the 36-character width of those columns.
     record_user_id: str | None = None
 
     @property
-    def assignment_user_id(self) -> str:
+    def persisted_user_id(self) -> str:
+        """The ``users.id`` to store in a domain ``*_user_id`` column.
+
+        Use this for persisted references; keep ``user_id`` for audit actors and
+        authorisation. Falls back to ``user_id`` for identities with no user row
+        (dev headers), which are already short IDs.
+        """
         return self.record_user_id or self.user_id
+
+    @property
+    def assignment_user_id(self) -> str:
+        return self.persisted_user_id
 
 
 def has_permission(principal: Principal, permission: Permission) -> bool:
