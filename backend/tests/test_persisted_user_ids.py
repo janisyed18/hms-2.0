@@ -27,6 +27,7 @@ from uuid6 import uuid7
 import hms_backend.app.api.jobs as jobs_module
 import hms_backend.app.api.records as records_module
 import hms_backend.app.core.object_storage as storage_module
+import hms_backend.app.modules.certificates.issuance as issuance_module
 from hms_backend.app.api.dependencies import get_session
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.object_storage import LocalObjectStorage
@@ -35,9 +36,10 @@ from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
 from hms_backend.app.models.foundation import AuditEvent
 from hms_backend.app.modules.certificates.models import Certificate
+from hms_backend.app.modules.certificates.tasks import _run_batch
 from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.inspections.models import Inspection, InspectionStatus
-from hms_backend.app.modules.jobs.models import CertificateBatchJob
+from hms_backend.app.modules.jobs.models import CertificateBatchJob, JobStatus
 
 SUBJECT_PREFIX = "local:"
 
@@ -83,6 +85,7 @@ def bearer_and_certificates(
     monkeypatch.setattr(settings, "certificate_trust_anchor_path", str(pki.anchor_path))
     engine = SigningFakeEngine(pki.signer)
     monkeypatch.setattr(records_module, "get_certificate_engine", lambda: engine)
+    monkeypatch.setattr(issuance_module, "get_certificate_engine", lambda: engine)
     monkeypatch.setattr(
         storage_module, "_storage", LocalObjectStorage(tmp_path / "objects")
     )
@@ -274,3 +277,77 @@ async def test_staff_created_inspection_stores_the_users_id(
         assert inspection is not None
         assert inspection.inspector_user_id == admin.id
         assert inspection.inspector_user_id != admin.oidc_subject
+
+
+async def run_bulk_job(
+    session_factory: async_sessionmaker[AsyncSession],
+    requested_by_user_id: str,
+    inspection_id: str,
+) -> None:
+    async with session_factory() as session:
+        job = CertificateBatchJob(
+            status=JobStatus.PENDING.value,
+            requested_by_user_id=requested_by_user_id,
+            total=1,
+            inspection_ids=[inspection_id],
+            results=[],
+        )
+        session.add(job)
+        await session.commit()
+        job_id = job.id
+    result = await _run_batch(job_id, session_factory)
+    assert result == {"succeeded": 1, "failed": 0}
+
+
+@pytest.mark.asyncio
+async def test_bulk_issuance_persists_the_user_id_but_audits_the_subject(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Queued issuance must match interactive issuance: one identity contract."""
+    reviewer = await make_user(session_factory, Role.REVIEWER)
+    inspection_id = await seed_approved_inspection(session_factory, "U5")
+
+    # The job stores the canonical users.id, exactly as the enqueue route does.
+    await run_bulk_job(session_factory, reviewer.id, inspection_id)
+
+    async with session_factory() as session:
+        certificate = (
+            await session.scalars(
+                select(Certificate).where(Certificate.inspection_id == inspection_id)
+            )
+        ).one()
+        assert certificate.issued_by_user_id == reviewer.id
+        issued = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "certificate.issued")
+            )
+        ).one()
+        assert issued.actor_id == reviewer.oidc_subject
+        assert issued.actor_id != reviewer.id
+        # The signed issuance snapshot names the same external identity.
+        assert certificate.issuance_facts is not None
+        assert certificate.issuance_facts["issued_by_name"] == reviewer.oidc_subject
+
+
+@pytest.mark.asyncio
+async def test_bulk_issuance_falls_back_when_the_requester_row_is_gone(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    unknown_user_id = str(uuid7())
+    inspection_id = await seed_approved_inspection(session_factory, "U6")
+
+    await run_bulk_job(session_factory, unknown_user_id, inspection_id)
+
+    async with session_factory() as session:
+        certificate = (
+            await session.scalars(
+                select(Certificate).where(Certificate.inspection_id == inspection_id)
+            )
+        ).one()
+        assert certificate.issued_by_user_id == unknown_user_id
+        issued = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "certificate.issued")
+            )
+        ).one()
+        assert issued.actor_id == unknown_user_id

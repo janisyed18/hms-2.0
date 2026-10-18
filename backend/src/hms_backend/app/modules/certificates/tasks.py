@@ -13,6 +13,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -24,6 +25,7 @@ from hms_backend.app.core.config import settings
 from hms_backend.app.modules.certificates.issuance import (
     generate_and_store_certificate,
 )
+from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.inspections.models import Inspection
 from hms_backend.app.modules.jobs.models import CertificateBatchJob, JobStatus
 
@@ -48,13 +50,27 @@ async def _run_batch(
             job.started_at = datetime.now(UTC)
             await session.commit()
             inspection_ids = list(job.inspection_ids)
-            actor_id = job.requested_by_user_id
+            # The job stores the canonical users.id. Issuance keeps that as the
+            # persisted reference but audits (and prints on the certificate) the
+            # external authentication subject, matching interactive issuance.
+            issued_by_user_id = job.requested_by_user_id
+            requester = await session.scalar(
+                select(User).where(User.id == issued_by_user_id)
+            )
+            # If the user row has since gone, fall back to the stored id rather
+            # than losing the issuance.
+            actor_id = requester.oidc_subject if requester else issued_by_user_id
 
         results: list[dict[str, Any]] = []
         succeeded = 0
         failed = 0
         for inspection_id in inspection_ids:
-            outcome = await _process_one(session_factory, inspection_id, actor_id)
+            outcome = await _process_one(
+                session_factory,
+                inspection_id,
+                actor_id,
+                issued_by_user_id=issued_by_user_id,
+            )
             results.append(outcome)
             if outcome["status"] == "issued":
                 succeeded += 1
@@ -80,6 +96,8 @@ async def _process_one(
     session_factory: async_sessionmaker[AsyncSession],
     inspection_id: str,
     actor_id: str,
+    *,
+    issued_by_user_id: str | None = None,
 ) -> dict[str, Any]:
     async with session_factory() as session:
         try:
@@ -91,7 +109,10 @@ async def _process_one(
                     "error": "inspection not found",
                 }
             certificate = await generate_and_store_certificate(
-                session, inspection, actor_id=actor_id
+                session,
+                inspection,
+                actor_id=actor_id,
+                issued_by_user_id=issued_by_user_id,
             )
             await session.commit()
             return {
