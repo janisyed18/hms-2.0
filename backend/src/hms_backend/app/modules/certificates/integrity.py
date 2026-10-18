@@ -9,6 +9,12 @@ A certificate is valid only when every independent check passes:
   configured trust anchor;
 * the status is ISSUED and ``valid_until`` (inclusive) has not passed.
 
+Integrity and validity are separate answers. ``integrity`` says whether this is the
+genuine, unmodified certificate (the first three checks); ``valid`` says whether it
+may currently be relied on (all of them). A revoked, superseded or expired
+certificate is therefore ``VERIFIED`` but not valid, while a tampered one is
+``FAILED``.
+
 Certificates without a snapshot are ``LEGACY_UNVERIFIED``: they stay readable and
 downloadable but are never reported as authentic without controlled review or
 reissuance.
@@ -179,6 +185,28 @@ async def check_artifact(
     return ArtifactCheck(pdf=pdf, exists=True, digest_ok=True, signature_ok=True)
 
 
+def _authentic_but_not_valid(
+    message: str,
+    *,
+    facts: CertificateFacts,
+    hash_matches: bool,
+    artifact_verified: bool,
+    signature_verified: bool,
+    expired: bool,
+) -> CertificateAssessment:
+    """Genuine certificate that may no longer be relied on (revoked, expired...)."""
+    return CertificateAssessment(
+        integrity=IntegrityStatus.VERIFIED,
+        valid=False,
+        hash_matches=hash_matches,
+        artifact_verified=artifact_verified,
+        signature_verified=signature_verified,
+        expired=expired,
+        message=message,
+        facts=facts,
+    )
+
+
 async def assess_certificate(
     certificate: Certificate,
     *,
@@ -245,14 +273,17 @@ async def assess_certificate(
         signature_verified=True,
         expired=expired,
     )
+    # Past this point the document is the genuine, unmodified certificate. Whether
+    # it may still be relied on is a separate question: a revoked, superseded or
+    # expired certificate is authentic (integrity VERIFIED) but not valid.
     if certificate.status != CertificateStatus.ISSUED.value:
-        return _failed(
+        return _authentic_but_not_valid(
             f"This certificate is {certificate.status.lower()} and is no longer "
             "valid, though its content is authentic.",
             **common,  # type: ignore[arg-type]
         )
     if expired:
-        return _failed(
+        return _authentic_but_not_valid(
             f"This certificate expired on {snapshot_valid_until(facts):%d %B %Y}, "
             "though its content is authentic.",
             **common,  # type: ignore[arg-type]

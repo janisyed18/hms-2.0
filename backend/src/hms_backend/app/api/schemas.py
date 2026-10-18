@@ -735,7 +735,9 @@ class CertificateVerifyResponse(BaseModel):
 
     valid: bool
     status: str
-    # VERIFIED, LEGACY_UNVERIFIED (no integrity evidence) or FAILED.
+    # Authenticity of the document: VERIFIED (genuine and unmodified, even if revoked
+    # or expired), LEGACY_UNVERIFIED (no integrity evidence) or FAILED (tampered).
+    # Whether it may still be relied on is ``valid``.
     integrity: str
     hash_matches: bool
     artifact_verified: bool
