@@ -122,7 +122,10 @@ class Settings(BaseSettings):
     auth_bearer_issuer: str | None = None
     auth_bearer_audience: str | None = None
     auth_access_token_ttl_seconds: int = 3600
-    auth_password_login_enabled: bool = True
+    # Legacy ``POST /auth/login``: issues a bearer token on password alone, with no
+    # lockout, MFA or password-policy enforcement. Off unless deliberately enabled;
+    # browser sign-in (``/auth/browser/*``) is the supported flow.
+    auth_password_login_enabled: bool = False
 
     # External OIDC provider (oidc mode). JWKS is discovered from the issuer's
     # ``/.well-known/openid-configuration`` unless a JWKS URL is given directly.
@@ -202,6 +205,67 @@ class Settings(BaseSettings):
     @property
     def is_local_or_test(self) -> bool:
         return self.environment.lower() in {"local", "test", "development"}
+
+    @property
+    def environment_is_explicit(self) -> bool:
+        """True only if ENVIRONMENT was actually supplied (env var, .env or init).
+
+        ``environment`` defaults to ``"local"``, so an under-configured deployment
+        that lost ``ENVIRONMENT`` would otherwise be indistinguishable from a
+        deliberate local run.
+        """
+        return "environment" in self.model_fields_set
+
+    @property
+    def is_explicit_local_or_test(self) -> bool:
+        return self.environment_is_explicit and self.is_local_or_test
+
+    def auth_config_errors(self) -> list[str]:
+        """Blocking auth misconfigurations. Dev-style auth needs an explicit local/test.
+
+        Local/test operation must be selected deliberately (ENVIRONMENT=local|test).
+        Anything else, including an unset ENVIRONMENT, is treated as deployed:
+        header-based dev auth is refused and the credentials for the chosen mode
+        must be present.
+        """
+        errors: list[str] = []
+        if not self.environment_is_explicit:
+            errors.append(
+                "ENVIRONMENT must be set explicitly "
+                "(local, test, dev, staging or production)"
+            )
+        if self.is_explicit_local_or_test:
+            return errors
+
+        if self.auth_mode == "dev":
+            errors.append(
+                "AUTH_MODE=dev is only allowed when ENVIRONMENT is explicitly "
+                "local or test"
+            )
+        if self.auth_dev_headers_enabled:
+            errors.append("AUTH_DEV_HEADERS_ENABLED must be false outside local/test")
+        if self.auth_dev_allow_role_fallback:
+            errors.append(
+                "AUTH_DEV_ALLOW_ROLE_FALLBACK must be false outside local/test"
+            )
+        if self.auth_mode == "bearer" and not self.auth_bearer_hmac_secret:
+            errors.append("AUTH_BEARER_HMAC_SECRET is required")
+        if self.auth_mode == "oidc":
+            if not self.auth_oidc_issuer:
+                errors.append("AUTH_OIDC_ISSUER is required")
+            if not self.auth_oidc_audience:
+                errors.append("AUTH_OIDC_AUDIENCE is required")
+        if self.auth_password_login_enabled and self.auth_mfa_required:
+            errors.append(
+                "AUTH_PASSWORD_LOGIN_ENABLED must be false when AUTH_MFA_REQUIRED "
+                "is true (the legacy login bypasses MFA)"
+            )
+        return errors
+
+    def validate_auth_configuration(self) -> None:
+        errors = self.auth_config_errors()
+        if errors:
+            raise RuntimeError("Invalid auth configuration: " + "; ".join(errors))
 
     def browser_auth_config_errors(self) -> list[str]:
         """Return blocking misconfigurations for deployed browser login.

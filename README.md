@@ -251,12 +251,23 @@ capture are later phases.
 
 `AUTH_MODE` selects the mode:
 
-- **`dev`** (default, local only) — `X-HMS-User-Id` resolves a persisted user
-  (its DB role is authoritative); `X-HMS-Roles` is a fallback for unseeded ids.
-- **`bearer`** — locally issued HS256 tokens from Argon2 password login
-  (`POST /api/v1/auth/login`).
+- **`dev`** (default, explicit `ENVIRONMENT=local|test` only) — `X-HMS-User-Id`
+  resolves a persisted user (its DB role is authoritative); `X-HMS-Roles` is a
+  fallback for unseeded ids.
+- **`bearer`** — locally issued HS256 tokens (browser sign-in, or the legacy
+  `POST /api/v1/auth/login` when `AUTH_PASSWORD_LOGIN_ENABLED=true`).
 - **`oidc`** — real OIDC tokens (RS256/ES256) verified against the provider's
   JWKS. Configure `AUTH_OIDC_ISSUER` / `AUTH_OIDC_AUDIENCE`.
+
+**Fail-closed startup.** `ENVIRONMENT` must be set explicitly. Header-based `dev`
+auth is only permitted when `ENVIRONMENT` is explicitly `local` or `test`; any other
+value, **including an unset `ENVIRONMENT`**, is treated as a deployment and the API
+refuses to start with `AUTH_MODE=dev`, `AUTH_DEV_HEADERS_ENABLED=true`,
+`AUTH_DEV_ALLOW_ROLE_FALLBACK=true`, a missing bearer signing secret, or missing OIDC
+issuer/audience. The legacy `POST /auth/login` is **disabled by default**
+(`AUTH_PASSWORD_LOGIN_ENABLED=false`); it has no lockout or MFA, cannot be enabled
+together with `AUTH_MFA_REQUIRED=true`, and browser sign-in (`/auth/browser/*`) is
+the supported flow.
 
 ```bash
 # dev-mode manual check

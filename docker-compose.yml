@@ -15,6 +15,8 @@ x-backend: &backend
     context: ./backend
   image: hms-backend:local
   environment: &backend-env
+    # Local/test operation is selected explicitly; an unset ENVIRONMENT is refused.
+    ENVIRONMENT: local
     DATABASE_URL: postgresql+asyncpg://hms:hms@postgres:5432/hms
     REDIS_URL: redis://redis:6379/0
     CERTIFICATE_SERVICE_ADDRESS: certificate-engine:50051
