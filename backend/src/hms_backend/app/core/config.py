@@ -201,6 +201,11 @@ class Settings(BaseSettings):
     # Set only in ECS. CloudFront adds this random header to API origin
     # requests, preventing a caller from bypassing CDN controls through the ALB.
     security_edge_shared_secret: str = ""
+    # Number of trusted proxies between the viewer and this API that each append an
+    # address to X-Forwarded-For (CloudFront + ALB = 2). The viewer address is taken
+    # that many entries from the right and is honoured only on requests that present
+    # the edge secret. 0 ignores forwarding headers and uses the socket peer.
+    security_trusted_proxy_hops: int = Field(default=0, ge=0, le=5)
 
     @property
     def is_local_or_test(self) -> bool:
@@ -335,6 +340,12 @@ class Settings(BaseSettings):
             )
 
     def http_security_config_errors(self) -> list[str]:
+        if self.security_trusted_proxy_hops and not self.security_edge_shared_secret:
+            # Forwarded addresses are only trusted when the edge authenticates, so
+            # this setting would be silently ignored.
+            return [
+                "SECURITY_TRUSTED_PROXY_HOPS requires SECURITY_EDGE_SHARED_SECRET"
+            ]
         if self.is_local_or_test:
             return []
         if not self.security_edge_shared_secret:

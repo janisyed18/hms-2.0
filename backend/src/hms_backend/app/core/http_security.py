@@ -9,6 +9,10 @@ from typing import Any
 from redis.exceptions import RedisError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from hms_backend.app.core.client_identity import (
+    client_address_from_scope,
+    rate_limit_key,
+)
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.redis import get_redis
 
@@ -159,18 +163,8 @@ class ApiRateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        headers = _headers(scope)
-        # Forwarded client addresses are accepted only after EdgeOriginMiddleware
-        # has checked the CloudFront-only shared secret.
-        forwarded = headers.get("x-forwarded-for", "")
-        client = (
-            forwarded.split(",", 1)[0].strip()
-            if settings.security_edge_shared_secret
-            else ""
-        )
-        if not client:
-            client = (scope.get("client") or ("unknown", 0))[0]
-        key = f"{_RATE_KEY_PREFIX}{client}"
+        # One shared resolver decides the client address (see core/client_identity).
+        key = f"{_RATE_KEY_PREFIX}{rate_limit_key(client_address_from_scope(scope))}"
         try:
             redis = get_redis()
             count = int(await redis.incr(key))
