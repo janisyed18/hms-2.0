@@ -350,6 +350,10 @@ class Settings(BaseSettings):
             return []
         if not self.security_edge_shared_secret:
             return ["SECURITY_EDGE_SHARED_SECRET is required"]
+        if self.security_trusted_proxy_hops == 0:
+            # 0 makes every client resolve to the load balancer's address, which
+            # silently collapses per-client rate limits into one shared bucket.
+            return ["SECURITY_TRUSTED_PROXY_HOPS must be configured outside local/test"]
         return []
 
     def validate_http_security(self) -> None:

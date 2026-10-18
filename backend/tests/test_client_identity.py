@@ -217,6 +217,53 @@ def test_trusted_hops_without_an_edge_secret_is_a_configuration_error() -> None:
     ]
 
 
+def _settings(**values: object) -> Settings:
+    return Settings.model_validate(values)
+
+
+@pytest.mark.parametrize("environment", ["local", "test"])
+def test_local_and_test_allow_zero_trusted_hops(environment: str) -> None:
+    config = _settings(
+        environment=environment,
+        security_trusted_proxy_hops=0,
+        security_edge_shared_secret="",
+    )
+    assert config.http_security_config_errors() == []
+
+
+def test_deployed_with_edge_secret_but_zero_hops_is_rejected() -> None:
+    config = _settings(
+        environment="production",
+        security_trusted_proxy_hops=0,
+        security_edge_shared_secret=EDGE_SECRET,
+    )
+    assert config.http_security_config_errors() == [
+        "SECURITY_TRUSTED_PROXY_HOPS must be configured outside local/test"
+    ]
+    with pytest.raises(RuntimeError, match="SECURITY_TRUSTED_PROXY_HOPS"):
+        config.validate_http_security()
+
+
+def test_deployed_with_edge_secret_and_hops_is_accepted() -> None:
+    config = _settings(
+        environment="production",
+        security_trusted_proxy_hops=2,
+        security_edge_shared_secret=EDGE_SECRET,
+    )
+    assert config.http_security_config_errors() == []
+
+
+def test_deployed_hops_without_an_edge_secret_is_rejected() -> None:
+    config = _settings(
+        environment="production",
+        security_trusted_proxy_hops=2,
+        security_edge_shared_secret="",
+    )
+    assert config.http_security_config_errors() == [
+        "SECURITY_TRUSTED_PROXY_HOPS requires SECURITY_EDGE_SHARED_SECRET"
+    ]
+
+
 def test_trusted_hops_with_an_edge_secret_is_accepted() -> None:
     config = Settings.model_validate(
         {
