@@ -36,10 +36,11 @@ jobs:
         run: uv run alembic upgrade head
         env:
           DATABASE_URL: postgresql+asyncpg://hms:hms@127.0.0.1:5432/hms_inspector_test
-      - name: Test inspector and certificate races on PostgreSQL
+      - name: Test inspector, certificate and identity persistence on PostgreSQL
         run: >-
           uv run pytest tests/test_inspector_postgres_races.py
-          tests/test_certificate_postgres_races.py -v
+          tests/test_certificate_postgres_races.py
+          tests/test_persisted_user_ids_postgres.py -v
         env:
           POSTGRES_TEST_DATABASE_URL: postgresql+asyncpg://hms:hms@127.0.0.1:5432/hms_inspector_test
 

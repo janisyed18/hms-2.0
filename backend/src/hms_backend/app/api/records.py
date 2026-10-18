@@ -2033,7 +2033,7 @@ async def create_inspection_booking(
         status=(
             InspectionBookingStatus.PENDING_APPROVAL.value
         ),
-        requested_by_user_id=principal.user_id,
+        requested_by_user_id=principal.persisted_user_id,
         inspector_user_id=None,
         reviewed_by_user_id=None,
         reviewed_at=None,
@@ -2101,7 +2101,7 @@ async def approve_inspection_booking(
     before = booking.to_audit_dict()
     booking.status = InspectionBookingStatus.APPROVED.value
     booking.inspector_user_id = inspector.id
-    booking.reviewed_by_user_id = principal.user_id
+    booking.reviewed_by_user_id = principal.persisted_user_id
     booking.reviewed_at = utc_now()
     await record_update(
         session,
@@ -2115,6 +2115,7 @@ async def approve_inspection_booking(
         booking,
         inspector=inspector,
         actor_id=principal.user_id,
+        user_id=principal.persisted_user_id,
         change_reason="Booking approved",
     )
     await _create_booking_inspections(session, booking, actor_id=principal.user_id)
@@ -2160,7 +2161,7 @@ async def reject_inspection_booking(
         )
     before = booking.to_audit_dict()
     booking.status = InspectionBookingStatus.REJECTED.value
-    booking.reviewed_by_user_id = principal.user_id
+    booking.reviewed_by_user_id = principal.persisted_user_id
     booking.reviewed_at = utc_now()
     booking.rejection_reason = _clean_optional(payload.reason)
     await record_update(
@@ -2228,13 +2229,17 @@ async def cancel_inspection_booking(
         before=before,
     )
     await _cancel_pending_booking_change_requests(
-        session, booking, actor_id=principal.user_id
+        session,
+        booking,
+        actor_id=principal.user_id,
+        user_id=principal.persisted_user_id,
     )
     if booking.appointment is not None:
         await _cancel_appointment(
             session,
             booking.appointment,
             actor_id=principal.user_id,
+            user_id=principal.persisted_user_id,
             reason=_clean_optional(payload.reason) or "Cancelled",
         )
     await emit_event(
@@ -2325,7 +2330,7 @@ async def create_inspection_booking_change_request(
         appointment=booking.appointment,
         availability_quote=quote,
         availability_quote_id=quote.id,
-        requested_by_user_id=principal.user_id,
+        requested_by_user_id=principal.persisted_user_id,
         proposed_inspector_user_id=(
             proposed_inspector.id if proposed_inspector is not None else None
         ),
@@ -2351,6 +2356,7 @@ async def create_inspection_booking_change_request(
             change,
             inspector=proposed_inspector,
             actor_id=principal.user_id,
+            user_id=principal.persisted_user_id,
         )
     else:
         await emit_event(
@@ -2401,6 +2407,7 @@ async def approve_inspection_booking_change_request(
         change,
         inspector=inspector,
         actor_id=principal.user_id,
+        user_id=principal.persisted_user_id,
     )
     await session.commit()
     return _inspection_booking_change_request_read(change)
@@ -2444,6 +2451,7 @@ async def confirm_inspection_booking_change_request(
         change,
         inspector=inspector,
         actor_id=principal.user_id,
+        user_id=principal.persisted_user_id,
     )
     await session.commit()
     return _inspection_booking_change_request_read(change)
@@ -2507,11 +2515,7 @@ async def create_inspection(
         inspection_type=payload.inspection_type,
         status=InspectionStatus.DRAFT.value,
         result=_clean_optional(payload.result),
-        inspector_user_id=(
-            principal.assignment_user_id
-            if is_inspector_scoped(principal)
-            else principal.user_id
-        ),
+        inspector_user_id=principal.persisted_user_id,
     )
     session.add(inspection)
     await record_create(
@@ -2643,7 +2647,7 @@ async def approve_inspection(
 
     before = inspection.to_audit_dict()
     inspection.status = InspectionStatus.APPROVED.value
-    inspection.reviewer_user_id = principal.user_id
+    inspection.reviewer_user_id = principal.persisted_user_id
     inspection.approved_at = utc_now()
     await record_update(
         session,
@@ -2695,7 +2699,7 @@ async def reject_inspection(
 
     before = inspection.to_audit_dict()
     inspection.status = InspectionStatus.REJECTED.value
-    inspection.reviewer_user_id = principal.user_id
+    inspection.reviewer_user_id = principal.persisted_user_id
     inspection.rejected_at = utc_now()
     await record_update(
         session,
@@ -2795,7 +2799,7 @@ async def issue_certificate(
                 pdf_object_key=payload.pdf_object_key.strip(),
                 verification_hash=verification_hash,
                 public_token=public_token,
-                issued_by_user_id=principal.user_id,
+                issued_by_user_id=principal.persisted_user_id,
                 valid_until=payload.valid_until,
             )
         except CertificateIssueError as exc:
@@ -2818,6 +2822,7 @@ async def issue_certificate(
                 session,
                 inspection,
                 actor_id=principal.user_id,
+                issued_by_user_id=principal.persisted_user_id,
                 valid_until=payload.valid_until,
                 number=payload.number,
                 public_token=payload.public_token,
@@ -4430,6 +4435,7 @@ async def _confirm_booking_appointment(
     inspector: User | None,
     actor_id: str,
     change_reason: str,
+    user_id: str | None = None,
 ) -> InspectionAppointment:
     if inspector is None:
         raise HTTPException(
@@ -4469,7 +4475,7 @@ async def _confirm_booking_appointment(
         **_appointment_time_snapshot(booking.location, starts_at, ends_at),
         inspector_user_id=inspector.id,
         change_reason=change_reason,
-        created_by_user_id=actor_id,
+        created_by_user_id=user_id or actor_id,
     )
     session.add(revision)
     await record_create(
@@ -4542,13 +4548,14 @@ async def _cancel_appointment(
     *,
     actor_id: str,
     reason: str,
+    user_id: str | None = None,
 ) -> None:
     if appointment.status == InspectionAppointmentStatus.CANCELLED.value:
         return
     before = appointment.to_audit_dict()
     appointment.status = InspectionAppointmentStatus.CANCELLED.value
     appointment.cancelled_reason = reason
-    appointment.cancelled_by_user_id = actor_id
+    appointment.cancelled_by_user_id = user_id or actor_id
     await record_update(
         session,
         appointment,
@@ -4576,6 +4583,7 @@ async def _cancel_pending_booking_change_requests(
     booking: InspectionBooking,
     *,
     actor_id: str,
+    user_id: str | None = None,
 ) -> None:
     pending_statuses = {
         InspectionChangeRequestStatus.PENDING_ADMIN_APPROVAL.value,
@@ -4586,7 +4594,7 @@ async def _cancel_pending_booking_change_requests(
             continue
         before = change.to_audit_dict()
         change.status = InspectionChangeRequestStatus.CANCELLED.value
-        change.reviewed_by_user_id = actor_id
+        change.reviewed_by_user_id = user_id or actor_id
         change.reviewed_at = utc_now()
         await record_update(
             session,
@@ -4683,6 +4691,7 @@ async def _apply_appointment_change(
     *,
     inspector: User | None,
     actor_id: str,
+    user_id: str | None = None,
 ) -> None:
     if (
         booking.status != InspectionBookingStatus.APPROVED.value
@@ -4770,7 +4779,7 @@ async def _apply_appointment_change(
         **_appointment_time_snapshot(booking.location, starts_at, ends_at),
         inspector_user_id=inspector.id,
         change_reason=change.reason,
-        created_by_user_id=actor_id,
+        created_by_user_id=user_id or actor_id,
     )
     session.add(revision)
     await record_create(
@@ -4789,7 +4798,7 @@ async def _apply_appointment_change(
     change_before = change.to_audit_dict()
     change.status = InspectionChangeRequestStatus.APPLIED.value
     change.proposed_inspector_user_id = inspector.id
-    change.reviewed_by_user_id = actor_id
+    change.reviewed_by_user_id = user_id or actor_id
     change.reviewed_at = utc_now()
     await record_update(
         session,
