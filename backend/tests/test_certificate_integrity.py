@@ -493,6 +493,8 @@ async def test_valid_until_boundaries(
     assert body["valid"] is expect_valid
     assert body["expired"] is (not expect_valid)
     assert body["valid_until"] == valid_until.isoformat()
+    # An expired certificate is still the genuine document.
+    assert body["integrity"] == "VERIFIED"
     if not expect_valid:
         assert body["signed"] is True and "expired" in body["message"]
 
@@ -689,6 +691,9 @@ async def test_revoked_or_superseded_is_not_valid(
     assert body["status"] == new_status
     assert body["signed"] is True
     assert new_status.lower() in body["message"]
+    # Revoked or superseded: authentic, but no longer valid.
+    assert body["integrity"] == "VERIFIED"
+    assert (body["hash_matches"], body["artifact_verified"]) == (True, True)
 
 
 @pytest.mark.asyncio
@@ -887,3 +892,70 @@ async def test_issue_and_verify_with_only_inline_pem_configured(
         _, cert = await issued(client, factory, "T1")
         body = await verify(client, cert.public_token)
     assert body["valid"] is True and body["signed"] is True
+
+
+# ------------------------------------------- integrity and validity are separate
+
+
+async def _scenario_body(
+    client: httpx.AsyncClient,
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    scenario: str,
+) -> dict[str, Any]:
+    yesterday = (datetime.now(UTC).date() - timedelta(days=1)).isoformat()
+    extra = {"valid_until": yesterday} if scenario == "expired" else {}
+    _, cert = await issued(client, factory, f"V-{scenario[:5]}", **extra)
+    if scenario in {"revoked", "superseded"}:
+        async with factory() as session:
+            row = await session.get(Certificate, cert.id)
+            assert row is not None
+            row.status = scenario.upper()
+            await session.commit()
+    elif scenario == "tampered":
+        path = Path(storage._root) / cert.pdf_object_key  # noqa: SLF001
+        data = bytearray(path.read_bytes())
+        data[len(data) // 3] ^= 0xFF
+        path.write_bytes(bytes(data))
+    elif scenario == "legacy":
+        async with factory() as session:
+            row = await session.get(Certificate, cert.id)
+            assert row is not None
+            row.issuance_facts = None
+            row.pdf_sha256 = None
+            await session.commit()
+    return await verify(client, cert.public_token)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "integrity", "valid", "expired", "evidence"),
+    [
+        ("active", "VERIFIED", True, False, (True, True, True)),
+        ("revoked", "VERIFIED", False, False, (True, True, True)),
+        ("superseded", "VERIFIED", False, False, (True, True, True)),
+        ("expired", "VERIFIED", False, True, (True, True, True)),
+        ("tampered", "FAILED", False, False, (True, False, False)),
+        ("legacy", "LEGACY_UNVERIFIED", False, False, (False, False, False)),
+    ],
+)
+@pytest.mark.asyncio
+async def test_integrity_answers_authenticity_and_valid_answers_reliance(
+    factory, storage, engine, scenario, integrity, valid, expired, evidence
+) -> None:
+    """integrity: is this the genuine unmodified certificate? valid: may it be used?"""
+    async with api(factory) as client:
+        body = await _scenario_body(client, factory, storage, scenario)
+
+    assert body["integrity"] == integrity
+    assert body["valid"] is valid
+    assert body["expired"] is expired
+    assert (
+        body["hash_matches"],
+        body["artifact_verified"],
+        body["signed"],
+    ) == evidence
+    # The two answers must never contradict each other: a document reported as
+    # tampered or unverifiable is never valid, and a valid one is always VERIFIED.
+    assert not (body["valid"] and body["integrity"] != "VERIFIED")
+    if body["integrity"] == "VERIFIED":
+        assert all(body[k] for k in ("hash_matches", "artifact_verified", "signed"))
