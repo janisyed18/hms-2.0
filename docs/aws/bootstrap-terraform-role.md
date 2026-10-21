@@ -150,6 +150,46 @@ role ARN, then set it as `AWS_DEV_TERRAFORM_ROLE_ARN` through the GitHub
 repository settings. The workflows reject an empty value and reject a value
 that reuses `AWS_DEV_GITHUB_ROLE_ARN`.
 
+### Reviewed policy update: CloudWatch alarms and metric filter
+
+The dev alarm baseline (`infra/terraform/envs/dev/alarms.tf`) adds resource types the
+role cannot manage yet, so an SSO administrator applies this reviewed update **before
+the first Plan that includes them**; without it Plan fails reading, and Apply fails
+creating, the alarms and the metric filter. It changes two existing policies:
+
+- `terraform-role-read-policy.json`: `cloudwatch:DescribeAlarms`,
+  `cloudwatch:ListTagsForResource`, `logs:DescribeMetricFilters`.
+- `terraform-role-infrastructure-policy.json`: `cloudwatch:PutMetricAlarm`,
+  `cloudwatch:DeleteAlarms`, `cloudwatch:TagResource`, `cloudwatch:UntagResource`,
+  `logs:PutMetricFilter`, `logs:DeleteMetricFilter`.
+
+None of these can read log contents, change retention beyond what the role could
+already do, or touch IAM, secrets or SNS.
+
+```bash
+ACCOUNT_ID=558215002582
+
+for POLICY_FILE in terraform-role-read-policy terraform-role-infrastructure-policy; do
+  POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/hms-dev-github-actions-terraform-${POLICY_FILE#terraform-role-}"
+  # A managed policy keeps at most five versions; delete the oldest non-default one
+  # first if create-policy-version reports LimitExceeded.
+  aws iam create-policy-version \
+    --policy-arn "$POLICY_ARN" \
+    --policy-document "file://docs/aws/bootstrap/${POLICY_FILE}.json" \
+    --set-as-default
+done
+```
+
+Verify the live result before running the Plan (read-only):
+
+```bash
+ROLE_ARN=arn:aws:iam::${ACCOUNT_ID}:role/hms-dev-github-actions-terraform
+aws iam simulate-principal-policy --policy-source-arn "$ROLE_ARN" \
+  --action-names cloudwatch:PutMetricAlarm cloudwatch:DescribeAlarms \
+    logs:PutMetricFilter logs:DescribeMetricFilters \
+  --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text   # allowed
+```
+
 ## Policy Scope
 
 The identity policy is intentionally explicit rather than using service or
