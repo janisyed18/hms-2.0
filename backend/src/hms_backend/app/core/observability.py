@@ -10,7 +10,9 @@ deliberately narrow so it can be shipped and retained without becoming a data le
 * query strings, headers, cookies and bodies are never read into the log;
 * failures log the exception class and the call-site frames, never the exception
   message, because database and library errors routinely embed parameter values;
-* the client address comes from the shared trusted resolver in ``client_identity``.
+* the client address comes from the shared trusted resolver in ``client_identity``;
+* uvicorn's own per-request ``Exception in ASGI application`` traceback, which
+  includes the exception message, is dropped. Other uvicorn server errors are kept.
 
 An inbound ``X-Request-ID`` is ignored: IDs are server-generated so a caller cannot
 pick or forge the identifier that ties logs together.
@@ -75,6 +77,22 @@ class _DropAll(logging.Filter):
         return False
 
 
+# Uvicorn's per-request failure message (HTTP and websocket). Its record carries the
+# full traceback *including the exception message*, which can embed secrets.
+_REQUEST_FAILURE_MESSAGE = "Exception in ASGI application"
+
+
+class _DropRequestFailureTraceback(logging.Filter):
+    """Drop only uvicorn's per-request traceback; keep every other server error.
+
+    ``request.failed`` is the diagnostic record for these failures. Startup,
+    lifespan, configuration and protocol errors use different messages and pass.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith(_REQUEST_FAILURE_MESSAGE)
+
+
 def configure_logging() -> None:
     """Install the JSON request logger. Safe to call repeatedly."""
     if not any(isinstance(h, _StdoutHandler) for h in request_logger.handlers):
@@ -91,6 +109,12 @@ def configure_logging() -> None:
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, _DropAll) for f in access.filters):
         access.addFilter(_DropAll())
+
+    server_errors = logging.getLogger("uvicorn.error")
+    if not any(
+        isinstance(f, _DropRequestFailureTraceback) for f in server_errors.filters
+    ):
+        server_errors.addFilter(_DropRequestFailureTraceback())
 
 
 def request_id_from_scope(scope: Scope) -> str | None:

@@ -247,3 +247,131 @@ def test_uvicorn_access_log_with_query_strings_is_suppressed() -> None:
         access.setLevel(previous_level)
 
     assert seen == []
+
+
+# --- uvicorn's own per-request traceback (real server) ------------------------------
+
+_SERVER_SECRET = "SERVER-SIDE-SECRET-hunter2"
+
+
+async def _hit_real_uvicorn(app: FastAPI, path: str) -> httpx.Response:
+    """Serve ``app`` with a real uvicorn server so its real log path runs."""
+    import asyncio
+
+    import uvicorn
+
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=0,
+        log_config=None,
+        lifespan="off",
+        http="h11",
+        loop="asyncio",
+    )
+    server = uvicorn.Server(config)
+    task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(200):
+            if server.started:
+                break
+            await asyncio.sleep(0.01)
+        assert server.started, "uvicorn did not start"
+        port = server.servers[0].sockets[0].getsockname()[1]
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
+            return await client.get(path)
+    finally:
+        server.should_exit = True
+        await task
+
+
+@pytest.fixture
+def _uvicorn_error_logger_enabled() -> Generator[None]:
+    # Alembic's fileConfig (run by other tests in this process) disables existing
+    # loggers; a disabled logger would make the "no leak" assertions vacuous.
+    logger = logging.getLogger("uvicorn.error")
+    was_disabled = logger.disabled
+    logger.disabled = False
+    yield
+    logger.disabled = was_disabled
+
+
+def _secret_app() -> FastAPI:
+    app = create_app()
+
+    @app.get("/api/v1/leaky")
+    async def leaky() -> dict[str, str]:
+        raise RuntimeError(f"upstream rejected credential {_SERVER_SECRET}")
+
+    return app
+
+
+def _uvicorn_error_text(caplog: pytest.LogCaptureFixture) -> str:
+    return "\n".join(
+        record.getMessage() + (record.exc_text or "") + repr(record.exc_info)
+        for record in caplog.records
+        if record.name == "uvicorn.error"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_uvicorn_error_logger_enabled")
+async def test_real_uvicorn_does_not_log_the_exception_message(
+    caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    app = _secret_app()  # installs the uvicorn.error filter
+    caplog.set_level(logging.DEBUG)
+
+    response = await _hit_real_uvicorn(app, "/api/v1/leaky")
+
+    assert response.status_code == 500
+    assert _SERVER_SECRET not in response.text
+    assert _SERVER_SECRET not in _uvicorn_error_text(caplog)
+    assert "Exception in ASGI application" not in caplog.text
+    out = capsys.readouterr().out
+    assert _SERVER_SECRET not in out
+    (entry,) = [e for e in _request_logs(out) if e["event"] == "request.failed"]
+    assert entry["error_type"] == "RuntimeError"
+    assert entry["request_id"] == response.headers["x-request-id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_uvicorn_error_logger_enabled")
+async def test_control_without_the_filter_uvicorn_does_leak_the_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Proves the test above can detect the leak, so its pass is meaningful."""
+    app = _secret_app()
+    server_errors = logging.getLogger("uvicorn.error")
+    installed = list(server_errors.filters)
+    for log_filter in installed:
+        server_errors.removeFilter(log_filter)
+    caplog.set_level(logging.DEBUG)
+    try:
+        await _hit_real_uvicorn(app, "/api/v1/leaky")
+    finally:
+        for log_filter in installed:
+            server_errors.addFilter(log_filter)
+
+    assert _SERVER_SECRET in _uvicorn_error_text(caplog)
+
+
+@pytest.mark.usefixtures("_uvicorn_error_logger_enabled")
+def test_other_uvicorn_server_errors_are_preserved(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    create_app()
+    caplog.set_level(logging.DEBUG)
+    server_errors = logging.getLogger("uvicorn.error")
+
+    server_errors.error("Application startup failed. Exiting.")
+    server_errors.error("Exception in 'lifespan' protocol\n")
+    server_errors.error("Invalid HTTP request received.")
+    server_errors.error("Exception in ASGI application\n")
+
+    messages = [r.getMessage() for r in caplog.records if r.name == "uvicorn.error"]
+    assert messages == [
+        "Application startup failed. Exiting.",
+        "Exception in 'lifespan' protocol\n",
+        "Invalid HTTP request received.",
+    ]
