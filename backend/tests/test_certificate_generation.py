@@ -26,7 +26,10 @@ from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
 from hms_backend.app.models.foundation import AuditEvent
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
-from hms_backend.app.modules.certificates.issuance import regenerate_certificate_pdf
+from hms_backend.app.modules.certificates.issuance import (
+    next_revision_key,
+    regenerate_certificate_pdf,
+)
 from hms_backend.app.modules.certificates.models import Certificate
 from hms_backend.app.modules.customers.models import Customer, CustomerLocation
 from hms_backend.app.modules.inspections.models import (
@@ -246,10 +249,12 @@ async def test_regenerate_certificate_pdf_repairs_legacy_storage_and_hash(
         )
         await session.commit()
         assert repaired.public_token == original_token
-        assert repaired.pdf_object_key == original_object_key
+        # The replacement is a new write-once key; the superseded object is kept.
+        assert repaired.pdf_object_key == next_revision_key(original_object_key)
         assert repaired.issued_at == original_issued_at
         assert repaired.verification_hash != "stale-hash"
         assert _storage.exists(original_object_key)
+        assert _storage.exists(repaired.pdf_object_key)
 
         audit = (
             await session.scalars(
