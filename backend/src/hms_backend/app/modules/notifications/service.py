@@ -9,6 +9,7 @@ Celery tasks, and are directly unit-testable with an in-memory session factory.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -21,10 +22,17 @@ from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.certificates.models import NON_CERTIFIABLE_ASSET_STATUSES
 from hms_backend.app.modules.notifications.channels.base import (
     ChannelAdapter,
+    DeliveryResult,
     OutgoingMessage,
 )
 from hms_backend.app.modules.notifications.channels.registry import (
     get_channel_adapters,
+)
+from hms_backend.app.modules.notifications.claims import (
+    Claim,
+    claim,
+    finalise,
+    requeue_expired_claims,
 )
 from hms_backend.app.modules.notifications.enums import (
     NotificationCategory,
@@ -110,7 +118,13 @@ async def _relay_one(
     settings: Settings,
 ) -> int:
     async with session_factory() as session:
-        event = await session.get(OutboxEvent, event_id)
+        # Claim the event row. A relay that finds it locked by another relay skips it,
+        # so two relays never both materialise (and then collide on) the same event.
+        event = await session.scalar(
+            select(OutboxEvent)
+            .where(OutboxEvent.id == event_id)
+            .with_for_update(skip_locked=True)
+        )
         if event is None or event.processed_at is not None:
             return 0
         try:
@@ -134,7 +148,9 @@ async def _relay_one(
             await session.rollback()
             async with session_factory() as retry_session:
                 ev = await retry_session.get(OutboxEvent, event_id)
-                if ev is not None:
+                # Only an event that is still unprocessed has failed: one another
+                # relay already completed must not be marked with a spurious error.
+                if ev is not None and ev.processed_at is None:
                     ev.attempts += 1
                     ev.error = str(exc)
                     await retry_session.commit()
@@ -262,7 +278,7 @@ def _unsubscribe_url(
     )
 
 
-# --- Dispatcher: send PENDING notifications --------------------------------------
+# --- Dispatcher: claim, send, record -----------------------------------------------
 
 
 async def dispatch_pending(
@@ -271,10 +287,22 @@ async def dispatch_pending(
     adapters: dict[NotificationChannel, ChannelAdapter] | None = None,
     settings: Settings | None = None,
     limit: int = 100,
+    now: datetime | None = None,
 ) -> dict[str, int]:
     adapters = adapters or get_channel_adapters()
     settings = settings or default_settings
-    now = _utc_now()
+
+    def clock() -> datetime:
+        return now if now is not None else _utc_now()
+
+    # Claims whose holder died or hung are resolved first: requeued, or dead-lettered
+    # once they have used their attempts (see ``claims``).
+    await requeue_expired_claims(
+        session_factory,
+        Notification,
+        now=clock(),
+        max_attempts=settings.notification_max_attempts,
+    )
     async with session_factory() as session:
         ids = list(
             (
@@ -284,7 +312,7 @@ async def dispatch_pending(
                         Notification.status == NotificationStatus.PENDING.value,
                         or_(
                             Notification.scheduled_for.is_(None),
-                            Notification.scheduled_for <= now,
+                            Notification.scheduled_for <= clock(),
                         ),
                     )
                     .order_by(Notification.created_at)
@@ -296,9 +324,13 @@ async def dispatch_pending(
     sent = 0
     failed = 0
     for notification_id in ids:
-        result = await _dispatch_one(
-            session_factory, notification_id, adapters, settings
-        )
+        try:
+            result = await _dispatch_one(
+                session_factory, notification_id, adapters, settings, clock
+            )
+        except Exception:  # noqa: BLE001 - one notification must not stop the batch
+            logger.exception("dispatch failed for notification %s", notification_id)
+            continue
         if result == "sent":
             sent += 1
         elif result == "dead_letter":
@@ -311,25 +343,25 @@ async def _dispatch_one(
     notification_id: str,
     adapters: dict[NotificationChannel, ChannelAdapter],
     settings: Settings,
+    clock: Callable[[], datetime],
 ) -> str:
+    # Durable claim first: only the holder of a claim may send, so two overlapping
+    # dispatchers can never send the same notification.
+    held = await claim(
+        session_factory,
+        Notification,
+        notification_id,
+        now=clock(),
+        lease_seconds=settings.notification_claim_lease_seconds,
+    )
+    if held is None:
+        return "skip"
+
     async with session_factory() as session:
         n = await session.get(Notification, notification_id)
-        if n is None or n.status != NotificationStatus.PENDING.value:
+        if n is None:
             return "skip"
-
         channel = NotificationChannel(n.channel)
-        adapter = adapters.get(channel)
-        n.attempts += 1
-        now = _utc_now()
-
-        needs_address = channel is not NotificationChannel.IN_APP
-        if adapter is None or (needs_address and n.recipient_address is None):
-            n.status = NotificationStatus.FAILED.value
-            n.failed_at = now
-            n.error = "no adapter or address"
-            await session.commit()
-            return "failed"
-
         message = OutgoingMessage(
             channel=channel,
             to_address=n.recipient_address or "",
@@ -337,27 +369,94 @@ async def _dispatch_one(
             body_text=n.body,
             body_html=n.body_html,
         )
-        result = await adapter.send(message)
-        if result.success:
-            n.status = NotificationStatus.SENT.value
-            n.sent_at = now
-            n.provider_message_id = result.provider_message_id
-            await session.commit()
-            return "sent"
+        address_missing = n.recipient_address is None
+    adapter = adapters.get(channel)
 
-        n.error = result.error
-        if n.attempts >= settings.notification_max_attempts:
-            n.status = NotificationStatus.DEAD_LETTER.value
-            n.failed_at = now
-            await session.commit()
-            return "dead_letter"
-        # Retry later with linear backoff.
-        n.status = NotificationStatus.PENDING.value
-        n.scheduled_for = now + timedelta(
-            seconds=settings.notification_retry_backoff_seconds * n.attempts
+    needs_address = channel is not NotificationChannel.IN_APP
+    if adapter is None or (needs_address and address_missing):
+        await _record(
+            session_factory,
+            held,
+            {
+                "status": NotificationStatus.FAILED.value,
+                "failed_at": clock(),
+                "error": "no adapter or address",
+            },
         )
-        await session.commit()
-        return "retry"
+        return "failed"
+
+    try:
+        result = await adapter.send(message)
+    except Exception as exc:  # noqa: BLE001 - a raising adapter is a failed attempt
+        result = DeliveryResult(success=False, error=type(exc).__name__)
+
+    finished = clock()
+    if result.success:
+        await _record(
+            session_factory,
+            held,
+            {
+                "status": NotificationStatus.SENT.value,
+                "sent_at": finished,
+                "provider_message_id": result.provider_message_id,
+                "error": None,
+            },
+        )
+        return "sent"
+
+    if held.token >= settings.notification_max_attempts:
+        await _record(
+            session_factory,
+            held,
+            {
+                "status": NotificationStatus.DEAD_LETTER.value,
+                "failed_at": finished,
+                "error": result.error,
+            },
+        )
+        return "dead_letter"
+    # Retry later with linear backoff.
+    await _record(
+        session_factory,
+        held,
+        {
+            "status": NotificationStatus.PENDING.value,
+            "error": result.error,
+            "scheduled_for": finished
+            + timedelta(
+                seconds=settings.notification_retry_backoff_seconds * held.token
+            ),
+        },
+    )
+    return "retry"
+
+
+async def _record(
+    session_factory: async_sessionmaker[AsyncSession],
+    held: Claim,
+    values: dict[str, Any],
+) -> None:
+    """Write the outcome fenced by the claim; never let it abort the batch."""
+    try:
+        applied = await finalise(session_factory, Notification, held, values)
+    except Exception:
+        # The message may already have been sent. The row stays SENDING, so it is not
+        # re-sent before the lease expires; log what an operator needs to reconcile.
+        logger.exception(
+            "could not record the outcome for notification %s (attempt %s, "
+            "provider message id %s)",
+            held.row_id,
+            held.token,
+            values.get("provider_message_id"),
+        )
+        return
+    if not applied:
+        logger.error(
+            "lost the claim on notification %s (attempt %s) before recording its "
+            "outcome; it may be sent again",
+            held.row_id,
+            held.token,
+        )
 
 
 # --- Scheduler: daily retest reminders + overdue escalation ----------------------

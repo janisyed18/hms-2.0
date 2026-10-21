@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     notification_sender_name: str = "BAT Engineering"
     notification_max_attempts: int = 5
     notification_retry_backoff_seconds: int = 60
+    # How long a dispatcher may hold a claimed message before it is presumed dead.
+    # Must exceed the slowest provider call (adapters time out at 30 s).
+    notification_claim_lease_seconds: int = 300
     # Reminder cadence (days). Advance before due; escalation after overdue;
     # approaching-condemnation before the grave date.
     retest_advance_days: list[int] = Field(default_factory=lambda: [30, 14])

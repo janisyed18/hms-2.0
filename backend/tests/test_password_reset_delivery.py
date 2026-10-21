@@ -180,3 +180,87 @@ async def test_final_delivery_failure_scrubs_secret_and_redacts_error(
         assert delivery.ciphertext is None
         assert delivery.error == "email delivery failed"
         assert "secret-provider-detail" not in (delivery.error or "")
+
+
+@pytest.mark.asyncio
+async def test_a_dispatcher_starting_mid_send_does_not_email_the_link_twice(
+    session_factory: SessionFactory,
+) -> None:
+    await queue_reset(session_factory)
+    inner: list[dict[str, int]] = []
+
+    class OverlappingAdapter(FakeEmailAdapter):
+        async def send(self, message: OutgoingMessage) -> DeliveryResult:
+            # While this dispatcher is mid-send, another one starts.
+            inner.append(
+                await dispatch_password_reset_deliveries(
+                    session_factory, adapter=self, now=NOW
+                )
+            )
+            return await super().send(message)
+
+    adapter = OverlappingAdapter()
+
+    result = await dispatch_password_reset_deliveries(
+        session_factory, adapter=adapter, now=NOW
+    )
+
+    assert len(adapter.messages) == 1
+    assert inner == [{"sent": 0, "failed": 0}]
+    assert result == {"sent": 1, "failed": 0}
+
+
+@pytest.mark.asyncio
+async def test_a_claim_whose_holder_died_scrubs_the_secret_instead_of_resending(
+    session_factory: SessionFactory,
+) -> None:
+    await queue_reset(session_factory)
+    async with session_factory() as session:
+        delivery = await session.scalar(select(PasswordResetDelivery))
+        assert delivery is not None
+        # A worker claimed it and then died: SENDING, lease long expired, attempts
+        # already at the limit (these tests run with max attempts = 1).
+        delivery.status = "SENDING"
+        delivery.attempts = 1
+        delivery.scheduled_for = NOW - timedelta(seconds=1)
+        await session.commit()
+    adapter = FakeEmailAdapter()
+
+    result = await dispatch_password_reset_deliveries(
+        session_factory, adapter=adapter, now=NOW
+    )
+
+    assert result == {"sent": 0, "failed": 0}
+    assert adapter.messages == []  # the unknown outcome is not blindly resent
+    async with session_factory() as session:
+        delivery = await session.scalar(select(PasswordResetDelivery))
+        assert delivery is not None
+        assert delivery.status == "DEAD_LETTER"
+        assert delivery.ciphertext is None  # the reset token envelope is scrubbed
+
+
+@pytest.mark.asyncio
+async def test_a_raising_adapter_is_recorded_as_a_failed_attempt(
+    session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "notification_max_attempts", 3)
+    await queue_reset(session_factory)
+
+    class ExplodingAdapter(FakeEmailAdapter):
+        async def send(self, message: OutgoingMessage) -> DeliveryResult:
+            raise RuntimeError("provider exploded for delivery@example.com")
+
+    result = await dispatch_password_reset_deliveries(
+        session_factory, adapter=ExplodingAdapter(), now=NOW
+    )
+
+    assert result == {"sent": 0, "failed": 0}
+    async with session_factory() as session:
+        delivery = await session.scalar(select(PasswordResetDelivery))
+        assert delivery is not None
+        assert delivery.status == "PENDING"  # retried later, not stuck in SENDING
+        assert delivery.attempts == 1
+        assert delivery.error == "email delivery failed"
+        assert delivery.ciphertext is not None  # still needed for the retry
+        assert delivery.scheduled_for.replace(tzinfo=UTC) > NOW
