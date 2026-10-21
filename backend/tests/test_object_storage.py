@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -63,6 +64,41 @@ class _FakeS3Client:
             raise _FakeS3Error("404")
         return {}
 
+    def delete_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        # Like S3, deleting a missing key succeeds.
+        self.objects.pop((Bucket, Key), None)
+        return {}
+
+    def list_objects_v2(
+        self,
+        *,
+        Bucket: str,
+        Prefix: str = "",
+        ContinuationToken: str | None = None,
+    ) -> dict[str, object]:
+        page_size = 2
+        keys = sorted(
+            key
+            for (bucket, key) in self.objects
+            if bucket == Bucket and key.startswith(Prefix)
+        )
+        start = int(ContinuationToken) if ContinuationToken else 0
+        page = keys[start : start + page_size]
+        response: dict[str, object] = {
+            "Contents": [
+                {
+                    "Key": key,
+                    "LastModified": datetime(2026, 1, 1, tzinfo=UTC),
+                    "Size": len(self.objects[(Bucket, key)]["Body"]),
+                }
+                for key in page
+            ],
+            "IsTruncated": start + page_size < len(keys),
+        }
+        if response["IsTruncated"]:
+            response["NextContinuationToken"] = str(start + page_size)
+        return response
+
     def generate_presigned_url(
         self,
         operation: str,
@@ -112,6 +148,39 @@ def test_s3_object_storage_reports_missing_objects() -> None:
     assert storage.exists("certificates/missing.pdf") is False
     with pytest.raises(ObjectNotFoundError):
         storage.get("certificates/missing.pdf")
+
+
+def test_s3_object_storage_delete_is_idempotent_and_prefix_scoped() -> None:
+    client = _FakeS3Client()
+    storage = S3ObjectStorage(
+        bucket="hms-dev-media", prefix="dev/media", client=client
+    )
+    storage.put("certificates/a/v1.pdf", b"a")
+
+    storage.delete("certificates/a/v1.pdf")
+    storage.delete("certificates/a/v1.pdf")  # already gone: not an error
+
+    assert storage.exists("certificates/a/v1.pdf") is False
+    assert client.objects == {}
+
+
+def test_s3_object_storage_lists_by_prefix_across_pages_with_keys_unprefixed() -> None:
+    client = _FakeS3Client()
+    storage = S3ObjectStorage(
+        bucket="hms-dev-media", prefix="dev/media", client=client
+    )
+    for name in ("a", "b", "c", "d", "e"):
+        storage.put(f"certificates/{name}/v1.pdf", name.encode())
+    storage.put("media/other.png", b"x")
+    client.objects[("hms-dev-media", "elsewhere/certificates/z.pdf")] = {"Body": b"z"}
+
+    listed = storage.list_objects("certificates/")
+
+    # Five objects over three pages; keys come back without the configured prefix,
+    # and objects outside the prefix (or another prefix) are not listed.
+    assert [o.key for o in listed] == [f"certificates/{n}/v1.pdf" for n in "abcde"]
+    assert {o.size for o in listed} == {1}
+    assert all(o.last_modified.tzinfo is not None for o in listed)
 
 
 def test_s3_object_storage_rejects_escaping_keys() -> None:

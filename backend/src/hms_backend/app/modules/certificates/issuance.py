@@ -9,6 +9,8 @@ on the session but does not commit.
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 import secrets
 from datetime import UTC, date, datetime
 
@@ -62,6 +64,64 @@ class CertificateSignatureError(RuntimeError):
     """The rendered PDF is not signed by a signer the configured CA trusts."""
 
 
+class CertificateStorageError(RuntimeError):
+    """The stored PDF could not be read back identical to what was rendered."""
+
+
+logger = logging.getLogger("hms_backend.certificates.issuance")
+
+
+def _discard_artifact(storage: ObjectStorage, key: str) -> None:
+    """Best-effort removal of an object no committed row can reference.
+
+    Only called from a failure path of a transaction that never committed, so the
+    key is unreferenced. A failed delete must not mask the original error: the
+    orphan is then found by ``reconcile_certificate_artifacts``.
+    """
+    try:
+        storage.delete(key)
+    except Exception as exc:  # noqa: BLE001 - never mask the original failure
+        logger.warning(
+            "could not remove unreferenced certificate artifact %s (%s); "
+            "reconcile_certificate_artifacts will find it",
+            key,
+            type(exc).__name__,
+        )
+
+
+async def _store_verified_artifact(
+    storage: ObjectStorage, key: str, pdf: bytes
+) -> None:
+    """Write the PDF, then read it back and compare, before anything refers to it.
+
+    A row must never point at an object that is missing or not byte-identical to
+    what was rendered, signed and hashed.
+    """
+    await asyncio.to_thread(storage.put, key, pdf)
+    stored = await asyncio.to_thread(storage.get, key)
+    if pdf_sha256(stored) != pdf_sha256(pdf):
+        raise CertificateStorageError(
+            "stored certificate PDF does not match the rendered document"
+        )
+
+
+_REVISION_KEY = re.compile(r"^(?P<stem>.+?)(?:-r(?P<revision>\d+))?(?P<ext>\.[^./]+)?$")
+
+
+def next_revision_key(key: str) -> str:
+    """Write-once key for the next regeneration of ``key``.
+
+    ``certificates/<id>/v1.pdf`` -> ``certificates/<id>/v1-r1.pdf`` -> ``...-r2.pdf``.
+    Deterministic, so a retry after a failed attempt targets the same (still
+    unreferenced) key, while a committed artifact's key is never reused.
+    """
+    match = _REVISION_KEY.match(key)
+    if match is None:  # pragma: no cover - the pattern matches any non-empty key
+        return f"{key}-r1"
+    revision = int(match.group("revision") or 0) + 1
+    return f"{match.group('stem')}-r{revision}{match.group('ext') or ''}"
+
+
 def generate_public_token() -> str:
     return secrets.token_urlsafe(24)
 
@@ -90,7 +150,9 @@ async def generate_and_store_certificate(
     :class:`InspectionNotApprovedError`, :class:`AssetNotCertifiableError`,
     :class:`CertificateConflictError`, :class:`CertificateSignatureError`, or
     :class:`~hms_backend.app.modules.certificates.engine_client.CertificateEngineError`.
-    Does not commit.
+    Does not commit. Raises :class:`CertificateStorageError` if the stored PDF cannot
+    be read back identical. On any failure after the object write, the object is
+    removed before the exception propagates.
     """
     settings = settings or default_settings
     engine = engine or get_certificate_engine()
@@ -180,30 +242,38 @@ async def generate_and_store_certificate(
         raise CertificateConflictError(
             "Certificate number, token or hash is already in use"
         ) from exc
-    await asyncio.to_thread(storage.put, pdf_object_key, rendered.pdf)
-    await record_create(
-        session,
-        certificate,
-        actor_id=actor_id,
-        action="certificate.issued",
-    )
+    # From here an external object exists (or may, if a write fails ambiguously) that
+    # no committed row references yet. Any failure before this function returns means
+    # the caller's transaction will not commit, so the object is removed. A crash or
+    # a failure at commit time cannot run this; reconciliation covers those.
+    try:
+        await _store_verified_artifact(storage, pdf_object_key, rendered.pdf)
+        await record_create(
+            session,
+            certificate,
+            actor_id=actor_id,
+            action="certificate.issued",
+        )
 
-    # Emit a domain event on the transactional outbox (N-01): if the caller's
-    # transaction rolls back, no notification is ever produced.
-    await emit_event(
-        session,
-        category=NotificationCategory.CERTIFICATE_ISSUED,
-        aggregate_type="certificate",
-        aggregate_id=certificate.id,
-        payload={
-            "customer_id": inspection.asset.customer_id,
-            "asset_id": inspection.asset.id,
-            "asset_number": inspection.asset.asset_number,
-            "certificate_number": number,
-            "public_token": public_token,
-            "link": verify_url,
-        },
-    )
+        # Emit a domain event on the transactional outbox (N-01): if the caller's
+        # transaction rolls back, no notification is ever produced.
+        await emit_event(
+            session,
+            category=NotificationCategory.CERTIFICATE_ISSUED,
+            aggregate_type="certificate",
+            aggregate_id=certificate.id,
+            payload={
+                "customer_id": inspection.asset.customer_id,
+                "asset_id": inspection.asset.id,
+                "asset_number": inspection.asset.asset_number,
+                "certificate_number": number,
+                "public_token": public_token,
+                "link": verify_url,
+            },
+        )
+    except BaseException:
+        _discard_artifact(storage, pdf_object_key)
+        raise
     return certificate
 
 
@@ -219,9 +289,14 @@ async def regenerate_certificate_pdf(
     """Re-render a stored issued certificate and repair its verification hash.
 
     This is deliberately limited to issued records. It retains the certificate's
-    public identity (number, token, issue date and object key), so it is suitable
-    for recovering a missing legacy PDF without creating a second certificate.
-    The caller owns the transaction.
+    public identity (number, token and issue date), so it is suitable for recovering
+    a missing legacy PDF without creating a second certificate.
+
+    The replacement is written to a *new* write-once key and the row is repointed in
+    the caller's transaction. The currently committed artifact is never overwritten,
+    so a failure or rollback at any point leaves the committed row and its object
+    exactly as they were. The superseded object is left in place. The caller owns
+    the transaction.
     """
     if certificate.status != CertificateStatus.ISSUED.value:
         raise ValueError("only issued certificates can have their PDF regenerated")
@@ -233,6 +308,13 @@ async def regenerate_certificate_pdf(
     settings = settings or default_settings
     engine = engine or get_certificate_engine()
     storage = storage or get_object_storage()
+    # Serialise concurrent regenerations of the same certificate (a row lock on
+    # PostgreSQL) and read the key that is actually committed now.
+    await session.refresh(
+        certificate,
+        attribute_names=["pdf_object_key", "verification_hash", "version"],
+        with_for_update=True,
+    )
     inspection = certificate.inspection
     verify_url = (
         f"{settings.public_base_url.rstrip('/')}"
@@ -252,15 +334,21 @@ async def regenerate_certificate_pdf(
         issuer_identifier=settings.issuer_identifier,
     )
     rendered = await engine.render(to_proto(facts))
-    storage.put(certificate.pdf_object_key, rendered.pdf)
 
-    before = certificate.to_audit_dict()
-    certificate.verification_hash = rendered.verification_hash
-    await record_update(
-        session,
-        certificate,
-        actor_id=actor_id,
-        action="certificate.pdf_regenerated",
-        before=before,
-    )
+    new_key = next_revision_key(certificate.pdf_object_key)
+    try:
+        await _store_verified_artifact(storage, new_key, rendered.pdf)
+        before = certificate.to_audit_dict()
+        certificate.pdf_object_key = new_key
+        certificate.verification_hash = rendered.verification_hash
+        await record_update(
+            session,
+            certificate,
+            actor_id=actor_id,
+            action="certificate.pdf_regenerated",
+            before=before,
+        )
+    except BaseException:
+        _discard_artifact(storage, new_key)
+        raise
     return certificate

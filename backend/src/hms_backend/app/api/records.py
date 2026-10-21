@@ -117,6 +117,7 @@ from hms_backend.app.modules.certificates.issuance import (
     CertificateAlreadyIssuedError,
     CertificateConflictError,
     CertificateSignatureError,
+    CertificateStorageError,
     InspectionNotApprovedError,
     generate_and_store_certificate,
     generate_certificate_number,
@@ -2842,6 +2843,11 @@ async def issue_certificate(
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Certificate signing could not be verified: {exc}",
+            ) from exc
+        except CertificateStorageError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Certificate storage could not be verified: {exc}",
             ) from exc
         except (
             CertificateAlreadyIssuedError,

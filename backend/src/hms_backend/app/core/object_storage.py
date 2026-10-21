@@ -19,9 +19,13 @@ through the app.
 from __future__ import annotations
 
 import importlib
+import os
 import posixpath
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, cast, runtime_checkable
+from uuid import uuid4
 
 from hms_backend.app.core.config import settings
 
@@ -32,6 +36,15 @@ class ObjectNotFoundError(FileNotFoundError):
     """Raised when an object key does not exist."""
 
 
+@dataclass(frozen=True)
+class StoredObject:
+    """One listed object: its opaque key, last write time (UTC) and size."""
+
+    key: str
+    last_modified: datetime
+    size: int
+
+
 class ObjectStorage(Protocol):
     def put(
         self, key: str, data: bytes, *, content_type: str = "application/pdf"
@@ -40,6 +53,14 @@ class ObjectStorage(Protocol):
     def get(self, key: str) -> bytes: ...
 
     def exists(self, key: str) -> bool: ...
+
+    def delete(self, key: str) -> None:
+        """Remove an object. Deleting a missing key is not an error."""
+        ...
+
+    def list_objects(self, prefix: str) -> list[StoredObject]:
+        """Every object whose key starts with ``prefix`` (used for reconciliation)."""
+        ...
 
 
 @runtime_checkable
@@ -53,6 +74,9 @@ class PresignedObjectStorage(Protocol):
         download_filename: str | None = None,
         expires_in: int | None = None,
     ) -> str: ...
+
+
+_LOCAL_TEMP_MARKER = ".tmp-"
 
 
 class LocalObjectStorage:
@@ -73,7 +97,15 @@ class LocalObjectStorage:
     ) -> str:
         path = self._resolve(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
+        # Write to a sibling temp file and rename, so a crash or failure mid-write can
+        # never leave a truncated object at a key that something may reference.
+        temp = path.with_name(f"{path.name}{_LOCAL_TEMP_MARKER}{uuid4().hex}")
+        try:
+            temp.write_bytes(data)
+            os.replace(temp, path)
+        except BaseException:
+            temp.unlink(missing_ok=True)
+            raise
         return key
 
     def get(self, key: str) -> bytes:
@@ -84,6 +116,27 @@ class LocalObjectStorage:
 
     def exists(self, key: str) -> bool:
         return self._resolve(key).exists()
+
+    def delete(self, key: str) -> None:
+        self._resolve(key).unlink(missing_ok=True)
+
+    def list_objects(self, prefix: str) -> list[StoredObject]:
+        objects: list[StoredObject] = []
+        for path in sorted(self._root.rglob("*")):
+            if not path.is_file() or _LOCAL_TEMP_MARKER in path.name:
+                continue
+            key = path.relative_to(self._root).as_posix()
+            if not key.startswith(prefix):
+                continue
+            stat = path.stat()
+            objects.append(
+                StoredObject(
+                    key=key,
+                    last_modified=datetime.fromtimestamp(stat.st_mtime, UTC),
+                    size=stat.st_size,
+                )
+            )
+        return objects
 
 
 def _normalise_object_key(key: str) -> str:
@@ -207,6 +260,37 @@ class S3ObjectStorage:
                 return False
             raise
         return True
+
+    def delete(self, key: str) -> None:
+        # S3 deletes are idempotent: a missing key is not an error.
+        self._get_client().delete_object(Bucket=self._bucket, Key=self._s3_key(key))
+
+    def list_objects(self, prefix: str) -> list[StoredObject]:
+        base = f"{self._prefix}/" if self._prefix else ""
+        objects: list[StoredObject] = []
+        token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = {
+                "Bucket": self._bucket,
+                "Prefix": f"{base}{prefix}",
+            }
+            if token:
+                kwargs["ContinuationToken"] = token
+            response = self._get_client().list_objects_v2(**kwargs)
+            for item in response.get("Contents", []):
+                modified = item["LastModified"]
+                if modified.tzinfo is None:
+                    modified = modified.replace(tzinfo=UTC)
+                objects.append(
+                    StoredObject(
+                        key=item["Key"][len(base) :],
+                        last_modified=modified,
+                        size=int(item["Size"]),
+                    )
+                )
+            if not response.get("IsTruncated"):
+                return objects
+            token = response["NextContinuationToken"]
 
     def presigned_get_url(
         self,
