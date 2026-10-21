@@ -79,6 +79,20 @@ variable "db_allocated_storage_gb" {
   default     = 20
 }
 
+variable "log_retention_days" {
+  description = "CloudWatch retention for all dev ECS log groups. The API group also receives migrate-task output, which can include development account emails, so keep this short."
+  type        = number
+  default     = 14
+
+  validation {
+    condition = contains(
+      [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365],
+      var.log_retention_days
+    )
+    error_message = "log_retention_days must be a retention value CloudWatch Logs supports (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180 or 365)."
+  }
+}
+
 variable "redis_node_type" {
   description = "ElastiCache Redis node type for dev."
   type        = string

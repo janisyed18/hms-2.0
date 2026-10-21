@@ -277,6 +277,23 @@ aws ecs describe-services \
   --services "$(terraform output -raw worker_service)" >/dev/null
 ```
 
+## Operational Alarms And Log Retention
+
+`infra/terraform/envs/dev/alarms.tf` defines a minimal CloudWatch alarm set for the
+API: unhandled exceptions (`request.failed` in the structured request log), no healthy
+ALB targets (missing data counts as breaching), target 5xx, sustained CPU and memory at
+or above 80%, and low RDS free storage (`max(2 GiB, 10% of allocated storage)`). Worker
+and beat are intentionally scaled to zero, so they have no alarms.
+
+The alarms have **no actions**: they change state in CloudWatch only. Nothing is paged
+or emailed until an operations destination is chosen and wired deliberately, and they
+must not use the application's `notification_events` SNS topic.
+
+All ECS log groups use `log_retention_days` (default 14). The API group also receives
+migrate-task output, which can include development account emails, so keep retention
+short. Adding these resources needs the reviewed bootstrap policy update in
+`docs/aws/bootstrap-terraform-role.md` before the first Plan.
+
 ## Notes
 
 - Dev ECS tasks run in public subnets with public egress to avoid NAT Gateway cost. Ingress is restricted by security group rules; API traffic enters through the public ALB.

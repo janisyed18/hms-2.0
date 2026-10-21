@@ -584,22 +584,22 @@ resource "aws_ecr_lifecycle_policy" "images" {
 
 resource "aws_cloudwatch_log_group" "api" {
   name              = "/ecs/${local.name}/api"
-  retention_in_days = 3
+  retention_in_days = var.log_retention_days
 }
 
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/ecs/${local.name}/worker"
-  retention_in_days = 3
+  retention_in_days = var.log_retention_days
 }
 
 resource "aws_cloudwatch_log_group" "beat" {
   name              = "/ecs/${local.name}/beat"
-  retention_in_days = 3
+  retention_in_days = var.log_retention_days
 }
 
 resource "aws_cloudwatch_log_group" "certificate_engine" {
   name              = "/ecs/${local.name}/certificate-engine"
-  retention_in_days = 3
+  retention_in_days = var.log_retention_days
 }
 
 resource "aws_secretsmanager_secret" "app" {
