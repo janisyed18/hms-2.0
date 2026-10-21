@@ -6,6 +6,7 @@ import fakeredis.aioredis
 import httpx
 import pytest
 from fastapi import Request
+from redis.exceptions import RedisError
 
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.redis import set_redis_client
@@ -136,3 +137,35 @@ async def test_api_requests_are_rate_limited_per_client() -> None:
     assert first.status_code == 200
     assert limited.status_code == 429
     assert 1 <= int(limited.headers["retry-after"]) <= 60
+
+
+class _UnavailableRedis:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    async def incr(self, *_args: object, **_kwargs: object) -> int:
+        raise self._error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [RedisError("down"), RuntimeError("no client"), OSError("unreachable")],
+    ids=["redis-error", "runtime-error", "os-error"],
+)
+async def test_ordinary_api_requests_remain_available_when_redis_is_down(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    # Deployed environment: the old code returned 503 here (local/test skipped it).
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "security_edge_shared_secret", "edge-secret")
+    set_redis_client(_UnavailableRedis(error))  # type: ignore[arg-type]
+    transport = httpx.ASGITransport(app=create_app())
+    async with httpx.AsyncClient(
+        transport=transport, base_url="https://testserver"
+    ) as client:
+        response = await client.get(
+            "/api/v1/openapi.json", headers={"X-HMS-Edge-Secret": "edge-secret"}
+        )
+
+    assert response.status_code == 200

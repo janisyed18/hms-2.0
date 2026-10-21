@@ -181,11 +181,7 @@ class ApiRateLimitMiddleware:
                 )
                 return
         except (RedisError, RuntimeError, OSError):
-            if not settings.is_local_or_test:
-                await _json(
-                    send,
-                    503,
-                    {"detail": "Request protection is temporarily unavailable."},
-                )
-                return
+            # Login and reset throttles fail closed independently; this broad
+            # limiter must not make database-backed API traffic unavailable.
+            pass
         await self.app(scope, receive, send)
