@@ -40,7 +40,10 @@ from hms_backend.app.modules.certificates.issuance import (
 )
 from hms_backend.app.modules.certificates.models import Certificate
 from hms_backend.app.modules.certificates.reconcile import (
-    delete_artifacts,
+    ORPHAN,
+    SUPERSEDED,
+    UNCLASSIFIED,
+    delete_orphans,
     find_unreferenced_artifacts,
 )
 from hms_backend.app.modules.identity import models as _identity_models  # noqa: F401
@@ -321,11 +324,14 @@ async def test_commit_failure_leaves_a_reconcilable_orphan_and_retry_is_clean(
             == []
         )
         later = datetime.now(UTC) + timedelta(hours=2)
-        orphans = await find_unreferenced_artifacts(
+        findings = await find_unreferenced_artifacts(
             session, storage, older_than=timedelta(hours=1), now=later
         )
-    assert [o.key for o in orphans] == [orphan_key]
-    assert await delete_artifacts(storage, orphans) == 1
+        assert [(f.stored.key, f.classification) for f in findings] == [
+            (orphan_key, ORPHAN)
+        ]
+        result = await delete_orphans(session, storage, findings)
+    assert result.deleted == [orphan_key]
     assert storage.keys() == []
 
     certificate = await _issue_once(factory, inspection_id, engine, storage)
@@ -510,10 +516,155 @@ async def test_reconciliation_only_reports_old_unreferenced_objects(
     assert young == []
     # Referenced objects (including a soft-deleted certificate's) and objects outside
     # the certificate prefix are never candidates.
-    assert [o.key for o in old] == ["certificates/orphan/v1.pdf"]
+    assert [(f.stored.key, f.classification) for f in old] == [
+        ("certificates/orphan/v1.pdf", ORPHAN)
+    ]
     assert storage.exists(kept.pdf_object_key)
     assert storage.exists(soft_deleted.pdf_object_key)
     assert storage.exists("certificates/orphan/v1.pdf")  # finding never deletes
+
+
+def _aged() -> datetime:
+    return datetime.now(UTC) + timedelta(hours=2)
+
+
+@pytest.mark.asyncio
+async def test_committed_revision_history_is_never_treated_as_an_orphan(
+    factory: async_sessionmaker[AsyncSession],
+    storage: FlakyStorage,
+    engine: SigningFakeEngine,
+) -> None:
+    """v1 -> r1 -> r2 is committed history; only a newer, uncommitted r3 is garbage."""
+    cid, v1_key, v1_bytes = await _legacy_certificate(factory, "H1", engine, storage)
+    r1 = await _regenerate(factory, cid, engine, storage)
+    r2 = await _regenerate(factory, cid, engine, storage)
+    r3 = next_revision_key(r2)
+    storage.put(r3, b"%PDF-failed-attempt")  # a leftover from a failed attempt
+    custom = f"certificates/{cid}/custom-name.pdf"
+    storage.put(custom, b"%PDF-unrelated")
+
+    async with factory() as session:
+        findings = await find_unreferenced_artifacts(
+            session, storage, older_than=timedelta(hours=1), now=_aged()
+        )
+        by_key = {f.stored.key: f.classification for f in findings}
+        assert by_key == {
+            v1_key: SUPERSEDED,
+            r1: SUPERSEDED,
+            r3: ORPHAN,
+            custom: UNCLASSIFIED,
+        }
+        result = await delete_orphans(session, storage, findings)
+
+    # Blanket "apply" removes only the genuine orphan; history and the committed
+    # artifact survive.
+    assert result.deleted == [r3]
+    assert storage.get(v1_key) == v1_bytes
+    assert storage.exists(r1) and storage.exists(r2) and storage.exists(custom)
+    assert not storage.exists(r3)
+    await _assert_committed_pdf_is_intact(factory, storage)
+
+
+@pytest.mark.asyncio
+async def test_a_stale_scan_cannot_delete_a_key_a_regeneration_has_since_adopted(
+    factory: async_sessionmaker[AsyncSession],
+    storage: FlakyStorage,
+    engine: SigningFakeEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scan selects r1 as an orphan; a retry then legitimately adopts r1."""
+    cid, v1_key, _ = await _legacy_certificate(factory, "S1", engine, storage)
+    r1 = next_revision_key(v1_key)
+
+    # A failed attempt whose own cleanup also failed leaves r1 behind, unreferenced.
+    async def boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("audit write failed")
+
+    storage.fail_deletes = True
+    with monkeypatch.context() as patch:
+        patch.setattr(issuance_module, "record_update", boom)
+        with pytest.raises(RuntimeError, match="audit write failed"):
+            await _regenerate(factory, cid, engine, storage, commit=False)
+    storage.fail_deletes = False
+    assert storage.exists(r1)
+
+    async with factory() as session:
+        stale = await find_unreferenced_artifacts(
+            session, storage, older_than=timedelta(hours=1), now=_aged()
+        )
+        assert [(f.stored.key, f.classification) for f in stale] == [(r1, ORPHAN)]
+
+        # The legitimate retry commits, adopting the very same key.
+        assert await _regenerate(factory, cid, engine, storage) == r1
+
+        result = await delete_orphans(session, storage, stale)
+
+    assert result.deleted == []
+    assert result.skipped == [(r1, "now referenced by a certificate")]
+    assert await _committed_key(factory, cid) == r1
+    await _assert_committed_pdf_is_intact(factory, storage)
+
+
+@pytest.mark.asyncio
+async def test_regeneration_rechecks_eligibility_after_taking_the_lock(
+    factory: async_sessionmaker[AsyncSession],
+    storage: FlakyStorage,
+    engine: SigningFakeEngine,
+) -> None:
+    """A concurrent change made after the in-memory copy was loaded is honoured."""
+    cid, old_key, old_bytes = await _legacy_certificate(factory, "E1", engine, storage)
+    async with factory() as stale_session:
+        stale_copy = await stale_session.get(Certificate, cid)
+        assert stale_copy is not None
+        assert stale_copy.status == "ISSUED"  # what the stale copy believes
+
+        async with factory() as other:
+            row = await other.get(Certificate, cid)
+            assert row is not None
+            row.status = "REVOKED"
+            await other.commit()
+
+        with pytest.raises(ValueError, match="only issued certificates"):
+            await regenerate_certificate_pdf(
+                stale_session,
+                stale_copy,
+                actor_id="repair",
+                engine=engine,
+                storage=storage,
+            )
+
+    assert storage.keys() == [old_key]  # nothing was rendered or written
+    assert storage.get(old_key) == old_bytes
+
+
+@pytest.mark.asyncio
+async def test_regeneration_rechecks_issuance_evidence_after_taking_the_lock(
+    factory: async_sessionmaker[AsyncSession],
+    storage: FlakyStorage,
+    engine: SigningFakeEngine,
+) -> None:
+    cid, old_key, _ = await _legacy_certificate(factory, "E2", engine, storage)
+    async with factory() as stale_session:
+        stale_copy = await stale_session.get(Certificate, cid)
+        assert stale_copy is not None
+        assert stale_copy.issuance_facts is None
+
+        async with factory() as other:
+            row = await other.get(Certificate, cid)
+            assert row is not None
+            row.issuance_facts = {"upgraded": True}
+            await other.commit()
+
+        with pytest.raises(ValueError, match="issuance evidence"):
+            await regenerate_certificate_pdf(
+                stale_session,
+                stale_copy,
+                actor_id="repair",
+                engine=engine,
+                storage=storage,
+            )
+
+    assert storage.keys() == [old_key]
 
 
 # --- key derivation and local storage primitives --------------------------------

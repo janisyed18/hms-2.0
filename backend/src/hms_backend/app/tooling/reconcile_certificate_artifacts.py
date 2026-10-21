@@ -1,9 +1,17 @@
-"""Report (and optionally delete) certificate PDFs no certificate references.
+"""Report (and optionally delete) orphaned certificate PDFs.
 
-Dry run by default: it lists orphaned objects and deletes nothing. Pass ``--apply`` to
-delete what it listed. Objects younger than ``--older-than-minutes`` are never
-considered, so an in-flight issuance is safe. Objects superseded by a PDF
-regeneration are unreferenced too and are included; review the list before applying.
+Dry run by default: it lists unreferenced objects, classified, and deletes nothing.
+Only ``orphan`` objects are ever deleted, and only with ``--apply``:
+
+* ``orphan``: a leftover from a crashed or rolled-back issuance, or a failed
+  regeneration attempt newer than the certificate's current revision;
+* ``superseded``: an older revision of a successfully regenerated certificate. This is
+  committed history. It is listed for information and never deleted;
+* ``unclassified``: a key outside the certificate key scheme. Listed, never deleted.
+
+Objects younger than ``--older-than-minutes`` are not considered. Each deletion
+re-checks the object under the certificate row lock, so a regeneration that has
+since adopted the key is never broken.
 """
 
 from __future__ import annotations
@@ -16,14 +24,18 @@ from datetime import timedelta
 from hms_backend.app.api.dependencies import SessionLocal
 from hms_backend.app.core.object_storage import get_object_storage
 from hms_backend.app.modules.certificates.reconcile import (
-    delete_artifacts,
+    ORPHAN,
+    SUPERSEDED,
+    UNCLASSIFIED,
+    ArtifactFinding,
+    delete_orphans,
     find_unreferenced_artifacts,
 )
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Find certificate PDFs that no certificate row references."
+        description="Find orphaned certificate PDFs that no certificate references."
     )
     parser.add_argument(
         "--older-than-minutes",
@@ -34,9 +46,21 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--apply",
         action="store_true",
-        help="Delete the listed objects. Without it nothing is deleted.",
+        help="Delete the orphan objects. Without it nothing is deleted.",
     )
     return parser
+
+
+def _describe(findings: list[ArtifactFinding], classification: str) -> list[object]:
+    return [
+        {
+            "key": f.stored.key,
+            "last_modified": f.stored.last_modified.isoformat(),
+            "size": f.stored.size,
+        }
+        for f in findings
+        if f.classification == classification
+    ]
 
 
 async def _run(args: argparse.Namespace) -> dict[str, object]:
@@ -44,21 +68,25 @@ async def _run(args: argparse.Namespace) -> dict[str, object]:
         raise SystemExit("--older-than-minutes must be at least 5")
     storage = get_object_storage()
     async with SessionLocal() as session:
-        orphans = await find_unreferenced_artifacts(
-            session,
-            storage,
-            older_than=timedelta(minutes=args.older_than_minutes),
+        findings = await find_unreferenced_artifacts(
+            session, storage, older_than=timedelta(minutes=args.older_than_minutes)
         )
-    result: dict[str, object] = {
-        "unreferenced": [
-            {"key": o.key, "last_modified": o.last_modified.isoformat(), "size": o.size}
-            for o in orphans
-        ],
-        "applied": args.apply,
-        "deleted": 0,
-    }
-    if args.apply:
-        result["deleted"] = await delete_artifacts(storage, orphans)
+        result: dict[str, object] = {
+            "orphan": _describe(findings, ORPHAN),
+            "superseded": _describe(findings, SUPERSEDED),
+            "unclassified": _describe(findings, UNCLASSIFIED),
+            "applied": args.apply,
+            "deleted": [],
+            "skipped": [],
+        }
+        if args.apply:
+            outcome = await delete_orphans(session, storage, findings)
+            result["deleted"] = outcome.deleted
+            result["skipped"] = [
+                {"key": key, "reason": reason}
+                for key, reason in outcome.skipped
+                if not reason.startswith("not deletable")
+            ]
     return result
 
 

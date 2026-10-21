@@ -108,6 +108,15 @@ async def _store_verified_artifact(
 _REVISION_KEY = re.compile(r"^(?P<stem>.+?)(?:-r(?P<revision>\d+))?(?P<ext>\.[^./]+)?$")
 
 
+def _require_regenerable(certificate: Certificate) -> None:
+    if certificate.status != CertificateStatus.ISSUED.value:
+        raise ValueError("only issued certificates can have their PDF regenerated")
+    if certificate.issuance_facts is not None:
+        # Certificates with integrity evidence are immutable: re-rendering from
+        # current master data would silently replace what was actually issued.
+        raise ValueError("a certificate with issuance evidence cannot be regenerated")
+
+
 def next_revision_key(key: str) -> str:
     """Write-once key for the next regeneration of ``key``.
 
@@ -298,23 +307,27 @@ async def regenerate_certificate_pdf(
     exactly as they were. The superseded object is left in place. The caller owns
     the transaction.
     """
-    if certificate.status != CertificateStatus.ISSUED.value:
-        raise ValueError("only issued certificates can have their PDF regenerated")
-    if certificate.issuance_facts is not None:
-        # Certificates with integrity evidence are immutable: re-rendering from
-        # current master data would silently replace what was actually issued.
-        raise ValueError("a certificate with issuance evidence cannot be regenerated")
+    _require_regenerable(certificate)  # fail fast, before taking the lock
 
     settings = settings or default_settings
     engine = engine or get_certificate_engine()
     storage = storage or get_object_storage()
     # Serialise concurrent regenerations of the same certificate (a row lock on
-    # PostgreSQL) and read the key that is actually committed now.
+    # PostgreSQL) and read the state that is actually committed now. Eligibility is
+    # re-checked from that fresh state: a concurrent revoke, or an upgrade that
+    # attached issuance evidence, must not be acted on from a stale in-memory copy.
     await session.refresh(
         certificate,
-        attribute_names=["pdf_object_key", "verification_hash", "version"],
+        attribute_names=[
+            "status",
+            "issuance_facts",
+            "pdf_object_key",
+            "verification_hash",
+            "version",
+        ],
         with_for_update=True,
     )
+    _require_regenerable(certificate)
     inspection = certificate.inspection
     verify_url = (
         f"{settings.public_base_url.rstrip('/')}"
