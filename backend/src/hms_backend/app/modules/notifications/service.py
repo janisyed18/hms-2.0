@@ -13,7 +13,7 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hms_backend.app.core.config import Settings
@@ -147,13 +147,20 @@ async def _relay_one(
         except Exception as exc:  # noqa: BLE001 - isolate one event's failure
             await session.rollback()
             async with session_factory() as retry_session:
-                ev = await retry_session.get(OutboxEvent, event_id)
-                # Only an event that is still unprocessed has failed: one another
-                # relay already completed must not be marked with a spurious error.
-                if ev is not None and ev.processed_at is None:
-                    ev.attempts += 1
-                    ev.error = str(exc)
-                    await retry_session.commit()
+                # One atomic statement, conditional on the event still being
+                # unprocessed. Another relay may have taken the event over after this
+                # one released it; PostgreSQL re-evaluates the predicate once any
+                # concurrent update commits, so an event that is by then processed
+                # matches nothing and is not marked with a spurious error or attempt.
+                await retry_session.execute(
+                    update(OutboxEvent)
+                    .where(
+                        OutboxEvent.id == event_id,
+                        OutboxEvent.processed_at.is_(None),
+                    )
+                    .values(attempts=OutboxEvent.attempts + 1, error=str(exc))
+                )
+                await retry_session.commit()
             logger.warning("relay failed for event %s: %s", event_id, exc)
         return created
 

@@ -390,3 +390,39 @@ async def test_a_missing_address_fails_the_claimed_row_without_sending(
     assert failed.error == "no adapter or address"
     assert failed.attempts == 1
     assert adapter.sends == {}
+
+
+@pytest.mark.asyncio
+async def test_a_genuine_relay_failure_is_still_recorded_on_an_unprocessed_event(
+    factory: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hms_backend.app.modules.notifications.service as service_module
+    from hms_backend.app.modules.notifications.models import OutboxEvent
+    from hms_backend.app.modules.notifications.service import _relay_one
+
+    async with factory() as session:
+        event = OutboxEvent(
+            event_type="CERTIFICATE_ISSUED",
+            aggregate_type="certificate",
+            aggregate_id=str(uuid4()),
+            payload={},
+        )
+        session.add(event)
+        await session.commit()
+        event_id = event.id
+
+    async def failing(*_args: object, **_kwargs: object) -> list[object]:
+        raise RuntimeError("could not resolve recipients")
+
+    monkeypatch.setattr(service_module, "resolve_recipients", failing)
+
+    await _relay_one(factory, event_id, Settings())
+    await _relay_one(factory, event_id, Settings())
+
+    async with factory() as session:
+        failed = await session.get(OutboxEvent, event_id)
+        assert failed is not None
+        # Each real failure is counted and kept for retry; the event stays unprocessed.
+        assert failed.processed_at is None
+        assert failed.attempts == 2
+        assert failed.error == "could not resolve recipients"
