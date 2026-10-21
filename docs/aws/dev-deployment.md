@@ -61,6 +61,11 @@ running an infrastructure Plan.
    refresh drift and output names. The decrypted plan is shredded when the job
    ends. This removes the need to export the age private key or to run Apply to
    obtain review evidence.
+   The same report is also uploaded as a one-day artifact named
+   `aws-dev-terraform-review-report-<plan run id>-<review run id>` (a single
+   `structural-report.md`), because the run summary is not available through any
+   API. Retrieve it with `gh run download <review run id> -n <artifact name>`. The
+   artifact never contains the plan, plan JSON, manifest or any value.
 4. Confirm all creates, changes, and deletes are expected. Pay particular
    attention to ECS task definitions, Secrets Manager, CloudFront, ALB, IAM,
    networking, and database resources. The structural report cannot show *what*

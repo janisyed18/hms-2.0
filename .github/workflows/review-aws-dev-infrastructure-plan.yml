@@ -121,17 +121,22 @@ jobs:
           test -s tfplan
 
       # The key is gone and no secret is in this step's environment. Plan JSON goes
-      # to a file, never to the log; only the sanitized report is published.
+      # to a file, never to the log; only the sanitized report is published. The
+      # report is written outside the Terraform directory so the raw plan material
+      # (tfplan, plan.json) is shredded here while the report alone survives for the
+      # upload step below.
       - name: Publish sanitized structural report
         working-directory: infra/terraform/envs/dev
         env:
           TF_IN_AUTOMATION: "true"
         run: |
           set +x
-          report="$(mktemp)"
+          report_dir="$RUNNER_TEMP/structural-report"
+          report="$report_dir/structural-report.md"
+          mkdir -p "$report_dir"
           cleanup() {
-            shred --remove --zero --iterations=1 tfplan plan.json "$report" 2>/dev/null \
-              || rm -f tfplan plan.json "$report"
+            shred --remove --zero --iterations=1 tfplan plan.json 2>/dev/null \
+              || rm -f tfplan plan.json
           }
           trap cleanup EXIT
           terraform show -json tfplan > plan.json 2>/dev/null
@@ -139,3 +144,14 @@ jobs:
             --plan-json plan.json \
             --manifest plan-manifest.json > "$report"
           cat "$report" >> "$GITHUB_STEP_SUMMARY"
+
+      # Additional retrieval path for the same sanitized report (the step summary is
+      # not exposed through any API). Exactly one file: the summarizer's output.
+      # Never add the plan, plan JSON, decrypted plan or manifest here.
+      - name: Upload sanitized structural report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aws-dev-terraform-review-report-${{ inputs.plan_run_id }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/structural-report/structural-report.md
+          if-no-files-found: error
+          retention-days: 1

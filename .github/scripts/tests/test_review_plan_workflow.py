@@ -51,9 +51,49 @@ class ReviewPlanWorkflowTests(unittest.TestCase):
         self.assertIn("terraform show -json tfplan > plan.json 2>/dev/null", publish)
         self.assertIn('shred --remove --zero --iterations=1 tfplan plan.json', publish)
         self.assertIn('>> "$GITHUB_STEP_SUMMARY"', publish)
-        # The raw plan is never written to the log or uploaded.
-        self.assertNotIn("upload-artifact", WORKFLOW)
+        # The raw plan is never written to the log.
         self.assertNotIn("terraform show -no-color", WORKFLOW)
+
+    def test_only_the_sanitized_report_is_ever_uploaded(self) -> None:
+        # Exactly one upload step, and it carries exactly one file: the summarizer's
+        # output. Anything derived from the plan itself must never be uploaded.
+        self.assertEqual(WORKFLOW.count("upload-artifact"), 1)
+        upload = step("Upload sanitized structural report")
+        self.assertIn(
+            "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", upload
+        )
+        self.assertIn(
+            "path: ${{ runner.temp }}/structural-report/structural-report.md", upload
+        )
+        self.assertEqual(upload.count("path:"), 1)
+        self.assertIn("retention-days: 1", upload)
+        self.assertIn("if-no-files-found: error", upload)
+        self.assertNotIn("secrets.", upload)
+        for raw in (
+            "tfplan",
+            "plan.json",
+            ".age",
+            "plan-manifest",
+            "terraform show",
+            "infra/terraform",
+            "*",
+        ):
+            with self.subTest(raw=raw):
+                self.assertNotIn(raw, upload.split("with:", 1)[1])
+
+    def test_report_is_written_outside_the_terraform_directory_and_kept(self) -> None:
+        publish = step("Publish sanitized structural report")
+        self.assertIn('report="$report_dir/structural-report.md"', publish)
+        self.assertIn('report_dir="$RUNNER_TEMP/structural-report"', publish)
+        # Raw plan material is shredded; the report is deliberately not.
+        cleanup = publish[publish.index("cleanup()") : publish.index("trap cleanup")]
+        self.assertIn("tfplan plan.json", cleanup)
+        self.assertNotIn("report", cleanup)
+        self.assertNotIn("$GITHUB_STEP_SUMMARY\n", cleanup)
+        self.assertLess(
+            WORKFLOW.index("Publish sanitized structural report"),
+            WORKFLOW.index("Upload sanitized structural report"),
+        )
 
     def test_plan_source_and_integrity_are_verified_before_decryption(self) -> None:
         self.assertLess(
