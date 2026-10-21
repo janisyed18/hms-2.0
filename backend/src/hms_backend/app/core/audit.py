@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.models.foundation import AuditEvent
@@ -29,6 +29,9 @@ def normalise_for_json(value: Any) -> Any:
 
 
 REDACTED = "[REDACTED]"
+
+# Fixed PostgreSQL transaction lock key for the one globally ordered hash chain.
+_AUDIT_CHAIN_LOCK_KEY = 0x484D534155444954
 
 # Credential material must never be stored in, or returned from, the audit trail.
 # Matching is on the key name (case-insensitive, at any depth). Exact names are
@@ -114,9 +117,11 @@ async def append_audit_event(
     before: dict[str, Any] | None,
     after: dict[str, Any] | None,
 ) -> AuditEvent:
-    latest = (
-        await session.scalars(select(AuditEvent).order_by(AuditEvent.sequence.desc()))
-    ).first()
+    # Flush pending domain writes before taking the global lock. Otherwise a
+    # concurrent transaction can hold a domain-row lock while waiting for it.
+    await session.flush()
+    await _acquire_audit_chain_lock(session)
+    latest = await _latest_audit_event(session)
     normalised_before = redact_sensitive(normalise_for_json(before))
     normalised_after = redact_sensitive(normalise_for_json(after))
     event = AuditEvent(
@@ -134,6 +139,20 @@ async def append_audit_event(
     session.add(event)
     await session.flush()
     return event
+
+
+async def _acquire_audit_chain_lock(session: AsyncSession) -> None:
+    if session.get_bind().dialect.name == "postgresql":
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": _AUDIT_CHAIN_LOCK_KEY},
+        )
+
+
+async def _latest_audit_event(session: AsyncSession) -> AuditEvent | None:
+    return (
+        await session.scalars(select(AuditEvent).order_by(AuditEvent.sequence.desc()))
+    ).first()
 
 
 async def verify_audit_chain(session: AsyncSession) -> bool:
