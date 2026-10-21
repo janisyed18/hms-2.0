@@ -141,6 +141,16 @@ async def append_audit_event(
     return event
 
 
+async def acquire_ledger_lock(session: AsyncSession) -> None:
+    """Take the global, transaction-scoped ledger lock (PostgreSQL; no-op elsewhere).
+
+    One lock orders every writer of the two append-only ledgers (the audit hash chain
+    and the sync change log). It is held until the transaction ends, so anything
+    numbered or chained *after* acquiring it commits in that same order.
+    """
+    await _acquire_audit_chain_lock(session)
+
+
 async def _acquire_audit_chain_lock(session: AsyncSession) -> None:
     if session.get_bind().dialect.name == "postgresql":
         await session.execute(

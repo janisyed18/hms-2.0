@@ -43,7 +43,8 @@ jobs:
           tests/test_persisted_user_ids_postgres.py
           tests/test_audit_redaction_postgres.py
           tests/test_audit_chain_postgres.py
-          tests/test_certificate_durability_postgres.py -v
+          tests/test_certificate_durability_postgres.py
+          tests/test_sync_correctness_postgres.py -v
         env:
           POSTGRES_TEST_DATABASE_URL: postgresql+asyncpg://hms:hms@127.0.0.1:5432/hms_inspector_test
 

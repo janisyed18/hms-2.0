@@ -6,7 +6,7 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.core.audit import append_audit_event
-from hms_backend.app.models.foundation import SyncChange
+from hms_backend.app.core.sync_ledger import stage_sync_change
 
 
 class SyncableEntity(Protocol):
@@ -30,13 +30,12 @@ async def soft_delete(
     entity.version += 1
     after = entity.to_audit_dict()
 
-    session.add(
-        SyncChange(
-            entity=entity.__class__.__name__,
-            entity_id=entity.id,
-            op="delete",
-            version=entity.version,
-        )
+    await stage_sync_change(
+        session,
+        entity=entity.__class__.__name__,
+        entity_id=entity.id,
+        op="delete",
+        version=entity.version,
     )
     await append_audit_event(
         session,
@@ -56,14 +55,14 @@ async def record_create(
     actor_id: str,
     action: str,
 ) -> None:
+    # Populates the entity's id and version defaults, which the change row records.
     await session.flush()
-    session.add(
-        SyncChange(
-            entity=entity.__class__.__name__,
-            entity_id=entity.id,
-            op="create",
-            version=entity.version,
-        )
+    await stage_sync_change(
+        session,
+        entity=entity.__class__.__name__,
+        entity_id=entity.id,
+        op="create",
+        version=entity.version,
     )
     await append_audit_event(
         session,
@@ -86,13 +85,12 @@ async def record_update(
 ) -> None:
     entity.version += 1
     after = entity.to_audit_dict()
-    session.add(
-        SyncChange(
-            entity=entity.__class__.__name__,
-            entity_id=entity.id,
-            op="update",
-            version=entity.version,
-        )
+    await stage_sync_change(
+        session,
+        entity=entity.__class__.__name__,
+        entity_id=entity.id,
+        op="update",
+        version=entity.version,
     )
     await append_audit_event(
         session,

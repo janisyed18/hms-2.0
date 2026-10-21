@@ -222,10 +222,17 @@ def draft(context: SyncWorkContext, *, key: str | None = None) -> SyncPushReques
     )
 
 
+def device_id_for(principal: Principal) -> str:
+    # A sync device belongs to exactly one user, so each principal gets its own.
+    return f"race-device-{principal.persisted_user_id}"
+
+
 async def push(
     session: AsyncSession, principal: Principal, payload: SyncPushRequest
 ) -> SyncPushResponse:
-    return await sync_push(payload, session, principal, "race-device", "test", "1")
+    return await sync_push(
+        payload, session, principal, device_id_for(principal), "test", "1"
+    )
 
 
 async def lock_booking(session: AsyncSession, booking_id: str) -> int:
@@ -592,13 +599,14 @@ async def test_simultaneous_identical_retries_are_idempotent(
 ) -> None:
     from hms_backend.app.models.foundation import Device
 
+    device_id = device_id_for(assignment.inspector_a)
     async with database() as session:
-        device = await session.get(Device, "race-device")
+        device = await session.get(Device, device_id)
         if device is None:
             session.add(
                 Device(
-                    device_id="race-device",
-                    user_id=assignment.inspector_a.user_id,
+                    device_id=device_id,
+                    user_id=assignment.inspector_a.persisted_user_id,
                     platform="test",
                     app_version="1",
                 )
@@ -613,7 +621,7 @@ async def test_simultaneous_identical_retries_are_idempotent(
     async with database() as first, database() as second:
         blocker = await lock_booking(first, assignment.context.booking_id)
         await first.execute(
-            select(Device).where(Device.device_id == "race-device").with_for_update()
+            select(Device).where(Device.device_id == device_id).with_for_update()
         )
         pid = await backend_pid(second)
         task = asyncio.create_task(push(second, assignment.inspector_a, payload))

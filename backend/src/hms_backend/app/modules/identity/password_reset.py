@@ -18,7 +18,7 @@ from hms_backend.app.core.password_reset_tokens import (
 )
 from hms_backend.app.core.passwords import hash_password, validate_password_policy
 from hms_backend.app.core.rate_limit import LoginRateLimiter
-from hms_backend.app.models.foundation import SyncChange
+from hms_backend.app.core.sync_ledger import stage_sync_change
 from hms_backend.app.modules.identity.models import (
     AccountStatus,
     BrowserRefreshSession,
@@ -194,13 +194,12 @@ class PasswordResetService:
             )
             .values(revoked_at=now)
         )
-        session.add(
-            SyncChange(
-                entity="User",
-                entity_id=user.id,
-                op="update",
-                version=user.version,
-            )
+        await stage_sync_change(
+            session,
+            entity="User",
+            entity_id=user.id,
+            op="update",
+            version=user.version,
         )
         await append_audit_event(
             session,
