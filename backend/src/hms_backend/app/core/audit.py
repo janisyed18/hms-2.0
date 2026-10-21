@@ -28,6 +28,60 @@ def normalise_for_json(value: Any) -> Any:
     return value
 
 
+REDACTED = "[REDACTED]"
+
+# Credential material must never be stored in, or returned from, the audit trail.
+# Matching is on the key name (case-insensitive, at any depth). Exact names are
+# listed rather than a "password" substring so that harmless state such as
+# ``must_change_password`` or ``failed_password_attempts`` stays visible.
+_SENSITIVE_KEYS = frozenset(
+    {
+        "password",
+        "new_password",
+        "current_password",
+        "temporary_password",
+        "password_hash",
+        "token_hash",
+        "code_digest",
+        "recovery_codes",
+        "mfa_secret",
+        "authorization",
+        "cookie",
+        "api_key",
+        "private_key",
+        "pepper",
+    }
+)
+_SENSITIVE_SUFFIXES = ("_secret", "_token", "_ciphertext", "_private_key")
+
+
+def _is_sensitive_key(key: object) -> bool:
+    name = str(key).lower()
+    return name in _SENSITIVE_KEYS or name.endswith(_SENSITIVE_SUFFIXES)
+
+
+def redact_sensitive(value: Any) -> Any:
+    """Return a copy with credential values replaced by a fixed marker.
+
+    A ``None`` value stays ``None`` so an audit reader can still see whether a
+    credential was present, without seeing it. Used both when writing new audit
+    events and when serving stored ones, so historical rows (kept byte-identical in
+    the hash chain) are never returned with secret material.
+    """
+    if isinstance(value, dict):
+        return {
+            key: (
+                REDACTED
+                if _is_sensitive_key(key) and item is not None
+                else redact_sensitive(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_sensitive(item) for item in value]
+    return value
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(
         normalise_for_json(value),
@@ -63,8 +117,8 @@ async def append_audit_event(
     latest = (
         await session.scalars(select(AuditEvent).order_by(AuditEvent.sequence.desc()))
     ).first()
-    normalised_before = normalise_for_json(before)
-    normalised_after = normalise_for_json(after)
+    normalised_before = redact_sensitive(normalise_for_json(before))
+    normalised_after = redact_sensitive(normalise_for_json(after))
     event = AuditEvent(
         actor_id=actor_id,
         action=action,
