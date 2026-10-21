@@ -192,7 +192,10 @@ async def sync_changes(
     ).all()
     scanned = fetched[:limit]
     changes = await _visible_change_records(session, principal, scanned)
-    cursor = scanned[-1].seq if scanned else await _max_sync_seq(session)
+    # Advance only over what this response actually scanned. An empty page consumed
+    # nothing, so it must not jump to a later snapshot's maximum: a change committed
+    # after the SELECT above would be skipped and never delivered.
+    cursor = scanned[-1].seq if scanned else since
     await session.commit()
     return SyncChangesResponse(
         cursor=cursor,
@@ -228,6 +231,8 @@ async def sync_push(
             )
         )
     await session.commit()
+    # Informational only: the newest committed sequence at response time, not a
+    # watermark of what the caller has received. Never feed it back as ``since``.
     return SyncPushResponse(cursor=await _max_sync_seq(session), results=results)
 
 

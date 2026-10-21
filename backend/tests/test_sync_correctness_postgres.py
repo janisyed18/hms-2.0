@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from uuid import uuid4
 
@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 import hms_backend.app.api.sync as sync_module
 import hms_backend.app.core.audit as audit_module
 from hms_backend.app.api.dependencies import get_current_principal, get_session
+from hms_backend.app.api.sync_schemas import SyncRecordRead
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.core.repository import record_create
 from hms_backend.app.main import create_app
@@ -162,6 +163,68 @@ async def test_a_transaction_that_commits_later_is_never_skipped_by_the_cursor(
         delivered |= {c["entity_id"] for c in second.json()["changes"]}
 
     assert {id_a, id_b} <= delivered, "the later-committing change was never delivered"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_page_never_advances_the_cursor_past_an_undelivered_change(
+    database: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A poll that found nothing must not move the cursor using a *later* snapshot.
+
+    The request reads ``seq > since`` and finds no rows. Before it builds its response,
+    another transaction commits a visible change. If the empty response then asked the
+    database for the new maximum sequence, its cursor would jump over that change, which
+    the client would never be sent.
+    """
+    real_visible = sync_module._visible_change_records  # noqa: SLF001
+    gate = _Gate()
+    used = {"yes": False}
+
+    async def pause_after_the_select(
+        session: AsyncSession, principal: Principal, scanned: Sequence[SyncChange]
+    ) -> list[SyncRecordRead]:
+        records = await real_visible(session, principal, scanned)
+        if not used["yes"]:
+            used["yes"] = True
+            gate.reached.set()
+            await gate.release.wait()
+        return records
+
+    monkeypatch.setattr(sync_module, "_visible_change_records", pause_after_the_select)
+    tag = uuid4().hex[:10].upper()
+    user_id = str(uuid4())
+    device = _device_headers(f"empty-{tag}")
+    async with database() as session:
+        baseline = int(await session.scalar(select(func.max(SyncChange.seq))) or 0)
+
+    async def poll(since: int) -> httpx.Response:
+        async with _client(database, user_id) as client:
+            return await client.get(
+                "/api/v1/sync/changes", params={"since": since}, headers=device
+            )
+
+    empty_poll = asyncio.create_task(poll(baseline))
+    await gate.reached.wait()  # the first SELECT is done and found nothing
+
+    async with database() as session:  # a visible change commits mid-request
+        customer = Customer(code=f"E-{tag}", name=f"Empty {tag}")
+        session.add(customer)
+        await record_create(
+            session, customer, actor_id=user_id, action="customer.created"
+        )
+        await session.commit()
+        new_id = customer.id
+
+    gate.release.set()
+    first = await empty_poll
+    assert first.status_code == 200, first.text
+    assert first.json()["changes"] == []
+    # Nothing was consumed past `since`, so the cursor must not have moved.
+    assert first.json()["cursor"] == baseline
+
+    second = await poll(first.json()["cursor"])
+    assert second.status_code == 200, second.text
+    assert new_id in {c["entity_id"] for c in second.json()["changes"]}
 
 
 # --- sync devices ---------------------------------------------------------------
