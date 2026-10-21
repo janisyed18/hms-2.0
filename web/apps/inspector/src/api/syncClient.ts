@@ -25,6 +25,8 @@ export interface SyncRuntimeAuth {
 interface SyncClientOptions extends SyncRuntimeAuth {
   fetchImpl?: FetchLike;
   deviceId?: string;
+  // The signed-in user, used to scope the device id.
+  userId?: string;
 }
 
 let runtimeAuth: SyncRuntimeAuth | null = null;
@@ -45,24 +47,65 @@ export function configureSyncRuntimeAuth(auth: SyncRuntimeAuth): () => void {
   };
 }
 
-function browserDeviceId(): string {
-  const storageKey = "hms.inspector.device-id";
-  if (typeof window === "undefined" || !window.localStorage) {
-    return "inspector-browser-unavailable";
-  }
+const DEVICE_ID_STORAGE_PREFIX = "hms.inspector.device-id";
 
-  const existing = window.localStorage.getItem(storageKey);
-  if (existing) {
-    return existing;
-  }
+// Ids that could not be persisted (storage blocked or unavailable), kept for the life
+// of the page so one session is still one device.
+const unpersistedDeviceIds = new Map<string, string>();
 
+function newDeviceId(): string {
   const suffix =
     typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const deviceId = `inspector-browser-${suffix}`;
-  window.localStorage.setItem(storageKey, deviceId);
-  return deviceId;
+  return `inspector-browser-${suffix}`;
+}
+
+function deviceStorage(): Storage | null {
+  try {
+    return typeof window !== "undefined" && window.localStorage
+      ? window.localStorage
+      : null;
+  } catch {
+    // Some browsers throw on merely touching localStorage (blocked site data).
+    return null;
+  }
+}
+
+/**
+ * The device id this browser sends for the signed-in user.
+ *
+ * The server binds a device id to the first user who syncs with it and refuses it for
+ * anyone else, so the id must belong to the user, not to the browser profile: two
+ * inspectors sharing a profile each get their own. It is random, persisted per user,
+ * and never a literal shared across users. A request with no signed-in user gets a
+ * page-lifetime id that is not persisted. The old browser-wide id is deliberately
+ * ignored: it was registered to whoever synced first and would lock out everyone else.
+ */
+function browserDeviceId(userId: string | undefined): string {
+  const scope = userId ?? "";
+  const store = userId === undefined ? null : deviceStorage();
+  const key = `${DEVICE_ID_STORAGE_PREFIX}:${scope}`;
+  try {
+    const existing = store?.getItem(key);
+    if (existing) {
+      return existing;
+    }
+  } catch {
+    // Fall through to the in-memory id.
+  }
+  const remembered = unpersistedDeviceIds.get(scope);
+  if (remembered) {
+    return remembered;
+  }
+  const created = newDeviceId();
+  unpersistedDeviceIds.set(scope, created);
+  try {
+    store?.setItem(key, created);
+  } catch {
+    // Keep the in-memory id.
+  }
+  return created;
 }
 
 interface ApiCustomerSummary {
@@ -507,7 +550,7 @@ export function createSyncClient(options: Partial<SyncClientOptions> = {}) {
     refreshAccessToken: options.refreshAccessToken ?? runtimeAuth?.refreshAccessToken,
     onAuthFailure: options.onAuthFailure ?? runtimeAuth?.onAuthFailure
   };
-  const deviceId = options.deviceId ?? browserDeviceId();
+  const deviceId = options.deviceId ?? browserDeviceId(options.userId);
 
   function request<TResponse>(path: string, init: RequestInit = {}) {
     return requestJson<TResponse>(fetchImpl, path, init, auth, deviceId);

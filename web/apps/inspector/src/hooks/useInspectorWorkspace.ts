@@ -177,7 +177,7 @@ export function useInspectorWorkspace(userId: string) {
 
   const refreshAssignments = useCallback(async () => {
     const generation = ++refreshGeneration.current;
-    const response = await createSyncClient().bootstrap();
+    const response = await createSyncClient({ userId }).bootstrap();
     if (generation !== refreshGeneration.current) {
       throw new Error("Assignment refresh was superseded");
     }
@@ -190,7 +190,7 @@ export function useInspectorWorkspace(userId: string) {
     ) ? item : null);
     setLastSyncLabel("Last sync just now");
     return response;
-  }, []);
+  }, [userId]);
 
   useEffect(() => {
     void refreshAssignments().catch(() => setLastSyncLabel("Unable to load assigned work"));
@@ -352,7 +352,7 @@ export function useInspectorWorkspace(userId: string) {
     refreshOutbox();
 
     try {
-      const result = await createSyncClient().push(queue);
+      const result = await createSyncClient({ userId }).push(queue);
       for (const item of result.results) {
         applyResultToOutbox(userId, item);
       }
