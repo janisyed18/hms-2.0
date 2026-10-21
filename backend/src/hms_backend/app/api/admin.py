@@ -23,7 +23,11 @@ from hms_backend.app.api.schemas import (
     UserRead,
     UserUpdate,
 )
-from hms_backend.app.core.audit import append_audit_event, normalise_for_json
+from hms_backend.app.core.audit import (
+    append_audit_event,
+    normalise_for_json,
+    redact_sensitive,
+)
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.passwords import (
     generate_temporary_password,
@@ -678,8 +682,10 @@ def _audit_event_read(event: AuditEvent) -> AuditEventRead:
         action=event.action,
         entity=event.entity,
         entity_id=event.entity_id,
-        before=event.before,
-        after=event.after,
+        # Stored rows are immutable (hash-chained); redact on the way out so rows
+        # written before write-time redaction existed never expose credentials.
+        before=redact_sensitive(event.before),
+        after=redact_sensitive(event.after),
         timestamp=event.timestamp,
         hash=event.hash,
     )
