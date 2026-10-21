@@ -30,6 +30,7 @@ class NotificationChannel(str, Enum):
 
 class NotificationStatus(str, Enum):
     PENDING = "PENDING"
+    SENDING = "SENDING"  # claimed by a dispatcher; outcome not yet recorded
     SENT = "SENT"
     DELIVERED = "DELIVERED"
     FAILED = "FAILED"
