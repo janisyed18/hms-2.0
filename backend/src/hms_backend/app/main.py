@@ -24,6 +24,11 @@ from hms_backend.app.core.http_security import (
     RequestBodyLimitMiddleware,
     SecurityHeadersMiddleware,
 )
+from hms_backend.app.core.observability import (
+    RequestContextMiddleware,
+    configure_logging,
+    request_id_from_scope,
+)
 from hms_backend.app.core.redis import close_redis, ping_redis
 
 
@@ -60,6 +65,9 @@ def create_app() -> FastAPI:
     app.add_middleware(EdgeOriginMiddleware)
     app.add_middleware(RequestBodyLimitMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
+    # Outermost: assigns the request ID and logs even requests rejected above.
+    app.add_middleware(RequestContextMiddleware)
+    configure_logging()
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
@@ -129,6 +137,24 @@ def create_app() -> FastAPI:
                 "Request validation failed",
                 exc.errors(),
             ),
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(
+        request: Request,
+        _exc: Exception,
+    ) -> JSONResponse:
+        # The request-failed log line carries the details; the client gets only the
+        # request ID to quote. Never echo the exception message.
+        request_id = request_id_from_scope(request.scope)
+        return JSONResponse(
+            status_code=500,
+            content=_error_payload(
+                "internal_error",
+                "Internal server error",
+                {"request_id": request_id} if request_id else None,
+            ),
+            headers={"X-Request-ID": request_id} if request_id else None,
         )
 
     app.include_router(records_router, prefix="/api/v1", tags=["core-records"])
