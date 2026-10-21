@@ -202,6 +202,39 @@ describe("Inspector app", () => {
     returnSession.unmount();
   });
 
+  it("syncs each inspector on a shared browser under their own device id", async () => {
+    const user = userEvent.setup();
+    const signIn = async (subject: string, email: string) => {
+      const session = render(
+        <App authClient={createAuthClient(["INSPECTOR"], subject)} />
+      );
+      await user.type(screen.getByLabelText("Email"), email);
+      await user.type(screen.getByLabelText("Password"), "correct-password");
+      await user.click(screen.getByRole("button", { name: "Sign in" }));
+      await screen.findByRole("button", { name: /open HOS-2024-0891/i });
+      session.unmount();
+    };
+    const deviceIds = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([url]) => String(url).includes("/api/v1/sync/"))
+        .map(([, init]) => (init?.headers as Record<string, string>)["X-HMS-Device-Id"]);
+
+    await signIn("inspector-a", "a@example.test");
+    const [firstA] = deviceIds();
+    await signIn("inspector-b", "b@example.test");
+    const idsAfterB = deviceIds();
+    await signIn("inspector-a", "a@example.test");
+    const idsAfterReturn = deviceIds();
+
+    // The server refuses a device id registered to another user, so a shared browser
+    // profile must not send one inspector's id for another.
+    expect(idsAfterB[idsAfterB.length - 1]).not.toEqual(firstA);
+    // The same inspector keeps the same device across sessions.
+    expect(idsAfterReturn[idsAfterReturn.length - 1]).toEqual(firstA);
+    expect(firstA).toMatch(/^inspector-browser-/);
+  });
+
   it("saves a pressure test draft into the local queue", async () => {
     const user = userEvent.setup();
     render(<App initialAccessToken="test-access-token" />);
