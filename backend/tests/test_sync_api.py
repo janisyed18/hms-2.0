@@ -247,7 +247,9 @@ async def test_persisted_subject_resolves_assigned_database_user(
             assigned_inspector_booking
         ]
     async with api_client(session_factory, other_principal) as client:
-        bootstrap = await client.get("/api/v1/sync/bootstrap", headers=sync_headers())
+        bootstrap = await client.get(
+            "/api/v1/sync/bootstrap", headers=sync_headers("field-tablet-02")
+        )
         assert bootstrap.json()["work_contexts"] == []
 
 
@@ -429,10 +431,12 @@ async def test_inspector_assignments_isolate_reads_writes_and_reassignment(
         )
     async with api_client(session_factory, inspector_b) as client:
         b_records = (
-            await client.get("/api/v1/sync/bootstrap", headers=sync_headers())
+            await client.get(
+                "/api/v1/sync/bootstrap", headers=sync_headers("field-tablet-02")
+            )
         ).json()["records"]
         denied = await client.post(
-            "/api/v1/sync/push", headers=sync_headers(), json=operation
+            "/api/v1/sync/push", headers=sync_headers("field-tablet-02"), json=operation
         )
     assert {r["entity_id"] for r in a_records if r["entity"] == "Asset"} == {
         seeded_sync_session["vopak_asset_id"]
@@ -810,7 +814,9 @@ async def test_old_work_cannot_follow_reassignment_or_later_appointment(
         )
     async with api_client(session_factory, inspector_b) as client:
         contexts_b = (
-            await client.get("/api/v1/sync/bootstrap", headers=sync_headers())
+            await client.get(
+                "/api/v1/sync/bootstrap", headers=sync_headers("field-tablet-02")
+            )
         ).json()["work_contexts"]
         reassigned_inspection = await client.get(
             f"/api/v1/inspections/{previous_inspection_id}"

@@ -8,12 +8,25 @@ ever notified. The relay later turns committed events into notifications.
 from __future__ import annotations
 
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.modules.notifications.enums import NotificationCategory
 from hms_backend.app.modules.notifications.models import OutboxEvent
+
+# ``notification_outbox.aggregate_id`` is a 36-character column, but a device id is up
+# to 80 (inspector browsers use ``inspector-browser-<uuid>``, 54). Recipients are
+# addressed from the payload, never from this column, so an over-long id is mapped to a
+# stable 36-character UUID instead of failing the whole request on PostgreSQL.
+_AGGREGATE_ID_WIDTH = 36
+
+
+def bounded_aggregate_id(aggregate_id: str) -> str:
+    if len(aggregate_id) <= _AGGREGATE_ID_WIDTH:
+        return aggregate_id
+    return str(uuid5(NAMESPACE_URL, f"hms:outbox-aggregate:{aggregate_id}"))
 
 
 async def emit_event(
@@ -32,7 +45,7 @@ async def emit_event(
     event = OutboxEvent(
         event_type=category.value,
         aggregate_type=aggregate_type,
-        aggregate_id=aggregate_id,
+        aggregate_id=bounded_aggregate_id(aggregate_id),
         payload=payload,
         dedupe_key=dedupe_key,
     )

@@ -8,6 +8,7 @@ from typing import Annotated, Any, Protocol, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
@@ -191,7 +192,10 @@ async def sync_changes(
     ).all()
     scanned = fetched[:limit]
     changes = await _visible_change_records(session, principal, scanned)
-    cursor = scanned[-1].seq if scanned else await _max_sync_seq(session)
+    # Advance only over what this response actually scanned. An empty page consumed
+    # nothing, so it must not jump to a later snapshot's maximum: a change committed
+    # after the SELECT above would be skipped and never delivered.
+    cursor = scanned[-1].seq if scanned else since
     await session.commit()
     return SyncChangesResponse(
         cursor=cursor,
@@ -227,6 +231,8 @@ async def sync_push(
             )
         )
     await session.commit()
+    # Informational only: the newest committed sequence at response time, not a
+    # watermark of what the caller has received. Never feed it back as ``since``.
     return SyncPushResponse(cursor=await _max_sync_seq(session), results=results)
 
 
@@ -250,6 +256,23 @@ def _require_sync_push(principal: Principal) -> None:
         ) from exc
 
 
+async def _lock_device(session: AsyncSession, device_id: str) -> Device | None:
+    """Load the device with a row lock (``SELECT ... FOR UPDATE``).
+
+    Holding the lock until this transaction ends means a concurrent revoke or metadata
+    update waits for it, and a request that starts after a revoke commits sees the
+    revoked state instead of a stale copy.
+    """
+    return (
+        await session.scalars(
+            select(Device)
+            .where(Device.device_id == device_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).one_or_none()
+
+
 async def _upsert_sync_device(
     session: AsyncSession,
     principal: Principal,
@@ -263,18 +286,47 @@ async def _upsert_sync_device(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Sync device headers are required",
         )
-    device = await session.get(Device, device_id)
+    owner_id = principal.persisted_user_id
+    device = await _lock_device(session, device_id)
+    created = False
     if device is None:
-        device = Device(
+        candidate = Device(
             device_id=device_id,
-            user_id=principal.persisted_user_id,
+            user_id=owner_id,
             platform=platform,
             app_version=app_version,
             offline_window_days=7,
             revoked=False,
         )
-        session.add(device)
-        # New device registration is a security event to the device owner.
+        try:
+            # A savepoint, so losing a registration race rolls back only this insert.
+            async with session.begin_nested():
+                session.add(candidate)
+                await session.flush()
+        except IntegrityError:
+            # Another request registered the same device first: adopt its row (the
+            # locking read waits for that transaction to commit).
+            device = await _lock_device(session, device_id)
+            if device is None:
+                raise
+        else:
+            device = candidate
+            created = True
+    if device.user_id != owner_id:
+        # A device id is bound to the user who registered it. Silently re-pointing it
+        # would hand one user's device record, and its revocation state, to another.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sync device is registered to another user",
+        )
+    if device.revoked:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sync device has been revoked",
+        )
+    if created:
+        # New device registration is a security event to the device owner. Only the
+        # request that actually created the row emits it.
         await emit_event(
             session,
             category=NotificationCategory.DEVICE_REGISTERED,
@@ -286,12 +338,6 @@ async def _upsert_sync_device(
                 "link": settings.public_base_url.rstrip("/"),
             },
         )
-    if device.revoked:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Sync device has been revoked",
-        )
-    device.user_id = principal.persisted_user_id
     device.platform = platform
     device.app_version = app_version
     device.last_sync_at = datetime.now(UTC)
