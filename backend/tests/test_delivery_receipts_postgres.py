@@ -200,3 +200,66 @@ async def test_a_provider_retry_racing_the_first_delivery_parks_one_receipt(
         assert count == 1
     finally:
         await _cleanup(database, pmid)
+
+
+@pytest.mark.asyncio
+async def test_waiting_receipts_never_starve_a_ready_one_on_postgresql(
+    database: async_sessionmaker[AsyncSession],
+) -> None:
+    """Same invariant on PostgreSQL, where the JSON payload join uses ``->>``."""
+    tag = uuid4().hex
+    waiting = [f"waiting-{tag}-{n}" for n in range(3)]
+    ready = f"ready-{tag}"
+    limit = 2  # fewer than the number of unmatched receipts
+    try:
+        async with database() as session:
+            for pmid in [*waiting, ready]:
+                await defer_receipt(
+                    session,
+                    provider_message_id=pmid,
+                    status=NotificationStatus.DELIVERED,
+                )
+            await session.commit()
+        # The unmatched receipts are the oldest, then the ready one's notification
+        # gets its provider id.
+        async with database() as session:
+            for offset, pmid in enumerate([*waiting, ready]):
+                await session.execute(
+                    text(
+                        "UPDATE notification_outbox SET occurred_at = now() - "
+                        "make_interval(mins => :minutes) WHERE dedupe_key = :key"
+                    ),
+                    {
+                        "minutes": 100 - offset,
+                        "key": receipt_dedupe_key(pmid, NotificationStatus.DELIVERED),
+                    },
+                )
+            await session.commit()
+        nid = await _seed_sent(database, ready)
+
+        result = await apply_deferred_receipts(
+            database, settings=Settings(), limit=limit
+        )
+
+        assert result["applied"] >= 1
+        async with database() as session:
+            notification = await session.get(Notification, nid)
+            assert notification is not None
+            assert notification.status == "DELIVERED"
+            still_waiting = await session.scalar(
+                select(func.count())
+                .select_from(OutboxEvent)
+                .where(
+                    OutboxEvent.dedupe_key.in_(
+                        [
+                            receipt_dedupe_key(p, NotificationStatus.DELIVERED)
+                            for p in waiting
+                        ]
+                    ),
+                    OutboxEvent.processed_at.is_(None),
+                )
+            )
+        assert still_waiting == len(waiting)  # none was retired or applied
+    finally:
+        for pmid in [*waiting, ready]:
+            await _cleanup(database, pmid)

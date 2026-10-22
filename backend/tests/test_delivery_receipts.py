@@ -38,7 +38,10 @@ from hms_backend.app.modules.notifications.enums import (
     NotificationStatus,
 )
 from hms_backend.app.modules.notifications.models import Notification, OutboxEvent
-from hms_backend.app.modules.notifications.outbox import RECEIPT_EVENT_TYPE
+from hms_backend.app.modules.notifications.outbox import (
+    RECEIPT_EVENT_TYPE,
+    receipt_dedupe_key,
+)
 from hms_backend.app.modules.notifications.service import (
     apply_deferred_receipts,
     dispatch_pending,
@@ -294,7 +297,10 @@ async def test_a_receipt_that_never_matches_is_retired_after_the_retention_windo
     soon = await apply_deferred_receipts(
         factory, settings=settings, now=datetime.now(UTC) + timedelta(hours=47)
     )
-    assert soon == {"applied": 0, "expired": 0, "waiting": 1}
+    # A receipt that is merely waiting is not examined at all (that is what keeps it
+    # from crowding out ready ones), so nothing is reported for it.
+    assert soon == {"applied": 0, "expired": 0, "waiting": 0}
+    assert [e.processed_at for e in await parked(factory)] == [None]
 
     later = await apply_deferred_receipts(
         factory, settings=settings, now=datetime.now(UTC) + timedelta(hours=49)
@@ -336,7 +342,7 @@ async def test_unmatched_receipts_never_crowd_out_real_notification_events(
 
 
 @pytest.mark.asyncio
-async def test_a_malformed_parked_receipt_is_retired_not_retried_forever(
+async def test_a_malformed_parked_receipt_is_retired_at_expiry_not_kept_forever(
     factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with factory() as session:
@@ -350,9 +356,79 @@ async def test_a_malformed_parked_receipt_is_retired_not_retried_forever(
             )
         )
         await session.commit()
+    settings = Settings(notification_receipt_retention_hours=48)
 
-    result = await apply_deferred_receipts(factory, settings=Settings())
+    early = await apply_deferred_receipts(factory, settings=settings)
+    assert early == {"applied": 0, "expired": 0, "waiting": 0}
 
-    assert result == {"applied": 0, "expired": 1, "waiting": 0}
+    late = await apply_deferred_receipts(
+        factory, settings=settings, now=datetime.now(UTC) + timedelta(hours=49)
+    )
+
+    assert late == {"applied": 0, "expired": 1, "waiting": 0}
     (event,) = await parked(factory)
     assert event.error == "malformed delivery receipt"
+
+
+@pytest.mark.asyncio
+async def test_waiting_receipts_never_starve_a_receipt_that_is_ready(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """More unmatched receipts than one sweep covers must not hide a matchable one."""
+    limit = 3
+    for n in range(limit + 2):
+        await post_receipt(factory, f"never-matches-{n}", NotificationStatus.DELIVERED)
+    async with factory() as session:  # the waiting receipts are the oldest
+        await session.execute(
+            update(OutboxEvent).values(occurred_at=NOW - timedelta(hours=1))
+        )
+        await session.commit()
+    # A later receipt, parked because its notification had no provider id yet...
+    await post_receipt(factory, "ready-now", NotificationStatus.DELIVERED)
+    # ...and the notification has since been given it, so this receipt is ready.
+    nid = await seed(
+        factory,
+        status=NotificationStatus.SENT.value,
+        provider_message_id="ready-now",
+        attempts=1,
+    )
+    async with factory() as session:
+        ready = await session.scalar(
+            select(OutboxEvent).where(
+                OutboxEvent.dedupe_key
+                == receipt_dedupe_key("ready-now", NotificationStatus.DELIVERED)
+            )
+        )
+        assert ready is not None
+        ready.occurred_at = NOW  # newest of all
+        await session.commit()
+
+    result = await apply_deferred_receipts(
+        factory, settings=Settings(), now=NOW + timedelta(minutes=1), limit=limit
+    )
+
+    # It is applied now, not after the older unmatched receipts expire (48 h).
+    assert (await row(factory, nid)).status == NotificationStatus.DELIVERED.value
+    assert result["applied"] == 1
+    waiting = [e for e in await parked(factory) if e.processed_at is None]
+    assert len(waiting) == limit + 2  # none of the unmatched ones was retired
+
+
+@pytest.mark.asyncio
+async def test_expired_receipts_are_retired_steadily_past_a_small_sweep_limit(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    for n in range(4):
+        await post_receipt(factory, f"old-{n}", NotificationStatus.DELIVERED)
+    async with factory() as session:
+        await session.execute(
+            update(OutboxEvent).values(occurred_at=NOW - timedelta(hours=60))
+        )
+        await session.commit()
+    settings = Settings(notification_receipt_retention_hours=48)
+
+    first = await apply_deferred_receipts(factory, settings=settings, now=NOW, limit=2)
+    second = await apply_deferred_receipts(factory, settings=settings, now=NOW, limit=2)
+
+    assert (first["expired"], second["expired"]) == (2, 2)  # steady progress
+    assert all(e.processed_at is not None for e in await parked(factory))

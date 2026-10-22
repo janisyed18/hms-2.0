@@ -13,7 +13,7 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hms_backend.app.core.config import Settings
@@ -141,25 +141,44 @@ async def apply_deferred_receipts(
     A receipt is applied in the order it was received, then retired. One that still
     matches nothing waits (the dispatcher may not have stored the provider id yet)
     until ``notification_receipt_retention_hours`` has passed, then it is retired
-    unapplied so the backlog cannot grow without bound.
+    unapplied so the backlog cannot grow without bound. Each sweep looks only at
+    receipts that are ready or expired, so a receipt that is merely waiting never
+    holds a place in the sweep that a ready one needs.
     """
     settings = settings or default_settings
     current = now or _utc_now()
     cutoff = current - timedelta(hours=settings.notification_receipt_retention_hours)
+    parked = and_(
+        OutboxEvent.processed_at.is_(None),
+        OutboxEvent.event_type == RECEIPT_EVENT_TYPE,
+    )
     async with session_factory() as session:
-        event_ids = list(
-            (
-                await session.scalars(
-                    select(OutboxEvent.id)
-                    .where(
-                        OutboxEvent.processed_at.is_(None),
-                        OutboxEvent.event_type == RECEIPT_EVENT_TYPE,
-                    )
-                    .order_by(OutboxEvent.occurred_at)
-                    .limit(limit)
+        # Select only receipts there is something to do for, never "the oldest N". A
+        # receipt that still matches nothing is left alone until it expires, so
+        # however many of those there are they cannot occupy the window and keep a
+        # receipt that is ready from being looked at.
+        ready = (
+            await session.scalars(
+                select(OutboxEvent.id)
+                .join(
+                    Notification,
+                    Notification.provider_message_id
+                    == OutboxEvent.payload["provider_message_id"].as_string(),
                 )
-            ).all()
-        )
+                .where(parked)
+                .order_by(OutboxEvent.occurred_at)
+                .limit(limit)
+            )
+        ).all()
+        expired = (
+            await session.scalars(
+                select(OutboxEvent.id)
+                .where(parked, OutboxEvent.occurred_at < cutoff)
+                .order_by(OutboxEvent.occurred_at)
+                .limit(limit)
+            )
+        ).all()
+    event_ids = list(dict.fromkeys([*ready, *expired]))
 
     counts = {"applied": 0, "expired": 0, "waiting": 0}
     for event_id in event_ids:
