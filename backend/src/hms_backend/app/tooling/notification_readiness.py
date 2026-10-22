@@ -25,6 +25,12 @@ dead-lettered unsent. ``not_selected_ciphertext_missing`` rows are never selecte
 the dispatcher at all, so they stay ``PENDING`` untouched). They
 carry type names, counts and ages, never identifiers or content, and never gate.
 
+``retests`` describes the daily retest scheduler's work as counts and one day-count:
+how many active schedules there are, by status, how many trigger today, and how many
+days until the next trigger. It never gates; a schedule that triggers today is a
+warning that reminders are expected, not a failure. Triggers follow the scheduler's own
+exact-day rules (it does no catch-up), and no identifier or date is reported.
+
 ``outbox.processed_with_error`` is diagnostic only. A processed event legitimately
 keeps its error text: a business event that failed once and then succeeded, and a
 delivery receipt retired as unmatched or malformed, both end ``processed_at`` and
@@ -39,13 +45,16 @@ import json
 import re
 import sys
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Select, and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from hms_backend.app.api.dependencies import engine
+from hms_backend.app.core.config import settings
+from hms_backend.app.modules.assets.models import Asset
+from hms_backend.app.modules.certificates.models import NON_CERTIFIABLE_ASSET_STATUSES
 from hms_backend.app.modules.identity.models import (
     PasswordResetDelivery,
     PasswordResetToken,
@@ -53,6 +62,10 @@ from hms_backend.app.modules.identity.models import (
 )
 from hms_backend.app.modules.notifications.models import Notification, OutboxEvent
 from hms_backend.app.modules.notifications.outbox import RECEIPT_EVENT_TYPE
+from hms_backend.app.modules.scheduling.models import (
+    RetestSchedule,
+    RetestScheduleStatus,
+)
 
 SENDING = "SENDING"
 PENDING = "PENDING"
@@ -241,6 +254,79 @@ async def _password_reset_section(
     }
 
 
+_ACTIVE_RETEST_STATUSES = (
+    RetestScheduleStatus.UPCOMING.value,
+    RetestScheduleStatus.DUE.value,
+    RetestScheduleStatus.OVERDUE.value,
+)
+
+
+def _triggers_on(due: date, day: date) -> bool:
+    """Whether the scheduler would emit a reminder for ``due`` when run on ``day``.
+
+    Mirrors ``_emit_for_schedule``: reminders fire only on an exact day (N days before,
+    the due day, N days overdue), and a missed day is never made up. A test runs the
+    real scheduler over the same data to keep the two from drifting apart.
+    """
+    days_to_due = (due - day).days
+    days_overdue = (day - due).days
+    return (
+        days_to_due in settings.retest_advance_days
+        or days_to_due == 0
+        or days_overdue in settings.retest_overdue_escalation_days
+    )
+
+
+def _next_trigger_days(due_dates: set[date], today: date) -> int | None:
+    """Days from ``today`` to the nearest later trigger day, or None if none exists."""
+    candidates: set[date] = set()
+    for due in due_dates:
+        candidates.add(due)
+        candidates.update(due - timedelta(days=a) for a in settings.retest_advance_days)
+        candidates.update(
+            due + timedelta(days=o) for o in settings.retest_overdue_escalation_days
+        )
+    upcoming = [
+        day
+        for day in candidates
+        if day > today and any(_triggers_on(due, day) for due in due_dates)
+    ]
+    return None if not upcoming else (min(upcoming) - today).days
+
+
+async def _retest_section(conn: AsyncConnection, today: date) -> dict[str, Any]:
+    """Counts and a day-count only: no schedule, asset or customer identifier."""
+    r = RetestSchedule
+    rows = (
+        await conn.execute(
+            select(r.status, r.due_at, func.count())
+            .join(Asset, Asset.id == r.asset_id)
+            .where(
+                r.deleted_at.is_(None),
+                r.status.in_(_ACTIVE_RETEST_STATUSES),
+                Asset.deleted_at.is_(None),
+                Asset.lifecycle_status.notin_(NON_CERTIFIABLE_ASSET_STATUSES),
+            )
+            .group_by(r.status, r.due_at)
+        )
+    ).all()
+    by_status: dict[str, int] = {}
+    due_dates: set[date] = set()
+    eligible_today = 0
+    for status, due, count in rows:
+        key = _status_key(status)
+        by_status[key] = by_status.get(key, 0) + int(count)
+        due_dates.add(due)
+        if _triggers_on(due, today):
+            eligible_today += int(count)
+    return {
+        "active_total": sum(by_status.values()),
+        "by_status": dict(sorted(by_status.items())),
+        "eligible_today": eligible_today,
+        "days_until_next_trigger": _next_trigger_days(due_dates, today),
+    }
+
+
 def evaluate(report: Mapping[str, Any]) -> tuple[list[str], list[str]]:
     """Return ``(blockers, warnings)`` for a collected report."""
     notifications = report["notifications"]
@@ -266,6 +352,11 @@ def evaluate(report: Mapping[str, Any]) -> tuple[list[str], list[str]]:
         warnings.append("outbox: unprocessed events will be relayed on activation")
     if outbox["unprocessed_with_error"]:
         warnings.append("outbox: unprocessed events already carry an error")
+    if report.get("retests", {}).get("eligible_today"):
+        warnings.append(
+            "retests: schedules trigger today, so reminders are expected from "
+            "today's scheduler run"
+        )
     return blockers, warnings
 
 
@@ -276,6 +367,8 @@ async def collect(conn: AsyncConnection) -> dict[str, Any]:
         "notifications": await _notification_section(conn, now),
         "outbox": await _outbox_section(conn, now),
         "password_resets": await _password_reset_section(conn, now),
+        # The scheduler runs on the UTC date, so the preview uses the same one.
+        "retests": await _retest_section(conn, now.astimezone(UTC).date()),
     }
     blockers, warnings = evaluate(report)
     report["blockers"] = blockers

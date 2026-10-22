@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
 
 import hms_backend.app.tooling.notification_readiness as readiness
+from hms_backend.app.core.config import settings
 
 
 def _report(**overrides: dict[str, Any]) -> dict[str, Any]:
@@ -24,6 +26,7 @@ def _report(**overrides: dict[str, Any]) -> dict[str, Any]:
             "expired_sending": 0,
             "finished_retaining_ciphertext": 0,
         },
+        "retests": {"eligible_today": 0},
     }
     for section, values in overrides.items():
         report[section] = {**report[section], **values}
@@ -120,3 +123,106 @@ def test_type_names_are_restricted_to_identifier_shaped_values() -> None:
     assert readiness._type_key("a@b.example") == "OTHER"
     assert readiness._type_key("x" * 81) == "OTHER"
     assert readiness._type_key(None) == "OTHER"
+
+
+TODAY = date(2030, 6, 15)
+
+
+@pytest.fixture
+def default_rules(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "retest_advance_days", [30, 14])
+    monkeypatch.setattr(settings, "retest_overdue_escalation_days", [7, 14, 30])
+
+
+@pytest.mark.parametrize(
+    ("offset", "expected"),
+    [
+        (30, True),  # 30 days before due
+        (14, True),
+        (0, True),  # due today
+        (-7, True),  # 7 days overdue
+        (-14, True),
+        (-30, True),
+        (31, False),
+        (29, False),
+        (1, False),
+        (-1, False),
+        (-8, False),
+        (-31, False),  # the scheduler never makes up a missed day
+    ],
+)
+def test_trigger_days_are_exact(
+    default_rules: None, offset: int, expected: bool
+) -> None:
+    due = TODAY + timedelta(days=offset)
+    assert readiness._triggers_on(due, TODAY) is expected
+
+
+def test_trigger_rules_follow_the_configured_days(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "retest_advance_days", [3])
+    monkeypatch.setattr(settings, "retest_overdue_escalation_days", [2])
+    assert readiness._triggers_on(TODAY + timedelta(days=3), TODAY)
+    assert not readiness._triggers_on(TODAY + timedelta(days=30), TODAY)
+    assert readiness._triggers_on(TODAY - timedelta(days=2), TODAY)
+    assert not readiness._triggers_on(TODAY - timedelta(days=7), TODAY)
+
+
+@pytest.mark.parametrize(
+    ("due_offsets", "expected"),
+    [
+        ([100], 70),  # 30 days before a due date 100 days out
+        ([20], 6),  # 14 days before a due date 20 days out
+        ([5], 5),  # the due day itself
+        ([-1], 6),  # 7 days overdue
+        ([-9], 5),  # 14 days overdue
+        ([-20], 10),  # 30 days overdue
+        ([-31], None),  # every trigger has passed
+        ([-31, 100], 70),  # the nearest future trigger of any schedule
+        ([-9, 100], 5),
+        ([], None),
+    ],
+)
+def test_days_until_next_trigger(
+    default_rules: None, due_offsets: list[int], expected: int | None
+) -> None:
+    dues = {TODAY + timedelta(days=o) for o in due_offsets}
+    assert readiness._next_trigger_days(dues, TODAY) == expected
+
+
+def test_a_trigger_today_is_not_the_next_trigger(default_rules: None) -> None:
+    assert readiness._next_trigger_days({TODAY}, TODAY) == 7
+
+
+class _NoRows:
+    def all(self) -> list[Any]:
+        return []
+
+
+class _EmptyConnection:
+    async def execute(self, *_args: Any, **_kwargs: Any) -> _NoRows:
+        return _NoRows()
+
+
+@pytest.mark.asyncio
+async def test_no_schedules_reports_zeros_and_a_null_next_trigger(
+    default_rules: None,
+) -> None:
+    report = await readiness._retest_section(_EmptyConnection(), TODAY)  # type: ignore[arg-type]
+    assert report == {
+        "active_total": 0,
+        "by_status": {},
+        "eligible_today": 0,
+        "days_until_next_trigger": None,
+    }
+
+
+def test_schedules_triggering_today_warn_but_never_block() -> None:
+    blockers, warnings = readiness.evaluate(_report(retests={"eligible_today": 4}))
+    assert blockers == []
+    assert warnings == [
+        "retests: schedules trigger today, so reminders are expected from "
+        "today's scheduler run"
+    ]
+    assert readiness.evaluate(_report(retests={"eligible_today": 0})) == ([], [])

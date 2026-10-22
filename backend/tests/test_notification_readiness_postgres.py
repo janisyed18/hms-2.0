@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, date, datetime, timedelta
+from random import randint
 from typing import Any
 from uuid import uuid4
 
@@ -24,11 +25,14 @@ from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
     AsyncSession,
+    async_sessionmaker,
     create_async_engine,
 )
 
 import hms_backend.app.main  # noqa: F401  (registers every ORM model)
 import hms_backend.app.tooling.notification_readiness as readiness
+from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
+from hms_backend.app.modules.customers.models import Customer
 from hms_backend.app.modules.identity.models import (
     PasswordResetDelivery,
     PasswordResetToken,
@@ -36,6 +40,9 @@ from hms_backend.app.modules.identity.models import (
 )
 from hms_backend.app.modules.notifications.models import Notification, OutboxEvent
 from hms_backend.app.modules.notifications.outbox import RECEIPT_EVENT_TYPE
+from hms_backend.app.modules.notifications.service import run_retest_scheduler
+from hms_backend.app.modules.products.models import Product
+from hms_backend.app.modules.scheduling.models import RetestSchedule
 
 POSTGRES_URL = os.environ.get("POSTGRES_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
@@ -493,3 +500,221 @@ async def test_activation_preview_exposes_no_identifiers_or_content(
     ):
         assert leaked not in rendered
     assert "@" not in rendered
+
+
+# --- retests: a sanitized view of what the daily scheduler will do -----------------
+
+
+def _far_future_today() -> date:
+    """A 'today' no other test's schedules are due around, in the shared database.
+
+    The scheduler tests use years 2500 onwards; this stays well clear of them.
+    """
+    return date(7000, 1, 1) + timedelta(days=randint(0, 300_000))
+
+
+async def _retest_report(engine: AsyncEngine, today: date) -> dict[str, Any]:
+    async with engine.connect() as conn:
+        try:
+            await readiness.begin_read_only(conn)
+            return await readiness._retest_section(conn, today)
+        finally:
+            await conn.rollback()
+
+
+async def _seed_retests(
+    engine: AsyncEngine,
+    today: date,
+    specs: Sequence[tuple[Any, ...]],
+) -> dict[int, str]:
+    """One asset and schedule per (days until due, status); asset ids by index."""
+    tag = uuid4().hex[:10]
+    asset_ids: dict[int, str] = {}
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        for n, spec in enumerate(specs):
+            offset, status = spec[0], spec[1]
+            lifecycle = (
+                spec[2] if len(spec) == 3 else AssetLifecycleStatus.IN_SERVICE.value
+            )
+            customer = Customer(code=f"R{tag}{n}", name=f"Retest {tag} Secret {n}")
+            product = Product(category="Hydraulic", code=f"P{tag}{n}", name="Hose")
+            asset = Asset(
+                customer=customer,
+                product=product,
+                asset_number=f"SECRET-RT-{tag}-{n}",
+                lifecycle_status=lifecycle,
+            )
+            session.add(asset)
+            await session.flush()
+            session.add(
+                RetestSchedule(
+                    customer_id=customer.id,
+                    asset_id=asset.id,
+                    due_at=today + timedelta(days=offset),
+                    status=status,
+                    reminder_interval_days=30,
+                    escalation_interval_days=7,
+                )
+            )
+            asset_ids[n] = asset.id
+        await session.commit()
+    return asset_ids
+
+
+async def _drop_retests(engine: AsyncEngine, asset_ids: list[str]) -> None:
+    """Remove these schedules and any events the real scheduler emitted for them."""
+    async with AsyncSession(engine) as session:
+        await session.execute(
+            delete(OutboxEvent).where(OutboxEvent.aggregate_id.in_(asset_ids))
+        )
+        await session.execute(
+            delete(RetestSchedule).where(RetestSchedule.asset_id.in_(asset_ids))
+        )
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_retest_trigger_days_match_what_the_real_scheduler_emits(
+    engine: AsyncEngine,
+) -> None:
+    today = _far_future_today()
+    plan = [
+        (30, "UPCOMING"),  # 30 days before: triggers
+        (14, "UPCOMING"),  # 14 days before: triggers
+        (0, "DUE"),  # due today: triggers
+        (-7, "OVERDUE"),  # 7 days overdue: triggers
+        (-14, "OVERDUE"),  # triggers
+        (-30, "OVERDUE"),  # triggers
+        (29, "UPCOMING"),  # one day off: does not
+        (-8, "OVERDUE"),  # does not
+        (-31, "OVERDUE"),  # a missed day is never made up
+        (200, "UPCOMING"),  # far away: does not
+        # On a trigger day but not eligible: the scheduler skips these, so must the
+        # preview (a suspended schedule, and a retired asset).
+        (0, "SUSPENDED"),
+        (0, "DUE", "RETIRED"),
+    ]
+    before = await _retest_report(engine, today)
+    asset_ids = await _seed_retests(engine, today, plan)
+    try:
+        after = await _retest_report(engine, today)
+        expected = {
+            i
+            for i, spec in enumerate(plan)
+            if spec[0] in (30, 14, 0, -7, -14, -30)
+            and spec[1] != "SUSPENDED"
+            and len(spec) == 2
+        }
+
+        assert after["eligible_today"] - before["eligible_today"] == len(expected)
+        assert after["active_total"] - before["active_total"] == len(plan) - 2
+        assert (
+            after["by_status"].get("UPCOMING", 0)
+            - before["by_status"].get("UPCOMING", 0)
+            == 4
+        )
+
+        # The real scheduler, run for the same day, emits for exactly those assets.
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        result = await run_retest_scheduler(factory, today=today)
+        assert result["failed"] == 0
+        async with factory() as session:
+            emitted_for = set(
+                (
+                    await session.scalars(
+                        select(OutboxEvent.aggregate_id).where(
+                            OutboxEvent.aggregate_id.in_(list(asset_ids.values()))
+                        )
+                    )
+                ).all()
+            )
+        assert emitted_for == {asset_ids[i] for i in expected}
+    finally:
+        await _drop_retests(engine, list(asset_ids.values()))
+
+
+@pytest.mark.asyncio
+async def test_days_until_next_trigger_counts_exact_future_trigger_days(
+    engine: AsyncEngine,
+) -> None:
+    today = _far_future_today()
+    # Due in 100 days: its first future trigger is 30 days before, i.e. day 70.
+    asset_ids = await _seed_retests(engine, today, [(100, "UPCOMING")])
+    try:
+        report = await _retest_report(engine, today)
+        assert report["days_until_next_trigger"] == 70
+    finally:
+        await _drop_retests(engine, list(asset_ids.values()))
+
+
+@pytest.mark.asyncio
+async def test_retest_section_is_sanitized(engine: AsyncEngine) -> None:
+    today = _far_future_today()
+    asset_ids = await _seed_retests(engine, today, [(14, "UPCOMING"), (-9, "OVERDUE")])
+    try:
+        section = await _retest_report(engine, today)
+        assert set(section) == {
+            "active_total",
+            "by_status",
+            "eligible_today",
+            "days_until_next_trigger",
+        }
+        rendered = json.dumps(section)
+        full = json.dumps(await _report(engine))
+        for leaked in ("SECRET-RT", "Secret", (today + timedelta(days=14)).isoformat()):
+            assert leaked not in rendered and leaked not in full
+        assert "retests" in full
+    finally:
+        await _drop_retests(engine, list(asset_ids.values()))
+
+
+@pytest.mark.asyncio
+async def test_the_retest_section_writes_nothing(engine: AsyncEngine) -> None:
+    today = _far_future_today()
+    asset_ids = await _seed_retests(engine, today, [(0, "DUE")])
+
+    async def snapshot() -> tuple[object, ...]:
+        async with engine.connect() as conn:
+            return (
+                (
+                    await conn.execute(select(func.count()).select_from(RetestSchedule))
+                ).one(),
+                (
+                    await conn.execute(select(func.count()).select_from(OutboxEvent))
+                ).one(),
+            )
+
+    try:
+        before = await snapshot()
+        await _retest_report(engine, today)
+        assert await snapshot() == before
+        async with engine.connect() as conn:
+            await readiness.begin_read_only(conn)
+            with pytest.raises(DBAPIError, match="read-only transaction"):
+                await conn.execute(text("DELETE FROM retest_schedules WHERE false"))
+            await conn.rollback()
+    finally:
+        await _drop_retests(engine, list(asset_ids.values()))
+
+
+@pytest.mark.asyncio
+async def test_next_trigger_is_null_when_no_trigger_remains(
+    engine: AsyncEngine,
+) -> None:
+    # Far in the future every real schedule is long past its last trigger day, so
+    # nothing triggers today and nothing triggers later: counts stay, the day-count
+    # is null rather than a sentinel, and the report is still ready.
+    today = _far_future_today()
+    report = await _retest_report(engine, today)
+    assert report["eligible_today"] == 0
+    assert report["days_until_next_trigger"] is None
+    assert isinstance(report["active_total"], int)
+
+    asset_ids = await _seed_retests(engine, today, [(-31, "OVERDUE")])
+    try:
+        seeded = await _retest_report(engine, today)
+        assert seeded["eligible_today"] == 0
+        assert seeded["days_until_next_trigger"] is None
+        assert seeded["active_total"] == report["active_total"] + 1
+    finally:
+        await _drop_retests(engine, list(asset_ids.values()))
