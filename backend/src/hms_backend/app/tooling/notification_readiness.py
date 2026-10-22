@@ -41,6 +41,7 @@ count never gates activation.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import re
 import sys
@@ -50,6 +51,7 @@ from typing import Any
 
 from sqlalchemy import Select, and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.orm import configure_mappers
 
 from hms_backend.app.api.dependencies import engine
 from hms_backend.app.core.config import settings
@@ -66,6 +68,27 @@ from hms_backend.app.modules.scheduling.models import (
     RetestSchedule,
     RetestScheduleStatus,
 )
+
+# This command runs on its own, so only what it imports is registered with SQLAlchemy,
+# and the models' string-based relationships (``Asset -> "Customer"``) fail to resolve
+# unless every model module is loaded. The test suite imports the whole app first,
+# which hides a missing import, so a test configures the mappers in a clean interpreter.
+_MODEL_MODULES = (
+    "hms_backend.app.models.foundation",
+    "hms_backend.app.modules.assets.models",
+    "hms_backend.app.modules.certificates.models",
+    "hms_backend.app.modules.customers.models",
+    "hms_backend.app.modules.identity.models",
+    "hms_backend.app.modules.inspections.models",
+    "hms_backend.app.modules.jobs.models",
+    "hms_backend.app.modules.notifications.models",
+    "hms_backend.app.modules.products.models",
+    "hms_backend.app.modules.reference.models",
+    "hms_backend.app.modules.scheduling.models",
+)
+for _module in _MODEL_MODULES:
+    importlib.import_module(_module)
+configure_mappers()
 
 SENDING = "SENDING"
 PENDING = "PENDING"
