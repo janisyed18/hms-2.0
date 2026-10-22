@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from datetime import date, timedelta
 from typing import Any
 
@@ -226,3 +228,24 @@ def test_schedules_triggering_today_warn_but_never_block() -> None:
         "today's scheduler run"
     ]
     assert readiness.evaluate(_report(retests={"eligible_today": 0})) == ([], [])
+
+
+def test_the_cli_configures_every_mapper_in_a_fresh_interpreter() -> None:
+    # In production the command runs alone, so only what it imports itself is
+    # registered. The suite imports the whole app first, which hides a missing model
+    # import; a clean interpreter does not.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import hms_backend.app.tooling.notification_readiness\n"
+            "from sqlalchemy.orm import configure_mappers\n"
+            "configure_mappers()",
+        ],
+        env={"ENVIRONMENT": "test", "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-600:]
