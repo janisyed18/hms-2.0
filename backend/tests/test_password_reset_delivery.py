@@ -202,6 +202,61 @@ async def test_a_superseded_reset_is_scrubbed_without_sending(
 
 
 @pytest.mark.asyncio
+async def test_superseded_is_decided_before_the_user_is_checked(
+    session_factory: SessionFactory,
+) -> None:
+    # The readiness preview classifies superseded ahead of user_unavailable, so pin
+    # that this is the order the dispatcher applies.
+    await queue_reset(session_factory)
+    async with session_factory() as session:
+        delivery = await session.scalar(select(PasswordResetDelivery))
+        assert delivery is not None
+        token = await session.get(PasswordResetToken, delivery.reset_id)
+        assert token is not None
+        token.superseded_at = NOW
+        user = await session.get(User, token.user_id)
+        assert user is not None
+        user.deleted_at = NOW
+        await session.commit()
+
+    await dispatch_password_reset_deliveries(
+        session_factory, adapter=FakeEmailAdapter(), now=NOW
+    )
+
+    async with session_factory() as session:
+        delivery = await session.scalar(select(PasswordResetDelivery))
+        assert delivery is not None
+        assert delivery.error == "reset link superseded"
+
+
+@pytest.mark.asyncio
+async def test_a_due_row_without_ciphertext_is_never_selected_or_touched(
+    session_factory: SessionFactory,
+) -> None:
+    # The readiness preview reports these as not_selected_ciphertext_missing, which is
+    # only true while the dispatcher selects PENDING rows that still hold ciphertext.
+    await queue_reset(session_factory)
+    async with session_factory() as session:
+        delivery = await session.scalar(select(PasswordResetDelivery))
+        assert delivery is not None
+        delivery.scheduled_for = NOW - timedelta(seconds=1)
+        delivery.ciphertext = None
+        await session.commit()
+    adapter = FakeEmailAdapter()
+
+    result = await dispatch_password_reset_deliveries(
+        session_factory, adapter=adapter, now=NOW
+    )
+
+    assert result == {"sent": 0, "failed": 0}
+    assert adapter.messages == []
+    async with session_factory() as session:
+        delivery = await session.scalar(select(PasswordResetDelivery))
+        assert delivery is not None
+        assert (delivery.status, delivery.attempts) == ("PENDING", 0)
+
+
+@pytest.mark.asyncio
 async def test_final_delivery_failure_scrubs_secret_and_redacts_error(
     session_factory: SessionFactory,
 ) -> None:

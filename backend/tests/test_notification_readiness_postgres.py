@@ -330,3 +330,166 @@ async def test_a_recovered_business_event_does_not_make_readiness_false(
     recovered = _outbox(processed=True, error="failed once, then relayed")
     delta = await _blockers_with(engine, recovered)
     assert delta == 1
+
+
+def _preview_user(*, deleted: bool = False) -> User:
+    return User(
+        oidc_subject=f"preview-{uuid4().hex}",
+        email=f"preview-{uuid4().hex[:8]}@example.com",
+        role="HMS_ADMIN",
+        password_hash="x",
+        deleted_at=datetime.now(UTC) if deleted else None,
+    )
+
+
+@pytest_asyncio.fixture
+async def preview_rows(engine: AsyncEngine) -> AsyncIterator[dict[str, Any]]:
+    """Unprocessed outbox rows and one due reset per dispatcher outcome."""
+    baseline = await _report(engine)
+    now = datetime.now(UTC)
+    past, future = now - timedelta(hours=1), now + timedelta(hours=1)
+    ids = [str(uuid4()) for _ in range(3)]
+    events = [
+        OutboxEvent(
+            event_type="PreviewTypeA",
+            aggregate_type="PreviewAggregateX",
+            aggregate_id=ids[0],
+            payload={"secret": SECRET_BODY},
+            dedupe_key=uuid4().hex,
+            occurred_at=now - timedelta(days=3),
+        ),
+        OutboxEvent(
+            event_type="PreviewTypeA",
+            aggregate_type="PreviewAggregateY",
+            aggregate_id=ids[1],
+            payload={},
+            dedupe_key=uuid4().hex,
+            occurred_at=now - timedelta(days=1),
+        ),
+        OutboxEvent(
+            event_type="PreviewTypeB",
+            aggregate_type="PreviewAggregateX",
+            aggregate_id=ids[2],
+            payload={},
+            dedupe_key=uuid4().hex,
+            occurred_at=now - timedelta(hours=2),
+        ),
+        OutboxEvent(  # processed rows are not part of the backlog
+            event_type="PreviewTypeProcessed",
+            aggregate_type="PreviewAggregateX",
+            aggregate_id=str(uuid4()),
+            payload={},
+            dedupe_key=uuid4().hex,
+            processed_at=now,
+        ),
+    ]
+    live, gone = _preview_user(), _preview_user(deleted=True)
+    plans: list[tuple[User, dict[str, Any], str | None]] = [
+        (live, {}, SECRET_CIPHERTEXT),  # valid
+        (live, {"superseded_at": past}, SECRET_CIPHERTEXT),  # superseded
+        # Superseded is checked before the user, so this is superseded, not
+        # user_unavailable (the dispatcher's order).
+        (gone, {"superseded_at": past}, SECRET_CIPHERTEXT),
+        (live, {"consumed_at": past}, SECRET_CIPHERTEXT),  # consumed
+        (live, {"expires_at": past}, SECRET_CIPHERTEXT),  # expired
+        (gone, {}, SECRET_CIPHERTEXT),  # user_unavailable
+        (live, {}, None),  # not_selected_ciphertext_missing: never picked up
+    ]
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        session.add_all([*events, live, gone])
+        await session.flush()
+        deliveries: list[PasswordResetDelivery] = []
+        for user, token_fields, ciphertext in plans:
+            token = PasswordResetToken(
+                token_hash=uuid4().hex + uuid4().hex,
+                user_id=user.id,
+                **{"expires_at": future, **token_fields},
+            )
+            session.add(token)
+            await session.flush()
+            deliveries.append(
+                PasswordResetDelivery(
+                    reset_id=token.id,
+                    recipient_email=SECRET_ADDRESS,
+                    ciphertext=ciphertext,
+                    key_version=1,
+                    status="PENDING",
+                    scheduled_for=past,
+                )
+            )
+        session.add_all(deliveries)
+        await session.commit()
+    try:
+        yield {"baseline": baseline, "ids": ids}
+    finally:
+        async with AsyncSession(engine) as session:
+            await session.execute(
+                delete(OutboxEvent).where(OutboxEvent.id.in_([e.id for e in events]))
+            )
+            await session.execute(delete(User).where(User.id.in_([live.id, gone.id])))
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_activation_preview_classifies_the_backlog(
+    engine: AsyncEngine, preview_rows: dict[str, Any]
+) -> None:
+    before, after = preview_rows["baseline"], await _report(engine)
+
+    by_event = after["outbox"]["unprocessed_by_event_type"]
+    assert by_event["PreviewTypeA"]["count"] == 2
+    assert by_event["PreviewTypeB"]["count"] == 1
+    assert "PreviewTypeProcessed" not in by_event
+    assert (
+        3 * 86400 - 60
+        <= by_event["PreviewTypeA"]["oldest_age_seconds"]
+        <= 3 * 86400 + 600
+    )
+    assert 86400 - 60 <= by_event["PreviewTypeA"]["newest_age_seconds"] <= 86400 + 600
+    by_aggregate = after["outbox"]["unprocessed_by_aggregate_type"]
+    assert by_aggregate["PreviewAggregateX"] == 2
+    assert by_aggregate["PreviewAggregateY"] == 1
+    pairs = {
+        (p["event_type"], p["aggregate_type"]): p["count"]
+        for p in after["outbox"]["unprocessed_by_event_and_aggregate_type"]
+    }
+    assert pairs[("PreviewTypeA", "PreviewAggregateX")] == 1
+    assert pairs[("PreviewTypeA", "PreviewAggregateY")] == 1
+    assert pairs[("PreviewTypeB", "PreviewAggregateX")] == 1
+
+    for outcome in (
+        "valid",
+        "consumed",
+        "expired",
+        "user_unavailable",
+        "not_selected_ciphertext_missing",
+    ):
+        assert (
+            _delta(after, before, "password_resets", "due_by_outcome", outcome) == 1
+        ), outcome
+    assert _delta(after, before, "password_resets", "due_by_outcome", "superseded") == 2
+    assert _delta(after, before, "password_resets", "due_pending") == 7
+
+
+@pytest.mark.asyncio
+async def test_activation_preview_never_gates_activation(
+    engine: AsyncEngine, preview_rows: dict[str, Any]
+) -> None:
+    before, after = preview_rows["baseline"], await _report(engine)
+    assert after["blockers"] == before["blockers"]
+
+
+@pytest.mark.asyncio
+async def test_activation_preview_exposes_no_identifiers_or_content(
+    engine: AsyncEngine, preview_rows: dict[str, Any]
+) -> None:
+    rendered = json.dumps(await _report(engine))
+    for leaked in (
+        *preview_rows["ids"],
+        SECRET_ADDRESS,
+        SECRET_BODY,
+        SECRET_CIPHERTEXT,
+        "preview-",
+    ):
+        assert leaked not in rendered
+    assert "@" not in rendered
