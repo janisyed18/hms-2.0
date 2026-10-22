@@ -156,6 +156,15 @@ async def _deliver_one(
                 session_factory, held, _terminal_failure(clock(), "reset link expired")
             )
             return "failed"
+        if reset.superseded_at is not None:
+            # A newer request replaced this link and the API rejects it on confirm, so
+            # emailing it would hand the user a link that cannot work.
+            await _record(
+                session_factory,
+                held,
+                _terminal_failure(clock(), "reset link superseded"),
+            )
+            return "failed"
         user = await session.get(User, reset.user_id)
         if user is None or user.deleted_at is not None:
             await _record(
