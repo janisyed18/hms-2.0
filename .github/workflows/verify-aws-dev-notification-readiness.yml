@@ -1,0 +1,120 @@
+name: Verify AWS Dev Notification Readiness
+
+# Runs the read-only readiness check (python -m
+# hms_backend.app.tooling.notification_readiness) as a one-off ECS task, using the
+# image the current hms-dev-migrate task definition points at. It changes nothing: the
+# command opens a READ ONLY database transaction and has no mutation mode, and this
+# workflow neither deploys nor touches any service.
+#
+# Task exit status is the gate: 0 ready, 1 activation-blocking rows found, 2 the check
+# itself failed. The JSON report (counts and statuses only) is in the migrate log
+# stream named in the job output.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-southeast-2
+  ECS_CLUSTER: ${{ vars.AWS_DEV_ECS_CLUSTER || 'hms-dev' }}
+  ECS_MIGRATE_TASK_DEFINITION: ${{ vars.AWS_DEV_MIGRATE_TASK_DEFINITION || 'hms-dev-migrate' }}
+
+jobs:
+  verify:
+    name: Verify notification readiness
+    # Only the reviewed workflow on main may run against the deployed environment.
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: aws-dev
+
+    steps:
+      - name: Configure application deployment credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEV_GITHUB_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build ECS network configuration
+        env:
+          AWS_DEV_ECS_SUBNET_IDS: ${{ vars.AWS_DEV_ECS_SUBNET_IDS }}
+          AWS_DEV_ECS_SECURITY_GROUP_ID: ${{ vars.AWS_DEV_ECS_SECURITY_GROUP_ID }}
+        run: |
+          python3 - <<'PY' > ecs-network.json
+          import json
+          import os
+
+          subnets = [
+              subnet.strip()
+              for subnet in os.environ["AWS_DEV_ECS_SUBNET_IDS"].split(",")
+              if subnet.strip()
+          ]
+          security_group = os.environ["AWS_DEV_ECS_SECURITY_GROUP_ID"].strip()
+          if len(subnets) < 2:
+              raise SystemExit("AWS_DEV_ECS_SUBNET_IDS must contain at least two subnet ids")
+          if not security_group:
+              raise SystemExit("AWS_DEV_ECS_SECURITY_GROUP_ID is required")
+
+          print(json.dumps({
+              "awsvpcConfiguration": {
+                  "subnets": subnets,
+                  "securityGroups": [security_group],
+                  "assignPublicIp": "ENABLED",
+              }
+          }))
+          PY
+
+      - name: Run the read-only readiness check
+        run: |
+          # The family name resolves to the newest ACTIVE revision; record which one.
+          task_definition_arn="$(
+            aws ecs describe-task-definition \
+              --task-definition "$ECS_MIGRATE_TASK_DEFINITION" \
+              --query 'taskDefinition.taskDefinitionArn' \
+              --output text
+          )"
+          if [ -z "$task_definition_arn" ] || [ "$task_definition_arn" = "None" ]; then
+            echo "Task definition $ECS_MIGRATE_TASK_DEFINITION was not found" >&2
+            exit 1
+          fi
+          echo "Task definition: $task_definition_arn"
+
+          task_arn="$(
+            aws ecs run-task \
+              --cluster "$ECS_CLUSTER" \
+              --launch-type FARGATE \
+              --task-definition "$task_definition_arn" \
+              --network-configuration file://ecs-network.json \
+              --overrides '{"containerOverrides":[{"name":"migrate","command":["python","-m","hms_backend.app.tooling.notification_readiness"]}]}' \
+              --query 'tasks[0].taskArn' \
+              --output text
+          )"
+          if [ -z "$task_arn" ] || [ "$task_arn" = "None" ]; then
+            echo "Failed to start the readiness task" >&2
+            exit 1
+          fi
+          task_id="${task_arn##*/}"
+          echo "Readiness task: $task_id"
+          echo "Report: CloudWatch log stream migrate/migrate/$task_id"
+
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task_arn"
+          exit_code="$(
+            aws ecs describe-tasks \
+              --cluster "$ECS_CLUSTER" \
+              --tasks "$task_arn" \
+              --query 'tasks[0].containers[0].exitCode' \
+              --output text
+          )"
+          case "$exit_code" in
+            0) echo "Notification readiness: READY" ;;
+            1) echo "Notification readiness: BLOCKED (see the report in the log stream)" >&2; exit 1 ;;
+            2) echo "Notification readiness: the check itself failed" >&2; exit 2 ;;
+            *)
+              echo "Readiness task did not complete (exit code: $exit_code)" >&2
+              aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$task_arn" \
+                --query 'tasks[0].{stoppedReason:stoppedReason,containerReason:containers[0].reason}'
+              exit 1
+              ;;
+          esac
