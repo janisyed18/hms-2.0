@@ -36,7 +36,9 @@ app. An unanswered field is simply absent; nothing is defaulted on the customer'
 
 A draft can be saved once it has a test pressure, a test time and a pressure test result.
 It can be submitted for review only when every field above is answered (the API returns 422
-listing what is missing). Inspections saved before this form have no `schema_version` and
+listing what is missing). An inspection with no pressure test at all cannot be submitted
+("Pressure test" is reported as missing), by the staff API or by sync. Inspections saved
+before this form that carry a pressure test in the earlier format (no `schema_version`)
 submit as before.
 
 The offline inspector's "Submit" now submits on the server: the sync push applies a

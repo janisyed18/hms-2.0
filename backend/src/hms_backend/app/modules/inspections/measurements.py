@@ -42,6 +42,8 @@ from collections.abc import Mapping
 from typing import Any
 
 SCHEMA_VERSION = 1
+# What an inspection with no pressure test at all is missing at submission.
+PRESSURE_TEST_MISSING = "Pressure test"
 TEST_DURATION_MINUTES = (1, 5, 10)
 INSPECTION_RESULTS = frozenset({"PASS", "REPAIR", "FAIL", "REVIEW"})
 # What a current (schema version 1) inspection may be submitted with.

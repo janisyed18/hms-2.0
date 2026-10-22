@@ -48,6 +48,7 @@ from hms_backend.app.modules.customers.models import (
     CustomerLocation,
 )
 from hms_backend.app.modules.inspections.measurements import (
+    PRESSURE_TEST_MISSING,
     MeasurementsError,
     missing_for_submission,
     normalize_measurements,
@@ -1353,6 +1354,8 @@ def _check_inspection_payload(
                     "test_duration_minutes must match hold_time_seconds"
                 )
         if requested == "SUBMITTED":
+            if stored is None and not isinstance(pressure, dict):
+                return "Inspection is incomplete: " + PRESSURE_TEST_MISSING
             gaps = missing_for_submission(
                 measurements, result, hold_time_seconds=hold_seconds
             )

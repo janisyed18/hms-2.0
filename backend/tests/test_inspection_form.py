@@ -718,3 +718,95 @@ async def test_a_legacy_failed_result_still_raises_the_alert(
         measurements={"leak": "yes"},
     )
     assert "INSPECTION_FAILED" in events
+
+
+@pytest.mark.asyncio
+async def test_a_draft_with_no_pressure_test_cannot_be_submitted(
+    session_factory: async_sessionmaker[AsyncSession],  # noqa: F811
+    seeded_sync_session: dict[str, str],  # noqa: F811
+    assigned_inspector_booking: str,  # noqa: F811
+) -> None:
+    async with api_client(session_factory, INSPECTOR) as client:
+        created = await create_draft(
+            client, seeded_sync_session["vopak_asset_id"], result="PASS", test=None
+        )
+        inspection_id = created.json()["id"]
+        refused = await client.post(f"/api/v1/inspections/{inspection_id}/submit")
+        reloaded = await client.get(f"/api/v1/inspections/{inspection_id}")
+
+    assert refused.status_code == 422, refused.text
+    assert "Pressure test" in refused.json()["detail"]
+    assert reloaded.json()["status"] == "DRAFT"
+    assert reloaded.json()["submitted_at"] is None
+    async with session_factory() as session:
+        events = (
+            await session.scalars(
+                select(OutboxEvent.event_type).where(
+                    OutboxEvent.aggregate_id == inspection_id
+                )
+            )
+        ).all()
+    assert list(events) == []  # no reviewer notification for a refused submission
+
+
+@pytest.mark.asyncio
+async def test_a_sync_create_that_submits_with_no_pressure_test_is_rejected(
+    session_factory: async_sessionmaker[AsyncSession],  # noqa: F811
+    seeded_sync_session: dict[str, str],  # noqa: F811
+    assigned_inspector_booking: str,  # noqa: F811
+) -> None:
+    async with api_client(session_factory, INSPECTOR) as client:
+        context = await work_context(client)
+        results = await push(
+            client,
+            context,
+            inspection_op(
+                "np-1", "sync-np-1", context, status="SUBMITTED", result="PASS"
+            ),
+        )
+    assert results[0]["status"] == "rejected"
+    assert "Pressure test" in results[0]["error"]
+    async with session_factory() as session:
+        assert await session.get(Inspection, "sync-np-1") is None
+
+
+@pytest.mark.asyncio
+async def test_a_sync_update_cannot_submit_a_draft_that_has_no_pressure_test(
+    session_factory: async_sessionmaker[AsyncSession],  # noqa: F811
+    seeded_sync_session: dict[str, str],  # noqa: F811
+    assigned_inspector_booking: str,  # noqa: F811
+) -> None:
+    async with api_client(session_factory, INSPECTOR) as client:
+        context = await work_context(client)
+        created = await push(
+            client,
+            context,
+            inspection_op("np-2", "sync-np-2", context, result="PASS"),
+        )
+        refused = await client.post(
+            "/api/v1/sync/push",
+            headers=sync_headers(),
+            json={
+                "operations": [
+                    {
+                        "op_id": "np-3",
+                        "idempotency_key": "np-3",
+                        "entity": "Inspection",
+                        "entity_id": "sync-np-2",
+                        "op": "update",
+                        "base_version": created[0]["version"],
+                        "work_context": context,
+                        "payload": {"status": "SUBMITTED"},
+                    }
+                ]
+            },
+        )
+    assert created[0]["status"] == "applied"
+    result = refused.json()["results"][0]
+    assert result["status"] == "rejected"
+    assert "Pressure test" in result["error"]
+    async with session_factory() as session:
+        inspection = await session.get(Inspection, "sync-np-2")
+        assert inspection is not None
+        assert inspection.status == "DRAFT"
+        assert inspection.submitted_at is None

@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.repository import record_update
 from hms_backend.app.models.base import utc_now
-from hms_backend.app.modules.inspections.measurements import missing_for_submission
+from hms_backend.app.modules.inspections.measurements import (
+    PRESSURE_TEST_MISSING,
+    missing_for_submission,
+)
 from hms_backend.app.modules.inspections.models import Inspection, InspectionStatus
 from hms_backend.app.modules.notifications.enums import NotificationCategory
 from hms_backend.app.modules.notifications.outbox import emit_event
@@ -22,7 +25,9 @@ def submission_gaps(inspection: Inspection) -> list[str]:
     """What the inspection's recorded form still lacks before it can be submitted."""
     pressure_test = inspection.pressure_test
     if pressure_test is None:
-        return []
+        # Nothing recorded is not the same as nothing missing. Older inspections that
+        # carry a pressure test in the earlier format still submit; none at all cannot.
+        return [PRESSURE_TEST_MISSING]
     return missing_for_submission(
         pressure_test.measurements,
         inspection.result,
