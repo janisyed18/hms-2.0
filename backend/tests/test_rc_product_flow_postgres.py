@@ -16,16 +16,19 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from random import randint
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
 import pytest_asyncio
+import tzdata  # type: ignore[import-untyped]
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from certificate_support import SigningFakeEngine, build_pki
@@ -137,6 +140,10 @@ async def api_as(
         yield client
 
 
+# A fixed-offset, non-UTC zone: UTC+08:00 all year, so the expected offset is exact.
+LOCATION_TIMEZONE = "Australia/Perth"
+
+
 class RecordingAdapter:
     """Counts every message a dispatcher hands to a channel."""
 
@@ -192,7 +199,11 @@ async def _seed(database: async_sessionmaker[AsyncSession], assets: int = 1) -> 
         customer = Customer(code=f"C{world.tag}", name=f"Acme {world.tag} Pty Ltd")
         other = Customer(code=f"O{world.tag}", name=f"Other {world.tag} Pty Ltd")
         location = CustomerLocation(
-            customer=customer, name="North Pit", city="Kalgoorlie", state="WA"
+            customer=customer,
+            name="North Pit",
+            city="Kalgoorlie",
+            state="WA",
+            scheduling_timezone=LOCATION_TIMEZONE,
         )
         built: list[Asset] = []
         for n in range(assets):
@@ -333,6 +344,14 @@ async def test_booking_to_certificate_to_notification_flow(
     assert approved.json()["appointment"]["revision_number"] == 1
 
     # The appointment keeps the quoted local time and zone, not just a UTC instant.
+    # The location is in Perth (UTC+08:00, no DST), so every value is pinned exactly.
+    starts = datetime.fromisoformat(str(quote["starts_at"]))
+    ends = datetime.fromisoformat(str(quote["ends_at"]))
+    zone = ZoneInfo(LOCATION_TIMEZONE)
+    expected_local_start = starts.astimezone(zone).replace(tzinfo=None).isoformat()
+    expected_local_end = ends.astimezone(zone).replace(tzinfo=None).isoformat()
+    assert starts.astimezone(zone).utcoffset() == timedelta(hours=8)
+    appointment = approved.json()["appointment"]
     async with database() as session:
         revision = await session.scalar(
             select(InspectionAppointmentRevision).where(
@@ -340,9 +359,27 @@ async def test_booking_to_certificate_to_notification_flow(
             )
         )
     assert revision is not None
-    assert revision.timezone_id
-    assert revision.local_start_snapshot
-    assert revision.utc_offset_start
+    for source in (
+        appointment,
+        {
+            "timezone_id": revision.timezone_id,
+            "local_start_snapshot": revision.local_start_snapshot,
+            "local_end_snapshot": revision.local_end_snapshot,
+            "utc_offset_start": revision.utc_offset_start,
+            "utc_offset_end": revision.utc_offset_end,
+            "tzdata_version": revision.tzdata_version,
+        },
+    ):
+        assert source["timezone_id"] == LOCATION_TIMEZONE
+        assert source["local_start_snapshot"] == expected_local_start
+        assert source["local_end_snapshot"] == expected_local_end
+        assert source["utc_offset_start"] == "+08:00"
+        assert source["utc_offset_end"] == "+08:00"
+        assert source["tzdata_version"] == tzdata.IANA_VERSION
+    # Local wall-clock time differs from the UTC instant by exactly the offset.
+    assert expected_local_start != starts.replace(tzinfo=None).isoformat()
+    assert datetime.fromisoformat(appointment["starts_at"]) == starts
+    assert datetime.fromisoformat(appointment["ends_at"]) == ends
 
     # 3. INSPECTOR VISIBILITY: only the assigned inspector sees the case.
     async with api_as(database, inspector) as client:
@@ -520,22 +557,33 @@ async def test_booking_to_certificate_to_notification_flow(
                 )
             ).all()
         ]
-        event_types = {
+        event_counts = Counter(
             e.event_type
             for e in (
                 await session.scalars(
                     select(OutboxEvent).where(OutboxEvent.id.in_(event_ids))
                 )
             ).all()
-        }
+        )
+    # Exactly one of each business event: a duplicated emit would notify twice.
     assert {
-        "INSPECTION_BOOKING_REQUESTED",
-        "INSPECTION_BOOKING_APPROVED",
-        "INSPECTION_SUBMITTED",
-        "INSPECTION_APPROVED",
-        "CERTIFICATE_ISSUED",
-        "CERTIFICATE_REVOKED",
-    } <= event_types, event_types
+        name: event_counts[name]
+        for name in (
+            "INSPECTION_BOOKING_REQUESTED",
+            "INSPECTION_BOOKING_APPROVED",
+            "INSPECTION_SUBMITTED",
+            "INSPECTION_APPROVED",
+            "CERTIFICATE_ISSUED",
+            "CERTIFICATE_REVOKED",
+        )
+    } == {
+        "INSPECTION_BOOKING_REQUESTED": 1,
+        "INSPECTION_BOOKING_APPROVED": 1,
+        "INSPECTION_SUBMITTED": 1,
+        "INSPECTION_APPROVED": 1,
+        "CERTIFICATE_ISSUED": 1,
+        "CERTIFICATE_REVOKED": 1,
+    }, event_counts
 
     adapters = _adapters()
     for _ in range(3):  # the shared database may hold other tests' rows: drain it
@@ -574,6 +622,14 @@ async def test_booking_to_certificate_to_notification_flow(
 
     # A second full pass must send and create nothing more for this flow.
     sent_before = sum(len(a.sent) for a in adapters.values())
+    mine_before = len(
+        [
+            m
+            for a in adapters.values()
+            for m in a.sent
+            if m.to_address == world.contact_email
+        ]
+    )
     for _ in range(2):
         await relay_outbox(database, limit=500)
         await dispatch_pending(database, adapters=adapters, limit=500)  # type: ignore[arg-type]
@@ -590,7 +646,8 @@ async def test_booking_to_certificate_to_notification_flow(
         if m.to_address == world.contact_email
     ]
     assert len(mine_sent) == len({(m.subject, m.body_text) for m in mine_sent})
-    assert sum(len(a.sent) for a in adapters.values()) >= sent_before
+    assert len(mine_sent) == mine_before
+    assert sum(len(a.sent) for a in adapters.values()) == sent_before
 
 
 @pytest.mark.asyncio
