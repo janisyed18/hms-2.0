@@ -161,6 +161,47 @@ async def test_expired_delivery_is_scrubbed_without_sending(
 
 
 @pytest.mark.asyncio
+async def test_a_superseded_reset_is_scrubbed_without_sending(
+    session_factory: SessionFactory,
+) -> None:
+    # Reset A is requested, then reset B before A is delivered: A can no longer be
+    # confirmed, so its email must not go out, and only B's link is sent.
+    await queue_reset(session_factory)
+    async with session_factory() as session:
+        await PasswordResetService(now=lambda: NOW + timedelta(seconds=5)).request(
+            session, email="delivery@example.com", ip="127.0.0.1", user_agent="pytest"
+        )
+        await session.commit()
+    adapter = FakeEmailAdapter()
+
+    result = await dispatch_password_reset_deliveries(
+        session_factory, adapter=adapter, now=NOW + timedelta(seconds=10)
+    )
+
+    assert result == {"sent": 1, "failed": 1}
+    assert len(adapter.messages) == 1
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                select(PasswordResetDelivery, PasswordResetToken)
+                .join(
+                    PasswordResetToken,
+                    PasswordResetToken.id == PasswordResetDelivery.reset_id,
+                )
+                .order_by(PasswordResetToken.created_at)
+            )
+        ).all()
+    (first, first_token), (second, second_token) = rows
+    assert first_token.superseded_at is not None and second_token.superseded_at is None
+    assert (first.status, first.ciphertext, first.error) == (
+        "DEAD_LETTER",
+        None,
+        "reset link superseded",
+    )
+    assert (second.status, second.ciphertext) == ("SENT", None)
+
+
+@pytest.mark.asyncio
 async def test_final_delivery_failure_scrubs_secret_and_redacts_error(
     session_factory: SessionFactory,
 ) -> None:
