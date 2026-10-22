@@ -57,6 +57,16 @@ from hms_backend.app.modules.scheduling.models import (
 )
 
 
+def utc_today() -> date:
+    """Today as the server sees it: its dates are UTC, not the machine's local date.
+
+    ``date.today()`` differs from the server's date for part of every day wherever the
+    local timezone is not UTC (for example between 00:00 and 05:30 in IST), which made
+    day-count assertions fail locally while passing on UTC CI.
+    """
+    return datetime.now(UTC).date()
+
+
 @pytest_asyncio.fixture
 async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -370,7 +380,7 @@ async def test_dashboard_returns_live_operational_data_and_respects_customer_sco
                 RetestSchedule(
                     customer_id=seeded_session["orica_id"],
                     asset=orica_asset,
-                    due_at=date.today() + timedelta(days=3),
+                    due_at=utc_today() + timedelta(days=3),
                     status=RetestScheduleStatus.DUE.value,
                 ),
                 Inspection(
@@ -418,7 +428,7 @@ async def test_dashboard_returns_live_operational_data_and_respects_customer_sco
                 "customer_name": "Vopak",
                 "product_name": "FUELFLEX GREEN",
                 "due_at": "2023-11-02",
-                "days_overdue": (date.today() - date(2023, 11, 2)).days,
+                "days_overdue": (utc_today() - date(2023, 11, 2)).days,
                 "status": "OVERDUE",
             }
         ],
@@ -427,7 +437,7 @@ async def test_dashboard_returns_live_operational_data_and_respects_customer_sco
                 "asset_id": seeded_session["orica_asset_id"],
                 "asset_number": "ORIC-100",
                 "customer_name": "Orica",
-                "due_at": (date.today() + timedelta(days=3)).isoformat(),
+                "due_at": (utc_today() + timedelta(days=3)).isoformat(),
             }
         ],
         "awaiting_review": [
@@ -473,7 +483,7 @@ async def test_analytics_overview_uses_live_records_and_respects_customer_scope(
                 RetestSchedule(
                     customer_id=seeded_session["orica_id"],
                     asset=orica_asset,
-                    due_at=date.today() + timedelta(days=3),
+                    due_at=utc_today() + timedelta(days=3),
                     status=RetestScheduleStatus.DUE.value,
                 ),
                 Inspection(
@@ -492,7 +502,7 @@ async def test_analytics_overview_uses_live_records_and_respects_customer_scope(
                 inspection_id=approved_inspection.id,
                 asset_id=orica_asset.id,
                 number="CERT-ANALYTICS-1",
-                valid_until=date.today() + timedelta(days=10),
+                valid_until=utc_today() + timedelta(days=10),
                 pdf_object_key="certificates/analytics-test.pdf",
                 verification_hash="analytics-test-hash",
                 public_token="analytics-test-token",
@@ -3116,7 +3126,7 @@ async def test_inspection_availability_does_not_return_elapsed_slots(
         roles=frozenset({Role.CUSTOMER_USER}),
         customer_ids=frozenset({seeded_session["vopak_id"]}),
     )
-    yesterday = date.today() - timedelta(days=1)
+    yesterday = utc_today() - timedelta(days=1)
     async with api_client(session_factory, customer) as client:
         response = await client.get(
             "/api/v1/inspection-availability",
