@@ -27,7 +27,8 @@ const apiCustomer = {
       country: "AU"
     }
   ],
-  contacts: []
+  contacts: [],
+  metrics: { asset_count: 1, in_service_count: 0 }
 };
 
 const apiUnassignedCustomer = {
@@ -49,7 +50,8 @@ const apiUnassignedCustomer = {
       country: "AU"
     }
   ],
-  contacts: []
+  contacts: [],
+  metrics: { asset_count: 0, in_service_count: 0 }
 };
 
 const apiProduct = {

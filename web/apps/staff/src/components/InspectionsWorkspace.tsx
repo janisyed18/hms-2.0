@@ -302,6 +302,8 @@ export function InspectionsWorkspace({
             canApprove={canApprove}
             canWrite={canWrite}
             inspection={workspace.selectedInspection}
+            ratingFor={(assetId) =>
+              workspace.assetOptions.find((asset) => asset.id === assetId)?.pressureRating ?? null}
             onApprove={workspace.approveInspection}
             onClose={workspace.closeDetail}
             onSaveDraft={workspace.saveInspectionUpdate}

@@ -1,3 +1,4 @@
+import type { PressureRating, SavedInspectionForm } from "../domain/inspectionForm";
 import type {
   InspectionStatus,
   OutboxOperation,
@@ -144,6 +145,7 @@ interface ApiAssetPayload {
   customer?: ApiCustomerSummary;
   product?: ApiProductSummary;
   location: ApiLocationSummary | null;
+  pressure_rating?: unknown;
 }
 
 interface ApiRetestSchedulePayload {
@@ -159,11 +161,16 @@ interface ApiInspectionPayload {
   booking_id: string | null;
   status: "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
   inspection_type: string;
+  result: string | null;
 }
 
 interface ApiPressureTestPayload {
   id: string;
   inspection_id: string;
+  applied_pressure_kpa: number;
+  hold_time_seconds: number;
+  passed: boolean;
+  measurements: Record<string, unknown> | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -254,7 +261,36 @@ function asAssetPayload(value: unknown): ApiAssetPayload | null {
     location_id: nullableString(value.location_id),
     customer: asCustomerPayload(value.customer) ?? undefined,
     product: asProductPayload(value.product) ?? undefined,
-    location: asLocationPayload(value.location)
+    location: asLocationPayload(value.location),
+    pressure_rating: value.pressure_rating
+  };
+}
+
+function asPressureRating(value: unknown): PressureRating | null {
+  if (
+    !isRecord(value) ||
+    typeof value.working_pressure_kpa !== "number" ||
+    typeof value.test_pressure_kpa !== "number"
+  ) {
+    return null;
+  }
+  return {
+    workingPressureKpa: value.working_pressure_kpa,
+    testPressureKpa: value.test_pressure_kpa
+  };
+}
+
+function savedInspectionForm(
+  inspection: ApiInspectionPayload | undefined,
+  pressureTest: ApiPressureTestPayload | undefined
+): SavedInspectionForm | null {
+  if (!inspection || !pressureTest) return null;
+  return {
+    result: typeof inspection.result === "string" ? inspection.result : null,
+    appliedPressureKpa: pressureTest.applied_pressure_kpa,
+    holdTimeSeconds: pressureTest.hold_time_seconds,
+    passed: pressureTest.passed === true,
+    measurements: isRecord(pressureTest.measurements) ? pressureTest.measurements : null
   };
 }
 
@@ -502,8 +538,11 @@ export function mapBootstrapToWorkItems(
         serverVersion: inspection?.version ?? record.version,
         inspectionId: inspection?.payload.id ?? null,
         inspectionStatus: inspectionStatus(inspection?.payload.status),
+        inspectionLocked: inspection !== undefined && inspection.payload.status !== "DRAFT",
         pressureTestId: pressureTest?.payload.id ?? null,
-        pressureTestVersion: pressureTest?.version ?? null
+        pressureTestVersion: pressureTest?.version ?? null,
+        pressureRating: asPressureRating(payload.pressure_rating),
+        saved: savedInspectionForm(inspection?.payload, pressureTest?.payload)
       } satisfies WorkItem;
     }))
     .sort((left, right) => {

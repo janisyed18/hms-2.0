@@ -1,34 +1,20 @@
 import { FormEvent, useEffect, useState } from "react";
 import { X } from "lucide-react";
 
-import type {
-  AssetRecord,
-  InspectionCreateValues,
-  InspectionType,
-  PressureTestValues
-} from "../domain/types";
+import {
+  blankFormState,
+  buildValues,
+  draftGaps
+} from "../domain/inspectionForm";
+import type { InspectionFormState } from "../domain/inspectionForm";
+import type { AssetRecord, InspectionCreateValues, InspectionType } from "../domain/types";
+import { InspectionFormFields } from "./InspectionFormFields";
 
 interface InspectionFormProps {
   assetOptions: AssetRecord[];
   open: boolean;
   onClose: () => void;
   onSubmit: (values: InspectionCreateValues) => Promise<void>;
-}
-
-function measurementsFromNote(note: string): Record<string, unknown> | null {
-  const trimmed = note.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const separatorIndex = trimmed.indexOf("=");
-  if (separatorIndex > 0) {
-    return {
-      [trimmed.slice(0, separatorIndex).trim()]: trimmed
-        .slice(separatorIndex + 1)
-        .trim()
-    };
-  }
-  return { note: trimmed };
 }
 
 export function InspectionForm({
@@ -39,46 +25,52 @@ export function InspectionForm({
 }: InspectionFormProps) {
   const [assetId, setAssetId] = useState("");
   const [inspectionType, setInspectionType] = useState<InspectionType>("SERVICE");
-  const [result, setResult] = useState("REVIEW");
-  const [appliedPressureKpa, setAppliedPressureKpa] = useState("1500");
-  const [holdTimeSeconds, setHoldTimeSeconds] = useState("300");
-  const [passed, setPassed] = useState(true);
-  const [measurementNote, setMeasurementNote] = useState("");
+  const [form, setForm] = useState<InspectionFormState>(() => blankFormState(null));
   const [isSubmitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
-    setAssetId(assetOptions[0]?.id ?? "");
+    if (!open) return;
+    // A new inspection starts with no asset chosen; the pressures follow the asset.
+    setAssetId("");
     setInspectionType("SERVICE");
-    setResult("REVIEW");
-    setAppliedPressureKpa("1500");
-    setHoldTimeSeconds("300");
-    setPassed(true);
-    setMeasurementNote("");
-  }, [assetOptions, open]);
+    setForm(blankFormState(null));
+    setError(null);
+  }, [open]);
 
   if (!open) {
     return null;
   }
 
+  function chooseAsset(nextAssetId: string) {
+    setAssetId(nextAssetId);
+    const next = assetOptions.find((option) => option.id === nextAssetId);
+    // The rating belongs to the chosen asset's product and bore, so nothing typed for
+    // another asset carries over.
+    setForm(blankFormState(next?.pressureRating ?? null));
+    setError(null);
+  }
+
+  const gaps = draftGaps(form);
+  const built = buildValues(form);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const pressureTest: PressureTestValues = {
-      appliedPressureKpa: Number(appliedPressureKpa),
-      holdTimeSeconds: Number(holdTimeSeconds),
-      passed,
-      measurements: measurementsFromNote(measurementNote)
-    };
+    if (!assetId || !built) return;
     setSubmitting(true);
-    await onSubmit({
-      assetId,
-      inspectionType,
-      result: result || null,
-      pressureTest
-    });
-    setSubmitting(false);
+    setError(null);
+    try {
+      await onSubmit({
+        assetId,
+        inspectionType,
+        result: built.result,
+        pressureTest: built.pressureTest
+      });
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "The inspection could not be saved.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -87,7 +79,7 @@ export function InspectionForm({
         <div className="drawer-header">
           <div>
             <h2>Add Inspection</h2>
-            <p>Start a draft inspection and capture pressure-test results.</p>
+            <p>Start a draft inspection and capture the pressure test, measurements and condition checks.</p>
           </div>
           <button
             aria-label="Close form"
@@ -104,11 +96,12 @@ export function InspectionForm({
             aria-label="Inspection asset"
             required
             value={assetId}
-            onChange={(event) => setAssetId(event.target.value)}
+            onChange={(event) => chooseAsset(event.target.value)}
           >
-            {assetOptions.map((asset) => (
-              <option key={asset.id} value={asset.id}>
-                {asset.assetNumber} - {asset.customer.name}
+            <option value="">Select an asset</option>
+            {assetOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.assetNumber} - {option.customer.name}
               </option>
             ))}
           </select>
@@ -126,65 +119,26 @@ export function InspectionForm({
             <option value="NEW_ASSET">New asset</option>
           </select>
         </label>
-        <label>
-          <span>Result</span>
-          <select
-            aria-label="Inspection result"
-            value={result}
-            onChange={(event) => setResult(event.target.value)}
-          >
-            <option value="REVIEW">Review</option>
-            <option value="PASS">Pass</option>
-            <option value="FAIL">Fail</option>
-          </select>
-        </label>
-        <label>
-          <span>Applied pressure kPa</span>
-          <input
-            aria-label="Applied pressure kPa"
-            inputMode="numeric"
-            min="0"
-            required
-            type="number"
-            value={appliedPressureKpa}
-            onChange={(event) => setAppliedPressureKpa(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>Hold time seconds</span>
-          <input
-            aria-label="Hold time seconds"
-            inputMode="numeric"
-            min="0"
-            required
-            type="number"
-            value={holdTimeSeconds}
-            onChange={(event) => setHoldTimeSeconds(event.target.value)}
-          />
-        </label>
-        <label className="checkbox-field">
-          <input
-            aria-label="Pressure test passed"
-            checked={passed}
-            type="checkbox"
-            onChange={(event) => setPassed(event.target.checked)}
-          />
-          <span>Pressure test passed</span>
-        </label>
-        <label>
-          <span>Measurement notes</span>
-          <input
-            aria-label="Measurement notes"
-            placeholder="leak=none"
-            value={measurementNote}
-            onChange={(event) => setMeasurementNote(event.target.value)}
-          />
-        </label>
+        {assetId ? (
+          <InspectionFormFields idPrefix="inspection-form" state={form} onChange={setForm} />
+        ) : (
+          <p className="field-hint">Choose an asset to enter the inspection.</p>
+        )}
+        {assetId && gaps.length > 0 ? (
+          <p className="field-hint" role="status">
+            To save a draft, still needed: {gaps.join(", ")}.
+          </p>
+        ) : null}
+        {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="drawer-actions">
           <button className="secondary-button" type="button" onClick={onClose}>
             Cancel
           </button>
-          <button className="primary-button" disabled={isSubmitting} type="submit">
+          <button
+            className="primary-button"
+            disabled={isSubmitting || !assetId || !built}
+            type="submit"
+          >
             {isSubmitting ? "Saving..." : "Save inspection"}
           </button>
         </div>

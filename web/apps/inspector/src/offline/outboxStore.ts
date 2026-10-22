@@ -116,13 +116,13 @@ export function createInspectionOperation(
       asset_id: input.assetId,
       inspection_type: input.inspectionType ?? "SERVICE",
       status: input.status,
-      result: input.passed ? "PASS" : "FAIL",
-      notes: input.notes,
+      // The instruction (Pass or Repair), not the pressure test's own pass/fail.
+      result: input.result,
       pressure_test: {
-        applied_pressure_kpa: input.appliedPressureKpa,
-        required_pressure_kpa: input.requiredPressureKpa,
-        hold_time_seconds: input.holdTimeSeconds,
-        passed: input.passed
+        applied_pressure_kpa: input.pressureTest.appliedPressureKpa,
+        hold_time_seconds: input.pressureTest.holdTimeSeconds,
+        passed: input.pressureTest.passed,
+        measurements: input.pressureTest.measurements
       }
     },
     status: "pending",
@@ -179,9 +179,7 @@ export function createPressureTestOperation(
       applied_pressure_kpa: input.appliedPressureKpa,
       hold_time_seconds: input.holdTimeSeconds,
       passed: input.passed,
-      measurements: {
-        required_pressure_kpa: input.requiredPressureKpa
-      }
+      measurements: input.measurements
     },
     status: "pending",
     createdAt: timestamp,

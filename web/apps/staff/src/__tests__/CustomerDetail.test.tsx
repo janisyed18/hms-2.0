@@ -71,7 +71,6 @@ const customer: CustomerRecord = {
   metrics: {
     assetCount: 1,
     inServiceCount: 1,
-    outOfServiceCount: 0,
     inspectionDueCount: 0,
     inspectionDueLabel: "Current",
     certificateValidPercent: 100,
@@ -117,5 +116,41 @@ describe("CustomerDetail locations", () => {
     await user.click(screen.getByRole("button", { name: "Open asset HMS-798BBD74CE" }));
     expect(onClose).toHaveBeenCalledOnce();
     expect(onAssetOpen).toHaveBeenCalledWith("asset-west-1");
+  });
+
+  it("agrees with the customer card and shows unavailable metrics as a dash, not zero", async () => {
+    listAssets.mockResolvedValue({ total: 2, items: [asset, { ...asset, id: "asset-west-2", assetNumber: "HMS-2" }] });
+    render(
+      <CustomerDetail
+        activeTab="Locations"
+        canWrite={false}
+        customer={{
+          ...customer,
+          metrics: {
+            ...customer.metrics,
+            assetCount: 2,
+            inspectionDueCount: null,
+            certificateValidPercent: null,
+            inspectionDueLabel: "Not available",
+            certificateStatusLabel: "Not available"
+          }
+        }}
+        onAssetOpen={vi.fn()}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+        onTabChange={vi.fn()}
+      />
+    );
+
+    const summary = screen.getByLabelText("Customer asset summary");
+    await vi.waitFor(() => expect(summary).toHaveTextContent(/Assets2Assigned/));
+    const coverage = screen.getByText("Certificate coverage").closest("article") as HTMLElement;
+    expect(coverage).toHaveTextContent("—");
+    expect(coverage).toHaveTextContent("Not available");
+    expect(coverage).not.toHaveTextContent("0%");
+    const attention = screen.getByText("Needs attention").closest("article") as HTMLElement;
+    expect(attention).toHaveTextContent("—");
+    expect(attention).toHaveTextContent("Not available");
+    expect(attention).not.toHaveTextContent("Needs attention0");
   });
 });

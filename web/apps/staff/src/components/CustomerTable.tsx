@@ -36,26 +36,6 @@ function riskClass(risk: string) {
   return `status-pill risk-${risk.toLowerCase()}`;
 }
 
-function inspectionClass(label: string) {
-  if (label.includes("Overdue")) {
-    return "danger-text";
-  }
-  if (label.includes("Due Soon")) {
-    return "warning-text";
-  }
-  return "success-text";
-}
-
-function inspectionShortLabel(label: string) {
-  if (label.includes("Overdue")) {
-    return "Overdue";
-  }
-  if (label.includes("Due")) {
-    return "Due";
-  }
-  return "Current";
-}
-
 function csvCell(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
 }
@@ -247,10 +227,8 @@ export function CustomerTable({
                   <small>Assets</small>
                 </span>
                 <span>
-                  <strong className={inspectionClass(customer.metrics.inspectionDueLabel)}>
-                    {customer.metrics.inspectionDueCount}
-                  </strong>
-                  <small>{inspectionShortLabel(customer.metrics.inspectionDueLabel)}</small>
+                  <strong>{customer.metrics.inServiceCount}</strong>
+                  <small>In service</small>
                 </span>
                 <span>
                   <strong>{customer.locations.length}</strong>

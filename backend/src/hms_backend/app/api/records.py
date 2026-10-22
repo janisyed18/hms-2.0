@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, cast
 from uuid import uuid4
@@ -28,6 +29,7 @@ from hms_backend.app.api.schemas import (
     AssetEndWrite,
     AssetInspectionHistoryRead,
     AssetListResponse,
+    AssetPressureRatingRead,
     AssetRead,
     AssetUpdate,
     CertificateCreate,
@@ -42,6 +44,7 @@ from hms_backend.app.api.schemas import (
     CustomerLocationCreate,
     CustomerLocationRead,
     CustomerLocationUpdate,
+    CustomerMetricsRead,
     CustomerRead,
     CustomerSummary,
     CustomerUpdate,
@@ -107,7 +110,12 @@ from hms_backend.app.core.rbac import (
 )
 from hms_backend.app.core.repository import record_create, record_update, soft_delete
 from hms_backend.app.models.base import utc_now
-from hms_backend.app.modules.assets.models import Asset, AssetEndConfiguration
+from hms_backend.app.modules.assets.models import (
+    Asset,
+    AssetEndConfiguration,
+    AssetLifecycleStatus,
+)
+from hms_backend.app.modules.assets.pressure import rated_pressures
 from hms_backend.app.modules.certificates.engine_client import (
     CertificateEngineError,
     get_certificate_engine,
@@ -149,6 +157,11 @@ from hms_backend.app.modules.inspections.models import (
     InspectionResourceAllocation,
     InspectionStatus,
     PressureTestResult,
+)
+from hms_backend.app.modules.inspections.workflow import (
+    is_failed,
+    mark_submitted,
+    submission_gaps,
 )
 from hms_backend.app.modules.notifications.enums import NotificationCategory
 from hms_backend.app.modules.notifications.outbox import (
@@ -732,7 +745,7 @@ async def create_customer(
         )
     await session.commit()
     loaded = await _get_visible_customer_or_404(session, customer.id, principal)
-    return _customer_read(loaded)
+    return _customer_read(loaded, _NO_ASSETS)
 
 
 @router.get("/customers", response_model=CustomerListResponse)
@@ -765,12 +778,17 @@ async def list_customers(
         default="code",
     )
     customers = (await session.scalars(statement.offset(offset).limit(limit))).all()
+    metrics = await _customer_asset_metrics(
+        session, principal, [customer.id for customer in customers]
+    )
     return CustomerListResponse(
         total=total,
         limit=limit,
         offset=offset,
         items=[
-            await _customer_read_for_principal(session, customer, principal)
+            await _customer_read_for_principal(
+                session, customer, principal, metrics.get(customer.id, _NO_ASSETS)
+            )
             for customer in customers
         ],
     )
@@ -2608,30 +2626,13 @@ async def submit_inspection(
             detail="Inspection must be in draft status before submission",
         )
 
-    before = inspection.to_audit_dict()
-    inspection.status = InspectionStatus.SUBMITTED.value
-    inspection.submitted_at = utc_now()
-    await record_update(
-        session,
-        inspection,
-        actor_id=principal.user_id,
-        action="inspection.submitted",
-        before=before,
-    )
-    await emit_event(
-        session,
-        category=NotificationCategory.INSPECTION_SUBMITTED,
-        aggregate_type="inspection",
-        aggregate_id=inspection.id,
-        payload={
-            "inspection_id": inspection.id,
-            "asset_id": inspection.asset.id,
-            "asset_number": inspection.asset.asset_number,
-            "customer_id": inspection.asset.customer_id,
-            "reviewer_user_id": inspection.reviewer_user_id,
-            "link": settings.public_base_url.rstrip("/"),
-        },
-    )
+    gaps = submission_gaps(inspection)
+    if gaps:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Inspection is incomplete: " + ", ".join(gaps),
+        )
+    await mark_submitted(session, inspection, actor_id=principal.user_id)
     await session.commit()
     return _inspection_read(inspection)
 
@@ -2670,8 +2671,8 @@ async def approve_inspection(
         aggregate_id=inspection.id,
         payload=payload,
     )
-    # A failed result is a safety event to the customer/owner/reviewer.
-    if (inspection.result or "").upper() in {"FAIL", "FAILED"}:
+    # A failed hose is a safety event to the customer/owner/reviewer.
+    if is_failed(inspection):
         await emit_event(
             session,
             category=NotificationCategory.INSPECTION_FAILED,
@@ -3689,7 +3690,7 @@ def _customer_contact_read(contact: CustomerContact) -> CustomerContactRead:
     )
 
 
-def _customer_read(customer: Customer) -> CustomerRead:
+def _customer_read(customer: Customer, metrics: CustomerMetricsRead) -> CustomerRead:
     locations = sorted(
         (location for location in customer.locations if location.deleted_at is None),
         key=lambda location: location.name,
@@ -3707,13 +3708,55 @@ def _customer_read(customer: Customer) -> CustomerRead:
         default_retest_months=customer.default_retest_months,
         locations=[_customer_location_read(location) for location in locations],
         contacts=[_customer_contact_read(contact) for contact in contacts],
+        metrics=metrics,
     )
 
 
+_NO_ASSETS = CustomerMetricsRead(asset_count=0, in_service_count=0)
+
+
+async def _customer_asset_metrics(
+    session: AsyncSession, principal: Principal, customer_ids: Sequence[str]
+) -> dict[str, CustomerMetricsRead]:
+    """Asset counts for many customers in one grouped query (no per-customer reads).
+
+    Uses the asset list's own definition of an assigned asset: not deleted, any
+    lifecycle status, limited to what the caller may see.
+    """
+    if not customer_ids:
+        return {}
+    statement = (
+        select(
+            Asset.customer_id,
+            func.count(),
+            func.count().filter(
+                Asset.lifecycle_status == AssetLifecycleStatus.IN_SERVICE.value
+            ),
+        )
+        .where(Asset.deleted_at.is_(None), Asset.customer_id.in_(customer_ids))
+        .group_by(Asset.customer_id)
+    )
+    statement = _apply_asset_scope(statement, principal)
+    rows = (await session.execute(statement)).all()
+    return {
+        customer_id: CustomerMetricsRead(
+            asset_count=int(total), in_service_count=int(in_service)
+        )
+        for customer_id, total, in_service in rows
+    }
+
+
 async def _customer_read_for_principal(
-    session: AsyncSession, customer: Customer, principal: Principal
+    session: AsyncSession,
+    customer: Customer,
+    principal: Principal,
+    metrics: CustomerMetricsRead | None = None,
 ) -> CustomerRead:
-    result = _customer_read(customer)
+    if metrics is None:
+        metrics = (
+            await _customer_asset_metrics(session, principal, [customer.id])
+        ).get(customer.id, _NO_ASSETS)
+    result = _customer_read(customer, metrics)
     if not is_inspector_scoped(principal):
         return result
     location_ids = set((await session.scalars(
@@ -5109,6 +5152,16 @@ async def _asset_read_for_principal(
     )
 
 
+def _asset_pressure_rating(asset: Asset) -> AssetPressureRatingRead | None:
+    rated = rated_pressures(asset)
+    if rated is None:
+        return None
+    bore_id, working, test = rated
+    return AssetPressureRatingRead(
+        nominal_bore_id=bore_id, working_pressure_kpa=working, test_pressure_kpa=test
+    )
+
+
 def _asset_read(asset: Asset) -> AssetRead:
     ends = {
         configuration.end: configuration
@@ -5166,6 +5219,7 @@ def _asset_read(asset: Asset) -> AssetRead:
         ),
         a_end=_asset_end_read(ends.get("A")),
         b_end=_asset_end_read(ends.get("B")),
+        pressure_rating=_asset_pressure_rating(asset),
         inspection_history=[
             AssetInspectionHistoryRead(
                 id=inspection.id,

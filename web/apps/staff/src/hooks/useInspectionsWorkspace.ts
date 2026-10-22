@@ -32,7 +32,7 @@ export function useInspectionsWorkspace(
     setIsLoading(true); setError(null);
     void Promise.all([
       client.listInspections({ sort: "-created_at" }),
-      client.listAssets({ sort: "asset_number" }),
+      client.listAllAssets({ sort: "asset_number" }),
       client.listInspectionBookings()
     ])
       .then(async ([inspectionResult, assetResult, bookingResult]) => {

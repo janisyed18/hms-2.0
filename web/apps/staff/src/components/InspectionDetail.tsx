@@ -1,16 +1,23 @@
 import { FormEvent, useEffect, useState } from "react";
 import { CheckCircle2, Save, Send, X } from "lucide-react";
 
-import type {
-  InspectionRecord,
-  InspectionUpdateValues,
-  PressureTestValues
-} from "../domain/types";
+import {
+  blankFormState,
+  buildValues,
+  draftGaps,
+  stateFromInspection,
+  submitGaps
+} from "../domain/inspectionForm";
+import type { InspectionFormState, PressureRating } from "../domain/inspectionForm";
+import type { InspectionRecord, InspectionUpdateValues } from "../domain/types";
+import { InspectionFormFields } from "./InspectionFormFields";
 
 interface InspectionDetailProps {
   canApprove: boolean;
   canWrite: boolean;
   inspection: InspectionRecord | null;
+  /** The product rating for an asset, for inspections saved before ratings were recorded. */
+  ratingFor?: (assetId: string) => PressureRating | null;
   onApprove: () => Promise<void>;
   onClose: () => void;
   onSaveDraft: (values: InspectionUpdateValues) => Promise<void>;
@@ -30,61 +37,29 @@ function statusClass(status: string) {
   return "mini-status current";
 }
 
-function noteFromMeasurements(measurements: Record<string, unknown> | null) {
-  if (!measurements) {
-    return "";
-  }
-  const [firstKey, firstValue] = Object.entries(measurements)[0] ?? [];
-  if (!firstKey) {
-    return "";
-  }
-  return `${firstKey}=${String(firstValue)}`;
-}
-
-function measurementsFromNote(note: string): Record<string, unknown> | null {
-  const trimmed = note.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const separatorIndex = trimmed.indexOf("=");
-  if (separatorIndex > 0) {
-    return {
-      [trimmed.slice(0, separatorIndex).trim()]: trimmed
-        .slice(separatorIndex + 1)
-        .trim()
-    };
-  }
-  return { note: trimmed };
-}
-
 export function InspectionDetail({
   canApprove,
   canWrite,
   inspection,
+  ratingFor,
   onApprove,
   onClose,
   onSaveDraft,
   onSubmit
 }: InspectionDetailProps) {
-  const [result, setResult] = useState("REVIEW");
-  const [appliedPressureKpa, setAppliedPressureKpa] = useState("0");
-  const [holdTimeSeconds, setHoldTimeSeconds] = useState("0");
-  const [passed, setPassed] = useState(true);
-  const [measurementNote, setMeasurementNote] = useState("");
+  const [form, setForm] = useState<InspectionFormState>(() => blankFormState(null));
   const [isSaving, setSaving] = useState(false);
   const [isSubmitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!inspection) {
       return;
     }
-    setResult(inspection.result ?? "REVIEW");
-    setAppliedPressureKpa(
-      String(inspection.pressureTest?.appliedPressureKpa ?? 0)
-    );
-    setHoldTimeSeconds(String(inspection.pressureTest?.holdTimeSeconds ?? 0));
-    setPassed(inspection.pressureTest?.passed ?? true);
-    setMeasurementNote(noteFromMeasurements(inspection.pressureTest?.measurements ?? null));
+    // Shows exactly what was saved, so a reload or a reviewer sees the same form.
+    setForm(stateFromInspection(inspection, ratingFor?.(inspection.assetId) ?? null));
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inspection]);
 
   if (!inspection) {
@@ -98,36 +73,39 @@ export function InspectionDetail({
     );
   }
 
-  function draftValues(): InspectionUpdateValues {
-    const pressureTest: PressureTestValues = {
-      appliedPressureKpa: Number(appliedPressureKpa),
-      holdTimeSeconds: Number(holdTimeSeconds),
-      passed,
-      measurements: measurementsFromNote(measurementNote)
-    };
-    return {
-      result: result || null,
-      pressureTest
-    };
+  const editable = canWrite && inspection.status === "DRAFT";
+  const built = buildValues(form);
+  const draftMissing = draftGaps(form);
+  const submitMissing = submitGaps(form);
+
+  function draftValues(): InspectionUpdateValues | null {
+    return built ? { result: built.result, pressureTest: built.pressureTest } : null;
+  }
+
+  async function run(
+    action: (values: InspectionUpdateValues) => Promise<void>,
+    setBusy: (busy: boolean) => void
+  ) {
+    const values = draftValues();
+    if (!values) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await action(values);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "The inspection could not be saved.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSaving(true);
-    try {
-      await onSaveDraft(draftValues());
-    } finally {
-      setSaving(false);
-    }
+    await run(onSaveDraft, setSaving);
   }
 
   async function handleSubmitInspection() {
-    setSubmitting(true);
-    try {
-      await onSubmit(draftValues());
-    } finally {
-      setSubmitting(false);
-    }
+    await run(onSubmit, setSubmitting);
   }
 
   return (
@@ -173,73 +151,34 @@ export function InspectionDetail({
       </div>
 
       <form className="inspection-detail-form" onSubmit={handleSave}>
-        <label>
-          <span>Result</span>
-          <select
-            aria-label="Detail inspection result"
-            disabled={!canWrite || inspection.status !== "DRAFT"}
-            value={result}
-            onChange={(event) => setResult(event.target.value)}
-          >
-            <option value="REVIEW">Review</option>
-            <option value="PASS">Pass</option>
-            <option value="FAIL">Fail</option>
-          </select>
-        </label>
-        <label>
-          <span>Applied pressure kPa</span>
-          <input
-            aria-label="Detail applied pressure kPa"
-            disabled={!canWrite || inspection.status !== "DRAFT"}
-            inputMode="numeric"
-            min="0"
-            type="number"
-            value={appliedPressureKpa}
-            onChange={(event) => setAppliedPressureKpa(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>Hold time seconds</span>
-          <input
-            aria-label="Detail hold time seconds"
-            disabled={!canWrite || inspection.status !== "DRAFT"}
-            inputMode="numeric"
-            min="0"
-            type="number"
-            value={holdTimeSeconds}
-            onChange={(event) => setHoldTimeSeconds(event.target.value)}
-          />
-        </label>
-        <label className="checkbox-field">
-          <input
-            aria-label="Detail pressure test passed"
-            checked={passed}
-            disabled={!canWrite || inspection.status !== "DRAFT"}
-            type="checkbox"
-            onChange={(event) => setPassed(event.target.checked)}
-          />
-          <span>Pressure test passed</span>
-        </label>
-        <label>
-          <span>Measurement notes</span>
-          <input
-            aria-label="Detail measurement notes"
-            disabled={!canWrite || inspection.status !== "DRAFT"}
-            value={measurementNote}
-            onChange={(event) => setMeasurementNote(event.target.value)}
-          />
-        </label>
+        <InspectionFormFields
+          disabled={!editable}
+          idPrefix={`inspection-${inspection.id}`}
+          onChange={setForm}
+          state={form}
+        />
+        {editable && draftMissing.length > 0 ? (
+          <p className="field-hint" role="status">
+            To save, still needed: {draftMissing.join(", ")}.
+          </p>
+        ) : null}
+        {editable && draftMissing.length === 0 && submitMissing.length > 0 ? (
+          <p className="field-hint" role="status">
+            To submit, still needed: {submitMissing.join(", ")}.
+          </p>
+        ) : null}
+        {error ? <p className="form-error" role="alert">{error}</p> : null}
 
         <div className="inspection-action-row">
           {canWrite && inspection.status === "DRAFT" ? (
             <>
-              <button className="secondary-button" disabled={isSaving} type="submit">
+              <button className="secondary-button" disabled={isSaving || !built} type="submit">
                 <Save aria-hidden="true" size={16} />
                 {isSaving ? "Saving..." : "Save draft"}
               </button>
               <button
                 className="primary-button"
-                disabled={isSubmitting}
+                disabled={isSubmitting || submitMissing.length > 0}
                 onClick={handleSubmitInspection}
                 type="button"
               >

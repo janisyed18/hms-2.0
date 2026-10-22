@@ -3787,6 +3787,17 @@ async def test_completed_booking_appointment_cannot_be_cancelled(
             select(Inspection.id).where(Inspection.booking_id == booking["id"])
         )
     assert inspection_id is not None
+    async with session_factory() as session:
+        session.add(
+            PressureTestResult(
+                inspection_id=inspection_id,
+                applied_pressure_kpa=1500,
+                hold_time_seconds=300,
+                passed=True,
+                measurements={"leak": "none"},
+            )
+        )
+        await session.commit()
     inspector = Principal(inspector_id, frozenset({Role.INSPECTOR}), frozenset())
     async with api_client(session_factory, inspector) as client:
         submitted = await client.post(f"/api/v1/inspections/{inspection_id}/submit")
@@ -4158,6 +4169,14 @@ async def test_submit_and_approve_inspection_transitions_with_audit(
             status=InspectionStatus.DRAFT.value,
             result="PASS",
             inspector_user_id="inspector-1",
+            # An inspection saved before the customer form: a pressure test in the
+            # earlier free-form format still submits; one with none at all cannot.
+            pressure_test=PressureTestResult(
+                applied_pressure_kpa=1500,
+                hold_time_seconds=300,
+                passed=True,
+                measurements={"leak": "none"},
+            ),
         )
         session.add(inspection)
         await session.commit()

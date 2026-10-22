@@ -3,8 +3,10 @@ import {
   createSyncClient,
   mapBootstrapToWorkItems
 } from "../api/syncClient";
+import type { SavedInspectionForm } from "../domain/inspectionForm";
 import type {
   InspectionStatus,
+  PressureTestDraft,
   OutboxOperation,
   OutboxState,
   SyncOperationResult,
@@ -30,11 +32,9 @@ export type InspectorView = "work" | "capture" | "queue" | "scan";
 interface SaveInspectionInput {
   workItem: WorkItem;
   status: InspectionStatus;
-  appliedPressureMpa: number;
-  requiredPressureMpa: number;
-  holdTimeSeconds: number;
-  passed: boolean;
-  notes: string;
+  /** The instruction: PASS or REPAIR. */
+  result: string | null;
+  pressureTest: PressureTestDraft;
 }
 
 interface QueueAssetUpdateInput {
@@ -45,10 +45,34 @@ interface QueueAssetUpdateInput {
 
 interface QueuePressureTestInput {
   workItem: WorkItem;
-  appliedPressureMpa: number;
-  requiredPressureMpa: number;
-  holdTimeSeconds: number;
-  passed: boolean;
+  pressureTest: PressureTestDraft;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** The form values a queued operation carries, so a draft reopens as it was left. */
+function savedFromOperation(operation: OutboxOperation): SavedInspectionForm | null {
+  const pressure = operation.entity === "Inspection"
+    ? operation.payload.pressure_test
+    : operation.payload;
+  if (
+    !isRecord(pressure) ||
+    typeof pressure.applied_pressure_kpa !== "number" ||
+    typeof pressure.hold_time_seconds !== "number"
+  ) {
+    return null;
+  }
+  return {
+    result: operation.entity === "Inspection" && typeof operation.payload.result === "string"
+      ? operation.payload.result
+      : null,
+    appliedPressureKpa: pressure.applied_pressure_kpa,
+    holdTimeSeconds: pressure.hold_time_seconds,
+    passed: pressure.passed === true,
+    measurements: isRecord(pressure.measurements) ? pressure.measurements : null
+  };
 }
 
 function pendingOperations(operations: OutboxOperation[]) {
@@ -251,6 +275,18 @@ export function useInspectorWorkspace(userId: string) {
     return crypto.randomUUID();
   }
 
+  /** What to show when this assignment is opened: the unsent local edit if any, else the server's. */
+  function draftFor(item: WorkItem): SavedInspectionForm | null {
+    const local = loadOutbox(userId).operations
+      .filter((operation) =>
+        operation.status !== "applied" &&
+        (operation.entity === "Inspection" || operation.entity === "PressureTestResult") &&
+        sameWorkContext(operation.workContext, item.workContext))
+      .map(savedFromOperation)
+      .find((saved) => saved !== null);
+    return local ?? item.saved;
+  }
+
   function openWorkItem(item: WorkItem) {
     setSelectedWorkItem(item);
     setView("capture");
@@ -267,11 +303,8 @@ export function useInspectorWorkspace(userId: string) {
         ? input.workItem.serverVersion
         : null,
       status: input.status,
-      appliedPressureKpa: Math.round(input.appliedPressureMpa * 1000),
-      requiredPressureKpa: Math.round(input.requiredPressureMpa * 1000),
-      holdTimeSeconds: input.holdTimeSeconds,
-      passed: input.passed,
-      notes: input.notes,
+      result: input.result,
+      pressureTest: input.pressureTest,
       inspectionType: "SERVICE"
     });
 
@@ -310,10 +343,7 @@ export function useInspectorWorkspace(userId: string) {
       inspectionId,
       pressureTestId,
       baseVersion: input.workItem.pressureTestVersion,
-      appliedPressureKpa: Math.round(input.appliedPressureMpa * 1000),
-      requiredPressureKpa: Math.round(input.requiredPressureMpa * 1000),
-      holdTimeSeconds: input.holdTimeSeconds,
-      passed: input.passed
+      ...input.pressureTest
     });
 
     upsertOutboxOperation(userId, operation);
@@ -407,6 +437,7 @@ export function useInspectorWorkspace(userId: string) {
     lastSyncLabel,
     queuedCount,
     openWorkItem,
+    draftFor,
     saveInspection,
     queueAssetUpdate,
     queuePressureTest,

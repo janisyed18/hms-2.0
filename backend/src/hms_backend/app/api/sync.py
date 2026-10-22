@@ -40,11 +40,19 @@ from hms_backend.app.core.rbac import (
 from hms_backend.app.core.repository import record_create, record_update
 from hms_backend.app.models.foundation import Device, IdempotencyKey, SyncChange
 from hms_backend.app.modules.assets.models import Asset
+from hms_backend.app.modules.assets.pressure import rated_pressures
 from hms_backend.app.modules.certificates.models import Certificate
 from hms_backend.app.modules.customers.models import (
     Customer,
     CustomerContact,
     CustomerLocation,
+)
+from hms_backend.app.modules.inspections.measurements import (
+    PRESSURE_TEST_MISSING,
+    MeasurementsError,
+    missing_for_submission,
+    normalize_measurements,
+    validate_inspection_result,
 )
 from hms_backend.app.modules.inspections.models import (
     Inspection,
@@ -55,6 +63,7 @@ from hms_backend.app.modules.inspections.models import (
     InspectionStatus,
     PressureTestResult,
 )
+from hms_backend.app.modules.inspections.workflow import mark_submitted
 from hms_backend.app.modules.notifications.enums import NotificationCategory
 from hms_backend.app.modules.notifications.outbox import emit_event
 from hms_backend.app.modules.products.models import Product, ProductPressureRating
@@ -424,7 +433,22 @@ async def _get_sync_row(
 
 
 def _row_payload(row: SyncableRow) -> dict[str, Any]:
-    return cast(dict[str, Any], normalise_for_json(row.to_audit_dict()))
+    payload = cast(dict[str, Any], normalise_for_json(row.to_audit_dict()))
+    if isinstance(row, Asset):
+        # The offline inspector prefills the pressure form from the product rating, but
+        # the bore lives on the asset's ends, which are not synced. The server resolves
+        # it once, here.
+        rated = rated_pressures(row)
+        payload["pressure_rating"] = (
+            None
+            if rated is None
+            else {
+                "nominal_bore_id": rated[0],
+                "working_pressure_kpa": rated[1],
+                "test_pressure_kpa": rated[2],
+            }
+        )
+    return payload
 
 
 async def _row_visible(
@@ -856,6 +880,9 @@ async def _create_inspection_from_sync(
         )
         if existing_assigned_inspection is not None:
             return _rejected(operation, "The assignment already has an inspection")
+    invalid = _check_inspection_payload(operation, None)
+    if invalid is not None:
+        return _rejected(operation, invalid)
     inspection = Inspection(
         id=operation.entity_id,
         asset=asset,
@@ -880,6 +907,8 @@ async def _create_inspection_from_sync(
             payload=pressure_payload,
             actor_id=principal.user_id,
         )
+    if operation.payload.get("status") == "SUBMITTED":
+        await mark_submitted(session, inspection, actor_id=principal.user_id)
     return _applied(operation, inspection)
 
 
@@ -939,13 +968,20 @@ async def _create_pressure_test_entity_from_sync(
             "Inspection already has a pressure test result",
         )
 
+    try:
+        measurements = _measurements_payload(operation.payload)
+        _require_matching_duration(
+            measurements, _int_payload(operation.payload, "hold_time_seconds")
+        )
+    except MeasurementsError as exc:
+        return _rejected(operation, str(exc))
     pressure_test = PressureTestResult(
         id=operation.entity_id,
         inspection=inspection,
         applied_pressure_kpa=_int_payload(operation.payload, "applied_pressure_kpa"),
         hold_time_seconds=_int_payload(operation.payload, "hold_time_seconds"),
         passed=_bool_payload(operation.payload, "passed"),
-        measurements=_dict_payload(operation.payload, "measurements"),
+        measurements=measurements,
     )
     session.add(pressure_test)
     await record_create(
@@ -980,6 +1016,22 @@ async def _update_pressure_test_entity_from_sync(
             "Only draft inspection pressure tests can be updated by sync push",
         )
 
+    try:
+        measurements = (
+            _measurements_payload(operation.payload)
+            if "measurements" in operation.payload
+            or "required_pressure_kpa" in operation.payload
+            else pressure_test.measurements
+        )
+        hold_seconds = (
+            _int_payload(operation.payload, "hold_time_seconds")
+            if "hold_time_seconds" in operation.payload
+            else pressure_test.hold_time_seconds
+        )
+        _require_matching_duration(measurements, hold_seconds)
+    except MeasurementsError as exc:
+        return _rejected(operation, str(exc))
+
     before = pressure_test.to_audit_dict()
     if "applied_pressure_kpa" in operation.payload:
         pressure_test.applied_pressure_kpa = _int_payload(
@@ -993,11 +1045,11 @@ async def _update_pressure_test_entity_from_sync(
         )
     if "passed" in operation.payload:
         pressure_test.passed = _bool_payload(operation.payload, "passed")
-    if "measurements" in operation.payload:
-        pressure_test.measurements = _dict_payload(
-            operation.payload,
-            "measurements",
-        )
+    if (
+        "measurements" in operation.payload
+        or "required_pressure_kpa" in operation.payload
+    ):
+        pressure_test.measurements = measurements
     await record_update(
         session,
         pressure_test,
@@ -1028,6 +1080,10 @@ async def _update_inspection_from_sync(
             "Only draft inspections can be updated by sync push",
         )
 
+    invalid = _check_inspection_payload(operation, inspection)
+    if invalid is not None:
+        return _rejected(operation, invalid)
+
     before = inspection.to_audit_dict()
     if "result" in operation.payload:
         inspection.result = _optional_string_payload(operation, "result")
@@ -1046,6 +1102,8 @@ async def _update_inspection_from_sync(
             payload=pressure_payload,
             actor_id=principal.user_id,
         )
+    if operation.payload.get("status") == "SUBMITTED":
+        await mark_submitted(session, inspection, actor_id=principal.user_id)
     return _applied(operation, inspection)
 
 
@@ -1123,7 +1181,7 @@ async def _create_pressure_test_from_sync(
         applied_pressure_kpa=_int_payload(payload, "applied_pressure_kpa"),
         hold_time_seconds=_int_payload(payload, "hold_time_seconds"),
         passed=_bool_payload(payload, "passed"),
-        measurements=_dict_payload(payload, "measurements"),
+        measurements=_measurements_payload(payload),
     )
     session.add(pressure_test)
     await record_create(
@@ -1155,7 +1213,7 @@ async def _upsert_pressure_test_from_sync(
     pressure_test.applied_pressure_kpa = _int_payload(payload, "applied_pressure_kpa")
     pressure_test.hold_time_seconds = _int_payload(payload, "hold_time_seconds")
     pressure_test.passed = _bool_payload(payload, "passed")
-    pressure_test.measurements = _dict_payload(payload, "measurements")
+    pressure_test.measurements = _measurements_payload(payload)
     await record_update(
         session,
         pressure_test,
@@ -1252,3 +1310,65 @@ def _dict_payload(payload: dict[str, Any], key: str) -> dict[str, Any] | None:
             detail=f"pressure_test.{key} must be an object",
         )
     return value
+
+
+def _measurements_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """The pressure test's measurements, validated against the form schema.
+
+    Operations queued by an older inspector app carry the working pressure as
+    ``required_pressure_kpa`` beside the measurements; it is folded in so a queued
+    draft is not lost when the app is upgraded.
+    """
+    raw = _dict_payload(payload, "measurements")
+    if "required_pressure_kpa" in payload:
+        raw = {"required_pressure_kpa": payload["required_pressure_kpa"], **(raw or {})}
+    return normalize_measurements(raw)
+
+
+def _check_inspection_payload(
+    operation: SyncOperationWrite, existing: Inspection | None
+) -> str | None:
+    """Why an inspection operation cannot be applied, found before any write."""
+    payload = operation.payload
+    requested = payload.get("status")
+    if requested not in (None, "DRAFT", "SUBMITTED"):
+        return "status can only be DRAFT or SUBMITTED"
+    try:
+        result = existing.result if existing is not None else None
+        if "result" in payload:
+            result = validate_inspection_result(
+                _optional_string_payload(operation, "result")
+            )
+        stored = existing.pressure_test if existing is not None else None
+        measurements = stored.measurements if stored is not None else None
+        hold_seconds = stored.hold_time_seconds if stored is not None else 0
+        pressure = payload.get("pressure_test")
+        if isinstance(pressure, dict):
+            measurements = _measurements_payload(pressure)
+            hold = pressure.get("hold_time_seconds")
+            if isinstance(hold, int) and not isinstance(hold, bool):
+                hold_seconds = hold
+            minutes = (measurements or {}).get("test_duration_minutes")
+            if minutes is not None and hold_seconds != minutes * 60:
+                raise MeasurementsError(
+                    "test_duration_minutes must match hold_time_seconds"
+                )
+        if requested == "SUBMITTED":
+            if stored is None and not isinstance(pressure, dict):
+                return "Inspection is incomplete: " + PRESSURE_TEST_MISSING
+            gaps = missing_for_submission(
+                measurements, result, hold_time_seconds=hold_seconds
+            )
+            if gaps:
+                return "Inspection is incomplete: " + ", ".join(gaps)
+    except MeasurementsError as exc:
+        return str(exc)
+    return None
+
+
+def _require_matching_duration(
+    measurements: dict[str, Any] | None, hold_seconds: int
+) -> None:
+    minutes = (measurements or {}).get("test_duration_minutes")
+    if minutes is not None and hold_seconds != minutes * 60:
+        raise MeasurementsError("test_duration_minutes must match hold_time_seconds")

@@ -198,6 +198,20 @@ async function refreshInspectionsWorkspace(page: Page) {
   await openInspections(page);
 }
 
+// A new booking starts with nothing chosen: the customer picks the location, then the
+// assets. (A reschedule keeps the booking's own location and assets.)
+async function chooseBookingLocationAndAsset(page: Page) {
+  const location = page.getByLabel("Booking location");
+  await expect(location).toHaveValue("");
+  await expect(location.locator("option:checked")).toHaveText("Choose the location");
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.locator("form.inspection-booking-form").getByRole("button", { name: "Create booking" })).toBeDisabled();
+  await location.selectOption({ label: "Vopak - Port Botany" });
+  const asset = page.getByRole("checkbox", { name: "980636" });
+  await expect(asset).not.toBeChecked();
+  await asset.check();
+}
+
 async function selectFirstAvailableTime(page: Page, localDate = schedulingDate) {
   await expect(page.getByRole("checkbox", { name: "980636" })).toBeChecked();
   const dateInput = page.getByLabel("Preferred inspection date");
@@ -226,6 +240,7 @@ async function submitBookingForm(
 async function createAndApproveBooking(customer: Page, admin: Page, localDate = schedulingDate) {
   await openInspections(customer);
   await customer.getByRole("button", { name: "Book inspection" }).click();
+  await chooseBookingLocationAndAsset(customer);
   await selectFirstAvailableTime(customer, localDate);
   await submitBookingForm(customer, "Create booking", "/api/v1/inspection-bookings");
   await expect(customer.locator(".inspection-booking-list")).toContainText("PENDING APPROVAL", { timeout: 90_000 });
@@ -488,6 +503,7 @@ test.describe("scheduling release workflow", () => {
     try {
       await openInspections(customer.page);
       await customer.page.getByRole("button", { name: "Book inspection" }).click();
+      await chooseBookingLocationAndAsset(customer.page);
       await customer.page.getByLabel("Preferred inspection date").fill(schedulingDate);
       const timeSelect = customer.page.getByLabel("Available inspection time");
       await expect(timeSelect).toBeDisabled();
@@ -524,6 +540,7 @@ test.describe("scheduling release workflow", () => {
     try {
       await openInspections(customer.page);
       await customer.page.getByRole("button", { name: "Book inspection" }).click();
+      await chooseBookingLocationAndAsset(customer.page);
       await customer.page.getByLabel("Preferred inspection date").fill("2027-03-14");
       const springTimeSelect = customer.page.getByLabel("Available inspection time");
       await expect(springTimeSelect).toBeEnabled({ timeout: 30_000 });
@@ -533,6 +550,7 @@ test.describe("scheduling release workflow", () => {
       prepareSchedulingFixture({ closeTime: "03:00", openTime: "00:00", timezone: "America/New_York", weekdays: [6] });
       await refreshInspectionsWorkspace(customer.page);
       await customer.page.getByRole("button", { name: "Book inspection" }).click();
+      await chooseBookingLocationAndAsset(customer.page);
       await customer.page.getByLabel("Preferred inspection date").fill("2027-11-07");
       const fallTimeSelect = customer.page.getByLabel("Available inspection time");
       await expect(fallTimeSelect).toBeEnabled({ timeout: 30_000 });
@@ -544,6 +562,66 @@ test.describe("scheduling release workflow", () => {
       expect(availability.payload.items.map((slot) => slot.starts_at)).toEqual(["2027-11-07T07:00:00Z"]);
     } finally {
       await customer.context.close();
+    }
+  });
+
+  test("a new booking starts blank and drops everything that depended on the location", async ({ browser }) => {
+    test.setTimeout(120_000);
+    const customer = await signedInPage(browser, "customer.user@example.test", permanentPasswords.customer);
+    try {
+      await openInspections(customer.page);
+      await customer.page.getByRole("button", { name: "Book inspection" }).click();
+      await chooseBookingLocationAndAsset(customer.page);
+      await selectFirstAvailableTime(customer.page);
+      const create = customer.page.locator("form.inspection-booking-form").getByRole("button", { name: "Create booking" });
+      await expect(create).toBeEnabled();
+
+      // Going back to "Choose the location" clears the assets, the date, the times and the quote.
+      await customer.page.getByLabel("Booking location").selectOption("");
+      await expect(customer.page.getByRole("checkbox")).toHaveCount(0);
+      await expect(customer.page.getByLabel("Preferred inspection date")).toHaveValue("");
+      await expect(customer.page.getByLabel("Preferred inspection date")).toBeDisabled();
+      await expect(customer.page.getByLabel("Available inspection time")).toHaveCount(0);
+      await expect(create).toBeDisabled();
+
+      // Choosing the location again does not bring the old asset back.
+      await customer.page.getByLabel("Booking location").selectOption({ label: "Vopak - Port Botany" });
+      await expect(customer.page.getByRole("checkbox", { name: "980636" })).not.toBeChecked();
+      await expect(create).toBeDisabled();
+    } finally {
+      await customer.context.close();
+    }
+  });
+
+  test("customer cards show the API's asset count and agree with the customer detail", async ({ browser }) => {
+    test.setTimeout(120_000);
+    const admin = await signedInPage(browser, "hms.admin@example.test", permanentPasswords.admin);
+    try {
+      const expected = await admin.page.evaluate(async () => {
+        const refresh = await fetch("/api/v1/auth/browser/refresh", { method: "POST" });
+        const { access_token: accessToken } = await refresh.json() as { access_token: string };
+        const headers = { authorization: `Bearer ${accessToken}` };
+        const customers = await (await fetch("/api/v1/customers?limit=100", { headers })).json() as {
+          items: Array<{ id: string; name: string; metrics: { asset_count: number } }>;
+        };
+        const target = customers.items.find((item) => item.name === "Vopak") ?? customers.items[0];
+        const assets = await (await fetch(`/api/v1/assets?customer_id=${target.id}&limit=1`, { headers })).json() as { total: number };
+        return { name: target.name, fromMetrics: target.metrics.asset_count, fromAssetList: assets.total };
+      });
+      expect(expected.fromMetrics).toBe(expected.fromAssetList);
+      expect(expected.fromMetrics).toBeGreaterThan(0);
+
+      await admin.page.getByRole("navigation", { name: "Primary navigation" })
+        .getByRole("button", { name: "Customers", exact: true }).click();
+      // Searching narrows the list but must not change the customer's own count.
+      await admin.page.getByPlaceholder("Search customers...").fill(expected.name);
+      const card = admin.page.getByRole("button", { name: `Select customer ${expected.name}` });
+      await expect(card).toContainText(new RegExp(`${expected.fromMetrics}\\s*Assets`));
+      await card.click();
+      const summary = admin.page.getByLabel("Customer asset summary");
+      await expect(summary).toContainText(new RegExp(`Assets\\s*${expected.fromMetrics}`));
+    } finally {
+      await admin.context.close();
     }
   });
 });

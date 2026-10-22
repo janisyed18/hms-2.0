@@ -834,3 +834,58 @@ button:disabled {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Customer inspection form: grouped fields. */
+.capture-group {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.capture-group legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: #52627a;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.capture-form select {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #182235;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.capture-form em {
+  grid-column: 1 / -1;
+  color: #b42318;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.capture-hint {
+  margin: 0;
+  color: #52627a;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.capture-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
