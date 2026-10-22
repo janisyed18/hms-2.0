@@ -20,7 +20,9 @@ Exit status: 0 ready, 1 activation-blocking conditions found, 2 the check itself
 ``outbox.unprocessed_by_*`` and ``password_resets.due_by_outcome`` are an activation
 preview for a human to read: what relaying the backlog would work on, and what each due
 password-reset row will do when the dispatcher reaches it (only ``valid`` and
-``valid_superseded`` send an email; every other outcome is dead-lettered unsent). They
+``valid_superseded`` send an email; ``consumed``, ``expired`` and ``user_unavailable``
+are dead-lettered unsent. ``not_selected_ciphertext_missing`` rows are never selected by
+the dispatcher at all, so they stay ``PENDING`` untouched). They
 carry type names, counts and ages, never identifiers or content, and never gate.
 
 ``outbox.processed_with_error`` is diagnostic only. A processed event legitimately
@@ -169,7 +171,7 @@ async def _reset_due_outcomes(conn: AsyncConnection, now: datetime) -> dict[str,
     """Classify due PENDING resets the way the dispatcher will, in the same order."""
     p, t, u = PasswordResetDelivery, PasswordResetToken, User
     outcome = case(
-        (p.ciphertext.is_(None), "ciphertext_missing"),
+        (p.ciphertext.is_(None), "not_selected_ciphertext_missing"),
         (t.id.is_(None), "reset_token_missing"),
         (t.consumed_at.is_not(None), "consumed"),
         (t.expires_at <= now, "expired"),

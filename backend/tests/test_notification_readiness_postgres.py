@@ -390,7 +390,7 @@ async def preview_rows(engine: AsyncEngine) -> AsyncIterator[dict[str, Any]]:
         (live, {"consumed_at": past}, SECRET_CIPHERTEXT),  # consumed
         (live, {"expires_at": past}, SECRET_CIPHERTEXT),  # expired
         (gone, {}, SECRET_CIPHERTEXT),  # user_unavailable
-        (live, {}, None),  # ciphertext_missing
+        (live, {}, None),  # not_selected_ciphertext_missing: never picked up
     ]
     async with AsyncSession(engine, expire_on_commit=False) as session:
         session.add_all([*events, live, gone])
@@ -460,7 +460,7 @@ async def test_activation_preview_classifies_the_backlog(
         "consumed",
         "expired",
         "user_unavailable",
-        "ciphertext_missing",
+        "not_selected_ciphertext_missing",
     ):
         assert (
             _delta(after, before, "password_resets", "due_by_outcome", outcome) == 1
