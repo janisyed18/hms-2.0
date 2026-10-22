@@ -112,3 +112,11 @@ def test_a_failed_check_exits_two_and_prints_only_the_error_class(
 
 def test_processed_outbox_events_carrying_an_error_never_block_or_warn() -> None:
     assert readiness.evaluate(_report(outbox={"processed_with_error": 9})) == ([], [])
+
+
+def test_type_names_are_restricted_to_identifier_shaped_values() -> None:
+    assert readiness._type_key("DELIVERY_RECEIPT") == "DELIVERY_RECEIPT"
+    assert readiness._type_key("Asset") == "Asset"
+    assert readiness._type_key("a@b.example") == "OTHER"
+    assert readiness._type_key("x" * 81) == "OTHER"
+    assert readiness._type_key(None) == "OTHER"

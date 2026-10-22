@@ -17,6 +17,12 @@ Exit status: 0 ready, 1 activation-blocking conditions found, 2 the check itself
 * **Warnings** are work that will start on activation. They are not wrong, but the
   reviewer should know the size of it before sending begins.
 
+``outbox.unprocessed_by_*`` and ``password_resets.due_by_outcome`` are an activation
+preview for a human to read: what relaying the backlog would work on, and what each due
+password-reset row will do when the dispatcher reaches it (only ``valid`` and
+``valid_superseded`` send an email; every other outcome is dead-lettered unsent). They
+carry type names, counts and ages, never identifiers or content, and never gate.
+
 ``outbox.processed_with_error`` is diagnostic only. A processed event legitimately
 keeps its error text: a business event that failed once and then succeeded, and a
 delivery receipt retired as unmatched or malformed, both end ``processed_at`` and
@@ -34,11 +40,15 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, and_, func, or_, select, text
+from sqlalchemy import Select, and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from hms_backend.app.api.dependencies import engine
-from hms_backend.app.modules.identity.models import PasswordResetDelivery
+from hms_backend.app.modules.identity.models import (
+    PasswordResetDelivery,
+    PasswordResetToken,
+    User,
+)
 from hms_backend.app.modules.notifications.models import Notification, OutboxEvent
 from hms_backend.app.modules.notifications.outbox import RECEIPT_EVENT_TYPE
 
@@ -49,10 +59,22 @@ STATEMENT_TIMEOUT = "15s"
 # Statuses are code-controlled constants. Anything else is reported as OTHER so a stray
 # free-text value in the column can never reach the report.
 _STATUS = re.compile(r"^[A-Z][A-Z_]{0,31}$")
+# Event and aggregate types are code-controlled names (``DELIVERY_RECEIPT``, ``Asset``).
+_TYPE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.]{0,79}$")
+# The preview lists at most this many event-type x aggregate-type pairs.
+_MAX_PAIRS = 50
 
 
 def _status_key(raw: object) -> str:
     return raw if isinstance(raw, str) and _STATUS.match(raw) else "OTHER"
+
+
+def _type_key(raw: object) -> str:
+    return raw if isinstance(raw, str) and _TYPE_NAME.match(raw) else "OTHER"
+
+
+def _age(now: datetime, moment: datetime | None) -> int | None:
+    return None if moment is None else max(0, int((now - moment).total_seconds()))
 
 
 async def _scalar(conn: AsyncConnection, statement: Select[Any]) -> int:
@@ -92,6 +114,82 @@ async def _notification_section(conn: AsyncConnection, now: datetime) -> dict[st
     }
 
 
+async def _outbox_preview(conn: AsyncConnection, now: datetime) -> dict[str, Any]:
+    """What relaying the backlog would work on: type names, counts and ages only."""
+    e = OutboxEvent
+    rows = (
+        await conn.execute(
+            select(
+                e.event_type,
+                e.aggregate_type,
+                func.count(),
+                func.min(e.occurred_at),
+                func.max(e.occurred_at),
+            )
+            .where(e.processed_at.is_(None))
+            .group_by(e.event_type, e.aggregate_type)
+        )
+    ).all()
+    by_event: dict[str, dict[str, Any]] = {}
+    by_aggregate: dict[str, int] = {}
+    pairs: dict[tuple[str, str], int] = {}
+    for event_type, aggregate_type, count, oldest, newest in rows:
+        event_key, aggregate_key = _type_key(event_type), _type_key(aggregate_type)
+        entry = by_event.setdefault(
+            event_key,
+            {"count": 0, "oldest": oldest, "newest": newest},
+        )
+        entry["count"] += int(count)
+        entry["oldest"] = min(entry["oldest"], oldest)
+        entry["newest"] = max(entry["newest"], newest)
+        by_aggregate[aggregate_key] = by_aggregate.get(aggregate_key, 0) + int(count)
+        pairs[(event_key, aggregate_key)] = pairs.get(
+            (event_key, aggregate_key), 0
+        ) + int(count)
+    ranked = sorted(pairs.items(), key=lambda item: (-item[1], item[0]))
+    return {
+        "unprocessed_by_event_type": {
+            key: {
+                "count": entry["count"],
+                "oldest_age_seconds": _age(now, entry["oldest"]),
+                "newest_age_seconds": _age(now, entry["newest"]),
+            }
+            for key, entry in sorted(by_event.items())
+        },
+        "unprocessed_by_aggregate_type": dict(sorted(by_aggregate.items())),
+        "unprocessed_by_event_and_aggregate_type": [
+            {"event_type": pair[0], "aggregate_type": pair[1], "count": count}
+            for pair, count in ranked[:_MAX_PAIRS]
+        ],
+        "unprocessed_pairs_truncated": len(ranked) > _MAX_PAIRS,
+    }
+
+
+async def _reset_due_outcomes(conn: AsyncConnection, now: datetime) -> dict[str, int]:
+    """Classify due PENDING resets the way the dispatcher will, in the same order."""
+    p, t, u = PasswordResetDelivery, PasswordResetToken, User
+    outcome = case(
+        (p.ciphertext.is_(None), "ciphertext_missing"),
+        (t.id.is_(None), "reset_token_missing"),
+        (t.consumed_at.is_not(None), "consumed"),
+        (t.expires_at <= now, "expired"),
+        (or_(u.id.is_(None), u.deleted_at.is_not(None)), "user_unavailable"),
+        (t.superseded_at.is_not(None), "valid_superseded"),
+        else_="valid",
+    )
+    rows = (
+        await conn.execute(
+            select(outcome, func.count())
+            .select_from(p)
+            .outerjoin(t, t.id == p.reset_id)
+            .outerjoin(u, u.id == t.user_id)
+            .where(p.status == PENDING, p.scheduled_for <= now)
+            .group_by(outcome)
+        )
+    ).all()
+    return dict(sorted((str(name), int(count)) for name, count in rows))
+
+
 async def _outbox_section(conn: AsyncConnection, now: datetime) -> dict[str, Any]:
     e = OutboxEvent
     unprocessed = e.processed_at.is_(None)
@@ -112,6 +210,7 @@ async def _outbox_section(conn: AsyncConnection, now: datetime) -> dict[str, Any
         "unprocessed_oldest_age_seconds": (
             None if oldest is None else max(0, int((now - oldest).total_seconds()))
         ),
+        **await _outbox_preview(conn, now),
         "processed_with_error": await _scalar(
             conn, _count(e.processed_at.is_not(None), e.error.is_not(None))
         ),
@@ -127,6 +226,7 @@ async def _password_reset_section(
         "due_pending": await _scalar(
             conn, _count(p.status == PENDING, p.scheduled_for <= now)
         ),
+        "due_by_outcome": await _reset_due_outcomes(conn, now),
         "expired_sending": await _scalar(
             conn, _count(p.status == SENDING, p.scheduled_for <= now)
         ),
