@@ -108,13 +108,13 @@ variable "api_desired_count" {
 variable "worker_desired_count" {
   description = "Desired count for the Celery worker ECS service. Zero keeps dev core records online without background delivery."
   type        = number
-  default     = 0
+  default     = 1
 }
 
 variable "beat_desired_count" {
   description = "Desired count for the Celery beat ECS service. Zero pauses scheduled dev jobs."
   type        = number
-  default     = 0
+  default     = 1
 }
 
 variable "certificate_engine_desired_count" {
