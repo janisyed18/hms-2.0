@@ -41,6 +41,7 @@ from hms_backend.app.modules.notifications.models import (
     NotificationPreference,
     PhoneVerification,
 )
+from hms_backend.app.modules.notifications.outbox import defer_receipt
 from hms_backend.app.modules.notifications.service import apply_delivery_receipt
 from hms_backend.app.modules.notifications.webhooks import (
     parse_receipts,
@@ -458,13 +459,15 @@ async def delivery_webhook(
     """Update delivery status from a provider callback (Twilio / SES-SNS / generic).
 
     Matches notifications by ``provider_message_id``. Always returns 2xx so
-    providers do not retry indefinitely.
+    providers do not retry indefinitely. A receipt that matches nothing yet (the
+    provider reported before we stored its id) is kept and applied by the relay.
     """
     provider = provider.lower()
     body = await request.body()
     await _verify_webhook(provider, request, body)
     receipts = parse_receipts(provider, body)
     updated = 0
+    deferred = 0
     for provider_message_id, receipt_status in receipts:
         if await apply_delivery_receipt(
             session,
@@ -472,8 +475,20 @@ async def delivery_webhook(
             status=receipt_status,
         ):
             updated += 1
+        elif (
+            await defer_receipt(
+                session,
+                provider_message_id=provider_message_id,
+                status=receipt_status,
+            )
+            is not None
+        ):
+            # The provider can report delivery before we have stored its message id.
+            # We answer 2xx so it does not retry, so keep the receipt until the
+            # notification is identifiable instead of dropping it.
+            deferred += 1
     await session.commit()
-    return {"updated": updated}
+    return {"updated": updated, "deferred": deferred}
 
 
 def _read(n: Notification) -> NotificationRead:

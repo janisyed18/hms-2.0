@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     # How long a dispatcher may hold a claimed message before it is presumed dead.
     # Must exceed the slowest provider call (adapters time out at 30 s).
     notification_claim_lease_seconds: int = 300
+    # How long a delivery receipt that matches no notification yet is kept before it
+    # is given up on (a provider can report delivery before we have stored its id).
+    notification_receipt_retention_hours: int = 48
     # Reminder cadence (days). Advance before due; escalation after overdue;
     # approaching-condemnation before the grave date.
     retest_advance_days: list[int] = Field(default_factory=lambda: [30, 14])

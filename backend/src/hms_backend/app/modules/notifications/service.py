@@ -13,7 +13,7 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hms_backend.app.core.config import Settings
@@ -47,7 +47,10 @@ from hms_backend.app.modules.notifications.models import (
     NotificationPreference,
     OutboxEvent,
 )
-from hms_backend.app.modules.notifications.outbox import emit_event_if_absent
+from hms_backend.app.modules.notifications.outbox import (
+    RECEIPT_EVENT_TYPE,
+    emit_event_if_absent,
+)
 from hms_backend.app.modules.notifications.policy import (
     RecipientContext,
     policy_for,
@@ -91,12 +94,21 @@ async def relay_outbox(
     limit: int = 100,
 ) -> dict[str, int]:
     settings = settings or default_settings
+    # Receipts that arrived before their notification was identifiable are applied
+    # first, so a notification is not left looking merely "sent" for a poll longer
+    # than necessary.
+    receipts = await apply_deferred_receipts(session_factory, settings=settings)
     async with session_factory() as session:
         event_ids = list(
             (
                 await session.scalars(
                     select(OutboxEvent.id)
-                    .where(OutboxEvent.processed_at.is_(None))
+                    .where(
+                        OutboxEvent.processed_at.is_(None),
+                        # Parked receipts wait for a notification; they must never
+                        # crowd real notification events out of this batch.
+                        OutboxEvent.event_type != RECEIPT_EVENT_TYPE,
+                    )
                     .order_by(OutboxEvent.occurred_at)
                     .limit(limit)
                 )
@@ -109,7 +121,113 @@ async def relay_outbox(
         outcome = await _relay_one(session_factory, event_id, settings)
         processed += 1
         created += outcome
-    return {"processed": processed, "created": created}
+    return {
+        "processed": processed,
+        "created": created,
+        "receipts_applied": receipts["applied"],
+        "receipts_expired": receipts["expired"],
+    }
+
+
+async def apply_deferred_receipts(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    settings: Settings | None = None,
+    now: datetime | None = None,
+    limit: int = 200,
+) -> dict[str, int]:
+    """Apply parked delivery receipts whose notification is now identifiable.
+
+    A receipt is applied in the order it was received, then retired. One that still
+    matches nothing waits (the dispatcher may not have stored the provider id yet)
+    until ``notification_receipt_retention_hours`` has passed, then it is retired
+    unapplied so the backlog cannot grow without bound. Each sweep looks only at
+    receipts that are ready or expired, so a receipt that is merely waiting never
+    holds a place in the sweep that a ready one needs.
+    """
+    settings = settings or default_settings
+    current = now or _utc_now()
+    cutoff = current - timedelta(hours=settings.notification_receipt_retention_hours)
+    parked = and_(
+        OutboxEvent.processed_at.is_(None),
+        OutboxEvent.event_type == RECEIPT_EVENT_TYPE,
+    )
+    async with session_factory() as session:
+        # Select only receipts there is something to do for, never "the oldest N". A
+        # receipt that still matches nothing is left alone until it expires, so
+        # however many of those there are they cannot occupy the window and keep a
+        # receipt that is ready from being looked at.
+        ready = (
+            await session.scalars(
+                select(OutboxEvent.id)
+                .join(
+                    Notification,
+                    Notification.provider_message_id
+                    == OutboxEvent.payload["provider_message_id"].as_string(),
+                )
+                .where(parked)
+                .order_by(OutboxEvent.occurred_at)
+                .limit(limit)
+            )
+        ).all()
+        expired = (
+            await session.scalars(
+                select(OutboxEvent.id)
+                .where(parked, OutboxEvent.occurred_at < cutoff)
+                .order_by(OutboxEvent.occurred_at)
+                .limit(limit)
+            )
+        ).all()
+    event_ids = list(dict.fromkeys([*ready, *expired]))
+
+    counts = {"applied": 0, "expired": 0, "waiting": 0}
+    for event_id in event_ids:
+        outcome = await _apply_deferred_receipt(
+            session_factory, event_id, current, cutoff
+        )
+        counts[outcome] += 1
+    return counts
+
+
+async def _apply_deferred_receipt(
+    session_factory: async_sessionmaker[AsyncSession],
+    event_id: str,
+    now: datetime,
+    cutoff: datetime,
+) -> str:
+    async with session_factory() as session:
+        # Claimed like any outbox event: a sweep that finds it locked leaves it to the
+        # sweep that holds it.
+        event = await session.scalar(
+            select(OutboxEvent)
+            .where(OutboxEvent.id == event_id)
+            .with_for_update(skip_locked=True)
+        )
+        if event is None or event.processed_at is not None:
+            return "waiting"
+        try:
+            provider_message_id = str(event.payload["provider_message_id"])
+            status = NotificationStatus(str(event.payload["status"]))
+        except (KeyError, ValueError):
+            event.processed_at = now
+            event.error = "malformed delivery receipt"
+            await session.commit()
+            return "expired"
+        if await apply_delivery_receipt(
+            session, provider_message_id=provider_message_id, status=status
+        ):
+            event.processed_at = now
+            event.error = None
+            await session.commit()
+            return "applied"
+        occurred = event.occurred_at
+        if (occurred if occurred.tzinfo else occurred.replace(tzinfo=UTC)) < cutoff:
+            event.processed_at = now
+            event.error = "no matching notification"
+            await session.commit()
+            return "expired"
+        await session.commit()
+        return "waiting"
 
 
 async def _relay_one(
