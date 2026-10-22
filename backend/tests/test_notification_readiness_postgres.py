@@ -386,7 +386,10 @@ async def preview_rows(engine: AsyncEngine) -> AsyncIterator[dict[str, Any]]:
     live, gone = _preview_user(), _preview_user(deleted=True)
     plans: list[tuple[User, dict[str, Any], str | None]] = [
         (live, {}, SECRET_CIPHERTEXT),  # valid
-        (live, {"superseded_at": past}, SECRET_CIPHERTEXT),  # valid_superseded
+        (live, {"superseded_at": past}, SECRET_CIPHERTEXT),  # superseded
+        # Superseded is checked before the user, so this is superseded, not
+        # user_unavailable (the dispatcher's order).
+        (gone, {"superseded_at": past}, SECRET_CIPHERTEXT),
         (live, {"consumed_at": past}, SECRET_CIPHERTEXT),  # consumed
         (live, {"expires_at": past}, SECRET_CIPHERTEXT),  # expired
         (gone, {}, SECRET_CIPHERTEXT),  # user_unavailable
@@ -456,7 +459,6 @@ async def test_activation_preview_classifies_the_backlog(
 
     for outcome in (
         "valid",
-        "valid_superseded",
         "consumed",
         "expired",
         "user_unavailable",
@@ -465,7 +467,8 @@ async def test_activation_preview_classifies_the_backlog(
         assert (
             _delta(after, before, "password_resets", "due_by_outcome", outcome) == 1
         ), outcome
-    assert _delta(after, before, "password_resets", "due_pending") == 6
+    assert _delta(after, before, "password_resets", "due_by_outcome", "superseded") == 2
+    assert _delta(after, before, "password_resets", "due_pending") == 7
 
 
 @pytest.mark.asyncio
