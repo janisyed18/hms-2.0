@@ -35,6 +35,7 @@ from hms_backend.app.modules.identity.models import (
     User,
 )
 from hms_backend.app.modules.notifications.models import Notification, OutboxEvent
+from hms_backend.app.modules.notifications.outbox import RECEIPT_EVENT_TYPE
 
 POSTGRES_URL = os.environ.get("POSTGRES_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
@@ -144,7 +145,7 @@ async def seeded(engine: AsyncEngine) -> AsyncIterator[dict[str, Any]]:
         _notification("SENT", None),
     ]
     outbox = [
-        _outbox(processed=True, error=SECRET_ERROR),  # stale failure metadata
+        _outbox(processed=True, error=SECRET_ERROR),  # recovered or retired: legitimate
         _outbox(processed=False, error=None),
         _outbox(processed=False, error=SECRET_ERROR),
     ]
@@ -208,7 +209,7 @@ async def test_report_counts_each_kind_of_row(
     assert _delta(after, seeded, "notifications", "by_status", "SENT") == 1
     assert _delta(after, seeded, "outbox", "unprocessed") == 2
     assert _delta(after, seeded, "outbox", "unprocessed_with_error") == 1
-    assert _delta(after, seeded, "outbox", "processed_with_stale_failure") == 1
+    assert _delta(after, seeded, "outbox", "processed_with_error") == 1
     assert _delta(after, seeded, "password_resets", "expired_sending") == 1
     assert (
         _delta(after, seeded, "password_resets", "finished_retaining_ciphertext") == 1
@@ -284,3 +285,48 @@ async def test_a_connection_that_is_not_read_only_is_refused(
         with pytest.raises(RuntimeError, match="read-only"):
             await readiness.begin_read_only(_IgnoresReadOnly(conn))  # type: ignore[arg-type]
         await conn.rollback()
+
+
+async def _blockers_with(engine: AsyncEngine, event: OutboxEvent) -> int:
+    before = await _report(engine)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        session.add(event)
+        await session.commit()
+    try:
+        after = await _report(engine)
+    finally:
+        async with AsyncSession(engine) as session:
+            await session.execute(delete(OutboxEvent).where(OutboxEvent.id == event.id))
+            await session.commit()
+    # The shared database may hold unrelated rows; the event must change nothing.
+    assert before["blockers"] == after["blockers"]
+    # Outbox contents are only ever warnings (pending work), never blockers.
+    assert not any(b.startswith("outbox") for b in after["blockers"])
+    assert before["warnings"] == after["warnings"]
+    return _delta(after, before, "outbox", "processed_with_error")
+
+
+@pytest.mark.asyncio
+async def test_a_retired_unmatched_receipt_does_not_make_readiness_false(
+    engine: AsyncEngine,
+) -> None:
+    receipt = OutboxEvent(
+        event_type=RECEIPT_EVENT_TYPE,
+        aggregate_type="Notification",
+        aggregate_id=str(uuid4()),
+        payload={"provider_message_id": uuid4().hex},
+        dedupe_key=uuid4().hex,
+        processed_at=datetime.now(UTC),
+        error="no matching notification",
+    )
+    delta = await _blockers_with(engine, receipt)
+    assert delta == 1
+
+
+@pytest.mark.asyncio
+async def test_a_recovered_business_event_does_not_make_readiness_false(
+    engine: AsyncEngine,
+) -> None:
+    recovered = _outbox(processed=True, error="failed once, then relayed")
+    delta = await _blockers_with(engine, recovered)
+    assert delta == 1

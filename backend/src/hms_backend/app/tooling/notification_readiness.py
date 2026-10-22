@@ -12,11 +12,16 @@ body, payload, ciphertext, token or error text.
 Exit status: 0 ready, 1 activation-blocking conditions found, 2 the check itself failed.
 
 * **Blockers** are states the dispatchers do not expect and would act on wrongly:
-  an expired ``SENDING`` claim (a send of unknown outcome), a processed outbox event
-  still carrying failure metadata, or a finished password-reset delivery still
-  retaining its ciphertext.
+  an expired ``SENDING`` claim (a send of unknown outcome) or a finished
+  password-reset delivery still retaining its ciphertext.
 * **Warnings** are work that will start on activation. They are not wrong, but the
   reviewer should know the size of it before sending begins.
+
+``outbox.processed_with_error`` is diagnostic only. A processed event legitimately
+keeps its error text: a business event that failed once and then succeeded, and a
+delivery receipt retired as unmatched or malformed, both end ``processed_at`` and
+``error`` set. The columns cannot tell those from a historical race artifact, so the
+count never gates activation.
 """
 
 from __future__ import annotations
@@ -107,7 +112,7 @@ async def _outbox_section(conn: AsyncConnection, now: datetime) -> dict[str, Any
         "unprocessed_oldest_age_seconds": (
             None if oldest is None else max(0, int((now - oldest).total_seconds()))
         ),
-        "processed_with_stale_failure": await _scalar(
+        "processed_with_error": await _scalar(
             conn, _count(e.processed_at.is_not(None), e.error.is_not(None))
         ),
     }
@@ -145,8 +150,6 @@ def evaluate(report: Mapping[str, Any]) -> tuple[list[str], list[str]]:
         blockers.append("notifications: expired SENDING claims")
     if resets["expired_sending"]:
         blockers.append("password_resets: expired SENDING claims")
-    if outbox["processed_with_stale_failure"]:
-        blockers.append("outbox: processed events still carrying failure metadata")
     if resets["finished_retaining_ciphertext"]:
         blockers.append(
             "password_resets: SENT or DEAD_LETTER rows retaining ciphertext"

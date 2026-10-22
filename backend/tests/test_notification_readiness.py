@@ -16,7 +16,7 @@ def _report(**overrides: dict[str, Any]) -> dict[str, Any]:
         "outbox": {
             "unprocessed": 0,
             "unprocessed_with_error": 0,
-            "processed_with_stale_failure": 0,
+            "processed_with_error": 0,
         },
         "password_resets": {
             "by_status": {},
@@ -39,7 +39,6 @@ def test_a_clean_database_has_no_blockers_or_warnings() -> None:
     [
         ("notifications", "expired_sending"),
         ("password_resets", "expired_sending"),
-        ("outbox", "processed_with_stale_failure"),
         ("password_resets", "finished_retaining_ciphertext"),
     ],
 )
@@ -109,3 +108,7 @@ def test_a_failed_check_exits_two_and_prints_only_the_error_class(
     assert exit_info.value.code == 2
     assert json.loads(out) == {"error": "ConnectionError", "ready": False}
     assert "hunter2" not in out
+
+
+def test_processed_outbox_events_carrying_an_error_never_block_or_warn() -> None:
+    assert readiness.evaluate(_report(outbox={"processed_with_error": 9})) == ([], [])
