@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import Select
 from uuid6 import uuid7
 
@@ -41,6 +42,7 @@ from hms_backend.app.modules.identity.models import (
     AccountStatus,
     MfaRecoveryCode,
     User,
+    UserCustomerAccess,
 )
 from hms_backend.app.modules.identity.user_admin import (
     PrivilegeError,
@@ -185,7 +187,7 @@ async def list_users(
         sort,
         frozenset({"email", "oidc_subject", "role", "created_at", "updated_at"}),
         default="email",
-    ).limit(limit).offset(offset)
+    ).options(selectinload(User.customer_accesses)).limit(limit).offset(offset)
     users = (await session.scalars(statement)).all()
     return UserListResponse(
         total=total,
@@ -210,9 +212,7 @@ async def create_user(
     role = Role(_role_value(payload.role))
     _guard(ensure_can_manage_role, principal.roles, role)
     scoped = _guard(
-        normalise_customer_ids,
-        role,
-        [payload.customer_id] if payload.customer_id else [],
+        normalise_customer_ids, role, _payload_customer_ids(payload)
     )
 
     email = payload.email.strip().lower()
@@ -237,6 +237,7 @@ async def create_user(
         last_name=_clean_optional(payload.last_name),
         role=role.value,
         customer_id=scoped[0] if scoped else None,
+        customer_accesses=[],
         password_hash=hash_password(temporary_password),
         must_change_password=True,
         account_status=AccountStatus.ACTIVE.value,
@@ -248,6 +249,7 @@ async def create_user(
         actor_id=principal.user_id,
         action="user.created",
     )
+    await _replace_customer_accesses(session, user, scoped, actor_id=principal.user_id)
     await emit_event(
         session,
         category=NotificationCategory.USER_INVITATION,
@@ -308,13 +310,15 @@ async def update_user(
 
     # Re-validate customer scope against the effective role (covers a role change
     # to/from Customer User even when customer_id is not in this request).
-    effective_cid = (
-        payload.customer_id if "customer_id" in updates else user.customer_id
+    effective_customer_ids = (
+        _payload_customer_ids(payload)
+        if {"customer_id", "customer_ids"} & updates
+        else _active_customer_ids(user)
     )
     scoped = _guard(
         normalise_customer_ids,
         effective_role,
-        [effective_cid] if effective_cid else [],
+        effective_customer_ids,
     )
     user.customer_id = scoped[0] if scoped else None
 
@@ -325,6 +329,7 @@ async def update_user(
         action="user.updated",
         before=before,
     )
+    await _replace_customer_accesses(session, user, scoped, actor_id=principal.user_id)
     if security_change:
         await _auth_service.revoke_all_sessions(session, user.id)
     await session.commit()
@@ -627,7 +632,9 @@ async def list_audit_events(
 
 async def _active_user(session: AsyncSession, user_id: str) -> User:
     user = await session.scalar(
-        select(User).where(User.id == user_id, User.deleted_at.is_(None))
+        select(User)
+        .options(selectinload(User.customer_accesses))
+        .where(User.id == user_id, User.deleted_at.is_(None))
     )
     if user is None:
         raise HTTPException(
@@ -646,9 +653,67 @@ def _user_read(user: User) -> UserRead:
         last_name=user.last_name,
         role=user.role,
         customer_id=user.customer_id,
+        customer_ids=_active_customer_ids(user),
         created_at=user.created_at,
         updated_at=user.updated_at,
     )
+
+
+def _active_customer_ids(user: User) -> list[str]:
+    customer_ids = [
+        access.customer_id
+        for access in user.customer_accesses
+        if access.deleted_at is None
+    ]
+    if user.customer_id and user.customer_id not in customer_ids:
+        customer_ids.insert(0, user.customer_id)
+    return customer_ids
+
+
+def _payload_customer_ids(payload: UserCreate | UserUpdate) -> list[str]:
+    customer_ids = payload.customer_ids
+    if customer_ids is None:
+        return [payload.customer_id] if payload.customer_id else []
+    if payload.customer_id and payload.customer_id not in customer_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="customer_id must be included in customer_ids",
+        )
+    return customer_ids
+
+
+async def _replace_customer_accesses(
+    session: AsyncSession,
+    user: User,
+    customer_ids: list[str],
+    *,
+    actor_id: str,
+) -> None:
+    active_accesses = {
+        access.customer_id: access
+        for access in user.customer_accesses
+        if access.deleted_at is None
+    }
+    desired = set(customer_ids)
+    for customer_id, access in active_accesses.items():
+        if customer_id not in desired:
+            await soft_delete(
+                session,
+                access,
+                actor_id=actor_id,
+                action="user.customer_access_removed",
+            )
+    for customer_id in customer_ids:
+        if customer_id in active_accesses:
+            continue
+        access = UserCustomerAccess(user_id=user.id, customer_id=customer_id)
+        user.customer_accesses.append(access)
+        await record_create(
+            session,
+            access,
+            actor_id=actor_id,
+            action="user.customer_access_granted",
+        )
 
 
 def _device_read(device: Device) -> DeviceRead:

@@ -11,6 +11,7 @@ export interface UserAdminValues {
   lastName: string;
   role: StaffRole;
   customerId: string | null;
+  customerIds: string[];
 }
 
 export interface CustomerOption {
@@ -42,7 +43,7 @@ export function UserAdminDialog({
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [role, setRole] = useState<StaffRole>(roleOptions[0] ?? "INSPECTOR");
-  const [customerId, setCustomerId] = useState<string>("");
+  const [customerIds, setCustomerIds] = useState<string[]>([]);
   const emailRef = useRef<HTMLInputElement>(null);
   const reducedMotion = useReducedMotion();
 
@@ -52,7 +53,7 @@ export function UserAdminDialog({
       setFirstName(initial?.firstName ?? "");
       setLastName(initial?.lastName ?? "");
       setRole(initial?.role ?? roleOptions[0] ?? "INSPECTOR");
-      setCustomerId(initial?.customerId ?? "");
+      setCustomerIds(initial?.customerIds ?? (initial?.customerId ? [initial.customerId] : []));
     }
   }, [initial, open, roleOptions]);
 
@@ -63,7 +64,7 @@ export function UserAdminDialog({
   }, [open]);
 
   const needsCustomer = requiresCustomer(role);
-  const customerInvalid = needsCustomer && !customerId;
+  const customerInvalid = needsCustomer && customerIds.length === 0;
   const canSubmit = email.trim().length > 0 && !customerInvalid;
 
   function submit(event: FormEvent) {
@@ -76,7 +77,8 @@ export function UserAdminDialog({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       role,
-      customerId: needsCustomer ? customerId : null
+      customerId: needsCustomer ? customerIds[0] ?? null : null,
+      customerIds: needsCustomer ? customerIds : []
     });
   }
 
@@ -162,14 +164,14 @@ export function UserAdminDialog({
         </label>
         {needsCustomer ? (
           <label className="auth-field">
-            <span>Customer</span>
+            <span>Customers</span>
             <select
-              aria-label="Customer"
-              value={customerId}
-              onChange={(event) => setCustomerId(event.target.value)}
+              aria-label="Customers"
+              multiple
+              value={customerIds}
+              onChange={(event) => setCustomerIds(Array.from(event.currentTarget.selectedOptions, (option) => option.value))}
               required
             >
-              <option value="">Select a customer…</option>
               {customers.map((customer) => (
                 <option key={customer.id} value={customer.id}>
                   {customer.name}
@@ -180,7 +182,7 @@ export function UserAdminDialog({
         ) : null}
         {customerInvalid ? (
           <p className="auth-error" role="alert">
-            A Customer User must be assigned to exactly one customer.
+            A Customer User must be assigned to at least one customer.
           </p>
         ) : null}
 

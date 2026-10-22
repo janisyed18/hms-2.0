@@ -480,6 +480,7 @@ interface ApiAdminUser {
   last_name: string | null;
   role: string;
   customer_id: string | null;
+  customer_ids?: string[];
   account_status?: "ACTIVE" | "LOCKED" | "DISABLED";
   must_change_password?: boolean;
   mfa_enabled?: boolean;
@@ -1201,6 +1202,7 @@ function toAdminUser(
       displayName: displayName(user),
       role: user.role,
       customerId: user.customer_id,
+      customerIds: user.customer_ids ?? (user.customer_id ? [user.customer_id] : []),
       accountStatus: user.account_status ?? "ACTIVE",
       mustChangePassword: user.must_change_password ?? false,
       mfaEnabled: user.mfa_enabled ?? false,
@@ -1326,7 +1328,8 @@ function adminUserPayload(values: AdminUserFormValues) {
     first_name: values.firstName,
     last_name: values.lastName,
     role: values.role,
-    customer_id: values.customerId
+    customer_id: values.customerId,
+    customer_ids: values.customerIds
   };
 }
 
@@ -1336,7 +1339,8 @@ function adminUserUpdatePayload(values: AdminUserUpdateValues) {
     ...(values.firstName !== undefined ? { first_name: values.firstName } : {}),
     ...(values.lastName !== undefined ? { last_name: values.lastName } : {}),
     ...(values.role !== undefined ? { role: values.role } : {}),
-    ...(values.customerId !== undefined ? { customer_id: values.customerId } : {})
+    ...(values.customerId !== undefined ? { customer_id: values.customerId } : {}),
+    ...(values.customerIds !== undefined ? { customer_ids: values.customerIds } : {})
   };
 }
 

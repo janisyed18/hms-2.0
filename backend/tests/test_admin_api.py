@@ -174,9 +174,43 @@ async def test_admin_user_crud_writes_audit_events(
         assert [event.action for event in events] == [
             "user.created",
             "user.updated",
+            "user.customer_access_granted",
             "user.deleted",
         ]
         assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_customer_user_can_hold_multiple_persisted_customer_scopes(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed_user(session_factory)
+    async with session_factory() as session:
+        customer_a = Customer(code="CUSA", name="Customer A")
+        customer_b = Customer(code="CUSB", name="Customer B")
+        session.add_all([customer_a, customer_b])
+        await session.commit()
+
+    async with admin_client(session_factory) as client:
+        response = await client.post(
+            "/api/v1/admin/users",
+            json={
+                "oidc_subject": "customer-multi",
+                "email": "customer-multi@example.com",
+                "role": "CUSTOMER_USER",
+                "customer_ids": [customer_a.id, customer_b.id],
+            },
+        )
+
+    assert response.status_code == 201
+    assert response.json()["user"]["customer_id"] == customer_a.id
+    assert response.json()["user"]["customer_ids"] == [customer_a.id, customer_b.id]
+
+    async with admin_client(session_factory, user_id="customer-multi") as client:
+        me_response = await client.get("/api/v1/auth/me")
+
+    assert me_response.status_code == 200
+    assert me_response.json()["customer_ids"] == [customer_a.id, customer_b.id]
 
 
 @pytest.mark.asyncio

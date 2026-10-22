@@ -57,12 +57,15 @@ def test_role_change_requires_authority_over_both_roles() -> None:
     )
 
 
-def test_customer_user_requires_exactly_one_customer() -> None:
+def test_customer_user_requires_one_or_more_customers() -> None:
     assert normalise_customer_ids(Role.CUSTOMER_USER, ["c1"]) == ["c1"]
+    assert normalise_customer_ids(Role.CUSTOMER_USER, ["c1", "c2"]) == ["c1", "c2"]
+    assert normalise_customer_ids(Role.CUSTOMER_USER, [" c1 ", "c2", "c1"]) == [
+        "c1",
+        "c2",
+    ]
     with pytest.raises(PrivilegeError):
         normalise_customer_ids(Role.CUSTOMER_USER, [])
-    with pytest.raises(PrivilegeError):
-        normalise_customer_ids(Role.CUSTOMER_USER, ["c1", "c2"])
 
 
 def test_non_customer_roles_reject_customer_scope() -> None:

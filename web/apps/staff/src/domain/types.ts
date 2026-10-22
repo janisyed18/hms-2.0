@@ -447,6 +447,7 @@ export interface AdminUserRecord {
   displayName: string;
   role: string;
   customerId: string | null;
+  customerIds?: string[];
   accountStatus: "ACTIVE" | "LOCKED" | "DISABLED";
   mustChangePassword: boolean;
   mfaEnabled: boolean;
@@ -464,6 +465,7 @@ export interface AdminUserFormValues {
   lastName: string | null;
   role: string;
   customerId: string | null;
+  customerIds?: string[];
 }
 
 export interface AdminUserCreateResult {
@@ -482,6 +484,7 @@ export interface AdminUserUpdateValues {
   lastName?: string | null;
   role?: string;
   customerId?: string | null;
+  customerIds?: string[];
 }
 
 export interface DeviceRecord {

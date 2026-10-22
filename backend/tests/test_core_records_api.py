@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
@@ -41,7 +42,14 @@ from hms_backend.app.modules.inspections.models import (
     InspectionType,
     PressureTestResult,
 )
-from hms_backend.app.modules.notifications.models import OutboxEvent
+from hms_backend.app.modules.notifications.enums import (
+    NotificationCategory,
+    NotificationChannel,
+    NotificationStatus,
+    NotificationTier,
+    RecipientType,
+)
+from hms_backend.app.modules.notifications.models import Notification, OutboxEvent
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import (
     AttachMethod,
@@ -888,6 +896,133 @@ async def test_assets_endpoint_searches_and_scopes_customer_user(
     assert list_response.json()["total"] == 1
     assert list_response.json()["items"][0]["asset_number"] == "997950"
     assert hidden_detail_response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_customer_user_cannot_discover_another_customer_portal_records(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    """Customer filters and guessed identifiers cannot bypass server-side scope."""
+    async with session_factory() as session:
+        orica = await session.get(Customer, seeded_session["orica_id"])
+        orica_asset = await session.get(Asset, seeded_session["orica_asset_id"])
+        assert orica is not None
+        assert orica_asset is not None
+        orica_location = CustomerLocation(customer=orica, name="Orica Site")
+        orica_asset.location = orica_location
+        booking = InspectionBooking(
+            customer=orica,
+            location=orica_location,
+            scheduled_at=datetime.now(UTC),
+            scheduled_end_at=datetime.now(UTC) + timedelta(hours=1),
+            requested_by_user_id="other-customer-user",
+        )
+        booking.assets.append(InspectionBookingAsset(asset=orica_asset))
+        inspection = Inspection(
+            booking=booking,
+            asset=orica_asset,
+            inspection_type=InspectionType.SERVICE.value,
+            status=InspectionStatus.APPROVED.value,
+            result="PASS",
+            inspector_user_id="inspector-2",
+            reviewer_user_id="reviewer-1",
+        )
+        schedule = RetestSchedule(
+            customer=orica,
+            asset=orica_asset,
+            due_at=date(2027, 1, 1),
+            status=RetestScheduleStatus.UPCOMING.value,
+        )
+        customer_user = User(
+            id="customer-user-1",
+            oidc_subject="customer-user-1",
+            email="customer@example.test",
+            role=Role.CUSTOMER_USER.value,
+            customer_id=seeded_session["vopak_id"],
+        )
+        session.add_all([booking, inspection, schedule, customer_user])
+        await session.flush()
+        certificate = Certificate.issue_from_inspection(
+            inspection,
+            number="CERT-ORICA-PORTAL-1",
+            pdf_object_key="certificates/orica-portal-test.pdf",
+            verification_hash="orica-portal-test-hash",
+            public_token="orica-portal-test-token",
+            issued_by_user_id="reviewer-1",
+            valid_until=date(2027, 1, 1),
+        )
+        other_notification = Notification(
+            event_ref="orica-event",
+            category=NotificationCategory.CERTIFICATE_ISSUED.value,
+            tier=NotificationTier.IMPORTANT.value,
+            recipient_type=RecipientType.USER.value,
+            recipient_id="other-customer-user",
+            channel=NotificationChannel.IN_APP.value,
+            template_key="certificate_issued.in_app",
+            subject="Orica certificate",
+            body="This belongs to Customer B.",
+            status=NotificationStatus.SENT.value,
+            idempotency_key="f" * 64,
+            customer_id=orica.id,
+            asset_id=orica_asset.id,
+        )
+        session.add_all([certificate, other_notification])
+        await session.commit()
+
+    principal = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    customer_b = seeded_session["orica_id"]
+
+    async with api_client(session_factory, principal) as client:
+        filtered = await client.get(
+            "/api/v1/assets", params={"customer_id": customer_b}
+        )
+        availability = await client.get(
+            "/api/v1/inspection-availability",
+            params={
+                "customer_id": customer_b,
+                "location_id": orica_location.id,
+                "local_date": "2027-01-01",
+            },
+        )
+        booking_create = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": customer_b,
+                "location_id": orica_location.id,
+                "asset_ids": [orica_asset.id],
+                "availability_quote_id": "not-a-customer-b-quote",
+            },
+        )
+        list_responses = await asyncio.gather(
+            client.get(
+                "/api/v1/inspection-bookings", params={"customer_id": customer_b}
+            ),
+            client.get("/api/v1/inspections", params={"customer_id": customer_b}),
+            client.get("/api/v1/retest-schedules", params={"customer_id": customer_b}),
+            client.get("/api/v1/certificates", params={"customer_id": customer_b}),
+        )
+        detail_responses = await asyncio.gather(
+            client.get(f"/api/v1/customers/{customer_b}"),
+            client.get(f"/api/v1/assets/{orica_asset.id}"),
+            client.get(f"/api/v1/inspection-bookings/{booking.id}"),
+            client.get(f"/api/v1/inspections/{inspection.id}"),
+            client.get(f"/api/v1/retest-schedules/{schedule.id}"),
+            client.get(f"/api/v1/certificates/{certificate.id}"),
+            client.post(f"/api/v1/notifications/{other_notification.id}/read"),
+        )
+
+    assert filtered.status_code == 200
+    assert filtered.json()["total"] == 0
+    assert availability.status_code == 404
+    assert booking_create.status_code == 404
+    assert all(response.status_code == 200 for response in list_responses)
+    assert all(response.json()["total"] == 0 for response in list_responses)
+    assert all(response.status_code == 404 for response in detail_responses)
 
 
 @pytest.mark.asyncio

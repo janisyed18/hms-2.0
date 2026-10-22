@@ -81,6 +81,30 @@ async def test_customer_user_sees_only_assigned_customer(
 
 
 @pytest.mark.asyncio
+async def test_customer_user_scope_accepts_each_persisted_customer_membership(
+    session: AsyncSession,
+) -> None:
+    customer_ids = (
+        await session.scalars(select(Customer.id).order_by(Customer.code))
+    ).all()
+    principal = Principal(
+        user_id="customer-user",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset(customer_ids),
+    )
+
+    rows = (
+        await session.scalars(
+            apply_customer_scope(select(Customer.code), Customer, principal).order_by(
+                Customer.code
+            )
+        )
+    ).all()
+
+    assert rows == ["ONE", "TWO"]
+
+
+@pytest.mark.asyncio
 async def test_elevated_role_is_not_restricted_by_customer_user_membership(
     session: AsyncSession,
 ) -> None:
