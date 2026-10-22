@@ -67,20 +67,29 @@ async def emit_event_if_absent(
     payload: dict[str, Any],
     dedupe_key: str,
 ) -> OutboxEvent | None:
-    """Emit only if no event with ``dedupe_key`` exists (idempotent scheduler)."""
+    """Emit only if no event with ``dedupe_key`` exists (idempotent scheduler).
+
+    Safe against a concurrent emitter of the same key: the insert runs in a savepoint,
+    so losing the race to the unique key (another transaction created it first) returns
+    None instead of failing the caller's whole transaction.
+    """
     existing = await session.scalar(
         select(OutboxEvent.id).where(OutboxEvent.dedupe_key == dedupe_key)
     )
     if existing is not None:
         return None
-    return await emit_event(
-        session,
-        category=category,
-        aggregate_type=aggregate_type,
-        aggregate_id=aggregate_id,
-        payload=payload,
-        dedupe_key=dedupe_key,
-    )
+    try:
+        async with session.begin_nested():
+            return await emit_event(
+                session,
+                category=category,
+                aggregate_type=aggregate_type,
+                aggregate_id=aggregate_id,
+                payload=payload,
+                dedupe_key=dedupe_key,
+            )
+    except IntegrityError:
+        return None
 
 
 # A delivery receipt that matches no notification yet. A provider can report delivery

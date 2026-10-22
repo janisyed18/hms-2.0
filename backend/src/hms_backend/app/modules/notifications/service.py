@@ -13,7 +13,7 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hms_backend.app.core.config import Settings
@@ -587,6 +587,12 @@ async def _record(
 # --- Scheduler: daily retest reminders + overdue escalation ----------------------
 
 
+# One scheduler run at a time. Reminders fire on an exact day, so a run that fails is
+# never made up the next day; two overlapping runs must neither fail nor do the work
+# twice. Arbitrary 64-bit key for ``pg_try_advisory_xact_lock``.
+_RETEST_SCHEDULER_LOCK_KEY = 0x484D53524554_5354
+
+
 async def run_retest_scheduler(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -596,8 +602,20 @@ async def run_retest_scheduler(
     settings = settings or default_settings
     today = today or _utc_now().date()
     emitted = 0
+    failed = 0
 
     async with session_factory() as session:
+        if session.get_bind().dialect.name == "postgresql":
+            # Single flight: an overlapping run (a redelivered acks-late task, a second
+            # beat) steps aside instead of racing this one. The lock lasts until this
+            # transaction ends.
+            acquired = await session.scalar(
+                text("SELECT pg_try_advisory_xact_lock(:key)"),
+                {"key": _RETEST_SCHEDULER_LOCK_KEY},
+            )
+            if not acquired:
+                logger.info("retest scheduler already running; skipping this run")
+                return {"emitted": 0, "failed": 0, "skipped_concurrent": 1}
         schedules = (
             await session.scalars(
                 select(RetestSchedule)
@@ -608,50 +626,74 @@ async def run_retest_scheduler(
                     Asset.deleted_at.is_(None),
                     Asset.lifecycle_status.notin_(NON_CERTIFIABLE_ASSET_STATUSES),
                 )
+                # A fixed order, so two runs can never take the unique-key locks of
+                # the events they insert in opposite orders and deadlock.
+                .order_by(RetestSchedule.id)
             )
         ).all()
 
         for schedule in schedules:
-            asset = schedule.asset
-            due = schedule.due_at
-            base: dict[str, Any] = {
-                "customer_id": schedule.customer_id,
-                "asset_id": asset.id,
-                "asset_number": asset.asset_number,
-                "due_date": due.isoformat(),
-                "link": settings.public_base_url.rstrip("/"),
-            }
-            days_to_due = (due - today).days
-            days_overdue = (today - due).days
-
-            if days_to_due in settings.retest_advance_days:
-                emitted += await _emit(
-                    session,
-                    NotificationCategory.RETEST_ADVANCE,
-                    asset.id,
-                    {**base, "days_before": days_to_due},
-                    f"RETEST_ADVANCE:{asset.id}:{due.isoformat()}:{days_to_due}",
-                )
-            elif days_to_due == 0:
-                emitted += await _emit(
-                    session,
-                    NotificationCategory.RETEST_DUE,
-                    asset.id,
-                    base,
-                    f"RETEST_DUE:{asset.id}:{due.isoformat()}",
-                )
-            elif days_overdue in settings.retest_overdue_escalation_days:
-                level = settings.retest_overdue_escalation_days.index(days_overdue) + 1
-                emitted += await _emit(
-                    session,
-                    NotificationCategory.RETEST_OVERDUE,
-                    asset.id,
-                    {**base, "days_overdue": days_overdue, "escalation_level": level},
-                    f"RETEST_OVERDUE:{asset.id}:{due.isoformat()}:{days_overdue}",
+            try:
+                # A savepoint per schedule: one that cannot be processed is skipped
+                # and reported, and does not discard the day's other reminders.
+                async with session.begin_nested():
+                    emitted += await _emit_for_schedule(
+                        session, schedule, settings, today
+                    )
+            except Exception:  # noqa: BLE001 - isolate one schedule's failure
+                failed += 1
+                logger.exception(
+                    "retest scheduler could not process schedule %s", schedule.id
                 )
 
         await session.commit()
-    return {"emitted": emitted}
+    return {"emitted": emitted, "failed": failed}
+
+
+async def _emit_for_schedule(
+    session: AsyncSession,
+    schedule: RetestSchedule,
+    settings: Settings,
+    today: date,
+) -> int:
+    asset = schedule.asset
+    due = schedule.due_at
+    base: dict[str, Any] = {
+        "customer_id": schedule.customer_id,
+        "asset_id": asset.id,
+        "asset_number": asset.asset_number,
+        "due_date": due.isoformat(),
+        "link": settings.public_base_url.rstrip("/"),
+    }
+    days_to_due = (due - today).days
+    days_overdue = (today - due).days
+
+    if days_to_due in settings.retest_advance_days:
+        return await _emit(
+            session,
+            NotificationCategory.RETEST_ADVANCE,
+            asset.id,
+            {**base, "days_before": days_to_due},
+            f"RETEST_ADVANCE:{asset.id}:{due.isoformat()}:{days_to_due}",
+        )
+    if days_to_due == 0:
+        return await _emit(
+            session,
+            NotificationCategory.RETEST_DUE,
+            asset.id,
+            base,
+            f"RETEST_DUE:{asset.id}:{due.isoformat()}",
+        )
+    if days_overdue in settings.retest_overdue_escalation_days:
+        level = settings.retest_overdue_escalation_days.index(days_overdue) + 1
+        return await _emit(
+            session,
+            NotificationCategory.RETEST_OVERDUE,
+            asset.id,
+            {**base, "days_overdue": days_overdue, "escalation_level": level},
+            f"RETEST_OVERDUE:{asset.id}:{due.isoformat()}:{days_overdue}",
+        )
+    return 0
 
 
 async def apply_delivery_receipt(
