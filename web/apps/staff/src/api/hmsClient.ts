@@ -92,6 +92,7 @@ interface ApiCustomer {
   default_retest_months: number | null;
   locations: ApiLocation[];
   contacts: ApiContact[];
+  metrics: { asset_count: number; in_service_count: number };
 }
 
 interface ApiCustomerList {
@@ -293,6 +294,11 @@ interface ApiAsset {
   retest_schedule: ApiAssetRetestSchedule | null;
   a_end?: ApiAssetEnd | null;
   b_end?: ApiAssetEnd | null;
+  pressure_rating?: {
+    nominal_bore_id: string;
+    working_pressure_kpa: number;
+    test_pressure_kpa: number;
+  } | null;
   inspection_history?: Array<{
     id: string;
     inspection_type: string;
@@ -854,12 +860,11 @@ function toCustomer(customer: ApiCustomer, etag: string | null = null): Customer
         contractEnd: "Not set",
         lastActivity: "Synced",
         metrics: {
-          assetCount: 0,
-          inServiceCount: 0,
-          outOfServiceCount: 0,
-          inspectionDueCount: 0,
+          assetCount: customer.metrics.asset_count,
+          inServiceCount: customer.metrics.in_service_count,
+          inspectionDueCount: null,
           inspectionDueLabel: "Not available",
-          certificateValidPercent: 0,
+          certificateValidPercent: null,
           certificateStatusLabel: "Not available",
           recentInspections: [],
           activity: []
@@ -996,6 +1001,12 @@ function toAsset(asset: ApiAsset, etag: string | null = null): AssetRecord {
       retestSchedule: toAssetRetestSummary(asset.retest_schedule),
       aEnd: toAssetEnd(asset.a_end),
       bEnd: toAssetEnd(asset.b_end),
+      pressureRating: asset.pressure_rating
+        ? {
+            workingPressureKpa: asset.pressure_rating.working_pressure_kpa,
+            testPressureKpa: asset.pressure_rating.test_pressure_kpa
+          }
+        : null,
       inspectionHistory: (asset.inspection_history ?? []).map((item): AssetInspectionHistoryRecord => ({
         id: item.id,
         inspectionType: item.inspection_type,
@@ -1665,6 +1676,25 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         etag: response.etag,
         items: response.data.items.map((asset) => toAsset(asset, response.etag))
       };
+    },
+
+    /** Every asset matching the options, following the API's 100-row page limit. */
+    async listAllAssets(
+      listOptions: Omit<ListAssetOptions, "limit" | "offset"> = {}
+    ): Promise<ApiListResult<AssetRecord>> {
+      const pageSize = 100;
+      const first = await this.listAssets({ ...listOptions, limit: pageSize, offset: 0 });
+      const remaining = Math.max(0, first.total - first.items.length);
+      const pages = await Promise.all(
+        Array.from({ length: Math.ceil(remaining / pageSize) }, (_, index) =>
+          this.listAssets({
+            ...listOptions,
+            limit: pageSize,
+            offset: first.items.length + index * pageSize
+          })
+        )
+      );
+      return { ...first, items: [...first.items, ...pages.flatMap((page) => page.items)] };
     },
 
     async getAsset(id: string): Promise<AssetRecord> {

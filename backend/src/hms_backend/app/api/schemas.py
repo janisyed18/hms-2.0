@@ -6,7 +6,12 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
+
+from hms_backend.app.modules.inspections.measurements import (
+    normalize_measurements,
+    validate_inspection_result,
+)
 
 
 class BaseModel(PydanticBaseModel):
@@ -124,6 +129,18 @@ class CustomerContactRead(BaseModel):
     receives_retest_reminders: bool
 
 
+class CustomerMetricsRead(BaseModel):
+    """Per-customer asset counts, aggregated by the server.
+
+    ``asset_count`` is the number of assets assigned to the customer and visible to
+    the caller, defined exactly as the asset list defines it (not deleted, any
+    lifecycle status), so a customer card and the customer detail always agree.
+    """
+
+    asset_count: int
+    in_service_count: int
+
+
 class CustomerRead(BaseModel):
     id: str
     code: str
@@ -133,6 +150,7 @@ class CustomerRead(BaseModel):
     default_retest_months: int | None
     locations: list[CustomerLocationRead]
     contacts: list[CustomerContactRead]
+    metrics: CustomerMetricsRead
 
 
 class CustomerListResponse(BaseModel):
@@ -368,6 +386,14 @@ class AssetCertificateHistoryRead(BaseModel):
     valid_until: date | None
 
 
+class AssetPressureRatingRead(BaseModel):
+    """The product's rated pressures for this asset's nominal bore."""
+
+    nominal_bore_id: str
+    working_pressure_kpa: int
+    test_pressure_kpa: int
+
+
 class AssetRead(BaseModel):
     id: str
     asset_number: str
@@ -390,6 +416,9 @@ class AssetRead(BaseModel):
     retest_schedule: RetestScheduleSummary | None
     a_end: AssetEndRead | None
     b_end: AssetEndRead | None
+    # None when the product has no rating for the asset's bore (or the asset has no
+    # bore): callers must then ask for the pressures rather than assume defaults.
+    pressure_rating: AssetPressureRatingRead | None = None
     inspection_history: list[AssetInspectionHistoryRead] = Field(default_factory=list)
     certificate_history: list[AssetCertificateHistoryRead] = Field(default_factory=list)
 
@@ -461,6 +490,20 @@ class PressureTestWrite(BaseModel):
     passed: bool
     measurements: dict[str, Any] | None = None
 
+    @field_validator("measurements")
+    @classmethod
+    def validate_measurements(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return normalize_measurements(value)
+
+    @model_validator(mode="after")
+    def validate_test_duration(self) -> PressureTestWrite:
+        minutes = (self.measurements or {}).get("test_duration_minutes")
+        if minutes is not None and self.hold_time_seconds != minutes * 60:
+            raise ValueError("test_duration_minutes must match hold_time_seconds")
+        return self
+
 
 class PressureTestRead(BaseModel):
     id: str
@@ -475,10 +518,22 @@ class InspectionCreate(BaseModel):
     result: str | None = None
     pressure_test: PressureTestWrite | None = None
 
+    @field_validator("result")
+    @classmethod
+    def validate_result(cls, value: str | None) -> str | None:
+        # A blank result means "not set", as the endpoints always treated it.
+        return validate_inspection_result(value if value and value.strip() else None)
+
 
 class InspectionUpdate(BaseModel):
     result: str | None = None
     pressure_test: PressureTestWrite | None = None
+
+    @field_validator("result")
+    @classmethod
+    def validate_result(cls, value: str | None) -> str | None:
+        # A blank result means "not set", as the endpoints always treated it.
+        return validate_inspection_result(value if value and value.strip() else None)
 
 
 class InspectionRejectRequest(BaseModel):

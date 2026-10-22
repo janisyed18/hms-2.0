@@ -3464,3 +3464,31 @@ tbody tr.is-selected {
     grid-template-columns: 1fr;
   }
 }
+
+/* Customer inspection form: grouped fields that read as one form in the drawer and in
+   the inspection detail. */
+.inspection-pressure-fields,
+.inspection-measurement-fields,
+.inspection-condition-fields {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line, #d9dee6);
+  border-radius: 8px;
+}
+
+.inspection-pressure-fields legend,
+.inspection-measurement-fields legend,
+.inspection-condition-fields legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.inspection-condition-fields > button {
+  justify-self: start;
+}

@@ -184,12 +184,14 @@ export interface ActivityItem {
 }
 
 export interface CustomerMetrics {
+  /** Assigned assets, counted by the API with the same definition as the asset list. */
   assetCount: number;
   inServiceCount: number;
-  outOfServiceCount: number;
-  inspectionDueCount: number;
+  /** null means the API does not provide the figure, which is not the same as zero. */
+  inspectionDueCount: number | null;
   inspectionDueLabel: string;
-  certificateValidPercent: number;
+  /** null means the API does not provide the figure, which is not the same as zero. */
+  certificateValidPercent: number | null;
   certificateStatusLabel: string;
   recentInspections: RecentInspection[];
   activity: ActivityItem[];
@@ -351,6 +353,8 @@ export interface AssetRecord {
   retestSchedule: AssetRetestSummary | null;
   aEnd: AssetEndValues;
   bEnd: AssetEndValues;
+  /** The product's rating for this hose's bore; null when it has none. */
+  pressureRating?: { workingPressureKpa: number; testPressureKpa: number } | null;
   inspectionHistory: AssetInspectionHistoryRecord[];
   certificateHistory: AssetCertificateHistoryRecord[];
   etag?: string | null;

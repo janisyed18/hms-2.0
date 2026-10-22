@@ -48,6 +48,23 @@ function createAuthClient(
   };
 }
 
+// The form starts unanswered: a draft needs the pressure test core, a submission needs
+// the whole customer form.
+async function fillDraftCore(user: ReturnType<typeof userEvent.setup>) {
+  await user.selectOptions(screen.getByLabelText("Test time minutes"), "5");
+  await user.selectOptions(screen.getByLabelText("Pressure test result"), "PASS");
+}
+
+async function fillWholeForm(user: ReturnType<typeof userEvent.setup>) {
+  await fillDraftCore(user);
+  await user.selectOptions(screen.getByLabelText("Instruction"), "PASS");
+  await user.type(screen.getByLabelText("Ohms end A"), "0.1");
+  await user.type(screen.getByLabelText("Ohms end B"), "0.2");
+  await user.type(screen.getByLabelText("Ohms total"), "0.3");
+  await user.click(screen.getByRole("button", { name: "Pass all" }));
+  await user.selectOptions(screen.getByLabelText("Certificate result"), "PASS");
+}
+
 describe("Inspector app", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
@@ -89,6 +106,7 @@ describe("Inspector app", () => {
     render(<App initialAccessToken="test-access-token" />);
 
     await user.click(await screen.findByRole("button", { name: /open HOS-2024-0891/i }));
+    await fillDraftCore(user);
     await user.click(screen.getByRole("button", { name: "Save Draft" }));
     fireEvent(window, new Event("online"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -170,6 +188,7 @@ describe("Inspector app", () => {
     await user.click(
       await screen.findByRole("button", { name: /open HOS-2024-0891/i })
     );
+    await fillDraftCore(user);
     await user.click(screen.getByRole("button", { name: "Save Draft" }));
     await user.click(screen.getByRole("button", { name: "Queue" }));
 
@@ -242,10 +261,11 @@ describe("Inspector app", () => {
     await user.click(
       await screen.findByRole("button", { name: /open HOS-2024-0891/i })
     );
-    await user.clear(screen.getByLabelText("Applied pressure"));
-    await user.type(screen.getByLabelText("Applied pressure"), "30.2");
-    await user.clear(screen.getByLabelText("Hold time"));
-    await user.type(screen.getByLabelText("Hold time"), "300");
+    await user.clear(screen.getByLabelText("Test pressure kPa"));
+    await user.type(screen.getByLabelText("Test pressure kPa"), "2400");
+    await user.selectOptions(screen.getByLabelText("Test time minutes"), "5");
+    await user.selectOptions(screen.getByLabelText("Pressure test result"), "PASS");
+    await fillDraftCore(user);
     await user.click(screen.getByRole("button", { name: "Save Draft" }));
     await user.click(screen.getByRole("button", { name: "Queue" }));
 
@@ -275,6 +295,7 @@ describe("Inspector app", () => {
     const user = userEvent.setup();
     render(<App initialAccessToken="test-access-token" />);
     await user.click(await screen.findByRole("button", { name: /open HOS-2024-0891/i }));
+    await fillDraftCore(user);
     await user.click(screen.getByRole("button", { name: "Save Draft" }));
     await user.click(screen.getByRole("button", { name: "Queue Test Result" }));
     await user.click(screen.getByRole("button", { name: "Queue" }));
@@ -353,6 +374,7 @@ describe("Inspector app", () => {
     await user.click(
       await screen.findByRole("button", { name: /open HOS-2024-0891/i })
     );
+    await fillWholeForm(user);
     await user.click(screen.getByRole("button", { name: "Submit" }));
     await user.click(screen.getByRole("button", { name: "Queue" }));
     await user.click(screen.getByRole("button", { name: "Push Changes" }));
@@ -411,6 +433,7 @@ describe("Inspector app", () => {
     await user.click(
       await screen.findByRole("button", { name: /open HOS-2024-0891/i })
     );
+    await fillWholeForm(user);
     await user.click(screen.getByRole("button", { name: "Submit" }));
     await user.click(screen.getByRole("button", { name: "Queue" }));
     await user.click(screen.getByRole("button", { name: "Push Changes" }));

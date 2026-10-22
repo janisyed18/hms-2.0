@@ -32,6 +32,7 @@ function InspectorWorkspace({ userId }: { userId: string }) {
   if (workspace.view === "capture") {
     content = (
       <InspectionCapture
+        draftFor={workspace.draftFor}
         onBack={() => workspace.setView("work")}
         onQueueAssetUpdate={workspace.queueAssetUpdate}
         onQueuePressureTest={workspace.queuePressureTest}

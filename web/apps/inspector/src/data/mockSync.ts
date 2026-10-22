@@ -43,6 +43,12 @@ export const mockBootstrapResponse: SyncBootstrapResponse = {
           name: "Composite 2\" WP20",
           category: "Composite hose"
         },
+        // The product's rating for this hose's bore, resolved by the server.
+        pressure_rating: {
+          nominal_bore_id: "bore-2in",
+          working_pressure_kpa: 1500,
+          test_pressure_kpa: 2250
+        },
         location: {
           id: "loc-dock-a",
           name: "Dock A - Bay 3",
@@ -162,7 +168,33 @@ export const mockBootstrapResponse: SyncBootstrapResponse = {
         asset_id: "asset-0156",
         booking_id: "booking-asset-0156",
         status: "DRAFT",
-        inspection_type: "SERVICE"
+        inspection_type: "SERVICE",
+        result: "REPAIR"
+      }
+    },
+    {
+      seq: 7,
+      entity: "PressureTestResult",
+      entity_id: "pressure-0156",
+      op: "upsert",
+      version: 1,
+      changed_at: changedAt,
+      payload: {
+        id: "pressure-0156",
+        inspection_id: "inspection-0156",
+        applied_pressure_kpa: 1800,
+        hold_time_seconds: 600,
+        passed: false,
+        measurements: {
+          schema_version: 1,
+          working_pressure_kpa: 1200,
+          rated_working_pressure_kpa: 1200,
+          rated_test_pressure_kpa: 1800,
+          test_duration_minutes: 10,
+          ohms_end_a: 0.4,
+          conditions: { kink_or_dent: "FAIL" },
+          notes: "Kink at end B."
+        }
       }
     }
   ]

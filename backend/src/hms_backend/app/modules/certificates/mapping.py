@@ -155,6 +155,15 @@ def build_facts(
     location = asset.location
     standard = getattr(product, "standard", None)
     pt = inspection.pressure_test
+    recorded: dict[str, object] = dict(pt.measurements or {}) if pt is not None else {}
+
+    def recorded_kpa(key: str) -> int:
+        value = recorded.get(key)
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    # The certificate prints its own Pass/Fail, recorded on the form. Inspections that
+    # predate the form only have the inspection result.
+    certificate_result = recorded.get("certificate_result")
 
     ends: list[EndFacts] = []
     for end in sorted(getattr(asset, "ends", []) or [], key=lambda e: e.end):
@@ -207,7 +216,11 @@ def build_facts(
         standard_name=_lookup_name(standard, "name"),
         inspection_id=inspection.id,
         inspection_type=inspection.inspection_type,
-        inspection_result=inspection.result or "",
+        inspection_result=(
+            certificate_result
+            if isinstance(certificate_result, str)
+            else inspection.result or ""
+        ),
         inspector_id=inspection.inspector_user_id or "",
         inspector_name=inspection.inspector_user_id or "",
         reviewer_id=inspection.reviewer_user_id or "",
@@ -223,8 +236,11 @@ def build_facts(
             None
             if pt is None
             else PressureFacts(
-                working_pressure_kpa=getattr(pt, "working_pressure_kpa", 0) or 0,
-                test_pressure_kpa=getattr(pt, "test_pressure_kpa", 0) or 0,
+                working_pressure_kpa=recorded_kpa("working_pressure_kpa"),
+                # The rated test pressure when recorded, else what was applied.
+                test_pressure_kpa=(
+                    recorded_kpa("rated_test_pressure_kpa") or pt.applied_pressure_kpa
+                ),
                 applied_pressure_kpa=pt.applied_pressure_kpa,
                 hold_time_seconds=pt.hold_time_seconds,
                 passed=pt.passed,

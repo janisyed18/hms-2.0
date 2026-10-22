@@ -48,15 +48,27 @@ export function InspectionBookingForm({
         timezone: asset.location.schedulingTimezone ?? "UTC"
       });
     });
+    if (rescheduleBooking && !entries.has(rescheduleBooking.location.id)) {
+      entries.set(rescheduleBooking.location.id, {
+        id: rescheduleBooking.location.id,
+        label: `${rescheduleBooking.customer.name} - ${rescheduleBooking.location.name}`,
+        timezone: rescheduleBooking.location.schedulingTimezone ?? "UTC"
+      });
+    }
     return Array.from(entries.values()).sort((left, right) =>
       left.label.localeCompare(right.label)
     );
-  }, [assetOptions]);
+  }, [assetOptions, rescheduleBooking]);
   const [locationId, setLocationId] = useState("");
   const [assetIds, setAssetIds] = useState<string[]>([]);
   const [bookingDate, setBookingDate] = useState("");
-  const [availableSlots, setAvailableSlots] = useState<InspectionAvailabilitySlot[]>([]);
-  const [availabilityQuoteId, setAvailabilityQuoteId] = useState("");
+  // Availability is stored with the location and date it was requested for, and only
+  // trusted while both still match, so a quote can never outlive the choices it priced.
+  const [availability, setAvailability] = useState<{
+    key: string;
+    slots: InspectionAvailabilitySlot[];
+  }>({ key: "", slots: [] });
+  const [chosenQuoteId, setChosenQuoteId] = useState("");
   const [inspectorUserId, setInspectorUserId] = useState("");
   const [isLoadingAvailability, setLoadingAvailability] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
@@ -66,36 +78,44 @@ export function InspectionBookingForm({
     () => assetOptions.filter((asset) => asset.location?.id === locationId),
     [assetOptions, locationId]
   );
+  const customerId = rescheduleBooking?.customer.id ?? availableAssets[0]?.customer.id;
+  // A reschedule shows the booking's own assets, which need not be in the loaded list.
+  const assetChoices = rescheduleBooking
+    ? rescheduleBooking.assets.map((asset) => ({ id: asset.id, assetNumber: asset.assetNumber }))
+    : availableAssets;
   const schedulingTimezone = locations.find((location) => location.id === locationId)?.timezone ?? "UTC";
+  const availabilityKey = locationId && bookingDate ? `${locationId}|${bookingDate}` : "";
+  const availableSlots = availability.key === availabilityKey ? availability.slots : [];
+  const availabilityQuoteId = availableSlots.some((slot) => slot.quoteId === chosenQuoteId)
+    ? chosenQuoteId
+    : "";
 
+  // Reset only when the form opens or its subject changes. Depending on the option
+  // lists would wipe the user's choices whenever the workspace refreshes them.
+  const rescheduleKey = rescheduleBooking?.id ?? null;
   useEffect(() => {
     if (!open) return;
-    const firstLocationId = rescheduleBooking?.location.id ?? locations[0]?.id ?? "";
-    setLocationId(firstLocationId);
-    setAssetIds(
-      rescheduleBooking
-        ? rescheduleBooking.assets.map((asset) => asset.id)
-        : assetOptions
-            .filter((asset) => asset.location?.id === firstLocationId)
-            .slice(0, 1)
-            .map((asset) => asset.id)
-    );
+    // A new booking starts blank: the user must choose the location and the assets.
+    // A reschedule keeps the booking's own location and assets.
+    setLocationId(rescheduleBooking ? rescheduleBooking.location.id : "");
+    setAssetIds(rescheduleBooking ? rescheduleBooking.assets.map((asset) => asset.id) : []);
     setBookingDate("");
-    setAvailableSlots([]);
-    setAvailabilityQuoteId("");
+    setAvailability({ key: "", slots: [] });
+    setChosenQuoteId("");
     setInspectorUserId("");
+    setLoadingAvailability(false);
     setAvailabilityError(null);
     setAdditionalInformation("");
-  }, [assetOptions, locations, open, rescheduleBooking]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, rescheduleKey]);
 
   useEffect(() => {
-    const customerId = availableAssets[0]?.customer.id;
     if (!open || !bookingDate || !customerId || !locationId) return;
+    const requestKey = `${locationId}|${bookingDate}`;
     let active = true;
     setLoadingAvailability(true);
     setAvailabilityError(null);
-    setAvailableSlots([]);
-    setAvailabilityQuoteId("");
+    setChosenQuoteId("");
     void createHmsClient()
       .listInspectionAvailability({
         customerId,
@@ -104,7 +124,7 @@ export function InspectionBookingForm({
         durationMinutes: 60
       })
       .then((slots) => {
-        if (active) setAvailableSlots(slots);
+        if (active) setAvailability({ key: requestKey, slots });
       })
       .catch((reason: unknown) => {
         if (active) {
@@ -121,21 +141,20 @@ export function InspectionBookingForm({
     return () => {
       active = false;
     };
-  }, [availableAssets, bookingDate, locationId, open]);
+  }, [bookingDate, customerId, locationId, open]);
 
   if (!open) return null;
 
   function updateLocation(nextLocationId: string) {
+    // Everything that depended on the previous location is dropped, including the
+    // assets: the user picks them again for the new location.
     setLocationId(nextLocationId);
-    setAssetIds(
-      assetOptions
-        .filter((asset) => asset.location?.id === nextLocationId)
-        .slice(0, 1)
-        .map((asset) => asset.id)
-    );
+    setAssetIds([]);
     setBookingDate("");
-    setAvailableSlots([]);
-    setAvailabilityQuoteId("");
+    setAvailability({ key: "", slots: [] });
+    setChosenQuoteId("");
+    setAvailabilityError(null);
+    setLoadingAvailability(false);
   }
 
   function toggleAsset(assetId: string) {
@@ -148,7 +167,6 @@ export function InspectionBookingForm({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const customerId = availableAssets[0]?.customer.id;
     if (!customerId || !locationId || assetIds.length === 0 || !availabilityQuoteId) return;
     setSubmitting(true);
     try {
@@ -198,6 +216,7 @@ export function InspectionBookingForm({
             value={locationId}
             onChange={(event) => updateLocation(event.target.value)}
           >
+            {rescheduleBooking ? null : <option value="">Choose the location</option>}
             {locations.map((location) => (
               <option key={location.id} value={location.id}>
                 {location.label}
@@ -207,7 +226,11 @@ export function InspectionBookingForm({
         </label>
         <fieldset className="booking-asset-list" disabled={Boolean(rescheduleBooking)}>
           <legend>Assets</legend>
-          {availableAssets.map((asset) => (
+          {!locationId ? <p className="field-hint">Choose a location to see its assets.</p> : null}
+          {locationId && assetChoices.length === 0 ? (
+            <p className="field-hint">No assets are assigned to this location.</p>
+          ) : null}
+          {assetChoices.map((asset) => (
             <label key={asset.id} className="checkbox-field">
               <input
                 checked={assetIds.includes(asset.id)}
@@ -222,6 +245,7 @@ export function InspectionBookingForm({
           <span>Preferred inspection date</span>
           <input
             aria-label="Preferred inspection date"
+            disabled={!locationId}
             required
             type="date"
             value={bookingDate}
@@ -236,7 +260,7 @@ export function InspectionBookingForm({
               disabled={isLoadingAvailability || availableSlots.length === 0}
               required
               value={availabilityQuoteId}
-              onChange={(event) => setAvailabilityQuoteId(event.target.value)}
+              onChange={(event) => setChosenQuoteId(event.target.value)}
             >
               <option value="">
                 {isLoadingAvailability
@@ -293,7 +317,7 @@ export function InspectionBookingForm({
           </button>
           <button
             className="primary-button"
-            disabled={isSubmitting || assetIds.length === 0 || !availabilityQuoteId || (rescheduleBooking !== null && requiresInspector && !inspectorUserId)}
+            disabled={isSubmitting || !locationId || assetIds.length === 0 || !availabilityQuoteId || (rescheduleBooking !== null && requiresInspector && !inspectorUserId)}
             type="submit"
           >
             {isSubmitting ? "Saving..." : rescheduleBooking ? "Request reschedule" : "Create booking"}

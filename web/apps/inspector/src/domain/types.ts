@@ -1,4 +1,6 @@
 
+import type { PressureRating, SavedInspectionForm } from "./inspectionForm";
+
 export type InspectionStatus = "DRAFT" | "SUBMITTED";
 
 export type InspectionType = "SERVICE" | "NEW_ASSET";
@@ -14,14 +16,18 @@ export type OutboxStatus =
 
 export type ConflictResolution = "keep-local" | "accept-server";
 
+/**
+ * The pressure test as queued: pressures and duration, the pass/fail, and the
+ * structured measurements (schema version 1) the customer's form records.
+ */
 export interface PressureTestDraft {
   appliedPressureKpa: number;
-  requiredPressureKpa: number;
   holdTimeSeconds: number;
   passed: boolean;
+  measurements: Record<string, unknown> | null;
 }
 
-export interface InspectionDraftInput extends PressureTestDraft {
+export interface InspectionDraftInput {
   workContext?: SyncWorkContext;
   assetId: string;
   assetNumber: string;
@@ -29,7 +35,9 @@ export interface InspectionDraftInput extends PressureTestDraft {
   inspectionId: string;
   baseVersion: number | null;
   status: InspectionStatus;
-  notes: string;
+  /** The instruction: PASS or REPAIR. */
+  result: string | null;
+  pressureTest: PressureTestDraft;
   inspectionType?: InspectionType;
 }
 
@@ -71,8 +79,14 @@ export interface WorkItem {
   serverVersion: number;
   inspectionId: string | null;
   inspectionStatus: InspectionStatus | null;
+  /** True once the server holds the inspection as submitted, approved or rejected. */
+  inspectionLocked: boolean;
   pressureTestId: string | null;
   pressureTestVersion: number | null;
+  /** The product's rating for this hose's bore; null when it has none. */
+  pressureRating: PressureRating | null;
+  /** What the server holds for this assignment's inspection, for a draft reload. */
+  saved: SavedInspectionForm | null;
 }
 
 export interface SyncDeviceRead {

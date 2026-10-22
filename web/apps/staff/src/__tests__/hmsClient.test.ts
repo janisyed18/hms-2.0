@@ -30,7 +30,8 @@ const apiCustomer = {
       role: "Operations Manager",
       receives_retest_reminders: true
     }
-  ]
+  ],
+  metrics: { asset_count: 7, in_service_count: 5 }
 };
 
 const apiProduct = {
@@ -427,6 +428,43 @@ describe("hmsClient", () => {
         expect.objectContaining({ name: "Aberdeen Yard" })
       ])
     });
+  });
+
+  it("loads every page of assets rather than only the first 50", async () => {
+    const page = (offset: number, count: number) => ({
+      total: 250,
+      limit: 100,
+      offset,
+      items: Array.from({ length: count }, (_, i) => ({ ...apiAsset, id: `asset-${offset + i}` }))
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://x");
+      expect(url.searchParams.get("limit")).toBe("100");
+      const offset = Number(url.searchParams.get("offset"));
+      return okJson(page(offset, Math.min(100, 250 - offset)));
+    });
+    const client = createHmsClient({ fetcher: fetchMock as unknown as typeof fetch, baseUrl: "" });
+    const result = await client.listAllAssets({ sort: "asset_number" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.items).toHaveLength(250);
+    expect(new Set(result.items.map((asset) => asset.id)).size).toBe(250);
+  });
+
+  it("takes the asset counts from the API and reports unavailable metrics as null, not zero", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okJson({ total: 1, limit: 50, offset: 0, items: [apiCustomer] })
+    );
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const metrics = (await client.listCustomers()).items[0].metrics;
+
+    expect(metrics.assetCount).toBe(7);
+    expect(metrics.inServiceCount).toBe(5);
+    expect(metrics.inspectionDueCount).toBeNull();
+    expect(metrics.certificateValidPercent).toBeNull();
+    expect(metrics.inspectionDueLabel).toBe("Not available");
+    expect(metrics.certificateStatusLabel).toBe("Not available");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("passes a selected reporting period to dashboard and analytics endpoints", async () => {

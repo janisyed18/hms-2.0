@@ -21,23 +21,12 @@ export function useCustomerWorkspace() {
     setLoading(true);
     setError(null);
     const client = createHmsClient();
-    void Promise.all([
-      client.listCustomers(),
-      client.listAssets({ limit: 100 }).catch(() => null)
-    ])
-      .then(([result, assetResult]) => {
+    void client.listCustomers()
+      .then((result) => {
         if (!active) return;
-        const assetCounts = new Map<string, number>();
-        assetResult?.items.forEach((asset) => {
-          assetCounts.set(asset.customer.id, (assetCounts.get(asset.customer.id) ?? 0) + 1);
-        });
-        setCustomers(result.items.map((customer) => ({
-          ...customer,
-          metrics: {
-            ...customer.metrics,
-            assetCount: assetResult ? assetCounts.get(customer.id) ?? 0 : customer.metrics.assetCount
-          }
-        })));
+        // Asset counts come from the API (aggregated per customer), never from a
+        // client-side tally of some page of assets.
+        setCustomers(result.items);
         setTotalCount(result.total);
         setSelectedId(null);
       })

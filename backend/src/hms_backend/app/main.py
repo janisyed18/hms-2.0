@@ -135,7 +135,13 @@ def create_app() -> FastAPI:
             content=_error_payload(
                 "validation_error",
                 "Request validation failed",
-                exc.errors(),
+                # ``ctx`` holds the raised exception object of a custom validator, which
+                # is not JSON serialisable and turned a 422 into a 500. Its text is
+                # already in ``msg``.
+                [
+                    {key: value for key, value in error.items() if key != "ctx"}
+                    for error in exc.errors()
+                ],
             ),
         )
 

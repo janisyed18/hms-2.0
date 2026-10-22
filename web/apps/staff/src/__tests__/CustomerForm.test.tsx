@@ -28,7 +28,6 @@ describe("CustomerForm", () => {
           metrics: {
             assetCount: 0,
             inServiceCount: 0,
-            outOfServiceCount: 0,
             inspectionDueCount: 0,
             inspectionDueLabel: "",
             certificateValidPercent: 0,

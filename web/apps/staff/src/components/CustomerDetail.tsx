@@ -207,8 +207,8 @@ export function CustomerDetail({
             <div className="customer-profile-metrics" aria-label="Customer asset summary">
               <article><span>Assets</span><strong>{isLoadingAssets ? "…" : assetTotal}</strong><small>Assigned to this customer</small></article>
               <article><span>Active locations</span><strong>{isLoadingAssets ? "…" : locationGroups.length}</strong><small>Derived from asset assignments</small></article>
-              <article><span>Needs attention</span><strong className={customer.metrics.inspectionDueCount ? "danger-text" : "success-text"}>{customer.metrics.inspectionDueCount}</strong><small>{customer.metrics.inspectionDueLabel}</small></article>
-              <article><span>Certificate coverage</span><strong>{customer.metrics.certificateValidPercent}%</strong><small>{customer.metrics.certificateStatusLabel}</small></article>
+              <article><span>Needs attention</span><strong className={customer.metrics.inspectionDueCount === null ? undefined : customer.metrics.inspectionDueCount ? "danger-text" : "success-text"}>{customer.metrics.inspectionDueCount ?? "—"}</strong><small>{customer.metrics.inspectionDueLabel}</small></article>
+              <article><span>Certificate coverage</span><strong>{customer.metrics.certificateValidPercent === null ? "—" : `${customer.metrics.certificateValidPercent}%`}</strong><small>{customer.metrics.certificateStatusLabel}</small></article>
             </div>
 
             <div className="tab-list customer-detail-tabs" role="tablist" aria-label="Customer detail tabs">

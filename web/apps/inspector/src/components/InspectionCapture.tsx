@@ -1,60 +1,61 @@
 import { ArrowLeft, ClipboardCheck } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { WorkItem } from "../domain/types";
+import {
+  blankFormState,
+  buildValues,
+  draftGaps,
+  stateFromSaved,
+  submitGaps
+} from "../domain/inspectionForm";
+import type { InspectionFormState, SavedInspectionForm } from "../domain/inspectionForm";
+import type { PressureTestDraft, WorkItem } from "../domain/types";
+import { InspectionFields } from "./InspectionFields";
 
 interface InspectionCaptureProps {
   workItem: WorkItem | null;
+  /** What to show for this assignment: an unsent local edit, else what the server holds. */
+  draftFor: (workItem: WorkItem) => SavedInspectionForm | null;
   onBack: () => void;
   onQueueAssetUpdate: (values: {
     workItem: WorkItem;
     customerSerialNo: string;
     tag: string;
   }) => void;
-  onQueuePressureTest: (values: {
-    workItem: WorkItem;
-    appliedPressureMpa: number;
-    requiredPressureMpa: number;
-    holdTimeSeconds: number;
-    passed: boolean;
-  }) => void;
+  onQueuePressureTest: (values: { workItem: WorkItem; pressureTest: PressureTestDraft }) => void;
   onSaveDraft: (values: {
     workItem: WorkItem;
-    appliedPressureMpa: number;
-    requiredPressureMpa: number;
-    holdTimeSeconds: number;
-    passed: boolean;
-    notes: string;
+    result: string | null;
+    pressureTest: PressureTestDraft;
   }) => void;
   onSubmit: (values: {
     workItem: WorkItem;
-    appliedPressureMpa: number;
-    requiredPressureMpa: number;
-    holdTimeSeconds: number;
-    passed: boolean;
-    notes: string;
+    result: string | null;
+    pressureTest: PressureTestDraft;
   }) => void;
 }
 
 export function InspectionCapture({
   workItem,
+  draftFor,
   onBack,
   onQueueAssetUpdate,
   onQueuePressureTest,
   onSaveDraft,
   onSubmit
 }: InspectionCaptureProps) {
-  const [appliedPressureMpa, setAppliedPressureMpa] = useState("30.2");
-  const [requiredPressureMpa, setRequiredPressureMpa] = useState("20");
-  const [holdTimeSeconds, setHoldTimeSeconds] = useState("300");
-  const [passed, setPassed] = useState(true);
-  const [notes, setNotes] = useState("");
+  const [form, setForm] = useState<InspectionFormState>(() => blankFormState(null));
   const [customerSerialNo, setCustomerSerialNo] = useState("");
   const [tag, setTag] = useState("");
+  const workItemKey = workItem?.workContext?.assignment_id ?? workItem?.id ?? null;
 
   useEffect(() => {
     setCustomerSerialNo(workItem?.customerSerialNo ?? "");
     setTag(workItem?.tag ?? "");
-  }, [workItem]);
+    // Reload the saved form for the assignment, or start blank with the product rating.
+    setForm(workItem ? stateFromSaved(draftFor(workItem), workItem.pressureRating) : blankFormState(null));
+    // Only when a different assignment is opened, not on every queue change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workItemKey]);
 
   if (!workItem) {
     return (
@@ -69,21 +70,9 @@ export function InspectionCapture({
     );
   }
 
-  const values = {
-    workItem,
-    appliedPressureMpa: Number(appliedPressureMpa) || 0,
-    requiredPressureMpa: Number(requiredPressureMpa) || 0,
-      holdTimeSeconds: Number(holdTimeSeconds) || 0,
-      passed,
-      notes
-  };
-  const pressureValues = {
-    workItem,
-    appliedPressureMpa: values.appliedPressureMpa,
-    requiredPressureMpa: values.requiredPressureMpa,
-    holdTimeSeconds: values.holdTimeSeconds,
-    passed: values.passed
-  };
+  const built = buildValues(form);
+  const draftMissing = draftGaps(form);
+  const submitMissing = submitGaps(form);
 
   return (
     <section className="screen-stack" aria-label="Inspection capture">
@@ -142,86 +131,48 @@ export function InspectionCapture({
         </button>
       </div>
 
-      <form className="capture-form">
-        <label>
-          <span>Applied pressure</span>
-          <input
-            aria-label="Applied pressure"
-            inputMode="decimal"
-            onChange={(event) => setAppliedPressureMpa(event.target.value)}
-            value={appliedPressureMpa}
-          />
-          <small>MPa</small>
-        </label>
+      {workItem.inspectionLocked ? (
+        <p className="capture-hint" role="status">
+          This inspection has been submitted for review and can no longer be edited here.
+        </p>
+      ) : null}
+      <InspectionFields disabled={workItem.inspectionLocked} onChange={setForm} state={form} />
 
-        <label>
-          <span>Required pressure</span>
-          <input
-            aria-label="Required pressure"
-            inputMode="decimal"
-            onChange={(event) => setRequiredPressureMpa(event.target.value)}
-            value={requiredPressureMpa}
-          />
-          <small>MPa</small>
-        </label>
+      {workItem.inspectionLocked ? null : draftMissing.length > 0 ? (
+        <p className="capture-hint" role="status">
+          To save, still needed: {draftMissing.join(", ")}.
+        </p>
+      ) : submitMissing.length > 0 ? (
+        <p className="capture-hint" role="status">
+          To submit, still needed: {submitMissing.join(", ")}.
+        </p>
+      ) : null}
 
-        <label>
-          <span>Hold time</span>
-          <input
-            aria-label="Hold time"
-            inputMode="numeric"
-            onChange={(event) => setHoldTimeSeconds(event.target.value)}
-            value={holdTimeSeconds}
-          />
-          <small>seconds</small>
-        </label>
-
-        <div className="result-toggle">
-          <button
-            className={passed ? "segment segment--active" : "segment"}
-            onClick={() => setPassed(true)}
-            type="button"
-          >
-            Pass
-          </button>
-          <button
-            className={!passed ? "segment segment--danger" : "segment"}
-            onClick={() => setPassed(false)}
-            type="button"
-          >
-            Fail
-          </button>
-        </div>
-
-        <label className="notes-field">
-          <span>Notes</span>
-          <textarea
-            aria-label="Notes"
-            onChange={(event) => setNotes(event.target.value)}
-            placeholder="Inspection observations"
-            value={notes}
-          />
-        </label>
-      </form>
-
-      <div className="action-row">
+      <div className="action-row" hidden={workItem.inspectionLocked}>
         <button
           className="secondary-action"
-          onClick={() => onQueuePressureTest(pressureValues)}
+          disabled={!built}
+          onClick={() => built && onQueuePressureTest({ workItem, pressureTest: built.pressureTest })}
           type="button"
         >
           Queue Test Result
         </button>
         <button
           className="secondary-action"
-          onClick={() => onSaveDraft(values)}
+          disabled={!built}
+          onClick={() =>
+            built && onSaveDraft({ workItem, result: built.result, pressureTest: built.pressureTest })
+          }
           type="button"
         >
           Save Draft
         </button>
         <button
           className="primary-action"
-          onClick={() => onSubmit(values)}
+          disabled={!built || submitMissing.length > 0}
+          onClick={() =>
+            built && onSubmit({ workItem, result: built.result, pressureTest: built.pressureTest })
+          }
           type="button"
         >
           Submit

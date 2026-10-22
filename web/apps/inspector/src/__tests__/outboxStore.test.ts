@@ -28,11 +28,13 @@ function makeDraftOperation() {
     inspectionId: "local-inspection-1",
     baseVersion: 2,
     status: "DRAFT",
-    appliedPressureKpa: 30200,
-    requiredPressureKpa: 20000,
-    holdTimeSeconds: 300,
-    passed: true,
-    notes: "No leaks"
+    result: "REPAIR",
+    pressureTest: {
+      appliedPressureKpa: 2250,
+      holdTimeSeconds: 300,
+      passed: true,
+      measurements: { schema_version: 1, working_pressure_kpa: 1500, test_duration_minutes: 5 }
+    }
   });
 }
 
@@ -89,6 +91,26 @@ describe("outboxStore", () => {
     });
   });
 
+  it("queues the whole form: the instruction, the pressure test and its measurements", () => {
+    const operation = makeDraftOperation();
+
+    expect(operation.payload).toEqual({
+      asset_id: "asset-1",
+      inspection_type: "SERVICE",
+      status: "DRAFT",
+      result: "REPAIR",
+      pressure_test: {
+        applied_pressure_kpa: 2250,
+        hold_time_seconds: 300,
+        passed: true,
+        measurements: { schema_version: 1, working_pressure_kpa: 1500, test_duration_minutes: 5 }
+      }
+    });
+    // The instruction is separate from the pressure test's own result: a failed test can
+    // still be instructed PASS and a passed one REPAIR.
+    expect(operation.payload.result).not.toBe("PASS");
+  });
+
   it("creates a pressure-test child operation", () => {
     const operation = createPressureTestOperation({
       assetId: "asset-1",
@@ -97,10 +119,10 @@ describe("outboxStore", () => {
       inspectionId: "inspection-1",
       pressureTestId: "pressure-test-1",
       baseVersion: null,
-      appliedPressureKpa: 30200,
-      requiredPressureKpa: 20000,
+      appliedPressureKpa: 2250,
       holdTimeSeconds: 300,
-      passed: true
+      passed: true,
+      measurements: { schema_version: 1, working_pressure_kpa: 1500 }
     });
 
     expect(operation).toMatchObject({
@@ -110,12 +132,10 @@ describe("outboxStore", () => {
       baseVersion: null,
       payload: {
         inspection_id: "inspection-1",
-        applied_pressure_kpa: 30200,
+        applied_pressure_kpa: 2250,
         hold_time_seconds: 300,
         passed: true,
-        measurements: {
-          required_pressure_kpa: 20000
-        }
+        measurements: { schema_version: 1, working_pressure_kpa: 1500 }
       },
       status: "pending"
     });
