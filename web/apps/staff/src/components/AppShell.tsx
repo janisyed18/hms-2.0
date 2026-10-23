@@ -455,17 +455,21 @@ export function AppShell({
   const loadNotifications = useCallback(async () => {
     setNotificationStatus("loading");
     setNotificationError(null);
+    if (notificationCustomerId === null) {
+      setNotifications([]);
+      setNotificationUnreadTotal(0);
+      setNotificationStatus("ready");
+      return;
+    }
     try {
-      const feed = await createHmsClient().listNotifications();
-      const visibleNotifications = notificationCustomerId === undefined
-        ? feed.items
-        : notificationCustomerId
-          ? feed.items.filter((item) => item.customerId === notificationCustomerId)
-          : [];
-      setNotifications(visibleNotifications);
-      setNotificationUnreadTotal(
-        visibleNotifications.filter((item) => item.readAt === null).length
-      );
+      const feed = notificationCustomerId === undefined
+        ? await createHmsClient().listNotifications()
+        : await createHmsClient().listNotifications({
+            customerId: notificationCustomerId,
+            limit: 12
+          });
+      setNotifications(feed.items);
+      setNotificationUnreadTotal(feed.unreadTotal);
       setNotificationStatus("ready");
     } catch {
       setNotificationStatus("error");
