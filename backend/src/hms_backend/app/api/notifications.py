@@ -29,7 +29,12 @@ from hms_backend.app.api.schemas import (
     PhoneVerificationRequest,
 )
 from hms_backend.app.core.config import settings
-from hms_backend.app.core.rbac import Permission, Principal, require_permission
+from hms_backend.app.core.rbac import (
+    Permission,
+    Principal,
+    is_customer_scoped,
+    require_permission,
+)
 from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.notifications.enums import (
     NotificationCategory,
@@ -96,6 +101,31 @@ async def _current_user(session: AsyncSession, principal: Principal) -> User:
             detail="Unknown HMS user identity",
         )
     return user
+
+
+def _scope_customer_notifications(
+    statement: Select[tuple[Notification]],
+    principal: Principal,
+    customer_id: str | None,
+) -> Select[tuple[Notification]]:
+    if is_customer_scoped(principal):
+        if customer_id is not None and customer_id not in principal.customer_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Customer notifications not found",
+            )
+        visible_customer_ids = (
+            {customer_id} if customer_id is not None else principal.customer_ids
+        )
+        return statement.where(
+            or_(
+                Notification.customer_id.is_(None),
+                Notification.customer_id.in_(visible_customer_ids),
+            )
+        )
+    if customer_id is not None:
+        return statement.where(Notification.customer_id == customer_id)
+    return statement
 
 
 # --- Preference centre ----------------------------------------------------------
@@ -289,6 +319,7 @@ async def confirm_phone_verification(
 async def my_notifications(
     session: SessionDep,
     principal: PrincipalDep,
+    customer_id: str | None = None,
     limit: LimitParam = 20,
     offset: OffsetParam = 0,
 ) -> NotificationListResponse:
@@ -299,6 +330,7 @@ async def my_notifications(
         Notification.channel == NotificationChannel.IN_APP.value,
         Notification.deleted_at.is_(None),
     )
+    base = _scope_customer_notifications(base, principal, customer_id)
     unread_total = (
         await session.scalar(
             select(func.count()).select_from(
@@ -317,12 +349,16 @@ async def mark_notification_read(
 ) -> NotificationRead:
     user = await _current_user(session, principal)
     notification = await session.scalar(
-        select(Notification).where(
-            Notification.id == notification_id,
-            Notification.recipient_type == _USER,
-            Notification.recipient_id == user.id,
-            Notification.channel == NotificationChannel.IN_APP.value,
-            Notification.deleted_at.is_(None),
+        _scope_customer_notifications(
+            select(Notification).where(
+                Notification.id == notification_id,
+                Notification.recipient_type == _USER,
+                Notification.recipient_id == user.id,
+                Notification.channel == NotificationChannel.IN_APP.value,
+                Notification.deleted_at.is_(None),
+            ),
+            principal,
+            None,
         )
     )
     if notification is None:

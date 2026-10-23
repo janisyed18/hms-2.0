@@ -44,12 +44,15 @@ export type AppModule =
   | "dashboard"
   | "analytics"
   | "customers"
+  | "locations"
+  | "bookings"
   | "assets"
   | "products"
   | "reference"
   | "inspections"
   | "certificates"
   | "retest"
+  | "notifications"
   | "sync"
   | "audit"
   | "users"
@@ -58,7 +61,7 @@ export type AppModule =
 type TopbarMenu = "notifications" | "help" | "user";
 type WorkspaceTheme = "dark" | "light";
 
-interface NavItem {
+export interface NavItem {
   label: string;
   icon: LucideIcon;
   module: AppModule;
@@ -69,6 +72,10 @@ interface AppShellProps {
   canCreateAsset: boolean;
   children: ReactNode;
   description: string;
+  hideGlobalSearch?: boolean;
+  navGroups?: Array<{ label: string; items: NavItem[] }>;
+  notificationCustomerId?: string | null;
+  notificationModule?: AppModule;
   onLogout?: () => void;
   onModuleChange: (module: AppModule) => void;
   onSearchRecordOpen: (suggestion: GlobalSearchSuggestion) => void;
@@ -280,6 +287,7 @@ interface SidebarNavigationProps {
   onGlobalQueryChange: (query: string) => void;
   onModuleChange: (module: AppModule) => void;
   onSearch: (event: FormEvent<HTMLFormElement>) => void;
+  hideGlobalSearch: boolean;
   onSignOut: () => void;
   session: StaffSession;
   visibleNavGroups: Array<{ label: string; items: NavItem[] }>;
@@ -292,6 +300,7 @@ function SidebarNavigation({
   onGlobalQueryChange,
   onModuleChange,
   onSearch,
+  hideGlobalSearch,
   onSignOut,
   session,
   visibleNavGroups
@@ -317,7 +326,7 @@ function SidebarNavigation({
           </div>
           <span className="brand-product-label">Hose Management System</span>
         </div>
-        <form className="sidebar-search" onSubmit={onSearch}>
+        {!hideGlobalSearch ? <form className="sidebar-search" onSubmit={onSearch}>
           <Search aria-hidden="true" size={16} />
           <label className="sr-only" htmlFor={`sidebar-search-input-${idSuffix}`}>
             Search assets and customers
@@ -328,7 +337,7 @@ function SidebarNavigation({
             value={globalQuery}
             onChange={(event) => onGlobalQueryChange(event.target.value)}
           />
-        </form>
+        </form> : null}
       </div>
       <nav aria-label="Primary navigation" className="nav-list">
         {visibleNavGroups.map((group) => (
@@ -385,6 +394,10 @@ export function AppShell({
   canCreateAsset,
   children,
   description,
+  hideGlobalSearch = false,
+  navGroups: customNavGroups,
+  notificationCustomerId,
+  notificationModule,
   onLogout,
   onModuleChange,
   onSearchRecordOpen,
@@ -416,13 +429,13 @@ export function AppShell({
   const visibleModuleSet = useMemo(() => new Set(visibleModules), [visibleModules]);
   const visibleNavGroups = useMemo(
     () =>
-      navGroups
+      (customNavGroups ?? navGroups)
         .map((group) => ({
           ...group,
           items: group.items.filter((item) => visibleModuleSet.has(item.module))
         }))
         .filter((group) => group.items.length > 0),
-    [visibleModuleSet]
+    [customNavGroups, visibleModuleSet]
   );
   const visibleNavItems = useMemo(
     () => visibleNavGroups.flatMap((group) => group.items),
@@ -442,8 +455,19 @@ export function AppShell({
   const loadNotifications = useCallback(async () => {
     setNotificationStatus("loading");
     setNotificationError(null);
+    if (notificationCustomerId === null) {
+      setNotifications([]);
+      setNotificationUnreadTotal(0);
+      setNotificationStatus("ready");
+      return;
+    }
     try {
-      const feed = await createHmsClient().listNotifications();
+      const feed = notificationCustomerId === undefined
+        ? await createHmsClient().listNotifications()
+        : await createHmsClient().listNotifications({
+            customerId: notificationCustomerId,
+            limit: 12
+          });
       setNotifications(feed.items);
       setNotificationUnreadTotal(feed.unreadTotal);
       setNotificationStatus("ready");
@@ -451,7 +475,7 @@ export function AppShell({
       setNotificationStatus("error");
       setNotificationError("Notifications could not be loaded. Try again.");
     }
-  }, []);
+  }, [notificationCustomerId]);
 
   useEffect(() => {
     void loadNotifications();
@@ -643,6 +667,10 @@ export function AppShell({
     }
 
     setOpenMenu(null);
+    if (notificationModule) {
+      handleModuleChange(notificationModule);
+      return;
+    }
     if (notification.category.includes("INSPECTION_BOOKING")) {
       handleModuleChange("inspections");
     } else if (notification.assetId) {
@@ -702,6 +730,7 @@ export function AppShell({
     onGlobalQueryChange: setGlobalQuery,
     onModuleChange: handleModuleChange,
     onSearch: handleGlobalSearch,
+    hideGlobalSearch,
     onSignOut: handleLogout,
     session,
     visibleNavGroups

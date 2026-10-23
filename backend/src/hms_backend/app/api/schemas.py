@@ -945,6 +945,7 @@ class UserRead(BaseModel):
     last_name: str | None
     role: str
     customer_id: str | None
+    customer_ids: list[str] = Field(default_factory=list)
     account_status: str = "ACTIVE"
     must_change_password: bool = False
     mfa_enabled: bool = False
@@ -967,6 +968,7 @@ class UserCreate(BaseModel):
     last_name: str | None = None
     role: str
     customer_id: str | None = None
+    customer_ids: list[str] | None = None
     # Local users get a server-generated subject; an explicit one is accepted only
     # for provisioning an external-IdP identity.
     oidc_subject: str | None = None
@@ -978,6 +980,7 @@ class UserUpdate(BaseModel):
     last_name: str | None = None
     role: str | None = None
     customer_id: str | None = None
+    customer_ids: list[str] | None = None
 
 
 class UserCreateResult(BaseModel):

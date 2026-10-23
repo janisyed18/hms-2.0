@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -31,7 +31,10 @@ const session: StaffSession = {
   authMode: "bearer"
 };
 
-function renderSearch(onSearchRecordOpen = vi.fn()) {
+function renderSearch(
+  onSearchRecordOpen = vi.fn(),
+  notificationCustomerId?: string | null
+) {
   return {
     onSearchRecordOpen,
     ...render(
@@ -39,6 +42,7 @@ function renderSearch(onSearchRecordOpen = vi.fn()) {
         activeModule="dashboard"
         canCreateAsset
         description="Operational snapshot"
+        notificationCustomerId={notificationCustomerId}
         onModuleChange={vi.fn()}
         onSearchRecordOpen={onSearchRecordOpen}
         session={session}
@@ -52,6 +56,35 @@ function renderSearch(onSearchRecordOpen = vi.fn()) {
 }
 
 describe("global search", () => {
+  it("loads the active customer bell preview with the server unread total", async () => {
+    listNotifications.mockResolvedValue({
+      items: [{
+        id: "notification-a-newest",
+        category: "CERTIFICATE_ISSUED",
+        subject: "Customer A update",
+        body: "The newest visible Customer A update.",
+        customerId: "customer-a",
+        assetId: null,
+        createdAt: "2027-10-04T00:00:00Z",
+        readAt: null
+      }],
+      unreadTotal: 5
+    });
+
+    renderSearch(vi.fn(), "customer-a");
+
+    const notificationButton = await screen.findByRole("button", {
+      name: "Notifications"
+    });
+    await waitFor(() =>
+      expect(listNotifications).toHaveBeenCalledWith({
+        customerId: "customer-a",
+        limit: 12
+      })
+    );
+    expect(notificationButton).toHaveTextContent("5");
+  });
+
   it("shows real prefix matches and opens the selected record", async () => {
     listNotifications.mockResolvedValue({ items: [], unreadTotal: 0 });
     listCustomers.mockResolvedValue({
@@ -66,6 +99,8 @@ describe("global search", () => {
     listInspections.mockResolvedValue({ total: 0, items: [] });
     const user = userEvent.setup();
     const { onSearchRecordOpen } = renderSearch();
+
+    await waitFor(() => expect(listNotifications).toHaveBeenCalledWith());
 
     const input = screen.getByRole("combobox", { name: "Global search" });
     await user.type(input, "cust");

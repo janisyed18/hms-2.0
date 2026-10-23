@@ -1,6 +1,15 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import {
+  Bell,
+  CalendarClock,
+  ClipboardCheck,
+  Database,
+  FileCheck2,
+  LayoutDashboard,
+  MapPinned
+} from "lucide-react";
 
-import { AppShell, type AppModule, type GlobalSearchSuggestion } from "./components/AppShell";
+import { AppShell, type AppModule, type GlobalSearchSuggestion, type NavItem } from "./components/AppShell";
 import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
 import { CustomerForm } from "./components/CustomerForm";
@@ -62,6 +71,11 @@ const SystemWorkspace = lazy(() =>
     default: SystemWorkspace
   }))
 );
+const CustomerPortalWorkspace = lazy(() =>
+  import("./components/CustomerPortalWorkspace").then(({ CustomerPortalWorkspace }) => ({
+    default: CustomerPortalWorkspace
+  }))
+);
 
 const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   dashboard: {
@@ -75,6 +89,14 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   customers: {
     title: "Customer Management",
     description: "Manage customers and view hose management overview"
+  },
+  locations: {
+    title: "Locations",
+    description: "Your approved sites and site requirements"
+  },
+  bookings: {
+    title: "Bookings",
+    description: "Request, track, reschedule, or cancel inspection appointments"
   },
   assets: {
     title: "Asset Register",
@@ -99,6 +121,10 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   retest: {
     title: "Retest Schedule",
     description: "Plan upcoming hose assembly retest work"
+  },
+  notifications: {
+    title: "Notifications",
+    description: "Review operational updates and required actions"
   },
   sync: {
     title: "Sync Queue",
@@ -177,6 +203,33 @@ const roleModules: Record<StaffRole, AppModule[]> = {
   REVIEWER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest"],
   CUSTOMER_USER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest"]
 };
+
+const customerPortalModules: AppModule[] = [
+  "dashboard",
+  "assets",
+  "locations",
+  "bookings",
+  "inspections",
+  "certificates",
+  "retest",
+  "notifications"
+];
+
+const customerPortalNavGroups: Array<{ label: string; items: NavItem[] }> = [
+  {
+    label: "Workspace",
+    items: [
+      { label: "Dashboard", icon: LayoutDashboard, module: "dashboard" },
+      { label: "Assets", icon: Database, module: "assets" },
+      { label: "Locations", icon: MapPinned, module: "locations" },
+      { label: "Bookings", icon: CalendarClock, module: "bookings" },
+      { label: "Inspections", icon: ClipboardCheck, module: "inspections" },
+      { label: "Certificates", icon: FileCheck2, module: "certificates" },
+      { label: "Retests", icon: CalendarClock, module: "retest" },
+      { label: "Notifications", icon: Bell, module: "notifications" }
+    ]
+  }
+];
 
 interface AppProps {
   // Explicit test/story seam: providing a session bypasses auth gating.
@@ -260,11 +313,15 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
   const [activeModule, setActiveModule] = useState<AppModule>("dashboard");
   const [pendingAssetId, setPendingAssetId] = useState<string | null>(null);
   const [pendingInspectionId, setPendingInspectionId] = useState<string | null>(null);
+  const [portalCustomerId, setPortalCustomerId] = useState<string | null>(null);
   const [session, setSession] = useState<StaffSession>(
     normaliseSession(providedSession)
   );
   const workspace = useCustomerWorkspace();
-  const visibleModules = useMemo(() => modulesForSession(session), [session]);
+  const visibleModules = useMemo(
+    () => (portalMode ? customerPortalModules : modulesForSession(session)),
+    [portalMode, session]
+  );
   const renderedActiveModule = visibleModules.includes(activeModule)
     ? activeModule
     : visibleModules[0] ?? "dashboard";
@@ -325,6 +382,10 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
       activeModule={renderedActiveModule}
       canCreateAsset={canCreateAsset}
       description={activeCopy.description}
+      hideGlobalSearch={portalMode}
+      navGroups={portalMode ? customerPortalNavGroups : undefined}
+      notificationCustomerId={portalMode ? portalCustomerId : undefined}
+      notificationModule={portalMode ? "notifications" : undefined}
       onLogout={onLogout}
       onModuleChange={handleModuleChange}
       onSearchRecordOpen={handleSearchRecordOpen}
@@ -342,6 +403,19 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
         >
           {renderedActiveModule === "audit" ? (
             <main className="record-page"><div className="record-main"><AuditWorkspace /></div></main>
+          ) : portalMode ? (
+            <main className="record-page customer-portal-page">
+              <div className="record-main">
+                <CustomerPortalWorkspace
+                  activeModule={renderedActiveModule}
+                  customerId={portalCustomerId}
+                  key={portalCustomerId ?? "customer"}
+                  onCustomerChange={setPortalCustomerId}
+                  onModuleChange={setActiveModule}
+                  session={session}
+                />
+              </div>
+            </main>
           ) : isOperationalModule(renderedActiveModule) ? (
             <main className="record-page">
               <div className="record-main">
@@ -473,9 +547,13 @@ const customerPortalCopy: Partial<Record<AppModule, { title: string; description
     title: "Customer Portal",
     description: "Your fleet status, upcoming work, and service activity"
   },
-  customers: {
-    title: "Your Organisation",
-    description: "Your approved locations, contacts, and site requirements"
+  locations: {
+    title: "Locations",
+    description: "Approved sites, contacts, and work requirements"
+  },
+  bookings: {
+    title: "Bookings",
+    description: "Request and manage inspection appointments"
   },
   assets: {
     title: "Asset Register",
@@ -492,6 +570,10 @@ const customerPortalCopy: Partial<Record<AppModule, { title: string; description
   retest: {
     title: "Retest Schedule",
     description: "Plan work around upcoming retest due dates"
+  },
+  notifications: {
+    title: "Notifications",
+    description: "Updates for your assets, bookings, and certificates"
   }
 };
 

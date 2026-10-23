@@ -119,7 +119,8 @@ export function SystemWorkspace({
           firstName: values.firstName || null,
           lastName: values.lastName || null,
           role: values.role,
-          customerId: values.customerId
+          customerId: values.customerId,
+          customerIds: values.customerIds
         });
         replaceUser(updated);
       } else {
@@ -128,7 +129,8 @@ export function SystemWorkspace({
           firstName: values.firstName || null,
           lastName: values.lastName || null,
           role: values.role,
-          customerId: values.customerId
+          customerId: values.customerId,
+          customerIds: values.customerIds
         });
         setUsers((current) => [result.user, ...current]);
         setCredential({
@@ -324,7 +326,8 @@ export function SystemWorkspace({
           firstName: userDialog.user.firstName ?? "",
           lastName: userDialog.user.lastName ?? "",
           role: userDialog.user.role as StaffRole,
-          customerId: userDialog.user.customerId
+          customerId: userDialog.user.customerId,
+          customerIds: userDialog.user.customerIds
         } : undefined}
         mode={userDialog?.mode ?? "create"}
         open={userDialog !== null}

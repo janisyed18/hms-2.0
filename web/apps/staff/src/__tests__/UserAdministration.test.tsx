@@ -96,7 +96,7 @@ describe("UserAdminDialog", () => {
     expect(roleOptionLabels()).not.toContain("Super Admin");
   });
 
-  it("requires a customer only for Customer User and blocks submit until chosen", () => {
+  it("requires customer access for Customer User and supports multiple assignments", async () => {
     const onSubmit = vi.fn();
     render(
       <UserAdminDialog
@@ -114,16 +114,19 @@ describe("UserAdminDialog", () => {
     fireEvent.change(screen.getByLabelText("Role"), {
       target: { value: "CUSTOMER_USER" }
     });
-    // Customer selector now required; submit disabled until a customer is chosen.
+    // Customer access is required; an operator can assign more than one organisation.
     const submit = screen.getByRole("button", { name: /create user/i });
     expect(submit).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Customer"), {
-      target: { value: "c2" }
-    });
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText("Customers"), ["c1", "c2"]);
     expect(submit).not.toBeDisabled();
     fireEvent.click(submit);
     expect(onSubmit).toHaveBeenCalledWith(
-      expect.objectContaining({ role: "CUSTOMER_USER", customerId: "c2" })
+      expect.objectContaining({
+        role: "CUSTOMER_USER",
+        customerId: "c1",
+        customerIds: ["c1", "c2"]
+      })
     );
   });
 

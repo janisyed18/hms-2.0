@@ -62,12 +62,16 @@ def ensure_can_change_role(
 
 
 def normalise_customer_ids(role: Role, customer_ids: Sequence[str]) -> list[str]:
-    """Validate customer scope: exactly one for a Customer User, none otherwise."""
-    cleaned = [value.strip() for value in customer_ids if value and value.strip()]
+    """Validate customer scope: one or more for a Customer User, none otherwise."""
+    cleaned = list(
+        dict.fromkeys(
+            value.strip() for value in customer_ids if value and value.strip()
+        )
+    )
     if role is Role.CUSTOMER_USER:
-        if len(set(cleaned)) != 1:
-            raise PrivilegeError("A Customer User must have exactly one customer.")
-        return [cleaned[0]]
+        if not cleaned:
+            raise PrivilegeError("A Customer User must have at least one customer.")
+        return cleaned
     if cleaned:
         raise PrivilegeError(f"A {role.value} cannot be scoped to a customer.")
     return []

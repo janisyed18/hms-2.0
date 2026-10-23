@@ -14,7 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, validates
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 from uuid6 import uuid7
 
 from hms_backend.app.core.rbac import Role
@@ -53,6 +53,15 @@ class User(SyncableMixin, Base):
         ForeignKey("customers.id"),
         nullable=True,
         index=True,
+    )
+    # ``customer_id`` remains the legacy/default customer. Customer portal scope
+    # is derived from active access rows so a browser user can safely access more
+    # than one customer without weakening server-side authorization.
+    customer_accesses: Mapped[list[UserCustomerAccess]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        passive_deletes=True,
     )
     # Contact verification for notifications (spec §9). A normalised E.164 phone
     # and per-address verification flags gate email/SMS delivery.
@@ -97,6 +106,27 @@ class User(SyncableMixin, Base):
 # the case-insensitive login lookup. Backs the normalisation in ``_normalise_email``
 # with a database-level guarantee even for writes that bypass the ORM.
 Index("ix_users_email_lower", func.lower(User.email), unique=True)
+
+
+class UserCustomerAccess(SyncableMixin, Base):
+    __tablename__ = "user_customer_accesses"
+    __table_args__ = (
+        UniqueConstraint("user_id", "customer_id", name="uq_user_customer_access"),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    customer_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user: Mapped[User] = relationship(back_populates="customer_accesses")
 
 
 class BrowserAuthChallenge(Base):

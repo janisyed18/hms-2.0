@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -15,7 +15,8 @@ from hms_backend.app.api.dependencies import get_session
 from hms_backend.app.core.rbac import Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
-from hms_backend.app.modules.identity.models import User
+from hms_backend.app.modules.customers.models import Customer
+from hms_backend.app.modules.identity.models import User, UserCustomerAccess
 from hms_backend.app.modules.notifications.enums import (
     NotificationCategory,
     NotificationChannel,
@@ -242,3 +243,81 @@ async def test_in_app_feed_tracks_current_user_unread_state(
     assert datetime.fromisoformat(repeated_read.json()["read_at"]).replace(
         tzinfo=None
     ) == datetime.fromisoformat(marked_read.json()["read_at"]).replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_customer_user_cannot_read_or_mark_notifications_after_scope_revocation(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    user = await seed_user(session_factory, oidc_subject="customer-oidc")
+    async with session_factory() as session:
+        customer_a = Customer(code="CUSA", name="Customer A")
+        customer_b = Customer(code="CUSB", name="Customer B")
+        session.add_all([customer_a, customer_b])
+        await session.flush()
+        persisted_user = await session.get(User, user.id)
+        assert persisted_user is not None
+        persisted_user.role = Role.CUSTOMER_USER.value
+        persisted_user.customer_id = customer_a.id
+        session.add_all(
+            [
+                UserCustomerAccess(
+                    user_id=persisted_user.id, customer_id=customer_a.id
+                ),
+                UserCustomerAccess(
+                    user_id=persisted_user.id, customer_id=customer_b.id
+                ),
+            ]
+        )
+        await session.flush()
+        customer_b_access = await session.scalar(
+            select(UserCustomerAccess).where(
+                UserCustomerAccess.user_id == persisted_user.id,
+                UserCustomerAccess.customer_id == customer_b.id,
+            )
+        )
+        assert customer_b_access is not None
+        customer_b_access.deleted_at = datetime.now(UTC)
+        revoked = Notification(
+            event_ref="customer-b-event",
+            category=NotificationCategory.CERTIFICATE_ISSUED.value,
+            tier=NotificationTier.IMPORTANT.value,
+            recipient_type=RecipientType.USER.value,
+            recipient_id=persisted_user.id,
+            channel=NotificationChannel.IN_APP.value,
+            template_key="certificate_issued.in_app",
+            subject="Customer B certificate",
+            body="This must not remain visible after access is removed.",
+            status=NotificationStatus.SENT.value,
+            idempotency_key="e" * 64,
+            customer_id=customer_b.id,
+        )
+        account_notice = Notification(
+            event_ref="account-event",
+            category=NotificationCategory.USER_INVITATION.value,
+            tier=NotificationTier.TRANSACTIONAL.value,
+            recipient_type=RecipientType.USER.value,
+            recipient_id=persisted_user.id,
+            channel=NotificationChannel.IN_APP.value,
+            template_key="user_invitation.in_app",
+            subject="Account notice",
+            body="This account-level notice remains visible.",
+            status=NotificationStatus.SENT.value,
+            idempotency_key="f" * 64,
+        )
+        session.add_all([revoked, account_notice])
+        await session.commit()
+
+    async with notifications_client(
+        session_factory, user_id="customer-oidc"
+    ) as client:
+        feed = await client.get("/api/v1/notifications/me")
+        filtered = await client.get(
+            "/api/v1/notifications/me", params={"customer_id": customer_b.id}
+        )
+        mark_revoked = await client.post(f"/api/v1/notifications/{revoked.id}/read")
+
+    assert feed.status_code == 200
+    assert [item["id"] for item in feed.json()["items"]] == [account_notice.id]
+    assert filtered.status_code == 404
+    assert mark_revoked.status_code == 404

@@ -18,7 +18,11 @@ from hms_backend.app.core.oidc import (
     get_oidc_validator,
 )
 from hms_backend.app.core.rbac import Principal, Role
-from hms_backend.app.modules.identity.models import AccountStatus, User
+from hms_backend.app.modules.identity.models import (
+    AccountStatus,
+    User,
+    UserCustomerAccess,
+)
 
 engine = create_async_engine(settings.database_url)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
@@ -196,10 +200,22 @@ async def _persisted_user_principal(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid persisted HMS role",
         ) from exc
+    access_ids = set(
+        (
+            await session.scalars(
+                select(UserCustomerAccess.customer_id).where(
+                    UserCustomerAccess.user_id == user.id,
+                    UserCustomerAccess.deleted_at.is_(None),
+                )
+            )
+        ).all()
+    )
+    if user.customer_id:
+        access_ids.add(user.customer_id)
     return Principal(
         user_id=user.oidc_subject,
         roles=frozenset({role}),
-        customer_ids=frozenset({user.customer_id} if user.customer_id else ()),
+        customer_ids=frozenset(access_ids),
         record_user_id=user.id,
     )
 

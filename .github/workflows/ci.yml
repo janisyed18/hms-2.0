@@ -41,6 +41,7 @@ jobs:
           uv run pytest tests/test_inspector_postgres_races.py
           tests/test_certificate_postgres_races.py
           tests/test_persisted_user_ids_postgres.py
+          tests/test_customer_access_postgres.py
           tests/test_audit_redaction_postgres.py
           tests/test_audit_chain_postgres.py
           tests/test_certificate_durability_postgres.py
