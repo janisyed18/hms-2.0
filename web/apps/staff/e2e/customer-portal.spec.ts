@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,6 +16,31 @@ function credentials(): Record<string, string> {
   const value = process.env.HMS_E2E_ACCOUNTS_JSON;
   if (!value) throw new Error("Development account credentials were not initialized.");
   return JSON.parse(value) as Record<string, string>;
+}
+
+function decodeBase32(value: string): Buffer {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const character of value.replace(/=|\s/g, "").toUpperCase()) {
+    const index = alphabet.indexOf(character);
+    if (index < 0) throw new Error("Invalid base32 authenticator secret.");
+    bits += index.toString(2).padStart(5, "0");
+  }
+  const bytes: number[] = [];
+  for (let offset = 0; offset + 8 <= bits.length; offset += 8) {
+    bytes.push(Number.parseInt(bits.slice(offset, offset + 8), 2));
+  }
+  return Buffer.from(bytes);
+}
+
+async function totp(secret: string): Promise<string> {
+  const seconds = Math.floor(Date.now() / 1000);
+  if (seconds % 30 >= 27) await new Promise((resolve) => setTimeout(resolve, 4_000));
+  const message = Buffer.alloc(8);
+  message.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 1000 / 30)));
+  const digest = createHmac("sha1", decodeBase32(secret)).update(message).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  return String((digest.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, "0");
 }
 
 function sql(command: string): string {
@@ -75,14 +101,32 @@ async function signInToPortal(page: Page): Promise<string> {
   await expect(page.getByRole("heading", { name: "Choose a new password" })).toBeVisible();
   await page.getByLabel("New password").fill(customerPassword);
   await page.getByLabel("Confirm password").fill(customerPassword);
-  const passwordResponse = page.waitForResponse((response) =>
-    response.url().includes("/api/v1/auth/browser/password") && response.request().method() === "POST"
-  );
   await page.getByRole("button", { name: "Set password" }).click();
-  const body = await (await passwordResponse).json() as { access_token?: string };
-  if (!body.access_token) throw new Error("Password change did not authenticate the portal user.");
-  await expect(page.getByRole("region", { name: "Customer portal workspace" })).toBeVisible();
-  return body.access_token;
+  const workspace = page.getByRole("region", { name: "Customer portal workspace" });
+  const nextStep = await Promise.race([
+    workspace.waitFor({ state: "visible", timeout: 60_000 }).then(() => "authenticated"),
+    page.getByRole("heading", { name: "Set up authenticator" })
+      .waitFor({ state: "visible", timeout: 60_000 }).then(() => "enroll")
+  ]);
+  if (nextStep === "enroll") {
+    const secret = (await page.locator(".auth-manual-key code").innerText()).trim();
+    await page.getByLabel("Authentication code").fill(await totp(secret));
+    await page.getByRole("button", { name: "Verify & finish" }).click();
+    await expect(page.getByLabel("I have saved my recovery codes.")).toBeVisible();
+    await page.getByLabel("I have saved my recovery codes.").check();
+    await page.getByRole("button", { name: "Continue to HMS" }).click();
+  }
+  await expect(workspace).toBeVisible();
+  const token = await page.evaluate(async () => {
+    const response = await fetch("/api/v1/auth/browser/refresh", {
+      method: "POST",
+      credentials: "include"
+    });
+    if (!response.ok) throw new Error(`Refresh failed: ${response.status}`);
+    return (await response.json() as { access_token?: string }).access_token;
+  });
+  if (!token) throw new Error("Authenticated portal session did not return an access token.");
+  return token;
 }
 
 async function selectFirstQuote(page: Page) {
