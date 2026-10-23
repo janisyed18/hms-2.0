@@ -10,7 +10,7 @@ Protocol version 2
 * The client sends ``X-HMS-Sync-Protocol: 2`` (the Inspector app does, from app version
   0.2.0). The header, not a query parameter, is the capability signal, so an old
   deployed client that knows nothing about paging is recognised and handled by
-  :func:`legacy_response_or_upgrade_required`.
+  ``_legacy_bootstrap`` in ``sync.py``.
 * A page holds at most ``limit`` items (records plus work contexts together): default
   :data:`DEFAULT_PAGE_SIZE`, hard maximum :data:`MAX_PAGE_SIZE`.
 * The traversal is a fixed sequence of sections: each synced entity in

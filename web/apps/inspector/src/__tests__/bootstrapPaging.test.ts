@@ -1,10 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BootstrapSupersededError,
   SyncUpgradeRequiredError,
-  createSyncClient,
-  discardBootstrapProgress
+  createSyncClient
 } from "../api/syncClient";
+import {
+  clearUserSyncData,
+  createMemorySyncStore,
+  type SyncStore
+} from "../offline/syncStore";
 import type { SyncBootstrapResponse, SyncRecordRead } from "../domain/types";
 
 const DEVICE = {
@@ -59,6 +63,14 @@ function emptyChanges(cursor = 10) {
 
 type Handler = (url: string) => Response | Promise<Response> | Error;
 
+// One store per test, shared by every client in it: a "restart" is a new client on the
+// same store.
+let store: SyncStore;
+
+beforeEach(() => {
+  store = createMemorySyncStore();
+});
+
 function client(handler: Handler, userId = "inspector-a") {
   const calls: string[] = [];
   const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
@@ -75,12 +87,11 @@ function client(handler: Handler, userId = "inspector-a") {
       fetchImpl,
       getAccessToken: () => "token",
       deviceId: "device-1",
-      userId
+      userId,
+      store
     })
   };
 }
-
-afterEach(() => discardBootstrapProgress());
 
 describe("paged bootstrap", () => {
   it("follows continuation tokens, then applies changes from the first watermark", async () => {
@@ -286,7 +297,7 @@ describe("paged bootstrap", () => {
       return new Response("down", { status: 503 });
     };
     await expect(client(handler).sync.bootstrap()).rejects.toThrow();
-    discardBootstrapProgress("inspector-a");
+    await clearUserSyncData("inspector-a", store);
     await expect(client(handler).sync.bootstrap()).rejects.toThrow();
     expect(pageOneFetches).toBe(2);
   });
@@ -311,6 +322,7 @@ describe("paged bootstrap", () => {
     release();
 
     await expect(older).rejects.toBeInstanceOf(BootstrapSupersededError);
-    expect((await newer).records.map((r) => r.entity_id)).toEqual(["run-2"]);
+    // Exactly one run's page, never a mixture of the two.
+    expect((await newer).records).toHaveLength(1);
   });
 });

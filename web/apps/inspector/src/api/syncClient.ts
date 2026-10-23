@@ -1,3 +1,12 @@
+import {
+  defaultSyncStore,
+  scopeKey,
+  type ActiveSnapshot,
+  type StagingChunk,
+  type StagingProgress,
+  type SyncScope,
+  type SyncStore
+} from "../offline/syncStore";
 import type { PressureRating, SavedInspectionForm } from "../domain/inspectionForm";
 import type {
   InspectionStatus,
@@ -31,6 +40,8 @@ export interface SyncRuntimeAuth {
 
 interface SyncClientOptions extends SyncRuntimeAuth {
   fetchImpl?: FetchLike;
+  store?: SyncStore;
+  now?: () => number;
   deviceId?: string;
   // The signed-in user, used to scope the device id.
   userId?: string;
@@ -414,6 +425,24 @@ async function requestJson<TResponse>(
 
 class RestartBootstrap extends Error {}
 
+/** The records and contexts a saved staging state adds up to. */
+function rebuild(chunks: StagingChunk[]): {
+  records: SyncRecordRead[];
+  workContexts: SyncWorkContext[];
+} {
+  let records: SyncRecordRead[] = [];
+  const workContexts: SyncWorkContext[] = [];
+  for (const chunk of chunks) {
+    if (chunk.kind === "page") {
+      records = records.concat(chunk.records);
+      workContexts.push(...chunk.workContexts);
+    } else {
+      records = applySyncChangesToRecords(records, chunk.records);
+    }
+  }
+  return { records, workContexts };
+}
+
 function isInvalidPageToken(error: unknown): boolean {
   return error instanceof SyncRequestError && error.code === "SYNC_PAGE_TOKEN_INVALID";
 }
@@ -621,40 +650,23 @@ export function applySyncChangesToRecords(
 
 const MAX_BOOTSTRAP_RESTARTS = 3;
 const CHANGES_PAGE_SIZE = 500;
+// The most the Inspector will trust a snapshot offline, whatever the server grants.
+const MAX_OFFLINE_DAYS = 7;
+const DAY_MS = 86_400_000;
 
-/**
- * A bootstrap in flight, kept in memory so a dropped connection resumes at the page
- * it was on instead of page one. It is scoped to one user, device and protocol; a
- * different user can never read it, and it is discarded on sign-out. Nothing here is
- * the offline dataset: that is only replaced by a *finished* bootstrap.
- */
-interface BootstrapProgress {
-  snapshot: number;
-  nextToken: string | null;
-  pagesComplete: boolean;
-  changesCursor: number;
-  records: SyncRecordRead[];
-  workContexts: SyncWorkContext[];
-  device: SyncBootstrapResponse["device"] | null;
-  run: number;
-}
-
-const bootstrapProgress = new Map<string, BootstrapProgress>();
+/** Latest bootstrap run per scope: a newer call supersedes an older one in flight. */
+const latestRun = new Map<string, number>();
 let bootstrapRuns = 0;
 
-function progressKey(userId: string | undefined, deviceId: string): string {
-  return JSON.stringify([userId ?? "", deviceId, SYNC_PROTOCOL_VERSION]);
-}
+export type BootstrapResult = SyncBootstrapResponse & {
+  /** Absolute time (ms) the promoted snapshot stops being usable offline. */
+  expiresAt: number;
+};
 
-/** Forget partial bootstrap state: on sign-out, and whenever the user changes. */
-export function discardBootstrapProgress(userId?: string): void {
-  for (const key of [...bootstrapProgress.keys()]) {
-    const [owner] = JSON.parse(key) as [string];
-    if (userId === undefined || owner === (userId ?? "")) {
-      bootstrapProgress.delete(key);
-    }
-  }
-}
+export type SavedSnapshot =
+  | { status: "none" }
+  | { status: "expired" }
+  | { status: "ready"; snapshot: ActiveSnapshot };
 
 export class BootstrapSupersededError extends Error {
   constructor() {
@@ -683,6 +695,65 @@ export function createSyncClient(options: Partial<SyncClientOptions> = {}) {
     return requestJson<TResponse>(fetchImpl, path, init, auth, deviceId);
   }
 
+  const store = options.store ?? defaultSyncStore();
+  const now = options.now ?? Date.now;
+  // Without a signed-in user there is nothing to scope persisted data to.
+  const scope: SyncScope = {
+    userId: options.userId ?? "",
+    deviceId,
+    protocol: SYNC_PROTOCOL_VERSION
+  };
+
+  // A failing store (quota, blocked storage) must not stop syncing: the run carries on
+  // from memory and simply is not restartable.
+  async function persist<T>(operation: () => Promise<T>): Promise<T | null> {
+    try {
+      return await operation();
+    } catch {
+      return null;
+    }
+  }
+
+  function emptyProgress(): StagingProgress {
+    return {
+      snapshot: 0,
+      nextToken: null,
+      pagesComplete: false,
+      changesCursor: 0,
+      device: null,
+      chunkCount: 0,
+      updatedAt: now()
+    };
+  }
+
+  async function promote(
+    source: { device: SyncBootstrapResponse["device"] | null },
+    cursor: number,
+    records: SyncRecordRead[],
+    workContexts: SyncWorkContext[]
+  ): Promise<BootstrapResult> {
+    const device = source.device as SyncBootstrapResponse["device"];
+    const days = Math.max(0, Math.min(device.offline_window_days, MAX_OFFLINE_DAYS));
+    const promotedAt = now();
+    const snapshot: ActiveSnapshot = {
+      device,
+      cursor,
+      records,
+      workContexts,
+      expiresAt: promotedAt + days * DAY_MS,
+      promotedAt
+    };
+    await persist(() => store.promote(scope, snapshot));
+    return {
+      device,
+      cursor,
+      has_more: false,
+      records,
+      work_contexts: workContexts,
+      expiresAt: snapshot.expiresAt
+    };
+  }
+
   function bootstrapPage(pageToken?: string) {
     const query = pageToken ? `?page_token=${encodeURIComponent(pageToken)}` : "";
     return request<SyncBootstrapResponse>(`/api/v1/sync/bootstrap${query}`);
@@ -697,105 +768,134 @@ export function createSyncClient(options: Partial<SyncClientOptions> = {}) {
     bootstrapPage,
 
     /**
-     * The whole assigned dataset: every bootstrap page, then the changes committed
-     * since the first page's watermark. Resolves only with a complete result; a
-     * network failure leaves the progress in place and the next call continues from
-     * the last page that arrived. The caller keeps its previous dataset until this
-     * resolves.
+     * The last fully reconciled snapshot saved for this user and device, if it is
+     * still inside its offline window. An expired one is deleted, not returned.
      */
-    async bootstrap(): Promise<SyncBootstrapResponse> {
-      const key = progressKey(options.userId, deviceId);
+    async loadSnapshot(): Promise<SavedSnapshot> {
+      const saved = await persist(() => store.loadActive(scope));
+      if (!saved) return { status: "none" };
+      if (saved.expiresAt <= now()) {
+        await persist(() => store.discardActive(scope));
+        return { status: "expired" };
+      }
+      return { status: "ready", snapshot: saved };
+    },
+
+    /**
+     * The whole assigned dataset: every bootstrap page, then the changes committed
+     * since the first page's watermark. Each completed page and change batch is saved
+     * to the sync store, so a dropped connection, a reload or a crash continues from
+     * the last saved step rather than page one. The result is promoted to the active
+     * snapshot in one transaction only when everything has reconciled; until then the
+     * previous snapshot stays untouched.
+     */
+    async bootstrap(): Promise<BootstrapResult> {
+      const runKey = scopeKey(scope);
       const run = ++bootstrapRuns;
-      const guard = (progress: BootstrapProgress) => {
-        if (progress.run !== run || bootstrapProgress.get(key) !== progress) {
-          throw new BootstrapSupersededError();
-        }
+      latestRun.set(runKey, run);
+      const guard = () => {
+        if (latestRun.get(runKey) !== run) throw new BootstrapSupersededError();
       };
 
       for (let restart = 0; restart <= MAX_BOOTSTRAP_RESTARTS; restart += 1) {
-        let progress = bootstrapProgress.get(key);
-        if (progress) {
-          progress.run = run;
-        } else {
-          progress = {
-            snapshot: 0,
-            nextToken: null,
-            pagesComplete: false,
-            changesCursor: 0,
-            records: [],
-            workContexts: [],
-            device: null,
-            run
-          };
-          bootstrapProgress.set(key, progress);
+        let staged = await persist(() => store.loadStaging(scope));
+        guard();
+        if (!staged) {
+          const fresh = emptyProgress();
+          await persist(() => store.beginStaging(scope, fresh));
+          staged = { progress: fresh, chunks: [] };
         }
+        let progress = staged.progress;
+        let { records, workContexts } = rebuild(staged.chunks);
 
         try {
-          if (!progress.pagesComplete) {
-            for (;;) {
-              const token = progress.nextToken ?? undefined;
-              const page = await bootstrapPage(token);
-              guard(progress);
-              if (page.protocol_version !== SYNC_PROTOCOL_VERSION) {
-                // A server that predates paging answered with everything at once.
-                bootstrapProgress.delete(key);
-                return page;
-              }
-              if (token !== undefined && page.cursor !== progress.snapshot) {
-                throw new RestartBootstrap();
-              }
-              progress.snapshot = page.cursor;
-              progress.device = page.device;
-              progress.records.push(...page.records);
-              progress.workContexts.push(...(page.work_contexts ?? []));
-              if (page.has_more && page.next_page_token) {
-                progress.nextToken = page.next_page_token;
-                continue;
-              }
-              if (page.scope_changed) throw new RestartBootstrap();
-              progress.nextToken = null;
-              progress.pagesComplete = true;
-              progress.changesCursor = progress.snapshot;
-              break;
+          while (!progress.pagesComplete) {
+            const token = progress.nextToken ?? undefined;
+            const page = await bootstrapPage(token);
+            guard();
+            if (page.protocol_version !== SYNC_PROTOCOL_VERSION) {
+              // A server that predates paging answered with everything at once.
+              return await promote(page, page.cursor, page.records, page.work_contexts ?? []);
             }
+            if (token !== undefined && page.cursor !== progress.snapshot) {
+              throw new RestartBootstrap();
+            }
+            const last = !(page.has_more && page.next_page_token);
+            if (last && page.scope_changed) throw new RestartBootstrap();
+            const chunk: StagingChunk = {
+              kind: "page",
+              records: page.records,
+              workContexts: page.work_contexts ?? []
+            };
+            progress = {
+              ...progress,
+              snapshot: page.cursor,
+              device: page.device,
+              nextToken: last ? null : (page.next_page_token ?? null),
+              pagesComplete: last,
+              changesCursor: last ? page.cursor : progress.changesCursor,
+              chunkCount: progress.chunkCount + 1,
+              updatedAt: now()
+            };
+            records = records.concat(chunk.records);
+            workContexts = workContexts.concat(chunk.workContexts);
+            await persist(() => store.appendStaging(scope, progress, chunk));
           }
 
-          // Changes after the watermark are applied before anything is promoted. A
+          // Changes after the watermark are reconciled before anything is promoted. A
           // change already present in the pages is applied again harmlessly.
           for (;;) {
             const batch = await changesPage(progress.changesCursor, CHANGES_PAGE_SIZE);
-            guard(progress);
-            progress.records = applySyncChangesToRecords(progress.records, batch.changes);
-            progress.changesCursor = batch.cursor;
+            guard();
+            const chunk: StagingChunk = {
+              kind: "changes",
+              records: batch.changes,
+              workContexts: []
+            };
+            progress = {
+              ...progress,
+              changesCursor: batch.cursor,
+              chunkCount: progress.chunkCount + 1,
+              updatedAt: now()
+            };
+            records = applySyncChangesToRecords(records, batch.changes);
+            await persist(() => store.appendStaging(scope, progress, chunk));
             if (!batch.has_more) break;
           }
           if (!progress.device) throw new RestartBootstrap();
-          bootstrapProgress.delete(key);
-          return {
-            device: progress.device,
-            cursor: progress.changesCursor,
-            has_more: false,
-            records: progress.records,
-            work_contexts: progress.workContexts
-          };
+          return await promote(
+            { ...progress, device: progress.device },
+            progress.changesCursor,
+            records,
+            workContexts
+          );
         } catch (error) {
           if (error instanceof RestartBootstrap || isInvalidPageToken(error)) {
-            bootstrapProgress.delete(key);
+            // Only the staged copy is discarded; the last good snapshot stays active.
+            await persist(() => store.discardStaging(scope));
             continue;
           }
           if (error instanceof SyncAuthenticationError) {
-            bootstrapProgress.delete(key);
+            // The session ended: this run is over, but its saved progress is kept for
+            // the same user to continue after signing back in.
+            throw error;
+          }
+          if (error instanceof SyncRequestError && error.status === 403) {
+            // Device revoked or permission withdrawn: nothing here may be shown.
+            await persist(() => store.discardStaging(scope));
+            await persist(() => store.discardActive(scope));
+            throw error;
           }
           if (error instanceof SyncRequestError && error.status === 426) {
-            bootstrapProgress.delete(key);
+            await persist(() => store.discardStaging(scope));
             throw new SyncUpgradeRequiredError();
           }
-          // Anything else (a dropped connection, a 5xx) keeps the progress so the
+          // Anything else (a dropped connection, a 5xx) keeps the saved progress so the
           // next attempt resumes where this one stopped.
           throw error;
         }
       }
-      bootstrapProgress.delete(key);
+      await persist(() => store.discardStaging(scope));
       throw new Error("Assigned work kept changing while loading; try again.");
     },
 

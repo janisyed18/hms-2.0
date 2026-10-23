@@ -8,12 +8,13 @@ import hmac
 import json
 import os
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, date, datetime
 from typing import Any
 from uuid import uuid4
 
+import fakeredis.aioredis
 import httpx
 import pytest
 import pytest_asyncio
@@ -36,6 +37,7 @@ from hms_backend.app.api.sync_bootstrap import (
 )
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.rbac import Principal, Role
+from hms_backend.app.core.redis import set_redis_client
 from hms_backend.app.core.repository import record_create, record_update, soft_delete
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
@@ -79,9 +81,15 @@ def inspector(user: str = INSPECTOR) -> Principal:
 
 
 @pytest.fixture(autouse=True)
-def _no_api_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """These tests make hundreds of requests; the per-IP limiter is not under test."""
+def _private_rate_limit_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None, None, None]:
+    """These tests make hundreds of requests. They must neither trip the per-IP
+    limiter nor leave counts in a shared Redis that later tests would trip over."""
     monkeypatch.setattr(settings, "security_api_rate_limit_max_requests", 10**9)
+    set_redis_client(fakeredis.aioredis.FakeRedis(decode_responses=True))
+    yield
+    set_redis_client(None)
 
 
 POSTGRES_URL = os.environ.get("POSTGRES_TEST_DATABASE_URL")

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createSyncClient,
-  discardBootstrapProgress,
   mapBootstrapToWorkItems
 } from "../api/syncClient";
 import type { SavedInspectionForm } from "../domain/inspectionForm";
@@ -180,6 +179,7 @@ export function useInspectorWorkspace(userId: string) {
   const [lastSyncLabel, setLastSyncLabel] = useState("Loading assigned work");
   const [offlineExpiresAt, setOfflineExpiresAt] = useState<number | null>(null);
   const refreshGeneration = useRef(0);
+  const refreshedThisSession = useRef(false);
 
   const visibleOutbox = useMemo(
     () => ({ ...outbox, operations: outbox.operations.filter((operation) => operationIsAssigned(operation, syncRecords, workContexts, outbox.operations)) }),
@@ -207,9 +207,10 @@ export function useInspectorWorkspace(userId: string) {
       throw new Error("Assignment refresh was superseded");
     }
     const contexts = response.work_contexts ?? [];
+    refreshedThisSession.current = true;
     setSyncRecords(response.records);
     setWorkContexts(contexts);
-    setOfflineExpiresAt(Date.now() + Math.max(0, Math.min(response.device.offline_window_days, 7)) * 86400000);
+    setOfflineExpiresAt(response.expiresAt);
     setSelectedWorkItem((item) => item && contexts.some(
       (context) => sameWorkContext(context, item.workContext)
     ) ? item : null);
@@ -217,14 +218,37 @@ export function useInspectorWorkspace(userId: string) {
     return response;
   }, [userId]);
 
+  // Show the last fully reconciled snapshot straight away (offline, or while the
+  // refresh below is still downloading). A refresh that finishes first wins.
   useEffect(() => {
-    void refreshAssignments().catch(() => setLastSyncLabel("Unable to load assigned work"));
+    let active = true;
+    void createSyncClient({ userId })
+      .loadSnapshot()
+      .then((saved) => {
+        if (!active || refreshedThisSession.current) return;
+        if (saved.status === "expired") {
+          setLastSyncLabel("Offline access expired; reconnect to refresh assignments");
+        } else if (saved.status === "ready") {
+          setSyncRecords(saved.snapshot.records);
+          setWorkContexts(saved.snapshot.workContexts);
+          setOfflineExpiresAt(saved.snapshot.expiresAt);
+          setLastSyncLabel("Showing saved assignments");
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    void refreshAssignments().catch(() =>
+      setLastSyncLabel((label) =>
+        label === "Showing saved assignments" ? label : "Unable to load assigned work"
+      )
+    );
     return () => { refreshGeneration.current += 1; };
   }, [refreshAssignments]);
-
-  // A half-finished bootstrap is private to this user: drop it on sign-out or when
-  // another user takes over.
-  useEffect(() => () => discardBootstrapProgress(userId), [userId]);
 
   useEffect(() => {
     if (offlineExpiresAt === null) return;

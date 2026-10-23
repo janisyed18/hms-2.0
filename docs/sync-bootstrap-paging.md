@@ -59,25 +59,87 @@ has been live for one offline window (7 days, `Device.offline_window_days`).
 
 ## Inspector
 
-* Always sends protocol 2; app version `0.2.0`.
-* `createSyncClient().bootstrap()` returns only a finished result. Its progress (token,
-  watermark, accumulated pages) lives in memory, keyed by user, device and protocol; a
-  dropped connection resumes at the last completed page, and the change phase resumes
-  from the last change cursor. A rejected token, a differing watermark or `scope_changed`
-  restarts from page 1.
-* The previous dataset in React state is replaced only after the promote step; the outbox
-  (localStorage) is never touched. Progress is discarded on sign-out and for any other
-  user.
-* A server that answers without `protocol_version: 2` (not yet upgraded) is accepted as a
-  single complete response.
+Always sends protocol 2; app version `0.2.0`. All of its assigned-work data lives in a
+persistent IndexedDB store (`web/apps/inspector/src/offline/syncStore.ts`), separate from
+the outbox, which is not touched by any of this.
 
-### Not done: resume after a browser refresh or app restart
+### Store design
 
-The Inspector keeps no offline copy of the dataset today: only the outbox is persisted
-(localStorage, per user). A refresh therefore loses the records already downloaded, and a
-saved token alone would resume into an incomplete dataset. Restart-resume needs a new
-persistence layer for the partial and the last-known-good datasets (IndexedDB: a
-5,000-10,000 item dataset exceeds the localStorage quota), plus the encryption, quota and
-eviction decisions that go with storing assigned-work data on a shared device. That is a
-separate design, not a change to this protocol, which already supports it (the token is
-stateless and user/device bound). Network-interruption resume is implemented and tested.
+Database `hms-inspector-sync`, IndexedDB version 1 (`SYNC_STORE_VERSION`), storage schema
+1 (`STORAGE_SCHEMA`, part of every key). Every entry is keyed by
+`JSON([userId, deviceId, syncProtocol, storageSchema])`, so a user, a device
+registration, a protocol or a schema version can never read another's data.
+
+| Object store | Key | Holds |
+|---|---|---|
+| `active` | scope key | the **last-good snapshot**: records, work contexts, final reconciled cursor, device metadata, absolute `expiresAt`, `promotedAt` |
+| `staging` | scope key | progress of a bootstrap in flight: watermark `S`, continuation token, `pagesComplete`, change cursor, device response, chunk count, `updatedAt` |
+| `chunks` | `[scope key, seq]` | one entry per completed bootstrap page or reconciled change batch |
+
+Each completed page or change batch is **one transaction** that writes its chunk and the
+updated progress, so the cost is per page (not per record, and never a rewrite of the
+whole snapshot), and a crash leaves either the previous or the next consistent state.
+
+### Flow
+
+1. App start: load `active` for the signed-in user and device. If valid and unexpired,
+   the workspace shows it immediately (label "Showing saved assignments"), whether or not
+   the network is up. An expired snapshot is deleted and the existing "Offline access
+   expired" message is shown.
+2. A refresh runs `bootstrap()`. If `staging` exists it continues from the stored token
+   (or, if the pages were complete, from the stored change cursor); otherwise it starts
+   at page one. Nothing partial is ever shown.
+3. Promotion: only after all pages, `scope_changed == false` and the change feed is
+   reconciled, **one readwrite transaction** over `active`, `staging` and `chunks` writes
+   the new snapshot and removes the staging data. A crash leaves the old snapshot or the
+   new one, never a mixture; a failed promotion leaves both the old snapshot and the
+   staging as they were.
+4. The workspace swaps its React state to the promoted result.
+
+### Failure handling
+
+| Event | Staging | Active snapshot |
+|---|---|---|
+| network error / 5xx | kept, resume later | untouched |
+| `SYNC_PAGE_TOKEN_INVALID`, watermark mismatch, `scope_changed` | deleted, restart at page one (max 3 restarts) | untouched until the clean copy is promoted |
+| `403` (device revoked / permission withdrawn) | deleted | deleted |
+| `426` | deleted | untouched |
+| corrupt staging (bad shape, chunk count mismatch) | deleted | untouched |
+| corrupt active | n/a | deleted, nothing invented, fetched again when online |
+| storage unavailable or failing | bootstrap continues from memory (not restartable) | n/a |
+
+An old (pre-paging) server answer is accepted as one complete response and promoted the
+same way. Incompatible persisted data from a future schema version may be discarded: none
+existed before this release.
+
+### Expiry
+
+`expiresAt = promotedAt + min(device.offline_window_days, 7) days`, fixed when a snapshot
+is promoted. Loading it, or a failed or partial refresh, never extends it; only a
+successful full refresh does.
+
+### Logout and user switch
+
+Everything is keyed by user, so another user never sees it. In addition, an explicit
+sign-out removes that user's `active`, `staging` and `chunks` on every device, and signing
+in as a different user in the same page session removes the previous user's. Session
+expiry deliberately keeps the data (a flaky network can also look like an expired
+session) until its offline expiry. The outbox follows its existing rules and is not
+cleared by any of this.
+
+### Threat model
+
+The data is stored unencrypted in same-origin IndexedDB, like the existing outbox. A key
+kept in the same browser next to the ciphertext would add no protection, so there is no
+pretend encryption. The controls are: per-user/device scoping, removal on explicit
+sign-out and user switch, the offline expiry, deletion on revocation, and the existing
+CSP/XSS hardening. Anyone with the unlocked device profile, or script running in the app's
+origin, can read it. If HMS later gets a device-bound key (for example OS-backed storage),
+encryption at rest can be added without changing the protocol.
+
+### Known limit
+
+Opening the app offline after a full browser restart still requires the sign-in check
+(`/auth/browser/refresh`, `/auth/browser/me`) to succeed, so the saved snapshot appears
+once the user is authenticated again. Persisting the identity for fully offline cold start
+is a separate decision.
