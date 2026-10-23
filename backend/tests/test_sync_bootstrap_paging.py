@@ -604,6 +604,15 @@ async def first_page(
     return body
 
 
+def resume_point(token: str) -> dict[str, Any]:
+    body = token.split(".")[0]
+    data: dict[str, Any] = json.loads(
+        base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
+    )
+    data.pop("t")
+    return data
+
+
 def invalid(response: httpx.Response) -> bool:
     return (
         response.status_code == 400
@@ -653,7 +662,10 @@ async def test_a_replayed_token_returns_the_same_page(
         )
     assert one.status_code == two.status_code == 200
     assert one.json()["records"] == two.json()["records"]
-    assert one.json()["next_page_token"] == two.json()["next_page_token"]
+    # Tokens differ only in their issue time.
+    assert resume_point(one.json()["next_page_token"]) == resume_point(
+        two.json()["next_page_token"]
+    )
 
 
 @pytest.mark.asyncio
