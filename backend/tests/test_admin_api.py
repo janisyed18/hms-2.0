@@ -214,6 +214,49 @@ async def test_customer_user_can_hold_multiple_persisted_customer_scopes(
 
 
 @pytest.mark.asyncio
+async def test_customer_scope_can_be_revoked_and_granted_again(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed_user(session_factory)
+    async with session_factory() as session:
+        customer_a = Customer(code="REG-A", name="Regrant Customer A")
+        customer_b = Customer(code="REG-B", name="Regrant Customer B")
+        session.add_all([customer_a, customer_b])
+        await session.commit()
+
+    async with admin_client(session_factory) as client:
+        created = await client.post(
+            "/api/v1/admin/users",
+            json={
+                "oidc_subject": "customer-regrant",
+                "email": "customer-regrant@example.com",
+                "role": "CUSTOMER_USER",
+                "customer_ids": [customer_a.id, customer_b.id],
+            },
+        )
+        user_id = created.json()["user"]["id"]
+        revoked = await client.patch(
+            f"/api/v1/admin/users/{user_id}",
+            json={"customer_ids": [customer_a.id]},
+        )
+        regranted = await client.patch(
+            f"/api/v1/admin/users/{user_id}",
+            json={"customer_ids": [customer_a.id, customer_b.id]},
+        )
+
+    assert created.status_code == 201
+    assert revoked.status_code == 200
+    assert regranted.status_code == 200
+    assert regranted.json()["customer_ids"] == [customer_a.id, customer_b.id]
+
+    async with admin_client(session_factory, user_id="customer-regrant") as client:
+        me_response = await client.get("/api/v1/auth/me")
+
+    assert me_response.status_code == 200
+    assert me_response.json()["customer_ids"] == [customer_a.id, customer_b.id]
+
+
+@pytest.mark.asyncio
 async def test_admin_devices_and_audit_filters(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

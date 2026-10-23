@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createHmsClient } from "../api/hmsClient";
 import type {
   AssetRecord,
+  ApiListResult,
   CertificateRecord,
   CustomerRecord,
   InspectionAvailabilitySlot,
@@ -48,15 +49,58 @@ function formatDate(value: string | null): string {
   );
 }
 
-function formatDateTime(value: string): string {
+function formatDateTime(value: string, timeZone?: string): string {
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
-    timeStyle: "short"
+    timeStyle: "short",
+    ...(timeZone ? { timeZone } : {})
   }).format(new Date(value));
+}
+
+function formatRecordedAppointment(
+  appointment: NonNullable<InspectionBookingRecord["appointment"]>
+): string {
+  const local = new Date(`${appointment.localStartSnapshot}Z`);
+  return `${new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC"
+  }).format(local)} (${appointment.timezoneId})`;
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "This portal data could not be loaded.";
+}
+
+async function loadAllPages<T>(
+  loadPage: (offset: number) => Promise<ApiListResult<T>>
+): Promise<T[]> {
+  const pageSize = 100;
+  const first = await loadPage(0);
+  const pages = await Promise.all(
+    Array.from(
+      { length: Math.ceil(Math.max(0, first.total - first.items.length) / pageSize) },
+      (_, index) => loadPage(first.items.length + index * pageSize)
+    )
+  );
+  return [...first.items, ...pages.flatMap((page) => page.items)];
+}
+
+async function loadAllNotifications(customerId: string): Promise<NotificationRecord[]> {
+  const client = createHmsClient();
+  const pageSize = 100;
+  const first = await client.listNotifications({ customerId, limit: pageSize });
+  const pages = await Promise.all(
+    Array.from(
+      { length: Math.ceil(Math.max(0, first.total - first.items.length) / pageSize) },
+      (_, index) => client.listNotifications({
+        customerId,
+        limit: pageSize,
+        offset: first.items.length + index * pageSize
+      })
+    )
+  );
+  return [...first.items, ...pages.flatMap((page) => page.items)];
 }
 
 export function CustomerPortalWorkspace({
@@ -74,11 +118,11 @@ export function CustomerPortalWorkspace({
 
   useEffect(() => {
     let current = true;
-    void createHmsClient()
-      .listCustomers({ limit: 100, sort: "name" })
+    const client = createHmsClient();
+    void loadAllPages((offset) => client.listCustomers({ limit: 100, offset, sort: "name" }))
       .then((response) => {
         if (!current) return;
-        setCustomers(response.items);
+        setCustomers(response);
         setCustomersError(null);
       })
       .catch((loadError) => {
@@ -109,22 +153,20 @@ export function CustomerPortalWorkspace({
       const client = createHmsClient();
       const [assets, bookings, certificates, inspections, notifications, retests] =
         await Promise.all([
-          client.listAssets({ customerId: customer.id, limit: 100, sort: "asset_number" }),
-          client.listInspectionBookings({ customerId: customer.id, limit: 100 }),
-          client.listCertificates({ customerId: customer.id, limit: 100, sort: "-issued_at" }),
-          client.listInspections({ customerId: customer.id, limit: 100, sort: "-submitted_at" }),
-          client.listNotifications(),
-          client.listRetestSchedules({ customerId: customer.id, limit: 100, sort: "due_at" })
+          loadAllPages((offset) => client.listAssets({ customerId: customer.id, limit: 100, offset, sort: "asset_number" })),
+          loadAllPages((offset) => client.listInspectionBookings({ customerId: customer.id, limit: 100, offset })),
+          loadAllPages((offset) => client.listCertificates({ customerId: customer.id, limit: 100, offset, sort: "-issued_at" })),
+          loadAllPages((offset) => client.listInspections({ customerId: customer.id, limit: 100, offset, sort: "-submitted_at" })),
+          loadAllNotifications(customer.id),
+          loadAllPages((offset) => client.listRetestSchedules({ customerId: customer.id, limit: 100, offset, sort: "due_at" }))
         ]);
       setData({
-        assets: assets.items,
-        bookings: bookings.items,
-        certificates: certificates.items,
-        inspections: inspections.items,
-        notifications: notifications.items.filter(
-          (item) => item.customerId === customer.id
-        ),
-        retests: retests.items
+        assets,
+        bookings,
+        certificates,
+        inspections,
+        notifications,
+        retests
       });
       setStatus("ready");
     } catch (loadError) {
@@ -192,8 +234,8 @@ function Dashboard({ customer, data, onModuleChange }: { customer: CustomerRecor
   const due = data.retests.filter((item) => item.status === "DUE" || item.status === "OVERDUE");
   return <>
     <div className="customer-portal-metrics">
-      <Metric label="Assets" value={data.assets.length} />
-      <Metric label="In service" value={data.assets.filter((item) => item.lifecycleStatus === "IN_SERVICE").length} />
+      <Metric label="Assets" value={customer.metrics.assetCount} />
+      <Metric label="In service" value={customer.metrics.inServiceCount} />
       <Metric label="Retests requiring attention" value={due.length} />
       <Metric label="Open bookings" value={data.bookings.filter((item) => item.status === "PENDING_APPROVAL" || item.status === "APPROVED").length} />
     </div>
@@ -254,16 +296,17 @@ function Bookings({ customer, data, onChanged }: { customer: CustomerRecord; dat
   const [slots, setSlots] = useState<InspectionAvailabilitySlot[]>([]);
   const [quoteId, setQuoteId] = useState("");
   const [additionalInformation, setAdditionalInformation] = useState("");
-  const [rescheduleBookingId, setRescheduleBookingId] = useState<string | null>(null);
+  const [rescheduleBooking, setRescheduleBooking] = useState<InspectionBookingRecord | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const locationAssets = data.assets.filter((asset) => asset.location?.id === locationId);
+  const selectedLocation = customer.locations.find((location) => location.id === locationId) ?? null;
   const clearQuote = () => { setSlots([]); setQuoteId(""); };
   const changeLocation = (nextLocationId: string) => { setLocationId(nextLocationId); setAssetId(""); clearQuote(); };
 
   async function findAvailability() {
-    if (!locationId || !assetId || !localDate) return;
+    if (!locationId || !localDate || (!rescheduleBooking && !assetId)) return;
     setBusy(true); setMessage(null); clearQuote();
     try {
       setSlots(await createHmsClient().listInspectionAvailability({ customerId: customer.id, locationId, localDate }));
@@ -271,18 +314,27 @@ function Bookings({ customer, data, onChanged }: { customer: CustomerRecord; dat
   }
 
   async function submitBooking() {
-    if (!quoteId || !locationId || !assetId) return;
+    if (!quoteId || !locationId || (!rescheduleBooking && !assetId)) return;
     setBusy(true); setMessage(null);
     try {
-      if (rescheduleBookingId) {
-        await createHmsClient().requestInspectionBookingReschedule(rescheduleBookingId, { availabilityQuoteId: quoteId, reason: additionalInformation.trim() || null, inspectorUserId: null });
+      if (rescheduleBooking) {
+        await createHmsClient().requestInspectionBookingReschedule(rescheduleBooking.id, { availabilityQuoteId: quoteId, reason: additionalInformation.trim() || null, inspectorUserId: null });
         setMessage("Your reschedule request was sent for review.");
       } else {
         await createHmsClient().createInspectionBooking({ customerId: customer.id, locationId, assetIds: [assetId], availabilityQuoteId: quoteId, additionalInformation: additionalInformation.trim() || null });
         setMessage("Your inspection request was submitted for approval.");
       }
-      setAssetId(""); setLocalDate(""); setAdditionalInformation(""); setRescheduleBookingId(null); clearQuote(); await onChanged();
+      setAssetId(""); setLocalDate(""); setAdditionalInformation(""); setRescheduleBooking(null); clearQuote(); await onChanged();
     } catch (requestError) { setMessage(errorMessage(requestError)); } finally { setBusy(false); }
+  }
+
+  function startReschedule(booking: InspectionBookingRecord) {
+    setRescheduleBooking(booking);
+    setLocationId(booking.location.id);
+    setAssetId(booking.assets[0]?.id ?? "");
+    setLocalDate("");
+    setAdditionalInformation("");
+    clearQuote();
   }
 
   async function cancelBooking(booking: InspectionBookingRecord) {
@@ -292,19 +344,19 @@ function Bookings({ customer, data, onChanged }: { customer: CustomerRecord; dat
   }
 
   return <>
-    <section className="portal-panel"><h2>{rescheduleBookingId ? "Request a new appointment time" : "Request an inspection"}</h2><p>Select a location first. Changing organisation, location, asset, or date clears any previous availability quote.</p>
+    <section className="portal-panel"><h2>{rescheduleBooking ? "Request a new appointment time" : "Request an inspection"}</h2><p>{rescheduleBooking ? "The approved location and assets are fixed. Select a new date and time." : "Select a location first. Changing organisation, location, asset, or date clears any previous availability quote."}</p>
       <div className="portal-form-grid">
-        <label>Location<select aria-label="Booking location" value={locationId} onChange={(event) => changeLocation(event.target.value)}><option value="">Select a location</option>{customer.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-        <label>Asset<select aria-label="Booking asset" disabled={!locationId} value={assetId} onChange={(event) => { setAssetId(event.target.value); clearQuote(); }}><option value="">Select an asset</option>{locationAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.assetNumber}</option>)}</select></label>
+        <label>Location<select aria-label="Booking location" disabled={Boolean(rescheduleBooking)} value={locationId} onChange={(event) => changeLocation(event.target.value)}><option value="">Select a location</option>{customer.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+        <label>Asset<select aria-label="Booking asset" disabled={Boolean(rescheduleBooking) || !locationId} value={assetId} onChange={(event) => { setAssetId(event.target.value); clearQuote(); }}><option value="">Select an asset</option>{locationAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.assetNumber}</option>)}</select></label>
         <label>Preferred date<input aria-label="Preferred date" type="date" value={localDate} onChange={(event) => { setLocalDate(event.target.value); clearQuote(); }} /></label>
         <label>Notes<textarea value={additionalInformation} onChange={(event) => setAdditionalInformation(event.target.value)} /></label>
       </div>
-      <button disabled={busy || !locationId || !assetId || !localDate} type="button" onClick={() => void findAvailability()}>Find availability</button>
-      {slots.length > 0 ? <fieldset><legend>Select a time</legend>{slots.map((slot) => <label className="portal-slot" key={slot.quoteId}><input checked={quoteId === slot.quoteId} name="slot" type="radio" value={slot.quoteId} onChange={() => setQuoteId(slot.quoteId)} />{formatDateTime(slot.startsAt)} to {formatDateTime(slot.endsAt)}</label>)}</fieldset> : null}
-      <button disabled={busy || !quoteId} type="button" onClick={() => void submitBooking()}>{rescheduleBookingId ? "Request reschedule" : "Submit booking request"}</button>
-      {rescheduleBookingId ? <button disabled={busy} type="button" onClick={() => { setRescheduleBookingId(null); setLocationId(""); setAssetId(""); setLocalDate(""); clearQuote(); }}>Cancel reschedule</button> : null}
+      <button disabled={busy || !locationId || (!rescheduleBooking && !assetId) || !localDate} type="button" onClick={() => void findAvailability()}>Find availability</button>
+      {slots.length > 0 ? <fieldset><legend>Select a time</legend>{slots.map((slot) => <label className="portal-slot" key={slot.quoteId}><input checked={quoteId === slot.quoteId} name="slot" type="radio" value={slot.quoteId} onChange={() => setQuoteId(slot.quoteId)} />{formatDateTime(slot.startsAt, selectedLocation?.schedulingTimezone)} to {formatDateTime(slot.endsAt, selectedLocation?.schedulingTimezone)}</label>)}</fieldset> : null}
+      <button disabled={busy || !quoteId} type="button" onClick={() => void submitBooking()}>{rescheduleBooking ? "Request reschedule" : "Submit booking request"}</button>
+      {rescheduleBooking ? <button disabled={busy} type="button" onClick={() => { setRescheduleBooking(null); setLocationId(""); setAssetId(""); setLocalDate(""); clearQuote(); }}>Cancel reschedule</button> : null}
       {message ? <p role="status">{message}</p> : null}
     </section>
-    <section className="portal-panel"><h2>Bookings</h2>{data.bookings.length === 0 ? <p>No booking requests for this organisation.</p> : <ul className="portal-list">{data.bookings.map((booking) => <li key={booking.id}><strong>{booking.location.name} · {booking.status}</strong><span>{formatDateTime(booking.scheduledAt)} · {booking.assets.map((asset) => asset.assetNumber).join(", ")}</span>{booking.rejectionReason ? <span>Reason: {booking.rejectionReason}</span> : null}{booking.status === "PENDING_APPROVAL" || booking.status === "APPROVED" ? <span className="portal-actions"><button disabled={busy} type="button" onClick={() => { setRescheduleBookingId(booking.id); changeLocation(booking.location.id); setAssetId(booking.assets[0]?.id ?? ""); setLocalDate(""); }}>Request reschedule</button><button disabled={busy} type="button" onClick={() => void cancelBooking(booking)}>Cancel booking</button></span> : null}{booking.changeRequests.some((request) => request.status === "PENDING_CUSTOMER_CONFIRMATION") ? <button disabled={busy} type="button" onClick={async () => { const request = booking.changeRequests.find((item) => item.status === "PENDING_CUSTOMER_CONFIRMATION"); if (!request) return; setBusy(true); try { await createHmsClient().confirmInspectionBookingReschedule(request.id); await onChanged(); } catch (requestError) { setMessage(errorMessage(requestError)); } finally { setBusy(false); } }}>Confirm proposed reschedule</button> : null}</li>)}</ul>}</section>
+    <section className="portal-panel"><h2>Bookings</h2>{data.bookings.length === 0 ? <p>No booking requests for this organisation.</p> : <ul className="portal-list">{data.bookings.map((booking) => <li key={booking.id}><strong>{booking.location.name} · {booking.status}</strong><span>{booking.appointment ? formatRecordedAppointment(booking.appointment) : formatDateTime(booking.scheduledAt, booking.location.schedulingTimezone)} · {booking.assets.map((asset) => asset.assetNumber).join(", ")}</span>{booking.rejectionReason ? <span>Reason: {booking.rejectionReason}</span> : null}{booking.status === "PENDING_APPROVAL" || booking.status === "APPROVED" ? <span className="portal-actions">{booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED" ? <button disabled={busy} type="button" onClick={() => startReschedule(booking)}>Request reschedule</button> : null}<button disabled={busy} type="button" onClick={() => void cancelBooking(booking)}>Cancel booking</button></span> : null}{booking.changeRequests.some((request) => request.status === "PENDING_CUSTOMER_CONFIRMATION") ? <button disabled={busy} type="button" onClick={async () => { const request = booking.changeRequests.find((item) => item.status === "PENDING_CUSTOMER_CONFIRMATION"); if (!request) return; setBusy(true); try { await createHmsClient().confirmInspectionBookingReschedule(request.id); await onChanged(); } catch (requestError) { setMessage(errorMessage(requestError)); } finally { setBusy(false); } }}>Confirm proposed reschedule</button> : null}</li>)}</ul>}</section>
   </>;
 }

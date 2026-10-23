@@ -575,6 +575,12 @@ export interface InspectionAppointmentRecord {
   startsAt: string;
   endsAt: string;
   revisionNumber: number;
+  timezoneId: string;
+  localStartSnapshot: string;
+  localEndSnapshot: string;
+  utcOffsetStart: string;
+  utcOffsetEnd: string;
+  tzdataVersion: string;
 }
 
 export interface InspectionAvailabilitySlot {

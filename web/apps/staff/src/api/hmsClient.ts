@@ -384,6 +384,12 @@ interface ApiInspectionBooking {
     starts_at: string;
     ends_at: string;
     revision_number: number;
+    timezone_id: string;
+    local_start_snapshot: string;
+    local_end_snapshot: string;
+    utc_offset_start: string;
+    utc_offset_end: string;
+    tzdata_version: string;
   } | null;
   change_requests: ApiInspectionBookingChangeRequest[];
 }
@@ -582,6 +588,12 @@ interface ApiAuthSession {
 interface ListCustomerOptions {
   search?: string;
   sort?: string;
+  limit?: number;
+  offset?: number;
+}
+
+interface ListNotificationOptions {
+  customerId?: string;
   limit?: number;
   offset?: number;
 }
@@ -1096,7 +1108,13 @@ function toInspectionBooking(booking: ApiInspectionBooking): InspectionBookingRe
           status: booking.appointment.status,
           startsAt: booking.appointment.starts_at,
           endsAt: booking.appointment.ends_at,
-          revisionNumber: booking.appointment.revision_number
+          revisionNumber: booking.appointment.revision_number,
+          timezoneId: booking.appointment.timezone_id,
+          localStartSnapshot: booking.appointment.local_start_snapshot,
+          localEndSnapshot: booking.appointment.local_end_snapshot,
+          utcOffsetStart: booking.appointment.utc_offset_start,
+          utcOffsetEnd: booking.appointment.utc_offset_end,
+          tzdataVersion: booking.appointment.tzdata_version
         }
       : null,
     changeRequests: (booking.change_requests ?? []).map(toInspectionBookingChangeRequest)
@@ -1529,10 +1547,13 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return response.data.dispatched;
     },
 
-    async listNotifications(): Promise<NotificationFeedResult> {
+    async listNotifications(
+      listOptions: ListNotificationOptions = {}
+    ): Promise<NotificationFeedResult> {
       const response = await request<ApiNotificationList>("/api/v1/notifications/me", {}, {
-        limit: 12,
-        offset: 0
+        limit: listOptions.limit ?? 12,
+        offset: listOptions.offset ?? 0,
+        customer_id: listOptions.customerId
       });
       return {
         total: response.data.total,

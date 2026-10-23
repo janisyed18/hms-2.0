@@ -689,9 +689,10 @@ async def _replace_customer_accesses(
     *,
     actor_id: str,
 ) -> None:
+    accesses = {access.customer_id: access for access in user.customer_accesses}
     active_accesses = {
-        access.customer_id: access
-        for access in user.customer_accesses
+        customer_id: access
+        for customer_id, access in accesses.items()
         if access.deleted_at is None
     }
     desired = set(customer_ids)
@@ -706,13 +707,25 @@ async def _replace_customer_accesses(
     for customer_id in customer_ids:
         if customer_id in active_accesses:
             continue
-        access = UserCustomerAccess(user_id=user.id, customer_id=customer_id)
-        user.customer_accesses.append(access)
-        await record_create(
+        revived_access = accesses.get(customer_id)
+        if revived_access is None:
+            access = UserCustomerAccess(user_id=user.id, customer_id=customer_id)
+            user.customer_accesses.append(access)
+            await record_create(
+                session,
+                access,
+                actor_id=actor_id,
+                action="user.customer_access_granted",
+            )
+            continue
+        before = revived_access.to_audit_dict()
+        revived_access.deleted_at = None
+        await record_update(
             session,
-            access,
+            revived_access,
             actor_id=actor_id,
             action="user.customer_access_granted",
+            before=before,
         )
 
 
