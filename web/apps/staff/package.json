@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "test": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:scheduling": "playwright test scheduling-release.spec.ts"
+    "test:e2e:scheduling": "playwright test scheduling-release.spec.ts scheduling-calendar.spec.ts"
   },
   "dependencies": {
     "@zxcvbn-ts/core": "^4.1.2",

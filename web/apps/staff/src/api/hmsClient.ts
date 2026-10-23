@@ -30,6 +30,7 @@ import type {
   InspectionBookingCreateValues,
   InspectionBookingRecord,
   InspectionBookingStatus,
+  InspectionScheduleResult,
   InspectionAvailabilitySlot,
   InspectionRecord,
   InspectionStatus,
@@ -637,8 +638,27 @@ interface ListInspectionOptions {
 interface ListInspectionBookingOptions {
   status?: InspectionBookingStatus;
   customerId?: string;
+  hasPendingChange?: boolean;
   limit?: number;
   offset?: number;
+}
+
+export interface InspectionScheduleOptions {
+  start: Date;
+  end: Date;
+  customerId?: string;
+  locationId?: string;
+  inspectorUserId?: string;
+  status?: InspectionBookingStatus;
+  unassigned?: boolean;
+  limit?: number;
+}
+
+interface ApiInspectionSchedule {
+  total: number;
+  limit: number;
+  items: ApiInspectionBooking[];
+  inspectors: Array<{ id: string; display_name: string }>;
 }
 
 interface InspectionAvailabilityOptions {
@@ -1797,13 +1817,43 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           limit: listOptions.limit ?? 50,
           offset: listOptions.offset ?? 0,
           status: listOptions.status,
-          customer_id: listOptions.customerId
+          customer_id: listOptions.customerId,
+          has_pending_change: listOptions.hasPendingChange ? "true" : undefined
         }
       );
       return {
         total: response.data.total,
         etag: response.etag,
         items: response.data.items.map(toInspectionBooking)
+      };
+    },
+
+    /** Bookings overlapping `[start, end)`: the bounded read behind the calendar. */
+    async listInspectionSchedule(
+      scheduleOptions: InspectionScheduleOptions
+    ): Promise<InspectionScheduleResult> {
+      const response = await request<ApiInspectionSchedule>(
+        "/api/v1/inspection-schedule",
+        {},
+        {
+          start: scheduleOptions.start.toISOString(),
+          end: scheduleOptions.end.toISOString(),
+          customer_id: scheduleOptions.customerId,
+          location_id: scheduleOptions.locationId,
+          inspector_user_id: scheduleOptions.inspectorUserId,
+          status: scheduleOptions.status,
+          unassigned: scheduleOptions.unassigned ? "true" : undefined,
+          limit: scheduleOptions.limit ?? 500
+        }
+      );
+      return {
+        total: response.data.total,
+        limit: response.data.limit,
+        items: response.data.items.map(toInspectionBooking),
+        inspectors: response.data.inspectors.map((inspector) => ({
+          id: inspector.id,
+          displayName: inspector.display_name
+        }))
       };
     },
 

@@ -46,6 +46,11 @@ const InspectionsWorkspace = lazy(() =>
     default: InspectionsWorkspace
   }))
 );
+const SchedulingWorkspace = lazy(() =>
+  import("./components/SchedulingWorkspace").then(({ SchedulingWorkspace }) => ({
+    default: SchedulingWorkspace
+  }))
+);
 const OperationalWorkspace = lazy(() =>
   import("./components/OperationalWorkspace").then(({ OperationalWorkspace }) => ({
     default: OperationalWorkspace
@@ -109,6 +114,10 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   reference: {
     title: "Reference Data",
     description: "Manage controlled standards and lookup data"
+  },
+  scheduling: {
+    title: "Scheduling",
+    description: "Dispatch calendar for inspection visits, inspectors and booking requests"
   },
   inspections: {
     title: "Inspection Management",
@@ -186,6 +195,7 @@ const allModules: AppModule[] = [
   "assets",
   "products",
   "reference",
+  "scheduling",
   "inspections",
   "certificates",
   "retest",
@@ -198,7 +208,7 @@ const allModules: AppModule[] = [
 const roleModules: Record<StaffRole, AppModule[]> = {
   SUPER_ADMIN: allModules,
   HMS_ADMIN: allModules.filter((module) => module !== "sync"),
-  INSPECTOR: ["dashboard", "customers", "assets", "inspections", "retest", "sync"],
+  INSPECTOR: ["dashboard", "customers", "assets", "scheduling", "inspections", "retest", "sync"],
   ASSEMBLY: ["dashboard", "customers", "assets", "retest"],
   REVIEWER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest"],
   CUSTOMER_USER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest"]
@@ -500,6 +510,14 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                 ) : null}
                 {renderedActiveModule === "reference" ? (
                   <ReferenceWorkspace canManage={hasPermission(session, "reference:admin")} />
+                ) : null}
+                {renderedActiveModule === "scheduling" ? (
+                  <SchedulingWorkspace
+                    canBook={hasPermission(session, "inspection:book")}
+                    canApproveBookings={session.roles.some((role) =>
+                      role === "SUPER_ADMIN" || role === "HMS_ADMIN"
+                    )}
+                  />
                 ) : null}
                 {renderedActiveModule === "inspections" ? (
                   <InspectionsWorkspace

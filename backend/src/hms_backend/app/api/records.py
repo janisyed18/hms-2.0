@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import tzdata  # type: ignore[import-untyped]
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from sqlalchemy import desc, false, func, or_, select
+from sqlalchemy import and_, desc, false, func, or_, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -69,6 +69,7 @@ from hms_backend.app.api.schemas import (
     InspectionListResponse,
     InspectionRead,
     InspectionRejectRequest,
+    InspectionScheduleResponse,
     InspectionUpdate,
     LocationSummary,
     LookupListResponse,
@@ -87,6 +88,7 @@ from hms_backend.app.api.schemas import (
     RetestScheduleSummary,
     RetestScheduleUpdate,
     RetestScheduleWrite,
+    ScheduleInspectorRead,
     StandardCreate,
     StandardUpdate,
 )
@@ -1909,6 +1911,7 @@ async def list_inspection_bookings(
     principal: PrincipalDep,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     customer_id: str | None = None,
+    has_pending_change: bool = False,
     limit: LimitParam = 50,
     offset: OffsetParam = 0,
 ) -> InspectionBookingListResponse:
@@ -1922,6 +1925,23 @@ async def list_inspection_bookings(
         statement = statement.where(InspectionBooking.status == status_filter)
     if customer_id:
         statement = statement.where(InspectionBooking.customer_id == customer_id)
+    if has_pending_change:
+        # The Staff "pending requests" queue: bookings with a reschedule awaiting
+        # a decision, wherever in time they fall.
+        statement = statement.where(
+            select(InspectionAppointmentChangeRequest.id)
+            .where(
+                InspectionAppointmentChangeRequest.booking_id == InspectionBooking.id,
+                InspectionAppointmentChangeRequest.deleted_at.is_(None),
+                InspectionAppointmentChangeRequest.status.in_(
+                    (
+                        InspectionChangeRequestStatus.PENDING_ADMIN_APPROVAL.value,
+                        InspectionChangeRequestStatus.PENDING_CUSTOMER_CONFIRMATION.value,
+                    )
+                ),
+            )
+            .exists()
+        )
     total = await _count(session, statement)
     bookings = (
         await session.scalars(
@@ -1938,6 +1958,119 @@ async def list_inspection_bookings(
         offset=offset,
         items=[_inspection_booking_read(booking) for booking in bookings],
     )
+
+
+# Six whole local weeks (the Month view) can be 42 days plus the hour a daylight-saving
+# change adds, so the cap leaves a full day of slack.
+MAX_SCHEDULE_RANGE = timedelta(days=43)
+# The longest a visit can start before the range and still overlap it.
+SCHEDULE_LOOKBACK = timedelta(days=2)
+
+
+@router.get("/inspection-schedule", response_model=InspectionScheduleResponse)
+async def list_inspection_schedule(
+    session: SessionDep,
+    principal: PrincipalDep,
+    start: datetime,
+    end: datetime,
+    customer_id: str | None = None,
+    location_id: str | None = None,
+    inspector_user_id: str | None = None,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    unassigned: bool = False,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 500,
+) -> InspectionScheduleResponse:
+    """Bookings whose visit overlaps ``[start, end)``, for the Staff calendar.
+
+    Read-only, and visible to exactly the same people as ``/inspection-bookings``
+    (customers see their own, inspectors their assigned work). The range is mandatory
+    and capped so a calendar view can never ask for the whole history. A booking's
+    ``scheduled_at``/``scheduled_end_at`` always hold its *current* slot (rescheduling
+    rewrites them), so the range is a plain indexed-column comparison; the persisted
+    appointment snapshot (local time, zone, offset) rides along untouched.
+    """
+    _require_asset_read(principal)
+    if start.tzinfo is None or end.tzinfo is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="start and end must include a time zone offset",
+        )
+    start_utc, end_utc = _as_utc(start), _as_utc(end)
+    if end_utc <= start_utc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="end must be after start",
+        )
+    if end_utc - start_utc > MAX_SCHEDULE_RANGE:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The schedule range cannot exceed 43 days",
+        )
+    statement = _apply_customer_scope(_inspection_booking_statement(), principal)
+    if is_inspector_scoped(principal):
+        statement = statement.where(
+            InspectionBooking.id.in_(assigned_bookings(principal))
+        )
+    statement = statement.where(
+        InspectionBooking.scheduled_at < end_utc,
+        # Redundant for correctness (no visit lasts two days), but it gives the
+        # ``scheduled_at`` index a lower bound, so the scan stays inside the range.
+        InspectionBooking.scheduled_at >= start_utc - SCHEDULE_LOOKBACK,
+        or_(
+            InspectionBooking.scheduled_end_at > start_utc,
+            and_(
+                InspectionBooking.scheduled_end_at.is_(None),
+                InspectionBooking.scheduled_at >= start_utc,
+            ),
+        ),
+    )
+    if customer_id:
+        statement = statement.where(InspectionBooking.customer_id == customer_id)
+    if location_id:
+        statement = statement.where(InspectionBooking.location_id == location_id)
+    if inspector_user_id:
+        statement = statement.where(
+            InspectionBooking.inspector_user_id == inspector_user_id
+        )
+    if unassigned:
+        statement = statement.where(InspectionBooking.inspector_user_id.is_(None))
+    if status_filter:
+        statement = statement.where(InspectionBooking.status == status_filter)
+    total = await _count(session, statement)
+    bookings = (
+        await session.scalars(
+            statement.order_by(
+                InspectionBooking.scheduled_at, InspectionBooking.id
+            ).limit(limit)
+        )
+    ).all()
+    inspector_ids = {
+        booking.inspector_user_id for booking in bookings if booking.inspector_user_id
+    }
+    users = (
+        (await session.scalars(select(User).where(User.id.in_(inspector_ids)))).all()
+        if inspector_ids
+        else []
+    )
+    return InspectionScheduleResponse(
+        start=start_utc,
+        end=end_utc,
+        total=total,
+        limit=limit,
+        items=[_inspection_booking_read(booking) for booking in bookings],
+        inspectors=sorted(
+            (
+                ScheduleInspectorRead(id=user.id, display_name=_person_name(user))
+                for user in users
+            ),
+            key=lambda inspector: inspector.display_name.lower(),
+        ),
+    )
+
+
+def _person_name(user: User) -> str:
+    name = " ".join(part for part in (user.first_name, user.last_name) if part)
+    return name or user.email
 
 
 @router.get(

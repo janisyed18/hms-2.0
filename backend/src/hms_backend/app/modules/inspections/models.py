@@ -76,7 +76,7 @@ class InspectionBooking(SyncableMixin, Base):
         String(36), ForeignKey("customer_locations.id"), nullable=False, index=True
     )
     scheduled_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+        DateTime(timezone=True), nullable=False, index=True
     )
     scheduled_end_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
