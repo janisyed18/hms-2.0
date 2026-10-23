@@ -337,8 +337,8 @@ Three modes, selected by `AUTH_MODE`:
 - **`dev`** (default, explicit `ENVIRONMENT=local|test` only) — `X-HMS-User-Id`
   resolves a persisted user (its DB role is authoritative); `X-HMS-Roles` is a
   fallback for unseeded ids.
-- **`bearer`** — locally issued **HS256** access tokens from the Argon2
-  **password login** below (legacy; disabled unless `AUTH_PASSWORD_LOGIN_ENABLED=true`). Verifies signature, issuer, audience and expiry.
+- **`bearer`** — locally issued **HS256** access tokens from the browser sign-in
+  (`/auth/browser/*`). Verifies signature, issuer, audience and expiry.
 - **`oidc`** — real **OIDC** tokens from an external IdP (Keycloak / OCI Identity
   Domains). Tokens are **RS256/ES256** and verified against the provider's
   **JWKS** (asymmetric; the server holds no signing secret), checking `iss`,
@@ -350,33 +350,24 @@ auth is only permitted when `ENVIRONMENT` is explicitly `local` or `test`; any o
 value, **including an unset `ENVIRONMENT`**, is treated as a deployment and the API
 refuses to start with `AUTH_MODE=dev`, `AUTH_DEV_HEADERS_ENABLED=true`,
 `AUTH_DEV_ALLOW_ROLE_FALLBACK=true`, a missing bearer signing secret, or missing OIDC
-issuer/audience. The legacy `POST /auth/login` is **disabled by default**
-(`AUTH_PASSWORD_LOGIN_ENABLED=false`); it has no lockout or MFA, cannot be enabled
-together with `AUTH_MFA_REQUIRED=true`, and browser sign-in (`/auth/browser/*`) is
-the supported flow.
+issuer/audience. The legacy password-only `POST /auth/login` (no lockout, no MFA) has
+been **removed**; browser sign-in (`/auth/browser/*`) is the only sign-in. A leftover
+`AUTH_PASSWORD_LOGIN_ENABLED` in the process environment is ignored; delete it from a
+local `.env`, where an unknown key stops the API from starting.
 
-Passwords are **Argon2**-hashed and never returned in any response. Legacy login flow (requires `AUTH_PASSWORD_LOGIN_ENABLED=true`):
+Passwords are **Argon2**-hashed and never returned in any response. Sign in with the
+browser flow (`/auth/browser/login`, `/auth/browser/refresh`, `/auth/browser/logout`);
+its access tokens work as bearer credentials:
 
 ```bash
-# set an admin's password first (admin only), then log in
-curl -X POST -H "X-HMS-User-Id: <admin-oidc-sub>" -H "Content-Type: application/json" \
-  -d '{"new_password":"a-strong-passphrase"}' \
-  http://127.0.0.1:8000/api/v1/auth/users/<USER_ID>/password
-
-TOKEN=$(curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"a-strong-passphrase"}' \
-  http://127.0.0.1:8000/api/v1/auth/login | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
-
-# with AUTH_MODE=bearer, use it as a bearer credential
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/v1/auth/me
+curl -H "Authorization: Bearer $ACCESS_TOKEN" http://127.0.0.1:8000/api/v1/auth/me
 ```
 
-Endpoints: `POST /auth/login`, `POST /auth/password` (change own, verifies
-current), `POST /auth/users/{id}/password` (admin reset), `GET /auth/me`.
+Endpoints: `POST /auth/password` (change own, verifies current),
+`POST /auth/users/{id}/password` (admin reset), `GET /auth/me`.
 
 Settings: `AUTH_MODE`, `AUTH_BEARER_HMAC_SECRET`, `AUTH_BEARER_ISSUER`,
-`AUTH_BEARER_AUDIENCE`, `AUTH_ACCESS_TOKEN_TTL_SECONDS`,
-`AUTH_PASSWORD_LOGIN_ENABLED`; OIDC: `AUTH_OIDC_ISSUER`, `AUTH_OIDC_AUDIENCE`,
+`AUTH_BEARER_AUDIENCE`; OIDC: `AUTH_OIDC_ISSUER`, `AUTH_OIDC_AUDIENCE`,
 `AUTH_OIDC_JWKS_URL` (optional; discovered from the issuer otherwise),
 `AUTH_OIDC_JIT_PROVISIONING`.
 

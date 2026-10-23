@@ -6,13 +6,19 @@ import type {
   SyncChangesResponse,
   SyncPushResponse,
   SyncRecordRead,
+  SyncWorkContext,
   WorkItem,
   WorkUrgency
 } from "../domain/types";
 
+// App 0.2.0 is the first release that pages the bootstrap. The protocol header, not
+// the app version string, is what the server uses to tell it from an older client.
+export const SYNC_PROTOCOL_VERSION = 2;
+
 const HMS_DEVICE_HEADERS = {
   "X-HMS-Device-Platform": "web",
-  "X-HMS-App-Version": "0.1.0"
+  "X-HMS-App-Version": "0.2.0",
+  "X-HMS-Sync-Protocol": String(SYNC_PROTOCOL_VERSION)
 };
 
 type FetchLike = typeof fetch;
@@ -36,6 +42,30 @@ export class SyncAuthenticationError extends Error {
   constructor(message = "Your session has expired. Please sign in again.") {
     super(message);
     this.name = "SyncAuthenticationError";
+  }
+}
+
+/** A non-2xx sync response, with the status and (when JSON) the error code. */
+export class SyncRequestError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(status: number, statusText: string, body: string) {
+    super(`Sync request failed with ${status}: ${body || statusText}`);
+    this.name = "SyncRequestError";
+    this.status = status;
+    this.code = errorCode(body);
+  }
+}
+
+function errorCode(body: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (!isRecord(parsed)) return null;
+    const detail = isRecord(parsed.detail) ? parsed.detail : parsed;
+    return typeof detail.code === "string" ? detail.code : null;
+  } catch {
+    return null;
   }
 }
 
@@ -372,13 +402,20 @@ async function requestJson<TResponse>(
       auth.onAuthFailure?.();
       throw new SyncAuthenticationError();
     }
-    const detail = await response.text();
-    throw new Error(
-      `Sync request failed with ${response.status}: ${detail || response.statusText}`
+    throw new SyncRequestError(
+      response.status,
+      response.statusText,
+      await response.text()
     );
   }
 
   return (await response.json()) as TResponse;
+}
+
+class RestartBootstrap extends Error {}
+
+function isInvalidPageToken(error: unknown): boolean {
+  return error instanceof SyncRequestError && error.code === "SYNC_PAGE_TOKEN_INVALID";
 }
 
 function toApiOperation(operation: OutboxOperation) {
@@ -582,6 +619,57 @@ export function applySyncChangesToRecords(
   });
 }
 
+const MAX_BOOTSTRAP_RESTARTS = 3;
+const CHANGES_PAGE_SIZE = 500;
+
+/**
+ * A bootstrap in flight, kept in memory so a dropped connection resumes at the page
+ * it was on instead of page one. It is scoped to one user, device and protocol; a
+ * different user can never read it, and it is discarded on sign-out. Nothing here is
+ * the offline dataset: that is only replaced by a *finished* bootstrap.
+ */
+interface BootstrapProgress {
+  snapshot: number;
+  nextToken: string | null;
+  pagesComplete: boolean;
+  changesCursor: number;
+  records: SyncRecordRead[];
+  workContexts: SyncWorkContext[];
+  device: SyncBootstrapResponse["device"] | null;
+  run: number;
+}
+
+const bootstrapProgress = new Map<string, BootstrapProgress>();
+let bootstrapRuns = 0;
+
+function progressKey(userId: string | undefined, deviceId: string): string {
+  return JSON.stringify([userId ?? "", deviceId, SYNC_PROTOCOL_VERSION]);
+}
+
+/** Forget partial bootstrap state: on sign-out, and whenever the user changes. */
+export function discardBootstrapProgress(userId?: string): void {
+  for (const key of [...bootstrapProgress.keys()]) {
+    const [owner] = JSON.parse(key) as [string];
+    if (userId === undefined || owner === (userId ?? "")) {
+      bootstrapProgress.delete(key);
+    }
+  }
+}
+
+export class BootstrapSupersededError extends Error {
+  constructor() {
+    super("Assignment refresh was superseded");
+    this.name = "BootstrapSupersededError";
+  }
+}
+
+export class SyncUpgradeRequiredError extends Error {
+  constructor() {
+    super("This version of the app is too old to load your assigned work. Update the app.");
+    this.name = "SyncUpgradeRequiredError";
+  }
+}
+
 export function createSyncClient(options: Partial<SyncClientOptions> = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const auth: SyncRuntimeAuth = {
@@ -595,14 +683,123 @@ export function createSyncClient(options: Partial<SyncClientOptions> = {}) {
     return requestJson<TResponse>(fetchImpl, path, init, auth, deviceId);
   }
 
+  function bootstrapPage(pageToken?: string) {
+    const query = pageToken ? `?page_token=${encodeURIComponent(pageToken)}` : "";
+    return request<SyncBootstrapResponse>(`/api/v1/sync/bootstrap${query}`);
+  }
+
+  function changesPage(since: number, limit?: number) {
+    const size = limit === undefined ? "" : `&limit=${limit}`;
+    return request<SyncChangesResponse>(`/api/v1/sync/changes?since=${since}${size}`);
+  }
+
   return {
-    bootstrap() {
-      return request<SyncBootstrapResponse>("/api/v1/sync/bootstrap");
+    bootstrapPage,
+
+    /**
+     * The whole assigned dataset: every bootstrap page, then the changes committed
+     * since the first page's watermark. Resolves only with a complete result; a
+     * network failure leaves the progress in place and the next call continues from
+     * the last page that arrived. The caller keeps its previous dataset until this
+     * resolves.
+     */
+    async bootstrap(): Promise<SyncBootstrapResponse> {
+      const key = progressKey(options.userId, deviceId);
+      const run = ++bootstrapRuns;
+      const guard = (progress: BootstrapProgress) => {
+        if (progress.run !== run || bootstrapProgress.get(key) !== progress) {
+          throw new BootstrapSupersededError();
+        }
+      };
+
+      for (let restart = 0; restart <= MAX_BOOTSTRAP_RESTARTS; restart += 1) {
+        let progress = bootstrapProgress.get(key);
+        if (progress) {
+          progress.run = run;
+        } else {
+          progress = {
+            snapshot: 0,
+            nextToken: null,
+            pagesComplete: false,
+            changesCursor: 0,
+            records: [],
+            workContexts: [],
+            device: null,
+            run
+          };
+          bootstrapProgress.set(key, progress);
+        }
+
+        try {
+          if (!progress.pagesComplete) {
+            for (;;) {
+              const token = progress.nextToken ?? undefined;
+              const page = await bootstrapPage(token);
+              guard(progress);
+              if (page.protocol_version !== SYNC_PROTOCOL_VERSION) {
+                // A server that predates paging answered with everything at once.
+                bootstrapProgress.delete(key);
+                return page;
+              }
+              if (token !== undefined && page.cursor !== progress.snapshot) {
+                throw new RestartBootstrap();
+              }
+              progress.snapshot = page.cursor;
+              progress.device = page.device;
+              progress.records.push(...page.records);
+              progress.workContexts.push(...(page.work_contexts ?? []));
+              if (page.has_more && page.next_page_token) {
+                progress.nextToken = page.next_page_token;
+                continue;
+              }
+              if (page.scope_changed) throw new RestartBootstrap();
+              progress.nextToken = null;
+              progress.pagesComplete = true;
+              progress.changesCursor = progress.snapshot;
+              break;
+            }
+          }
+
+          // Changes after the watermark are applied before anything is promoted. A
+          // change already present in the pages is applied again harmlessly.
+          for (;;) {
+            const batch = await changesPage(progress.changesCursor, CHANGES_PAGE_SIZE);
+            guard(progress);
+            progress.records = applySyncChangesToRecords(progress.records, batch.changes);
+            progress.changesCursor = batch.cursor;
+            if (!batch.has_more) break;
+          }
+          if (!progress.device) throw new RestartBootstrap();
+          bootstrapProgress.delete(key);
+          return {
+            device: progress.device,
+            cursor: progress.changesCursor,
+            has_more: false,
+            records: progress.records,
+            work_contexts: progress.workContexts
+          };
+        } catch (error) {
+          if (error instanceof RestartBootstrap || isInvalidPageToken(error)) {
+            bootstrapProgress.delete(key);
+            continue;
+          }
+          if (error instanceof SyncAuthenticationError) {
+            bootstrapProgress.delete(key);
+          }
+          if (error instanceof SyncRequestError && error.status === 426) {
+            bootstrapProgress.delete(key);
+            throw new SyncUpgradeRequiredError();
+          }
+          // Anything else (a dropped connection, a 5xx) keeps the progress so the
+          // next attempt resumes where this one stopped.
+          throw error;
+        }
+      }
+      bootstrapProgress.delete(key);
+      throw new Error("Assigned work kept changing while loading; try again.");
     },
 
-    changes(since: number) {
-      return request<SyncChangesResponse>(`/api/v1/sync/changes?since=${since}`);
-    },
+    changes: changesPage,
 
     push(operations: OutboxOperation[]) {
       return request<SyncPushResponse>("/api/v1/sync/push", {

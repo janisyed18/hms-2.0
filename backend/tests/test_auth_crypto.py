@@ -19,7 +19,6 @@ from hms_backend.app.core.auth import (
 from hms_backend.app.core.oidc import OidcValidationError, OidcValidator
 from hms_backend.app.core.passwords import (
     hash_password,
-    needs_rehash,
     verify_password,
 )
 
@@ -39,10 +38,6 @@ def test_password_hash_and_verify() -> None:
 
 def test_verify_rejects_garbage_hash() -> None:
     assert verify_password("not-a-hash", "whatever") is False
-
-
-def test_needs_rehash_false_for_current_params() -> None:
-    assert needs_rehash(hash_password("another-password")) is False
 
 
 # --- Local HS256 tokens ---------------------------------------------------------

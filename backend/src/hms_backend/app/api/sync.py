@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -12,6 +13,22 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
+from hms_backend.app.api.sync_bootstrap import (
+    DEFAULT_PAGE_SIZE,
+    LEGACY_BOOTSTRAP_MAX_ROWS,
+    MAX_PAGE_SIZE,
+    PROTOCOL_VERSION,
+    SYNC_MODELS,
+    UNSCOPED_ENTITIES,
+    PageToken,
+    PageTokenError,
+    PagingUnavailableError,
+    decode_page_token,
+    encode_page_token,
+    read_page,
+    scope_fingerprint,
+    work_context_select,
+)
 from hms_backend.app.api.sync_schemas import (
     SyncBootstrapResponse,
     SyncChangesResponse,
@@ -57,24 +74,13 @@ from hms_backend.app.modules.inspections.measurements import (
 from hms_backend.app.modules.inspections.models import (
     Inspection,
     InspectionAppointment,
-    InspectionAppointmentRevision,
     InspectionBooking,
-    InspectionBookingAsset,
     InspectionStatus,
     PressureTestResult,
 )
 from hms_backend.app.modules.inspections.workflow import mark_submitted
 from hms_backend.app.modules.notifications.enums import NotificationCategory
 from hms_backend.app.modules.notifications.outbox import emit_event
-from hms_backend.app.modules.products.models import Product, ProductPressureRating
-from hms_backend.app.modules.reference.models import (
-    AttachMethod,
-    Coupling,
-    CouplingAddOn,
-    Material,
-    NominalBore,
-    Standard,
-)
 from hms_backend.app.modules.scheduling.models import RetestSchedule
 
 router = APIRouter()
@@ -84,6 +90,7 @@ PrincipalDep = Annotated[Principal, Depends(get_current_principal)]
 DeviceIdHeader = Annotated[str | None, Header(alias="X-HMS-Device-Id")]
 DevicePlatformHeader = Annotated[str | None, Header(alias="X-HMS-Device-Platform")]
 AppVersionHeader = Annotated[str | None, Header(alias="X-HMS-App-Version")]
+SyncProtocolHeader = Annotated[str | None, Header(alias="X-HMS-Sync-Protocol")]
 LimitParam = Annotated[int, Query(ge=1, le=500)]
 
 
@@ -95,63 +102,16 @@ class SyncableRow(Protocol):
     def to_audit_dict(self) -> dict[str, object | None]: ...
 
 
-SYNC_MODELS: dict[str, type[Any]] = {
-    "AttachMethod": AttachMethod,
-    "Coupling": Coupling,
-    "CouplingAddOn": CouplingAddOn,
-    "Material": Material,
-    "NominalBore": NominalBore,
-    "Standard": Standard,
-    "Product": Product,
-    "ProductPressureRating": ProductPressureRating,
-    "Customer": Customer,
-    "CustomerLocation": CustomerLocation,
-    "CustomerContact": CustomerContact,
-    "Asset": Asset,
-    "RetestSchedule": RetestSchedule,
-    "Inspection": Inspection,
-    "PressureTestResult": PressureTestResult,
-    "Certificate": Certificate,
-}
-
-BOOTSTRAP_ENTITY_ORDER = [
-    "AttachMethod",
-    "Coupling",
-    "CouplingAddOn",
-    "Material",
-    "NominalBore",
-    "Standard",
-    "Product",
-    "ProductPressureRating",
-    "Customer",
-    "CustomerLocation",
-    "CustomerContact",
-    "Asset",
-    "RetestSchedule",
-    "Inspection",
-    "PressureTestResult",
-    "Certificate",
-]
-
-UNSCOPED_ENTITIES = {
-    "AttachMethod",
-    "Coupling",
-    "CouplingAddOn",
-    "Material",
-    "NominalBore",
-    "Standard",
-    "Product",
-    "ProductPressureRating",
-}
-
-
 @router.get("/sync/bootstrap", response_model=SyncBootstrapResponse)
 async def sync_bootstrap(
     session: SessionDep,
     principal: PrincipalDep,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+    page_token: Annotated[str | None, Query(max_length=2048)] = None,
     device_id: DeviceIdHeader = None,
     platform: DevicePlatformHeader = None,
     app_version: AppVersionHeader = None,
+    sync_protocol: SyncProtocolHeader = None,
 ) -> SyncBootstrapResponse:
     _require_sync_read(principal)
     device = await _upsert_sync_device(
@@ -161,16 +121,141 @@ async def sync_bootstrap(
         platform=platform,
         app_version=app_version,
     )
-    cursor = await _max_sync_seq(session)
-    records = await _bootstrap_records(session, principal)
-    work_contexts = await _inspector_work_contexts(session, principal)
+    if _client_protocol(sync_protocol) < PROTOCOL_VERSION:
+        response = await _legacy_bootstrap(session, principal, device)
+        await session.commit()
+        return response
+
+    assert device_id is not None  # _upsert_sync_device rejects a missing header
+    try:
+        token = (
+            None
+            if page_token is None
+            else decode_page_token(
+                page_token,
+                user_id=principal.persisted_user_id,
+                device_id=device_id,
+            )
+        )
+        if token is None:
+            # The watermark and the scope fingerprint are read before any page data,
+            # so a change after them is either in the pages or in the change feed.
+            snapshot = await _max_sync_seq(session)
+            fingerprint = await scope_fingerprint(session, principal)
+            section, after = 0, None
+        else:
+            snapshot, fingerprint = token.snapshot, token.fingerprint
+            section, after = token.section, token.key
+        page = await read_page(
+            session, principal, section=section, after=after, budget=limit
+        )
+        next_token = None
+        scope_changed = False
+        if page.next_position is None:
+            scope_changed = fingerprint != await scope_fingerprint(session, principal)
+        else:
+            next_token = encode_page_token(
+                PageToken(
+                    snapshot=snapshot,
+                    section=page.next_position[0],
+                    key=page.next_position[1],
+                    user_id=principal.persisted_user_id,
+                    device_id=device_id,
+                    fingerprint=fingerprint,
+                    issued_at=int(time.time()),
+                )
+            )
+    except PageTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "SYNC_PAGE_TOKEN_INVALID", "message": str(exc)},
+        ) from exc
+    except PagingUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sync paging is not configured",
+        ) from exc
+    response = SyncBootstrapResponse(
+        device=_device_read(device),
+        cursor=snapshot,
+        has_more=next_token is not None,
+        records=[_bootstrap_record(name, row) for name, row in page.rows],
+        work_contexts=_context_models(page.contexts),
+        protocol_version=PROTOCOL_VERSION,
+        next_page_token=next_token,
+        page_size=limit,
+        scope_changed=scope_changed,
+    )
     await session.commit()
+    return response
+
+
+def _client_protocol(header: str | None) -> int:
+    if header is None:
+        return 1
+    try:
+        return int(header)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-HMS-Sync-Protocol must be a whole number",
+        ) from exc
+
+
+async def _legacy_bootstrap(
+    session: AsyncSession, principal: Principal, device: Device
+) -> SyncBootstrapResponse:
+    """The single-response shape for a client that predates paging (temporary).
+
+    Uses the same scoped keyset queries as the paged protocol and reads at most
+    ``LEGACY_BOOTSTRAP_MAX_ROWS`` items. A bigger visible dataset is refused outright:
+    a truncated success would silently hand the client an incomplete offline copy.
+    """
+    cursor = await _max_sync_seq(session)
+    page = await read_page(
+        session, principal, section=0, after=None, budget=LEGACY_BOOTSTRAP_MAX_ROWS
+    )
+    if page.next_position is not None:
+        raise HTTPException(
+            status_code=status.HTTP_426_UPGRADE_REQUIRED,
+            detail={
+                "code": "SYNC_CLIENT_UPGRADE_REQUIRED",
+                "message": (
+                    "Your assigned work is too large for this version of the app. "
+                    "Update the app to continue."
+                ),
+                "required_protocol": PROTOCOL_VERSION,
+            },
+            headers={"Upgrade": f"hms-sync/{PROTOCOL_VERSION}"},
+        )
     return SyncBootstrapResponse(
         device=_device_read(device),
         cursor=cursor,
-        records=records,
-        work_contexts=work_contexts,
+        records=[_bootstrap_record(name, row) for name, row in page.rows],
+        work_contexts=_context_models(page.contexts),
     )
+
+
+def _bootstrap_record(entity_name: str, row: Any) -> SyncRecordRead:
+    sync_row = cast(SyncableRow, row)
+    return SyncRecordRead(
+        entity=entity_name,
+        entity_id=sync_row.id,
+        op="upsert",
+        version=sync_row.version,
+        payload=_row_payload(sync_row),
+    )
+
+
+def _context_models(
+    rows: Sequence[tuple[str, str, str, str, str]],
+) -> list[SyncWorkContext]:
+    return [
+        SyncWorkContext(
+            appointment_id=a, booking_id=b, revision_id=r, assignment_id=i, asset_id=s
+        )
+        for a, b, r, i, s in rows
+    ]
 
 
 @router.get("/sync/changes", response_model=SyncChangesResponse)
@@ -368,33 +453,6 @@ async def _max_sync_seq(session: AsyncSession) -> int:
     return await session.scalar(select(func.max(SyncChange.seq))) or 0
 
 
-async def _bootstrap_records(
-    session: AsyncSession,
-    principal: Principal,
-) -> list[SyncRecordRead]:
-    records: list[SyncRecordRead] = []
-    for entity_name in BOOTSTRAP_ENTITY_ORDER:
-        model = SYNC_MODELS[entity_name]
-        rows = (
-            await session.scalars(
-                select(model).where(model.deleted_at.is_(None)).order_by(model.id)
-            )
-        ).all()
-        for row in rows:
-            sync_row = cast(SyncableRow, row)
-            if await _row_visible(session, principal, entity_name, sync_row.id):
-                records.append(
-                    SyncRecordRead(
-                        entity=entity_name,
-                        entity_id=sync_row.id,
-                        op="upsert",
-                        version=sync_row.version,
-                        payload=_row_payload(sync_row),
-                    )
-                )
-    return records
-
-
 async def _visible_change_records(
     session: AsyncSession,
     principal: Principal,
@@ -586,41 +644,8 @@ async def _inspector_work_contexts(
 ) -> list[SyncWorkContext]:
     if not is_inspector_scoped(principal):
         return []
-    rows = (
-        await session.execute(
-            select(
-                InspectionAppointment.id,
-                InspectionAppointment.booking_id,
-                InspectionAppointmentRevision.id,
-                InspectionBookingAsset.id,
-                InspectionBookingAsset.asset_id,
-            )
-            .join(
-                InspectionAppointmentRevision,
-                InspectionAppointmentRevision.appointment_id
-                == InspectionAppointment.id,
-            )
-            .join(
-                InspectionBookingAsset,
-                InspectionBookingAsset.booking_id == InspectionAppointment.booking_id,
-            )
-            .where(
-                InspectionAppointment.booking_id.in_(assigned_bookings(principal)),
-                InspectionAppointmentRevision.revision_number
-                == InspectionAppointment.current_revision_number,
-                InspectionAppointmentRevision.inspector_user_id
-                == principal.assignment_user_id,
-                InspectionAppointmentRevision.deleted_at.is_(None),
-                InspectionBookingAsset.deleted_at.is_(None),
-            )
-        )
-    ).all()
-    return [
-        SyncWorkContext(
-            appointment_id=a, booking_id=b, revision_id=r, assignment_id=i, asset_id=s
-        )
-        for a, b, r, i, s in rows
-    ]
+    rows = (await session.execute(work_context_select(principal))).all()
+    return _context_models([(a, b, r, i, s) for a, b, r, i, s in rows])
 
 
 async def _apply_idempotent_operation(

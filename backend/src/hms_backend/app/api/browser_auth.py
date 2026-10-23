@@ -1,10 +1,10 @@
 """Staff browser authentication endpoints (Task 4).
 
-A separate contract from the native ``/auth/login`` bearer flow. Intermediate
-steps return only a short-lived opaque challenge; the access token is returned in
-the body (held in memory by the SPA) and the rotating refresh token is set as a
-strict ``HttpOnly`` cookie scoped to this router's path. Refresh and logout read
-only the cookie and enforce an allowed-origin check.
+The only sign-in. Intermediate steps return only a short-lived opaque challenge;
+the access token is returned in the body (held in memory by the SPA) and the
+rotating refresh token is set as a strict ``HttpOnly`` cookie scoped to this
+router's path. Refresh and logout read only the cookie and enforce an
+allowed-origin check.
 """
 
 from __future__ import annotations

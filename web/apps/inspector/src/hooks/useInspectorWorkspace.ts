@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createSyncClient,
+  discardBootstrapProgress,
   mapBootstrapToWorkItems
 } from "../api/syncClient";
 import type { SavedInspectionForm } from "../domain/inspectionForm";
@@ -220,6 +221,10 @@ export function useInspectorWorkspace(userId: string) {
     void refreshAssignments().catch(() => setLastSyncLabel("Unable to load assigned work"));
     return () => { refreshGeneration.current += 1; };
   }, [refreshAssignments]);
+
+  // A half-finished bootstrap is private to this user: drop it on sign-out or when
+  // another user takes over.
+  useEffect(() => () => discardBootstrapProgress(userId), [userId]);
 
   useEffect(() => {
     if (offlineExpiresAt === null) return;

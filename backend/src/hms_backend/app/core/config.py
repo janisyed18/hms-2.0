@@ -123,15 +123,10 @@ class Settings(BaseSettings):
     auth_dev_allow_role_fallback: bool = True
     auth_token_leeway_seconds: int = 60
 
-    # Local HS256 tokens (bearer mode + Argon2 login output).
+    # Local HS256 tokens (bearer mode, and the browser sign-in's access tokens).
     auth_bearer_hmac_secret: str = ""
     auth_bearer_issuer: str | None = None
     auth_bearer_audience: str | None = None
-    auth_access_token_ttl_seconds: int = 3600
-    # Legacy ``POST /auth/login``: issues a bearer token on password alone, with no
-    # lockout, MFA or password-policy enforcement. Off unless deliberately enabled;
-    # browser sign-in (``/auth/browser/*``) is the supported flow.
-    auth_password_login_enabled: bool = False
 
     # External OIDC provider (oidc mode). JWKS is discovered from the issuer's
     # ``/.well-known/openid-configuration`` unless a JWKS URL is given directly.
@@ -266,11 +261,6 @@ class Settings(BaseSettings):
                 errors.append("AUTH_OIDC_ISSUER is required")
             if not self.auth_oidc_audience:
                 errors.append("AUTH_OIDC_AUDIENCE is required")
-        if self.auth_password_login_enabled and self.auth_mfa_required:
-            errors.append(
-                "AUTH_PASSWORD_LOGIN_ENABLED must be false when AUTH_MFA_REQUIRED "
-                "is true (the legacy login bypasses MFA)"
-            )
         return errors
 
     def validate_auth_configuration(self) -> None:

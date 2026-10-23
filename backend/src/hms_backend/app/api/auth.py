@@ -1,12 +1,11 @@
 """Authentication endpoints.
 
 * ``/auth/me`` — the resolved principal (roles + permissions) for any auth mode.
-* ``/auth/login`` — Argon2 password login, returns a locally-issued HS256 access
-  token used as a bearer credential.
 * ``/auth/password`` — change your own password (verifying the current one).
 * ``/auth/users/{user_id}/password`` — admin reset of another user's password.
 
-Passwords are Argon2-hashed and never returned in any response.
+Passwords are Argon2-hashed and never returned in any response. Sign-in itself is the
+browser flow under ``/auth/browser`` (lockout, MFA, refresh sessions).
 """
 
 from __future__ import annotations
@@ -16,18 +15,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import ConfigDict, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
-from hms_backend.app.core.auth import TokenValidationError, encode_hs256_bearer_token
 from hms_backend.app.core.client_identity import client_address
 from hms_backend.app.core.config import settings
-from hms_backend.app.core.passwords import (
-    hash_password,
-    needs_rehash,
-    verify_password,
-)
+from hms_backend.app.core.passwords import hash_password, verify_password
 from hms_backend.app.core.rbac import (
     ROLE_PERMISSIONS,
     Permission,
@@ -48,7 +42,6 @@ PrincipalDep = Annotated[Principal, Depends(get_current_principal)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 _MIN_PASSWORD_LEN = 10
-_DUMMY_PASSWORD_HASH = hash_password("hms-dummy-password")
 
 
 class BaseModel(PydanticBaseModel):
@@ -61,17 +54,6 @@ class AuthMeResponse(BaseModel):
     permissions: list[str]
     customer_ids: list[str]
     auth_mode: str
-
-
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int
 
 
 class ChangePasswordRequest(BaseModel):
@@ -109,38 +91,6 @@ async def read_current_auth_session(principal: PrincipalDep) -> AuthMeResponse:
         customer_ids=sorted(principal.customer_ids),
         auth_mode=settings.auth_mode,
     )
-
-
-@router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, session: SessionDep) -> TokenResponse:
-    if not settings.auth_password_login_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Password login is disabled",
-        )
-    # Uniform failure to avoid leaking whether an email exists.
-    invalid = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid email or password",
-    )
-    user = await session.scalar(
-        select(User).where(
-            func.lower(User.email) == payload.email.strip().lower(),
-            User.deleted_at.is_(None),
-        )
-    )
-    if user is None or not user.password_hash:
-        # Still run a verify to keep timing roughly constant.
-        verify_password(_DUMMY_PASSWORD_HASH, payload.password)
-        raise invalid
-    if not verify_password(user.password_hash, payload.password):
-        raise invalid
-
-    if needs_rehash(user.password_hash):
-        user.password_hash = hash_password(payload.password)
-        await session.commit()
-
-    return _issue_token(user)
 
 
 @router.post("/password", response_model=MessageResponse)
@@ -218,25 +168,6 @@ async def confirm_password_reset(
         ) from exc
     await session.commit()
     return MessageResponse(message="Password reset. You can now log in.")
-
-
-def _issue_token(user: User) -> TokenResponse:
-    try:
-        token = encode_hs256_bearer_token(
-            subject=user.oidc_subject,
-            secret=settings.auth_bearer_hmac_secret,
-            issuer=settings.auth_bearer_issuer,
-            audience=settings.auth_bearer_audience,
-            ttl_seconds=settings.auth_access_token_ttl_seconds,
-        )
-    except TokenValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Token signing is not configured",
-        ) from exc
-    return TokenResponse(
-        access_token=token, expires_in=settings.auth_access_token_ttl_seconds
-    )
 
 
 async def _current_user(session: AsyncSession, principal: Principal) -> User:
