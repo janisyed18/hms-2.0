@@ -1,7 +1,7 @@
 {
   "name": "@bat-hms/inspector",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -24,6 +24,7 @@
     "@vitejs/plugin-react": "^5.0.0",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "fake-indexeddb": "^6.0.1",
     "jiti": "^2.7.0",
     "jsdom": "^26.1.0",
     "typescript": "^5.8.3",

@@ -254,8 +254,8 @@ capture are later phases.
 - **`dev`** (default, explicit `ENVIRONMENT=local|test` only) — `X-HMS-User-Id`
   resolves a persisted user (its DB role is authoritative); `X-HMS-Roles` is a
   fallback for unseeded ids.
-- **`bearer`** — locally issued HS256 tokens (browser sign-in, or the legacy
-  `POST /api/v1/auth/login` when `AUTH_PASSWORD_LOGIN_ENABLED=true`).
+- **`bearer`** — locally issued HS256 tokens (the browser sign-in under
+  `/api/v1/auth/browser/*`).
 - **`oidc`** — real OIDC tokens (RS256/ES256) verified against the provider's
   JWKS. Configure `AUTH_OIDC_ISSUER` / `AUTH_OIDC_AUDIENCE`.
 
@@ -264,10 +264,10 @@ auth is only permitted when `ENVIRONMENT` is explicitly `local` or `test`; any o
 value, **including an unset `ENVIRONMENT`**, is treated as a deployment and the API
 refuses to start with `AUTH_MODE=dev`, `AUTH_DEV_HEADERS_ENABLED=true`,
 `AUTH_DEV_ALLOW_ROLE_FALLBACK=true`, a missing bearer signing secret, or missing OIDC
-issuer/audience. The legacy `POST /auth/login` is **disabled by default**
-(`AUTH_PASSWORD_LOGIN_ENABLED=false`); it has no lockout or MFA, cannot be enabled
-together with `AUTH_MFA_REQUIRED=true`, and browser sign-in (`/auth/browser/*`) is
-the supported flow.
+issuer/audience. The legacy password-only `POST /auth/login` (no lockout, no MFA) has
+been **removed**; browser sign-in (`/auth/browser/*`) is the only sign-in. A leftover
+`AUTH_PASSWORD_LOGIN_ENABLED` in the process environment is ignored; delete it from a
+local `.env`, where an unknown key stops the API from starting.
 
 ```bash
 # dev-mode manual check

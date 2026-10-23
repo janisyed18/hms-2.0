@@ -43,6 +43,14 @@ class SyncBootstrapResponse(BaseModel):
     has_more: bool = False
     records: list[SyncRecordRead]
     work_contexts: list[SyncWorkContext] = Field(default_factory=list)
+    # Paged protocol (version 2) only. ``cursor`` is then the snapshot watermark
+    # pinned on the first page; the client reads ``/sync/changes`` from it once the
+    # last page is in. ``scope_changed`` on the last page means the caller's
+    # visibility moved during the traversal, so the partial copy must be discarded.
+    protocol_version: int = 1
+    next_page_token: str | None = None
+    page_size: int | None = None
+    scope_changed: bool = False
 
 
 class SyncChangesResponse(BaseModel):

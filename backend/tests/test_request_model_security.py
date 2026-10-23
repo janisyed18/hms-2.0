@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from hms_backend.app.api.auth import LoginRequest
 from hms_backend.app.api.browser_auth import BrowserLoginRequest
 from hms_backend.app.api.schemas import CustomerCreate
 from hms_backend.app.api.sync_schemas import SyncPushRequest
@@ -12,10 +11,6 @@ from hms_backend.app.api.sync_schemas import SyncPushRequest
 @pytest.mark.parametrize(
     ("model", "payload"),
     [
-        (
-            LoginRequest,
-            {"email": "user@example.test", "password": "password", "role": "ADMIN"},
-        ),
         (
             BrowserLoginRequest,
             {"email": "user@example.test", "password": "password", "role": "ADMIN"},

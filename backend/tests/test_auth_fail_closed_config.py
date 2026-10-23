@@ -173,29 +173,6 @@ def test_deployed_oidc_mode_requires_issuer_and_audience() -> None:
     assert complete.auth_config_errors() == []
 
 
-# -------------------------------------------------------- legacy password login
-
-
-def test_legacy_password_login_defaults_to_disabled() -> None:
-    assert configured().auth_password_login_enabled is False
-    assert deployed_bearer().auth_password_login_enabled is False
-
-
-def test_legacy_password_login_may_be_enabled_deliberately_without_mfa() -> None:
-    settings = deployed_bearer(auth_password_login_enabled=True)
-    assert settings.auth_config_errors() == []
-
-
-def test_legacy_password_login_cannot_coexist_with_required_mfa() -> None:
-    errors = deployed_bearer(
-        auth_password_login_enabled=True, auth_mfa_required=True
-    ).auth_config_errors()
-    assert errors == [
-        "AUTH_PASSWORD_LOGIN_ENABLED must be false when AUTH_MFA_REQUIRED is true "
-        "(the legacy login bypasses MFA)"
-    ]
-
-
 # ------------------------------------------------------------- startup wiring
 
 

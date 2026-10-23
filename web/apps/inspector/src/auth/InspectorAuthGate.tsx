@@ -18,6 +18,7 @@ import {
   type BrowserRecoveryCodesResponse
 } from "./browserAuthClient";
 import { configureSyncRuntimeAuth } from "../api/syncClient";
+import { clearUserSyncData } from "../offline/syncStore";
 
 export type { BrowserAuthClient } from "./browserAuthClient";
 
@@ -87,6 +88,9 @@ export function InspectorAuthGate({
   const client = useMemo(() => suppliedClient ?? createBrowserAuthClient(), [suppliedClient]);
   const [state, setState] = useState<AuthState>({ status: "signed-out" });
   const tokenRef = useRef<string | null>(null);
+  // Who was last signed in, so their saved assignments can be removed if someone else
+  // signs in on this browser. Only assigned-work data is cleared, never the outbox.
+  const lastUserRef = useRef<string | null>(null);
   const refreshInFlight = useRef<Promise<string> | null>(null);
 
   const signOut = useCallback((message?: string) => {
@@ -121,6 +125,10 @@ export function InspectorAuthGate({
         setState({ status: "access-denied" });
         return;
       }
+      if (lastUserRef.current && lastUserRef.current !== profile.user_id) {
+        void clearUserSyncData(lastUserRef.current).catch(() => undefined);
+      }
+      lastUserRef.current = profile.user_id;
       setState(
         recoveryCodes
           ? { status: "recovery-codes", userId: profile.user_id, recoveryCodes }
@@ -142,6 +150,7 @@ export function InspectorAuthGate({
     let active = true;
     if (initialAccessToken) {
       tokenRef.current = initialAccessToken;
+      lastUserRef.current = "test-inspector";
       setState({ status: "authenticated", userId: "test-inspector" });
       return () => {
         active = false;
@@ -232,9 +241,16 @@ export function InspectorAuthGate({
   }, [client]);
 
   const logout = useCallback(async () => {
+    const leaving = lastUserRef.current;
     try {
       await client.logout();
     } finally {
+      if (leaving) {
+        // An explicit sign-out removes this user's saved assignments and any
+        // half-downloaded bootstrap. Queued edits (the outbox) are left alone.
+        await clearUserSyncData(leaving).catch(() => undefined);
+        lastUserRef.current = null;
+      }
       signOut();
     }
   }, [client, signOut]);

@@ -5,6 +5,7 @@ import App from "../App";
 import type { BrowserAuthClient } from "../auth/browserAuthClient";
 import { mockBootstrapResponse } from "../data/mockSync";
 import { outboxStorageKey } from "../offline/outboxStore";
+import { defaultSyncStore, resetDefaultSyncStore } from "../offline/syncStore";
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>();
@@ -69,6 +70,7 @@ describe("Inspector app", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    resetDefaultSyncStore();
     vi.stubGlobal("localStorage", createMemoryStorage());
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
       new Response(JSON.stringify(mockBootstrapResponse), {
@@ -219,6 +221,44 @@ describe("Inspector app", () => {
 
     expect(await screen.findByText("1 pending")).toBeInTheDocument();
     returnSession.unmount();
+  });
+
+  it("removes the previous inspector's saved assignments when someone else signs in, but not their queue", async () => {
+    const user = userEvent.setup();
+    const authClient = createAuthClient(["INSPECTOR"], "inspector-a");
+    render(<App authClient={authClient} />);
+    await user.type(screen.getByLabelText("Email"), "a@example.test");
+    await user.type(screen.getByLabelText("Password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.click(await screen.findByRole("button", { name: /open HOS-2024-0891/i }));
+    await fillDraftCore(user);
+    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    const store = defaultSyncStore();
+    const sent = vi.mocked(fetch).mock.calls[0][1] as { headers: Record<string, string> };
+    const deviceId = sent.headers["X-HMS-Device-Id"];
+    const savedFor = (userId: string) =>
+      store.loadActive({ userId, deviceId, protocol: 2 });
+    await waitFor(async () => expect(await savedFor("inspector-a")).not.toBeNull());
+
+    // The session ends (the server refuses the token and the refresh), then B signs in.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("no", { status: 401 })));
+    fireEvent(window, new Event("online"));
+    await screen.findByLabelText("Email");
+    vi.mocked(authClient.me).mockResolvedValue({
+      user_id: "inspector-b",
+      email: "b@example.test",
+      display_name: "B",
+      roles: ["INSPECTOR"]
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(mockBootstrapResponse), { status: 200 })));
+    await user.type(screen.getByLabelText("Email"), "b@example.test");
+    await user.type(screen.getByLabelText("Password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByRole("heading", { name: "Inspector" });
+
+    await waitFor(async () => expect(await savedFor("inspector-a")).toBeNull());
+    expect(localStorage.getItem(outboxStorageKey("inspector-a"))).not.toBeNull();
   });
 
   it("syncs each inspector on a shared browser under their own device id", async () => {

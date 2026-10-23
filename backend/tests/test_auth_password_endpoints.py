@@ -1,4 +1,8 @@
-"""Argon2 password login + set-password integration tests."""
+"""Change-own and admin set-password integration tests.
+
+Sign-in itself is the browser flow (see ``test_browser_auth_api``); the legacy
+password-only ``/auth/login`` was retired (``test_auth_login_retired``).
+"""
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -10,7 +14,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from hms_backend.app.api.dependencies import get_session
-from hms_backend.app.core.auth import decode_hs256_bearer_token
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.passwords import hash_password, verify_password
 from hms_backend.app.main import create_app
@@ -35,8 +38,6 @@ async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
 @pytest.fixture(autouse=True)
 def _configure_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "auth_bearer_hmac_secret", _SECRET)
-    # The legacy login is off by default; these tests exercise it deliberately.
-    monkeypatch.setattr(settings, "auth_password_login_enabled", True)
 
 
 @pytest_asyncio.fixture
@@ -75,49 +76,6 @@ async def _client(
 
 
 @pytest.mark.asyncio
-async def test_login_success_issues_token(
-    session_factory: SessionFactory,
-    users: dict[str, str],
-) -> None:
-    async with _client(session_factory) as client:
-        r = await client.post(
-            "/api/v1/auth/login",
-            json={"email": "MEMBER@example.com", "password": _PASSWORD},
-        )
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["token_type"] == "bearer"
-    claims = decode_hs256_bearer_token(body["access_token"], secret=_SECRET)
-    assert claims.subject == "member-sub"
-
-
-@pytest.mark.asyncio
-async def test_login_wrong_password_is_401(
-    session_factory: SessionFactory,
-    users: dict[str, str],
-) -> None:
-    async with _client(session_factory) as client:
-        r = await client.post(
-            "/api/v1/auth/login",
-            json={"email": "member@example.com", "password": "nope"},
-        )
-    assert r.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_login_unknown_email_is_401(
-    session_factory: SessionFactory,
-    users: dict[str, str],
-) -> None:
-    async with _client(session_factory) as client:
-        r = await client.post(
-            "/api/v1/auth/login",
-            json={"email": "ghost@example.com", "password": _PASSWORD},
-        )
-    assert r.status_code == 401
-
-
-@pytest.mark.asyncio
 async def test_change_own_password(
     session_factory: SessionFactory,
     users: dict[str, str],
@@ -130,16 +88,18 @@ async def test_change_own_password(
             json={"current_password": _PASSWORD, "new_password": "brand-new-secret-9"},
         )
         assert changed.status_code == 200, changed.text
-        old = await client.post(
-            "/api/v1/auth/login",
-            json={"email": "member@example.com", "password": _PASSWORD},
+        wrong = await client.post(
+            "/api/v1/auth/password",
+            headers=headers,
+            json={"current_password": _PASSWORD, "new_password": "another-secret-77"},
         )
-        new = await client.post(
-            "/api/v1/auth/login",
-            json={"email": "member@example.com", "password": "brand-new-secret-9"},
-        )
-    assert old.status_code == 401
-    assert new.status_code == 200
+    # The old password no longer verifies; the new one does.
+    assert wrong.status_code == 400
+    async with session_factory() as session:
+        user = await session.scalar(select(User).where(User.id == users["member"]))
+        assert user is not None and user.password_hash is not None
+        assert verify_password(user.password_hash, "brand-new-secret-9")
+        assert not verify_password(user.password_hash, _PASSWORD)
 
 
 @pytest.mark.asyncio
@@ -158,11 +118,6 @@ async def test_admin_set_password(session_factory: SessionFactory) -> None:
             json={"new_password": "admin-set-secret-1"},
         )
         assert r.status_code == 200, r.text
-        login = await client.post(
-            "/api/v1/auth/login",
-            json={"email": "m2@example.com", "password": "admin-set-secret-1"},
-        )
-    assert login.status_code == 200
 
     async with session_factory() as session:
         user = await session.scalar(select(User).where(User.id == member_id))
@@ -183,26 +138,3 @@ async def test_admin_set_password_requires_permission(
             json={"new_password": "should-be-forbidden"},
         )
     assert r.status_code == 403
-
-
-def test_legacy_password_login_is_off_by_default() -> None:
-    from hms_backend.app.core.config import Settings
-
-    assert Settings.model_fields["auth_password_login_enabled"].default is False
-
-
-@pytest.mark.asyncio
-async def test_login_is_refused_unless_deliberately_enabled(
-    monkeypatch: pytest.MonkeyPatch,
-    session_factory: SessionFactory,
-    users: dict[str, str],
-) -> None:
-    monkeypatch.setattr(settings, "auth_password_login_enabled", False)
-    async with _client(session_factory) as client:
-        r = await client.post(
-            "/api/v1/auth/login",
-            json={"email": "member@example.com", "password": _PASSWORD},
-        )
-    # Correct credentials still receive no token.
-    assert r.status_code == 403
-    assert "access_token" not in r.text

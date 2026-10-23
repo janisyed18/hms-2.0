@@ -113,6 +113,11 @@ export interface SyncBootstrapResponse {
   has_more: boolean;
   records: SyncRecordRead[];
   work_contexts?: SyncWorkContext[];
+  // Present from the paged protocol (2) on.
+  protocol_version?: number;
+  next_page_token?: string | null;
+  page_size?: number | null;
+  scope_changed?: boolean;
 }
 
 export interface SyncWorkContext {

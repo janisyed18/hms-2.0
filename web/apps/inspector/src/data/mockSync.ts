@@ -6,7 +6,7 @@ export const mockBootstrapResponse: SyncBootstrapResponse = {
   device: {
     device_id: "inspector-browser-dev",
     platform: "web",
-    app_version: "0.1.0",
+    app_version: "0.2.0",
     offline_window_days: 7,
     revoked: false
   },

@@ -32,7 +32,8 @@ describe("syncClient", () => {
           Authorization: "Bearer inspector-access-token",
           "X-HMS-Device-Id": "inspector-browser-test",
           "X-HMS-Device-Platform": "web",
-          "X-HMS-App-Version": "0.1.0"
+          "X-HMS-App-Version": "0.2.0",
+          "X-HMS-Sync-Protocol": "2"
         })
       })
     );
