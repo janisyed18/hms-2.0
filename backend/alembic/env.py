@@ -39,7 +39,14 @@ target_metadata = Base.metadata
 
 
 def do_run_migrations(connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    # One transaction per migration: 20261023_0023 uses autocommit_block(), which
+    # commits whatever the run has done so far. In a single run-wide transaction that
+    # would silently commit earlier migrations while later ones stay uncommitted.
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        transaction_per_migration=True,
+    )
 
     with context.begin_transaction():
         context.run_migrations()
