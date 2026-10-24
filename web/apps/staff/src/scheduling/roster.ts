@@ -36,13 +36,19 @@ export async function loadActiveInspectors(list: ListUsers, maxPages = MAX_PAGES
         }
       }
       offset += result.items.length;
-      if (result.items.length === 0 || offset >= result.total) {
+      if (offset >= result.total) {
         reachedEnd = true;
+        break;
+      }
+      // An empty page is only a valid end once every counted user has been read; users
+      // removed between the count and the page read would otherwise pass as a full list.
+      if (result.items.length === 0) {
+        error = "Inspector list incomplete: users changed while the roster was loading.";
         break;
       }
     }
     // The cap ended the loop with users still unread: say so rather than show a short list as whole.
-    if (!reachedEnd) error = "Inspector list incomplete: too many users to read in one go.";
+    if (!reachedEnd && !error) error = "Inspector list incomplete: too many users to read in one go.";
   } catch (reason) {
     error = reason instanceof Error ? reason.message : "Inspectors could not be loaded.";
   }
