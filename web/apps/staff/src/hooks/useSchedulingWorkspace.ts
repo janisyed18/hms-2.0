@@ -445,10 +445,11 @@ export function useSchedulingWorkspace({
     openDay,
     openReschedule,
     loadMoreQueue,
+    // A badge that sums only one side would understate the queue, so wait for both.
     pendingTotal:
-      queueTotals.requests === null && queueTotals.changes === null
+      queueTotals.requests === null || queueTotals.changes === null
         ? null
-        : (queueTotals.requests ?? 0) + (queueTotals.changes ?? 0),
+        : queueTotals.requests + queueTotals.changes,
     queues,
     range,
     retryQueue,

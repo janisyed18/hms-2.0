@@ -1076,3 +1076,26 @@ describe("the inspector roster beyond one page", () => {
     await waitFor(async () => expect(await filterOptions()).toContain("Inspector 129"));
   });
 });
+
+describe("Pending badge", () => {
+  const badge = () => screen.queryByLabelText(/\d+ waiting/);
+
+  it("stays hidden while either count read has failed, rather than understating the queue", async () => {
+    client.listInspectionBookings.mockImplementation(async (options: { hasPendingChange?: boolean }) => {
+      if (options.hasPendingChange) throw new Error("Count unavailable");
+      return { total: 4, items: [], etag: null };
+    });
+    renderWorkspace();
+    await ready();
+    await waitFor(() => expect(client.listInspectionBookings).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(badge()).toBeNull();
+  });
+
+  it("shows the sum once both totals are known", async () => {
+    serveQueues(4, 3);
+    renderWorkspace();
+    await ready();
+    expect(await screen.findByLabelText("7 waiting")).toBeInTheDocument();
+  });
+});

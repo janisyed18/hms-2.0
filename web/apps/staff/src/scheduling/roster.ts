@@ -22,12 +22,13 @@ export interface RosterResult {
  * Every active Inspector, read with bounded page requests (the API has no role
  * filter, so each page is filtered here). Deduplicated by user id and ordered by name.
  */
-export async function loadActiveInspectors(list: ListUsers): Promise<RosterResult> {
+export async function loadActiveInspectors(list: ListUsers, maxPages = MAX_PAGES): Promise<RosterResult> {
   const found = new Map<string, InspectorOption>();
   let offset = 0;
   let error: string | null = null;
+  let reachedEnd = false;
   try {
-    for (let page = 0; page < MAX_PAGES; page += 1) {
+    for (let page = 0; page < maxPages; page += 1) {
       const result = await list({ sort: "email", limit: ROSTER_PAGE_SIZE, offset });
       for (const user of result.items) {
         if (user.role === "INSPECTOR" && user.accountStatus === "ACTIVE") {
@@ -35,8 +36,13 @@ export async function loadActiveInspectors(list: ListUsers): Promise<RosterResul
         }
       }
       offset += result.items.length;
-      if (result.items.length === 0 || offset >= result.total) break;
+      if (result.items.length === 0 || offset >= result.total) {
+        reachedEnd = true;
+        break;
+      }
     }
+    // The cap ended the loop with users still unread: say so rather than show a short list as whole.
+    if (!reachedEnd) error = "Inspector list incomplete: too many users to read in one go.";
   } catch (reason) {
     error = reason instanceof Error ? reason.message : "Inspectors could not be loaded.";
   }
