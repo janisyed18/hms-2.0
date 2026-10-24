@@ -28,4 +28,21 @@ describe("loadActiveInspectors page cap", () => {
     expect(result.error).toBeNull();
     expect(result.inspectors).toHaveLength(ROSTER_PAGE_SIZE * 3);
   });
+
+  it("reports the list as incomplete, keeping what loaded, when an empty page arrives before the total is read", async () => {
+    const list = vi.fn(async ({ offset }: { sort: string; limit: number; offset: number }) => ({
+      total: ROSTER_PAGE_SIZE * 2,
+      items: offset === 0 ? Array.from({ length: ROSTER_PAGE_SIZE }, (_, i) => user(i)) : []
+    }));
+    const result = await loadActiveInspectors(list);
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(result.error).toMatch(/inspector list incomplete/i);
+    expect(result.inspectors).toHaveLength(ROSTER_PAGE_SIZE);
+  });
+
+  it("treats an empty roster whose total is zero as complete", async () => {
+    const result = await loadActiveInspectors(serve(0));
+    expect(result.error).toBeNull();
+    expect(result.inspectors).toEqual([]);
+  });
 });
