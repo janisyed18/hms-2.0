@@ -52,7 +52,8 @@ jobs:
           tests/test_notification_readiness_postgres.py
           tests/test_rc_product_flow_postgres.py
           tests/test_sync_bootstrap_paging.py
-          tests/test_inspection_schedule.py -v
+          tests/test_inspection_schedule.py
+          tests/test_migration_booking_schedule_index.py -v
         env:
           POSTGRES_TEST_DATABASE_URL: postgresql+asyncpg://hms:hms@127.0.0.1:5432/hms_inspector_test
 

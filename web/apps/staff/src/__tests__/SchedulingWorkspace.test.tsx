@@ -778,7 +778,7 @@ describe("Pending requests", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.click(screen.getByRole("tab", { name: "Pending requests" }));
+    await user.click(screen.getByRole("tab", { name: /^Pending requests/ }));
     expect(await screen.findByRole("heading", { name: "New booking requests (1)" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Reschedule requests (1)" })).toBeInTheDocument();
     expect(screen.getByText(/Requested change to/)).toBeInTheDocument();
@@ -794,15 +794,285 @@ describe("Pending requests", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.click(screen.getByRole("tab", { name: "Pending requests" }));
+    await user.click(screen.getByRole("tab", { name: /^Pending requests/ }));
     expect(await screen.findByText("Nothing is waiting for a decision")).toBeInTheDocument();
 
     client.listInspectionBookings.mockRejectedValue(new Error("Boom"));
     await user.click(screen.getByRole("tab", { name: "Calendar" }));
-    await user.click(screen.getByRole("tab", { name: "Pending requests" }));
-    expect(await screen.findByText("Pending requests could not be loaded")).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /^Pending requests/ }));
+    expect(await screen.findAllByText(/could not be loaded\. Boom/)).toHaveLength(2);
     client.listInspectionBookings.mockResolvedValue({ total: 0, items: [], etag: null });
-    await act(async () => screen.getByRole("button", { name: "Try again" }).click());
+    await act(async () => screen.getAllByRole("button", { name: "Try again" })[0].click());
+    await act(async () => screen.getAllByRole("button", { name: "Try again" })[0]?.click());
     expect(await screen.findByText("Nothing is waiting for a decision")).toBeInTheDocument();
+  });
+});
+
+// --- work queues and roster beyond one page ---------------------------------------
+
+function queueBooking(index: number, kind: "request" | "change"): InspectionBookingRecord {
+  const stamp = String(index).padStart(4, "0");
+  return booking({
+    id: `${kind}-${stamp}`,
+    customer: `${kind === "request" ? "Requester" : "Changer"} ${stamp}`,
+    start: "2027-03-03T00:00:00Z",
+    end: "2027-03-03T01:00:00Z",
+    inspector: kind === "request" ? null : "insp-a",
+    status: kind === "request" ? "PENDING_APPROVAL" : "APPROVED",
+    appointmentStatus: kind === "request" ? null : "CONFIRMED",
+    change: kind === "change" ? "PENDING_ADMIN_APPROVAL" : undefined
+  });
+}
+
+function serveQueues(requestTotal: number, changeTotal: number) {
+  const requests = Array.from({ length: requestTotal }, (_, index) => queueBooking(index, "request"));
+  const changes = Array.from({ length: changeTotal }, (_, index) => queueBooking(index, "change"));
+  const calls: Array<{ kind: "requests" | "changes"; offset: number; limit: number }> = [];
+  client.listInspectionBookings.mockImplementation(
+    async (options: { status?: string; hasPendingChange?: boolean; limit?: number; offset?: number }) => {
+      const kind = options.hasPendingChange ? "changes" : "requests";
+      const rows = kind === "changes" ? changes : requests;
+      const offset = options.offset ?? 0;
+      const limit = options.limit ?? 50;
+      calls.push({ kind, offset, limit });
+      return { total: rows.length, items: rows.slice(offset, offset + limit), etag: null };
+    }
+  );
+  return { calls, requests, changes };
+}
+
+describe("Pending requests beyond one page", () => {
+  const reviewButtons = () => screen.getAllByRole("button", { name: /^Review / });
+
+  it("reports the server's total, not how many happen to be loaded", async () => {
+    const served = serveQueues(137, 120);
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await user.click(screen.getByRole("tab", { name: /Pending requests/ }));
+
+    expect(await screen.findByRole("heading", { name: "New booking requests (137)" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Reschedule requests (120)" })).toBeInTheDocument();
+    expect(screen.getByText("Showing 50 of 137")).toBeInTheDocument();
+    expect(screen.getByText("Showing 50 of 120")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Load more booking requests \(87 not yet shown\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Load more reschedule requests \(70 not yet shown\)/ })).toBeInTheDocument();
+    // The first page is a page: nothing pretends the queue ends at what was fetched.
+    expect(served.calls.every((call) => call.limit <= 50)).toBe(true);
+  });
+
+  it("reaches every record exactly once by loading more, independently per queue", async () => {
+    const served = serveQueues(137, 120);
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await user.click(screen.getByRole("tab", { name: /Pending requests/ }));
+    await screen.findByRole("heading", { name: "New booking requests (137)" });
+    const loadMoreRequests = () => screen.queryByRole("button", { name: /Load more booking requests/ });
+
+    await user.click(loadMoreRequests() as HTMLElement);
+    await screen.findByText("Showing 100 of 137");
+    expect(screen.getByText("Showing 50 of 120")).toBeInTheDocument(); // the other queue did not move
+    await user.click(loadMoreRequests() as HTMLElement);
+    await screen.findByText("Showing 137 of 137");
+    expect(loadMoreRequests()).not.toBeInTheDocument();
+
+    const names = reviewButtons().map((button) => button.getAttribute("aria-label"));
+    expect(new Set(names).size).toBe(names.length); // no duplicates
+    const requestNames = names.filter((name) => name?.includes("request from"));
+    expect(requestNames).toHaveLength(137);
+    for (let index = 0; index < 137; index += 1) {
+      expect(requestNames).toContain(
+        `Review request from Requester ${String(index).padStart(4, "0")} at Botany`
+      ); // none skipped
+    }
+
+    await user.click(screen.getByRole("button", { name: /Load more reschedule requests/ }));
+    await screen.findByText("Showing 100 of 120");
+    const pages = (kind: string) =>
+      served.calls.filter((call) => call.kind === kind && call.limit === 50).map((call) => call.offset);
+    expect(pages("requests")).toEqual([0, 50, 100]);
+    expect(pages("changes")).toEqual([0, 50]);
+  });
+
+  it("keeps what is loaded when a later page fails, and carries on from there on retry", async () => {
+    const served = serveQueues(137, 3);
+    const original = client.listInspectionBookings.getMockImplementation()!;
+    let failNext = false;
+    client.listInspectionBookings.mockImplementation(async (options: { offset?: number; hasPendingChange?: boolean }) => {
+      if (failNext && (options.offset ?? 0) === 50 && !options.hasPendingChange) {
+        failNext = false;
+        throw new Error("Gateway timeout");
+      }
+      return original(options);
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await user.click(screen.getByRole("tab", { name: /Pending requests/ }));
+    await screen.findByText("Showing 50 of 137");
+
+    failNext = true;
+    await user.click(screen.getByRole("button", { name: /Load more booking requests/ }));
+    const alert = await screen.findByText(/the 50 already loaded are still shown/);
+    expect(alert).toHaveTextContent("Gateway timeout");
+    expect(reviewButtons().filter((button) => button.getAttribute("aria-label")?.includes("request from"))).toHaveLength(50);
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByText("Showing 100 of 137");
+    const names = reviewButtons().map((button) => button.getAttribute("aria-label"));
+    expect(new Set(names).size).toBe(names.length);
+    expect(
+      served.calls.filter((call) => call.kind === "requests" && call.limit === 50).map((call) => call.offset)
+    ).toEqual([0, 50]); // the failed attempt at 50 never reached the server; the retry resumed there
+  });
+
+  it("shows the badge from the server totals before the tab is ever opened", async () => {
+    const served = serveQueues(137, 120);
+    renderWorkspace();
+    await ready();
+    expect(await screen.findByLabelText("257 waiting")).toBeInTheDocument();
+    // Counting needed no more than a one-row read of each queue.
+    expect(served.calls.every((call) => call.limit === 1)).toBe(true);
+  });
+});
+
+describe("the inspector roster beyond one page", () => {
+  function serveUsers(activeInspectors: number) {
+    const users = [
+      ...Array.from({ length: activeInspectors }, (_, index) => ({
+        id: `ins-${String(index).padStart(3, "0")}`,
+        displayName: `Inspector ${String(index).padStart(3, "0")}`,
+        role: "INSPECTOR",
+        accountStatus: "ACTIVE"
+      })),
+      ...Array.from({ length: 12 }, (_, index) => ({
+        id: `off-${index}`,
+        displayName: `Retired ${index}`,
+        role: "INSPECTOR",
+        accountStatus: "DISABLED"
+      })),
+      ...Array.from({ length: 25 }, (_, index) => ({
+        id: `adm-${index}`,
+        displayName: `Office ${index}`,
+        role: "HMS_ADMIN",
+        accountStatus: "ACTIVE"
+      }))
+    ];
+    const calls: Array<{ limit: number; offset: number }> = [];
+    client.listAdminUsers.mockImplementation(async (options: { limit: number; offset: number }) => {
+      calls.push({ limit: options.limit, offset: options.offset });
+      // A user near a page boundary can appear on two pages if the list shifts between requests.
+      const overlap = options.offset > 0 ? 1 : 0;
+      return {
+        total: users.length,
+        items: users.slice(Math.max(options.offset - overlap, 0), options.offset + options.limit)
+      };
+    });
+    return { calls, users };
+  }
+
+  const filterOptions = async () =>
+    within(screen.getByRole("group", { name: "Schedule filters" }).querySelector("select") as HTMLElement)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+
+  it("pages through every active inspector with bounded requests, once", async () => {
+    const served = serveUsers(130);
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await waitFor(() => expect(served.calls.length).toBe(Math.ceil(167 / 100)));
+    expect(served.calls.every((call) => call.limit <= 100)).toBe(true);
+    expect(served.calls.map((call) => call.offset)).toEqual([0, 100]);
+
+    const options = await waitFor(async () => {
+      const found = await filterOptions();
+      expect(found).toContain("Inspector 129");
+      return found;
+    });
+    expect(options.filter((name) => name === "Inspector 129")).toHaveLength(1); // not duplicated
+    expect(options.filter((name) => name?.startsWith("Inspector "))).toHaveLength(130);
+    expect(options.some((name) => name?.startsWith("Retired"))).toBe(false);
+    expect(options.some((name) => name?.startsWith("Office"))).toBe(false);
+
+    // Moving through dates does not read the whole roster again.
+    await user.click(screen.getByRole("button", { name: "Next day" }));
+    await user.click(screen.getByRole("button", { name: "Previous day" }));
+    expect(served.calls).toHaveLength(2);
+  });
+
+  it("offers an inspector from a later page for assignment and for reschedule", async () => {
+    serveUsers(130);
+    client.approveInspectionBooking.mockResolvedValue(undefined);
+    client.listAllAssets.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          id: "b3-a0",
+          assetNumber: "HOS-1",
+          customer: { id: "cust-orica", code: "O", name: "Orica" },
+          location: { id: "loc-kwinana", name: "Kwinana", schedulingTimezone: PERTH }
+        }
+      ]
+    });
+    client.listInspectionAvailability.mockResolvedValue([
+      { quoteId: "quote-1", startsAt: "2027-03-08T01:00:00Z", endsAt: "2027-03-08T02:00:00Z", expiresAt: "2027-03-01T05:00:00Z" }
+    ]);
+    client.requestInspectionBookingReschedule.mockResolvedValue({ id: "chg" });
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await waitFor(async () => expect(await filterOptions()).toContain("Inspector 129"));
+
+    // Assignment
+    await user.click(screen.getByRole("button", { name: /Unassigned, Awaiting approval/ }));
+    let drawer = await screen.findByRole("dialog");
+    await user.selectOptions(within(drawer).getByLabelText("Inspector to assign"), "ins-129");
+    await user.click(within(drawer).getByRole("button", { name: "Assign & approve" }));
+    await waitFor(() => expect(client.approveInspectionBooking).toHaveBeenCalledWith("b4", "ins-129"));
+    await user.click(within(drawer).getByRole("button", { name: "Close appointment details" }));
+
+    // Reschedule / reassignment
+    await user.click(screen.getByRole("button", { name: /Orica, Kwinana, Ben Brook/ }));
+    drawer = await screen.findByRole("dialog");
+    await user.click(within(drawer).getByRole("button", { name: "Request reschedule" }));
+    const form = (await screen.findByRole("heading", { name: "Request reschedule" })).closest("form") as HTMLElement;
+    fireEvent.change(within(form).getByLabelText("Preferred inspection date"), { target: { value: "2027-03-08" } });
+    await user.selectOptions(await within(form).findByLabelText("Available inspection time"), "quote-1");
+    const picker = within(form).getByLabelText("Inspector for rescheduled inspection");
+    expect(within(picker).getAllByRole("option", { name: "Inspector 129" })).toHaveLength(1);
+    await user.selectOptions(picker, "ins-129");
+    await user.click(within(form).getByRole("button", { name: "Request reschedule" }));
+    await waitFor(() =>
+      expect(client.requestInspectionBookingReschedule).toHaveBeenCalledWith(
+        "b3",
+        expect.objectContaining({ inspectorUserId: "ins-129" })
+      )
+    );
+  });
+
+  it("keeps what loaded, and the inspectors seen in the schedule, when a roster page fails", async () => {
+    serveUsers(130);
+    const original = client.listAdminUsers.getMockImplementation()!;
+    let failed = false;
+    client.listAdminUsers.mockImplementation(async (options: { limit: number; offset: number }) => {
+      if (options.offset > 0 && !failed) {
+        failed = true;
+        throw new Error("Users unavailable");
+      }
+      return original(options);
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    expect(await screen.findByText(/Not every inspector could be loaded/)).toHaveTextContent("Users unavailable");
+    const partial = await filterOptions();
+    expect(partial).toContain("Inspector 099"); // first page
+    expect(partial).not.toContain("Inspector 129"); // second page missing
+    expect(partial).toContain("Ada Archer"); // still represented from the schedule
+
+    await user.click(within(screen.getByText(/Not every inspector could be loaded/).closest("div") as HTMLElement).getByRole("button", { name: /Try again/ }));
+    await waitFor(async () => expect(await filterOptions()).toContain("Inspector 129"));
   });
 });

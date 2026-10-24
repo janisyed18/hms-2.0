@@ -18,9 +18,29 @@ import {
   type ScheduleEntry,
   type ScheduleFilters
 } from "../scheduling/scheduleModel";
+import { loadActiveInspectors } from "../scheduling/roster";
 import { addDays, addMonths, ymdOf } from "../scheduling/zonedTime";
 
 export type SchedulingView = "calendar" | "list" | "pending";
+
+/** The two work queues: new booking requests, and reschedules awaiting a decision. */
+export type QueueKind = "requests" | "changes";
+
+export interface Queue {
+  items: InspectionBookingRecord[];
+  /** The server's total for the whole queue, not the number loaded. */
+  total: number | null;
+  isLoading: boolean;
+  isLoadingMore: boolean;
+  error: string | null;
+}
+
+export const EMPTY_QUEUE: Queue = { items: [], total: null, isLoading: false, isLoadingMore: false, error: null };
+export const QUEUE_PAGE_SIZE = 50;
+const QUEUE_FILTER = {
+  requests: { status: "PENDING_APPROVAL" as const },
+  changes: { hasPendingChange: true }
+};
 
 /** Australia-first: the calendar's default zone, changeable in the toolbar. */
 export const DEFAULT_SCHEDULE_ZONE = "Australia/Sydney";
@@ -62,12 +82,17 @@ export function useSchedulingWorkspace({
   const [isLoading, setIsLoading] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<{
-    bookings: InspectionBookingRecord[];
-    changes: InspectionBookingRecord[];
-    isLoading: boolean;
-    error: string | null;
-  }>({ bookings: [], changes: [], isLoading: false, error: null });
+  const [queues, setQueues] = useState<Record<QueueKind, Queue>>({
+    requests: EMPTY_QUEUE,
+    changes: EMPTY_QUEUE
+  });
+  // Server totals for the badge, known even before the Pending tab is opened.
+  const [queueTotals, setQueueTotals] = useState<Record<QueueKind, number | null>>({
+    requests: null,
+    changes: null
+  });
+  const [rosterError, setRosterError] = useState<string | null>(null);
+  const [rosterToken, setRosterToken] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<ActionNotice | null>(null);
@@ -94,24 +119,19 @@ export function useSchedulingWorkspace({
     [filters.customerId, filters.inspectorId, filters.locationId, filters.assignment]
   );
 
+  // The roster is read once per workspace (and on an explicit retry), not per date change.
   useEffect(() => {
     if (!canApprove) return;
     let active = true;
-    void createHmsClient()
-      .listAdminUsers({ sort: "email", limit: 100 })
-      .then((result) => {
-        if (!active) return;
-        setRoster(
-          result.items
-            .filter((user) => user.role === "INSPECTOR" && user.accountStatus === "ACTIVE")
-            .map((user) => ({ id: user.id, name: user.displayName }))
-        );
-      })
-      .catch(() => undefined);
+    void loadActiveInspectors((options) => createHmsClient().listAdminUsers(options)).then((result) => {
+      if (!active) return;
+      setRoster(result.inspectors);
+      setRosterError(result.error);
+    });
     return () => {
       active = false;
     };
-  }, [canApprove]);
+  }, [canApprove, rosterToken]);
 
   useEffect(() => {
     if (view === "pending") return;
@@ -147,31 +167,69 @@ export function useSchedulingWorkspace({
       });
   }, [range, serverFilters, view, reloadToken]);
 
-  useEffect(() => {
-    if (view !== "pending") return;
-    let active = true;
-    setPending((current) => ({ ...current, isLoading: true, error: null }));
-    const client = createHmsClient();
-    void Promise.all([
-      client.listInspectionBookings({ status: "PENDING_APPROVAL", limit: 100 }),
-      client.listInspectionBookings({ hasPendingChange: true, limit: 100 })
-    ])
-      .then(([requests, changes]) => {
-        if (!active) return;
-        setPending({ bookings: requests.items, changes: changes.items, isLoading: false, error: null });
-      })
-      .catch((reason: unknown) => {
-        if (!active) return;
-        setPending((current) => ({
-          ...current,
-          isLoading: false,
-          error: reason instanceof Error ? reason.message : "Pending requests could not be loaded."
-        }));
+  const queueRequest = useRef<Record<QueueKind, number>>({ requests: 0, changes: 0 });
+
+  const fetchQueue = useCallback(async (kind: QueueKind, mode: "first" | "more", offset: number) => {
+    const current = ++queueRequest.current[kind];
+    setQueues((all) => ({
+      ...all,
+      [kind]: { ...all[kind], isLoading: mode === "first", isLoadingMore: mode === "more", error: null }
+    }));
+    try {
+      const result = await createHmsClient().listInspectionBookings({
+        ...QUEUE_FILTER[kind],
+        limit: QUEUE_PAGE_SIZE,
+        offset
       });
+      if (current !== queueRequest.current[kind]) return;
+      setQueues((all) => {
+        const kept = mode === "more" ? all[kind].items : [];
+        const seen = new Set(kept.map((item) => item.id));
+        const items = [...kept, ...result.items.filter((item) => !seen.has(item.id))];
+        return { ...all, [kind]: { items, total: result.total, isLoading: false, isLoadingMore: false, error: null } };
+      });
+      setQueueTotals((all) => ({ ...all, [kind]: result.total }));
+    } catch (reason) {
+      if (current !== queueRequest.current[kind]) return;
+      // Whatever was already loaded stays; only the status reports the failure.
+      setQueues((all) => ({
+        ...all,
+        [kind]: {
+          ...all[kind],
+          isLoading: false,
+          isLoadingMore: false,
+          error: reason instanceof Error ? reason.message : "Pending requests could not be loaded."
+        }
+      }));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view === "pending") {
+      void fetchQueue("requests", "first", 0);
+      void fetchQueue("changes", "first", 0);
+      return;
+    }
+    // Not looking at the queue: a one-row read is enough to keep the badge honest.
+    let active = true;
+    const client = createHmsClient();
+    for (const kind of ["requests", "changes"] as const) {
+      void client
+        .listInspectionBookings({ ...QUEUE_FILTER[kind], limit: 1 })
+        .then((result) => {
+          if (active) setQueueTotals((all) => ({ ...all, [kind]: result.total }));
+        })
+        .catch(() => undefined);
+    }
     return () => {
       active = false;
     };
-  }, [view, reloadToken]);
+  }, [view, reloadToken, fetchQueue]);
+
+  const loadMoreQueue = (kind: QueueKind) => fetchQueue(kind, "more", queues[kind].items.length);
+  const retryQueue = (kind: QueueKind) =>
+    fetchQueue(kind, queues[kind].items.length > 0 ? "more" : "first", queues[kind].items.length);
+  const retryRoster = () => setRosterToken((value) => value + 1);
 
   const inspectors: InspectorOption[] = useMemo(() => {
     const merged = new Map<string, string>();
@@ -194,9 +252,9 @@ export function useSchedulingWorkspace({
     if (!selectedId) return null;
     const found = allEntries.find((entry) => entry.id === selectedId);
     if (found) return found;
-    const fromPending = [...pending.bookings, ...pending.changes].find((b) => b.id === selectedId);
-    return fromPending ? toEntry(fromPending, inspectorNames) : null;
-  }, [allEntries, inspectorNames, pending.bookings, pending.changes, selectedId]);
+    const fromQueues = [...queues.requests.items, ...queues.changes.items].find((b) => b.id === selectedId);
+    return fromQueues ? toEntry(fromQueues, inspectorNames) : null;
+  }, [allEntries, inspectorNames, queues.requests.items, queues.changes.items, selectedId]);
 
   const refresh = useCallback(() => setReloadToken((value) => value + 1), []);
 
@@ -257,10 +315,9 @@ export function useSchedulingWorkspace({
     try {
       const fresh = await createHmsClient().getInspectionBooking(id);
       setBookings((current) => current.map((booking) => (booking.id === id ? fresh : booking)));
-      setPending((current) => ({
-        ...current,
-        bookings: current.bookings.map((booking) => (booking.id === id ? fresh : booking)),
-        changes: current.changes.map((booking) => (booking.id === id ? fresh : booking))
+      setQueues((all) => ({
+        requests: { ...all.requests, items: all.requests.items.map((booking) => (booking.id === id ? fresh : booking)) },
+        changes: { ...all.changes, items: all.changes.items.map((booking) => (booking.id === id ? fresh : booking)) }
       }));
     } catch {
       /* the broader refresh below still runs */
@@ -387,8 +444,16 @@ export function useSchedulingWorkspace({
     openBooking,
     openDay,
     openReschedule,
-    pending,
+    loadMoreQueue,
+    pendingTotal:
+      queueTotals.requests === null && queueTotals.changes === null
+        ? null
+        : (queueTotals.requests ?? 0) + (queueTotals.changes ?? 0),
+    queues,
     range,
+    retryQueue,
+    retryRoster,
+    rosterError,
     refresh,
     resetFilters,
     selected,

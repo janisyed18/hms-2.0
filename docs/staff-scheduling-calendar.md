@@ -18,11 +18,18 @@ confirmed work, as everywhere else). Customers keep the Bookings view in their p
   queue with reschedules awaiting a decision, wherever they fall in time.
 * A booking's `scheduled_at`/`scheduled_end_at` always hold its *current* slot
   (rescheduling rewrites them), so the range filter is a comparison on those columns.
-* Migration `20261023_0023` adds `ix_inspection_bookings_scheduled_at`. The query also
-  carries a redundant `scheduled_at >= start - 2 days` bound so the index has both ends.
+* Migration `20261023_0023` adds `ix_inspection_bookings_scheduled_at`, built and dropped
+  `CONCURRENTLY` on PostgreSQL (in an `autocommit_block`, since it cannot run in a
+  transaction) so a deploy never blocks writes to `inspection_bookings` while the previous
+  API is still serving. An interrupted concurrent build leaves an INVALID index; the
+  migration detects and rebuilds it rather than trusting it. SQLite uses the plain
+  statements. The query also carries a redundant `scheduled_at >= start - 2 days` bound
+  so the index has both ends.
   PostgreSQL 16, 150,000 bookings, one-week range, `EXPLAIN (ANALYZE, BUFFERS)`:
   sequential scan about 42 ms and 2,747 buffers; index plus the lower bound about 2.2 ms
-  and 29 buffers (without the lower bound the index alone scanned 61,000 rows).
+  and 29 buffers (without the lower bound the index alone scanned 61,000 rows). The real
+  endpoint query on a database built by the real migration (150,000 rows) uses the index:
+  24 buffers, about 2 ms.
 * There is no new mutation endpoint. Every action calls the existing validated one.
 
 ## Views
@@ -39,8 +46,26 @@ confirmed work, as everywhere else). Customers keep the Bookings view in their p
 * **List**: searchable, paginated table of the same period and filters (the accessible
   equivalent of the calendar).
 * **Pending requests**: new booking requests and reschedule requests with age, requested
-  time, current appointment and the next action.
+  time, current appointment and the next action. Each queue reads the paginated
+  `/inspection-bookings` API 50 at a time and shows the server's total in its heading
+  ("New booking requests (137)", "Showing 50 of 137") with a bounded **Load more**. The
+  queues page independently, never show a duplicate, and a failed page keeps everything
+  already loaded and offers a retry that resumes at the same place. The tab badge is the
+  sum of the two server totals (a one-row read of each before the tab is opened); the
+  queues are disjoint by business rule (a reschedule can only be raised on an approved
+  booking, new requests are still awaiting approval), so that sum counts each booking once.
 * Today / Previous / Next / jump-to-date keep the chosen range (a day, a week or a month).
+
+## Inspector roster
+
+Lanes, the Inspector filter, the assignment picker and the reschedule picker draw on every
+active Inspector. The admin users API has no role filter, so the workspace reads it in
+pages of 100 (the API maximum) until the reported total is reached, keeps active
+`INSPECTOR` users, deduplicates by id and sorts by name. It does this once per workspace
+(not per date change) and merges the result with the inspectors seen in schedule results,
+so a scheduled inspector is still represented if the roster is unavailable. If a page
+fails, what loaded is kept, a notice says some inspectors may be missing, and **Try again**
+reloads the roster.
 
 ## Status
 

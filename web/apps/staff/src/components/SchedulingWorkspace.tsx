@@ -108,9 +108,9 @@ export function SchedulingWorkspace({
             type="button"
           >
             {item.label}
-            {item.id === "pending" && workspace.pending.bookings.length + workspace.pending.changes.length > 0 ? (
-              <span className="scheduling-tabs__count">
-                {workspace.pending.bookings.length + workspace.pending.changes.length}
+            {item.id === "pending" && workspace.pendingTotal ? (
+              <span className="scheduling-tabs__count" aria-label={`${workspace.pendingTotal} waiting`}>
+                {workspace.pendingTotal}
               </span>
             ) : null}
           </button>
@@ -283,6 +283,19 @@ export function SchedulingWorkspace({
             ) : null}
           </div>
 
+          {workspace.rosterError ? (
+            <div className="schedule-error" role="alert">
+              <span>
+                Not every inspector could be loaded, so some may be missing from the pickers.{" "}
+                {workspace.rosterError}
+              </span>
+              <button className="secondary-button" onClick={workspace.retryRoster} type="button">
+                <RefreshCw aria-hidden="true" size={15} />
+                Try again
+              </button>
+            </div>
+          ) : null}
+
           {workspace.error ? (
             <div className="schedule-error" role="alert">
               <span>
@@ -345,13 +358,12 @@ export function SchedulingWorkspace({
         </>
       ) : (
         <PendingRequests
-          changes={workspace.pending.changes}
-          error={workspace.pending.error}
+          changes={workspace.queues.changes}
           inspectorNames={inspectorNames}
-          isLoading={workspace.pending.isLoading}
-          onRetry={workspace.refresh}
+          onLoadMore={(kind) => void workspace.loadMoreQueue(kind)}
+          onRetry={(kind) => void workspace.retryQueue(kind)}
           onSelect={(entry) => workspace.setSelectedId(entry.id)}
-          requests={workspace.pending.bookings}
+          requests={workspace.queues.requests}
         />
       )}
 
