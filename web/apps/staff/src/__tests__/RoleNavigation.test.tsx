@@ -22,9 +22,9 @@ afterEach(() => {
 
 describe("role navigation", () => {
   it.each([
-    ["SUPER_ADMIN", ["dashboard", "analytics", "customers", "assets", "products", "reference", "inspections", "certificates", "retest", "sync", "audit", "users", "devices"]],
-    ["HMS_ADMIN", ["dashboard", "analytics", "customers", "assets", "products", "reference", "inspections", "certificates", "retest", "audit", "users", "devices"]],
-    ["INSPECTOR", ["dashboard", "customers", "assets", "inspections", "retest", "sync"]],
+    ["SUPER_ADMIN", ["dashboard", "analytics", "customers", "assets", "products", "reference", "scheduling", "inspections", "certificates", "retest", "sync", "audit", "users", "devices"]],
+    ["HMS_ADMIN", ["dashboard", "analytics", "customers", "assets", "products", "reference", "scheduling", "inspections", "certificates", "retest", "audit", "users", "devices"]],
+    ["INSPECTOR", ["dashboard", "customers", "assets", "scheduling", "inspections", "retest", "sync"]],
     ["ASSEMBLY", ["dashboard", "customers", "assets", "retest"]],
     ["REVIEWER", ["dashboard", "customers", "assets", "inspections", "certificates", "retest"]],
     ["CUSTOMER_USER", ["dashboard", "customers", "assets", "inspections", "certificates", "retest"]]
@@ -41,6 +41,7 @@ describe("role navigation", () => {
       "dashboard",
       "customers",
       "assets",
+      "scheduling",
       "inspections",
       "certificates",
       "retest",

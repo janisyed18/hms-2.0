@@ -14,8 +14,10 @@ interface InspectionBookingFormProps {
   assetOptions: AssetRecord[];
   open: boolean;
   rescheduleBooking?: InspectionBookingRecord | null;
-  inspectors?: AdminUserRecord[];
+  inspectors?: Array<Pick<AdminUserRecord, "id" | "displayName">>;
   requiresInspector?: boolean;
+  /** A date (YYYY-MM-DD) to offer first, e.g. the day being viewed in the calendar. */
+  initialDate?: string;
   onClose: () => void;
   onSubmit: (values: InspectionBookingCreateValues) => Promise<void>;
   onReschedule?: (
@@ -34,6 +36,7 @@ export function InspectionBookingForm({
   rescheduleBooking = null,
   inspectors = [],
   requiresInspector = false,
+  initialDate = "",
   onClose,
   onSubmit,
   onReschedule
@@ -99,7 +102,7 @@ export function InspectionBookingForm({
     // A reschedule keeps the booking's own location and assets.
     setLocationId(rescheduleBooking ? rescheduleBooking.location.id : "");
     setAssetIds(rescheduleBooking ? rescheduleBooking.assets.map((asset) => asset.id) : []);
-    setBookingDate("");
+    setBookingDate(rescheduleBooking ? "" : initialDate);
     setAvailability({ key: "", slots: [] });
     setChosenQuoteId("");
     setInspectorUserId("");

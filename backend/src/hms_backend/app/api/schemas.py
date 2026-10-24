@@ -639,6 +639,22 @@ class InspectionBookingListResponse(BaseModel):
     items: list[InspectionBookingRead]
 
 
+class ScheduleInspectorRead(BaseModel):
+    id: str
+    display_name: str
+
+
+class InspectionScheduleResponse(BaseModel):
+    """Bookings overlapping ``[start, end)``, plus who the inspectors in them are."""
+
+    start: datetime
+    end: datetime
+    total: int
+    limit: int
+    items: list[InspectionBookingRead]
+    inspectors: list[ScheduleInspectorRead]
+
+
 class RetestScheduleRead(BaseModel):
     id: str
     asset_id: str

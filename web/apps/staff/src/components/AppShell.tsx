@@ -3,6 +3,7 @@ import {
   Bell,
   Boxes,
   CalendarClock,
+  CalendarDays,
   ChevronDown,
   ClipboardCheck,
   Database,
@@ -49,6 +50,7 @@ export type AppModule =
   | "assets"
   | "products"
   | "reference"
+  | "scheduling"
   | "inspections"
   | "certificates"
   | "retest"
@@ -107,6 +109,7 @@ const navGroups: Array<{ label: string; items: NavItem[] }> = [
     label: "Operations",
     items: [
       { label: "Assets", icon: Database, module: "assets" },
+      { label: "Scheduling", icon: CalendarDays, module: "scheduling" },
       { label: "Inspections", icon: ClipboardCheck, module: "inspections" },
       { label: "Certificates", icon: FileCheck2, module: "certificates" },
       { label: "Retest Schedule", icon: CalendarClock, module: "retest" },

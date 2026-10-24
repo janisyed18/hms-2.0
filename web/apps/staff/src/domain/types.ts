@@ -600,6 +600,18 @@ export interface InspectionBookingChangeRequest {
   createdAt: string;
 }
 
+export interface ScheduleInspector {
+  id: string;
+  displayName: string;
+}
+
+export interface InspectionScheduleResult {
+  total: number;
+  limit: number;
+  items: InspectionBookingRecord[];
+  inspectors: ScheduleInspector[];
+}
+
 export interface InspectionBookingCreateValues {
   customerId: string;
   locationId: string;
