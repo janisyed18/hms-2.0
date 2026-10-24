@@ -46,3 +46,27 @@ describe("loadActiveInspectors page cap", () => {
     expect(result.inspectors).toEqual([]);
   });
 });
+
+describe("loadActiveInspectors under concurrent changes", () => {
+  // KNOWN GAP: offset pagination skips a user when an already-read user is removed
+  // between pages. `it.fails` keeps CI green while the gap exists; once pagination is
+  // stable (cursor or snapshot) this starts passing, Vitest reports the unexpected
+  // pass, and the test must become a normal `it`.
+  it.fails("does not skip a user when an already-read user is removed between pages", async () => {
+    const backing = Array.from({ length: ROSTER_PAGE_SIZE + 2 }, (_, i) => user(i));
+    const list = vi.fn(async ({ offset, limit }: { sort: string; limit: number; offset: number }) => {
+      if (offset === ROSTER_PAGE_SIZE) {
+        // Page 1 is already read; one of its users is removed before page 2.
+        backing.splice(50, 1);
+      }
+      return { total: backing.length, items: backing.slice(offset, offset + limit) };
+    });
+
+    const result = await loadActiveInspectors(list);
+
+    // ins-0100 still exists, but it shifted into the already-read range, so
+    // offset 100 now starts after it and it never reaches the roster.
+    expect(backing.map((u) => u.id)).toContain("ins-0100");
+    expect(result.inspectors.map((inspector) => inspector.id)).toContain("ins-0100");
+  });
+});
