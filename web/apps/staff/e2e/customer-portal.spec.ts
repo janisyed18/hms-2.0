@@ -163,14 +163,62 @@ test.describe("customer portal", () => {
     await navigation.getByRole("button", { name: "Bookings", exact: true }).click();
     await selectFirstQuote(page);
     await page.getByRole("button", { name: "Submit booking request" }).click();
+    await expect(page.getByText("Your inspection request was submitted for approval.")).toBeFocused();
     await expect(page.getByRole("button", { name: "Cancel booking" })).toBeVisible();
-    await expect(page.getByText("PENDING_APPROVAL")).toBeVisible();
+    await expect(page.locator(".portal-status", { hasText: "Awaiting approval" })).toBeVisible();
+    // The request survives a reload, and the form starts fresh.
+    await page.reload();
+    await navigation.getByRole("button", { name: "Bookings", exact: true }).click();
+    await expect(page.locator(".portal-status", { hasText: "Awaiting approval" })).toBeVisible();
+    await expect(page.getByRole("radio")).toHaveCount(0);
+    // Cancelling asks first, and can be backed out of.
     await page.getByRole("button", { name: "Cancel booking" }).click();
-    await expect(page.getByText("CANCELLED")).toBeVisible();
+    await page.getByRole("button", { name: "Keep booking" }).click();
+    await expect(page.locator(".portal-status", { hasText: "Awaiting approval" })).toBeVisible();
+    await page.getByRole("button", { name: "Cancel booking" }).click();
+    await page.getByRole("button", { name: "Yes, cancel this booking" }).click();
+    await expect(page.getByText("The booking was cancelled and the time was released.")).toBeFocused();
+    await expect(page.locator(".portal-status", { hasText: "Cancelled" })).toBeVisible();
 
     for (const pageName of ["Inspections", "Certificates", "Retests", "Notifications"]) {
       await navigation.getByRole("button", { name: pageName, exact: true }).click();
       await expect(page.getByRole("heading", { name: pageName === "Retests" ? "Retest schedule" : pageName })).toBeVisible();
+    }
+  });
+
+  test("the booking form works at every width with long names, and the site's time zone is shown with the times", async ({ page }) => {
+    test.setTimeout(240_000);
+    preparePortalFixture(false);
+    sql(`UPDATE customer_locations SET name = 'Port Botany Bulk Liquids Terminal Berth 4 Extended Operations Name'
+         WHERE customer_id = (SELECT id FROM customers WHERE code = 'VOPA');`);
+    try {
+      await signInToPortal(page);
+      for (const [width, height] of [[1440, 900], [1280, 800], [1024, 768], [768, 1024], [390, 844]] as const) {
+        await page.setViewportSize({ width, height });
+        await page.goto("/portal/");
+        await expect(page.getByRole("region", { name: "Customer portal workspace" })).toBeVisible();
+        if (width < 800) {
+          await page.getByRole("button", { name: "Open navigation menu" }).click();
+          await page.getByRole("dialog", { name: "Navigation menu" }).getByRole("button", { name: "Bookings", exact: true }).click();
+        } else {
+          await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Bookings", exact: true }).click();
+        }
+        await selectFirstQuote(page);
+        await expect(page.getByRole("group", { name: /Available times on .*UTC/ })).toBeVisible();
+        await expect(page.getByText(/You are requesting/)).toContainText("Port Botany Bulk Liquids Terminal Berth 4");
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        expect(overflow, `page overflow at ${width}px`).toBeLessThanOrEqual(1);
+        const short = await page.evaluate(() =>
+          Array.from(document.querySelectorAll(".portal-booking button, .portal-booking select, .portal-booking input[type=date]"))
+            .filter((element) => element.getBoundingClientRect().height > 0 && element.getBoundingClientRect().height < 40)
+            .map((element) => element.textContent?.trim() || element.getAttribute("aria-label"))
+        );
+        expect(short, `controls under 40px tall at ${width}px`).toEqual([]);
+        await page.screenshot({ path: test.info().outputPath(`booking-${width}.png`) });
+      }
+    } finally {
+      sql(`UPDATE customer_locations SET name = 'Port Botany'
+           WHERE customer_id = (SELECT id FROM customers WHERE code = 'VOPA');`);
     }
   });
 
@@ -188,6 +236,57 @@ test.describe("customer portal", () => {
 
     expect(response.status).toBe(404);
     expect(response.body).not.toContain("Orica");
+  });
+
+  test("Customer A cannot read, cancel or price Customer B's scheduling by guessed ids", async ({ page }) => {
+    test.setTimeout(180_000);
+    preparePortalFixture(true);
+    sql(`UPDATE customer_locations
+         SET scheduling_timezone = 'UTC', scheduling_open_time = '08:00',
+             scheduling_close_time = '12:00', scheduling_weekdays = '[0]', scheduling_blackout_dates = '[]'
+         WHERE customer_id = (SELECT id FROM customers WHERE code = 'ORIC');`);
+    const ids = sql(`SELECT c.id || '|' || l.id FROM customers c JOIN customer_locations l ON l.customer_id = c.id WHERE c.code = 'ORIC' LIMIT 1;`).split("|");
+    const accessToken = await signInToPortal(page);
+
+    // While the user can still act for both organisations, create a booking for Customer B.
+    const bookingId = await page.evaluate(async ({ accessToken, customerId, locationId, assetId, date }) => {
+      const headers = { Authorization: `Bearer ${accessToken}`, "content-type": "application/json" };
+      const quotes = await fetch(`/api/v1/inspection-availability?customer_id=${customerId}&location_id=${locationId}&local_date=${date}&duration_minutes=60`, { headers });
+      const slot = ((await quotes.json()) as { items: Array<{ quote_id: string }> }).items[0];
+      const created = await fetch("/api/v1/inspection-bookings", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ customer_id: customerId, location_id: locationId, asset_ids: [assetId], availability_quote_id: slot.quote_id })
+      });
+      return ((await created.json()) as { id: string }).id;
+    }, { accessToken, customerId: ids[0], locationId: ids[1], assetId: "00000000-0000-7000-8000-000000000043", date: bookingDate });
+    expect(bookingId).toBeTruthy();
+
+    // Now remove access to Customer B and try guessed identifiers.
+    sql(`DELETE FROM user_customer_accesses WHERE id = '00000000-0000-7000-8000-000000000042';`);
+    const attempts = await page.evaluate(async ({ accessToken, customerId, locationId, bookingId, date }) => {
+      const headers = { Authorization: `Bearer ${accessToken}`, "content-type": "application/json" };
+      const read = async (path: string, init: RequestInit = {}) => {
+        const result = await fetch(path, { headers, ...init });
+        return { status: result.status, body: await result.text() };
+      };
+      return {
+        detail: await read(`/api/v1/inspection-bookings/${bookingId}`),
+        cancel: await read(`/api/v1/inspection-bookings/${bookingId}/cancel`, { method: "POST", body: JSON.stringify({ reason: "guess" }) }),
+        availability: await read(`/api/v1/inspection-availability?customer_id=${customerId}&location_id=${locationId}&local_date=${date}&duration_minutes=60`),
+        list: await read(`/api/v1/inspection-bookings?customer_id=${customerId}`)
+      };
+    }, { accessToken, customerId: ids[0], locationId: ids[1], bookingId, date: bookingDate });
+
+    expect([403, 404]).toContain(attempts.detail.status);
+    expect([403, 404]).toContain(attempts.cancel.status);
+    expect([403, 404]).toContain(attempts.availability.status);
+    for (const attempt of Object.values(attempts)) {
+      expect(attempt.body).not.toContain("Orica");
+      expect(attempt.body).not.toContain("E2E-ORIC-SECRET");
+    }
+    const listed = JSON.parse(attempts.list.body) as { items?: unknown[] };
+    expect(attempts.list.status === 200 ? listed.items ?? [] : []).toEqual([]);
   });
 
   test("multi-customer users can switch organisations and mobile navigation remains usable", async ({ page }) => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
 import type {
@@ -6,7 +6,6 @@ import type {
   ApiListResult,
   CertificateRecord,
   CustomerRecord,
-  InspectionAvailabilitySlot,
   InspectionBookingRecord,
   InspectionRecord,
   NotificationRecord,
@@ -14,6 +13,7 @@ import type {
   StaffSession
 } from "../domain/types";
 import type { AppModule } from "./AppShell";
+import { CustomerBookings } from "./CustomerBookings";
 import { WorkspaceState } from "./WorkspaceState";
 
 interface CustomerPortalWorkspaceProps {
@@ -55,17 +55,6 @@ function formatDateTime(value: string, timeZone?: string): string {
     timeStyle: "short",
     ...(timeZone ? { timeZone } : {})
   }).format(new Date(value));
-}
-
-function formatRecordedAppointment(
-  appointment: NonNullable<InspectionBookingRecord["appointment"]>
-): string {
-  const local = new Date(`${appointment.localStartSnapshot}Z`);
-  return `${new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "UTC"
-  }).format(local)} (${appointment.timezoneId})`;
 }
 
 function errorMessage(error: unknown): string {
@@ -115,6 +104,10 @@ export function CustomerPortalWorkspace({
   const [data, setData] = useState<PortalData>(emptyData);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
+  // The organisation the loaded data belongs to. A refresh of the same organisation keeps the
+  // last good data on screen (and the booking form's state); only a different one starts over.
+  const loadedFor = useRef<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   useEffect(() => {
     let current = true;
@@ -147,7 +140,12 @@ export function CustomerPortalWorkspace({
 
   const loadCustomerData = useCallback(async () => {
     if (!customer) return;
-    setStatus("loading");
+    const refreshing = loadedFor.current === customer.id;
+    if (!refreshing) {
+      setData(emptyData);
+      setStatus("loading");
+      loadedFor.current = null;
+    }
     setError(null);
     try {
       const client = createHmsClient();
@@ -168,8 +166,14 @@ export function CustomerPortalWorkspace({
         notifications,
         retests
       });
+      loadedFor.current = customer.id;
+      setRefreshError(null);
       setStatus("ready");
     } catch (loadError) {
+      if (refreshing) {
+        setRefreshError(errorMessage(loadError));
+        return;
+      }
       setError(errorMessage(loadError));
       setStatus("error");
     }
@@ -194,6 +198,12 @@ export function CustomerPortalWorkspace({
 
   return (
     <section className="customer-portal-workspace" aria-label="Customer portal workspace">
+      {refreshError ? (
+        <div className="portal-notice is-error" role="alert">
+          <span>Some information could not be refreshed, so the last loaded data is shown. {refreshError}</span>
+          <button className="secondary-button" type="button" onClick={() => void loadCustomerData()}>Try again</button>
+        </div>
+      ) : null}
       <header className="customer-portal-context">
         <div>
           <span className="eyebrow">Customer workspace</span>
@@ -217,7 +227,13 @@ export function CustomerPortalWorkspace({
       {activeModule === "assets" ? <Assets assets={data.assets} /> : null}
       {activeModule === "locations" ? <Locations customer={customer} assets={data.assets} onModuleChange={onModuleChange} /> : null}
       {activeModule === "bookings" ? (
-        <Bookings customer={customer} data={data} onChanged={loadCustomerData} />
+        <CustomerBookings
+          assets={data.assets}
+          bookings={data.bookings}
+          customer={customer}
+          key={customer.id}
+          onChanged={loadCustomerData}
+        />
       ) : null}
       {activeModule === "inspections" ? <Inspections inspections={data.inspections} /> : null}
       {activeModule === "certificates" ? <Certificates certificates={data.certificates} /> : null}
@@ -287,76 +303,4 @@ function Retests({ retests, onModuleChange }: { retests: RetestScheduleRecord[];
 function Notifications({ notifications, onChanged }: { notifications: NotificationRecord[]; onChanged: () => Promise<void> }) {
   const [pending, setPending] = useState<string | null>(null);
   return <section className="portal-panel"><h2>Notifications</h2>{notifications.length === 0 ? <p>No notifications for this organisation.</p> : <ul className="portal-list">{notifications.map((notification) => <li key={notification.id}><strong>{notification.subject ?? notification.category}</strong><span>{notification.body}</span><span>{formatDateTime(notification.createdAt)}</span>{notification.readAt ? <span>Read</span> : <button disabled={pending === notification.id} type="button" onClick={async () => { setPending(notification.id); try { await createHmsClient().markNotificationRead(notification.id); await onChanged(); } finally { setPending(null); } }}>Mark as read</button>}</li>)}</ul>}</section>;
-}
-
-function Bookings({ customer, data, onChanged }: { customer: CustomerRecord; data: PortalData; onChanged: () => Promise<void> }) {
-  const [locationId, setLocationId] = useState("");
-  const [assetId, setAssetId] = useState("");
-  const [localDate, setLocalDate] = useState("");
-  const [slots, setSlots] = useState<InspectionAvailabilitySlot[]>([]);
-  const [quoteId, setQuoteId] = useState("");
-  const [additionalInformation, setAdditionalInformation] = useState("");
-  const [rescheduleBooking, setRescheduleBooking] = useState<InspectionBookingRecord | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const locationAssets = data.assets.filter((asset) => asset.location?.id === locationId);
-  const selectedLocation = customer.locations.find((location) => location.id === locationId) ?? null;
-  const clearQuote = () => { setSlots([]); setQuoteId(""); };
-  const changeLocation = (nextLocationId: string) => { setLocationId(nextLocationId); setAssetId(""); clearQuote(); };
-
-  async function findAvailability() {
-    if (!locationId || !localDate || (!rescheduleBooking && !assetId)) return;
-    setBusy(true); setMessage(null); clearQuote();
-    try {
-      setSlots(await createHmsClient().listInspectionAvailability({ customerId: customer.id, locationId, localDate }));
-    } catch (requestError) { setMessage(errorMessage(requestError)); } finally { setBusy(false); }
-  }
-
-  async function submitBooking() {
-    if (!quoteId || !locationId || (!rescheduleBooking && !assetId)) return;
-    setBusy(true); setMessage(null);
-    try {
-      if (rescheduleBooking) {
-        await createHmsClient().requestInspectionBookingReschedule(rescheduleBooking.id, { availabilityQuoteId: quoteId, reason: additionalInformation.trim() || null, inspectorUserId: null });
-        setMessage("Your reschedule request was sent for review.");
-      } else {
-        await createHmsClient().createInspectionBooking({ customerId: customer.id, locationId, assetIds: [assetId], availabilityQuoteId: quoteId, additionalInformation: additionalInformation.trim() || null });
-        setMessage("Your inspection request was submitted for approval.");
-      }
-      setAssetId(""); setLocalDate(""); setAdditionalInformation(""); setRescheduleBooking(null); clearQuote(); await onChanged();
-    } catch (requestError) { setMessage(errorMessage(requestError)); } finally { setBusy(false); }
-  }
-
-  function startReschedule(booking: InspectionBookingRecord) {
-    setRescheduleBooking(booking);
-    setLocationId(booking.location.id);
-    setAssetId(booking.assets[0]?.id ?? "");
-    setLocalDate("");
-    setAdditionalInformation("");
-    clearQuote();
-  }
-
-  async function cancelBooking(booking: InspectionBookingRecord) {
-    setBusy(true); setMessage(null);
-    try { await createHmsClient().cancelInspectionBooking(booking.id, "Cancelled by customer"); setMessage("The booking was cancelled and the slot was released."); await onChanged(); }
-    catch (requestError) { setMessage(errorMessage(requestError)); } finally { setBusy(false); }
-  }
-
-  return <>
-    <section className="portal-panel"><h2>{rescheduleBooking ? "Request a new appointment time" : "Request an inspection"}</h2><p>{rescheduleBooking ? "The approved location and assets are fixed. Select a new date and time." : "Select a location first. Changing organisation, location, asset, or date clears any previous availability quote."}</p>
-      <div className="portal-form-grid">
-        <label>Location<select aria-label="Booking location" disabled={Boolean(rescheduleBooking)} value={locationId} onChange={(event) => changeLocation(event.target.value)}><option value="">Select a location</option>{customer.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-        <label>Asset<select aria-label="Booking asset" disabled={Boolean(rescheduleBooking) || !locationId} value={assetId} onChange={(event) => { setAssetId(event.target.value); clearQuote(); }}><option value="">Select an asset</option>{locationAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.assetNumber}</option>)}</select></label>
-        <label>Preferred date<input aria-label="Preferred date" type="date" value={localDate} onChange={(event) => { setLocalDate(event.target.value); clearQuote(); }} /></label>
-        <label>Notes<textarea value={additionalInformation} onChange={(event) => setAdditionalInformation(event.target.value)} /></label>
-      </div>
-      <button disabled={busy || !locationId || (!rescheduleBooking && !assetId) || !localDate} type="button" onClick={() => void findAvailability()}>Find availability</button>
-      {slots.length > 0 ? <fieldset><legend>Select a time</legend>{slots.map((slot) => <label className="portal-slot" key={slot.quoteId}><input checked={quoteId === slot.quoteId} name="slot" type="radio" value={slot.quoteId} onChange={() => setQuoteId(slot.quoteId)} />{formatDateTime(slot.startsAt, selectedLocation?.schedulingTimezone)} to {formatDateTime(slot.endsAt, selectedLocation?.schedulingTimezone)}</label>)}</fieldset> : null}
-      <button disabled={busy || !quoteId} type="button" onClick={() => void submitBooking()}>{rescheduleBooking ? "Request reschedule" : "Submit booking request"}</button>
-      {rescheduleBooking ? <button disabled={busy} type="button" onClick={() => { setRescheduleBooking(null); setLocationId(""); setAssetId(""); setLocalDate(""); clearQuote(); }}>Cancel reschedule</button> : null}
-      {message ? <p role="status">{message}</p> : null}
-    </section>
-    <section className="portal-panel"><h2>Bookings</h2>{data.bookings.length === 0 ? <p>No booking requests for this organisation.</p> : <ul className="portal-list">{data.bookings.map((booking) => <li key={booking.id}><strong>{booking.location.name} · {booking.status}</strong><span>{booking.appointment ? formatRecordedAppointment(booking.appointment) : formatDateTime(booking.scheduledAt, booking.location.schedulingTimezone)} · {booking.assets.map((asset) => asset.assetNumber).join(", ")}</span>{booking.rejectionReason ? <span>Reason: {booking.rejectionReason}</span> : null}{booking.status === "PENDING_APPROVAL" || booking.status === "APPROVED" ? <span className="portal-actions">{booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED" ? <button disabled={busy} type="button" onClick={() => startReschedule(booking)}>Request reschedule</button> : null}<button disabled={busy} type="button" onClick={() => void cancelBooking(booking)}>Cancel booking</button></span> : null}{booking.changeRequests.some((request) => request.status === "PENDING_CUSTOMER_CONFIRMATION") ? <button disabled={busy} type="button" onClick={async () => { const request = booking.changeRequests.find((item) => item.status === "PENDING_CUSTOMER_CONFIRMATION"); if (!request) return; setBusy(true); try { await createHmsClient().confirmInspectionBookingReschedule(request.id); await onChanged(); } catch (requestError) { setMessage(errorMessage(requestError)); } finally { setBusy(false); } }}>Confirm proposed reschedule</button> : null}</li>)}</ul>}</section>
-  </>;
 }

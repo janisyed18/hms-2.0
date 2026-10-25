@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -227,5 +227,351 @@ describe("CustomerPortalWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Request reschedule" }));
     expect(screen.getByRole("combobox", { name: "Booking location" })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Booking asset" })).toBeDisabled();
+  });
+});
+
+// --- final scheduling UX: availability, submission, history, hard dates ----------------
+
+type Json = Record<string, unknown>;
+
+function rawBooking(overrides: Json = {}, zone = "Australia/Sydney"): Json {
+  return {
+    id: "booking-1",
+    customer: { id: "customer-a", code: "CUSTOMER-A", name: "Customer A" },
+    location: { id: "location-customer-a", name: "Customer A Site", address_1: null, address_2: null, city: null, state: null, country: null, scheduling_timezone: zone },
+    assets: [{ id: "asset-customer-a", asset_number: "ASSET-customer-a", tag: null, lifecycle_status: "IN_SERVICE" }],
+    scheduled_at: "2027-10-04T00:00:00Z",
+    scheduled_end_at: "2027-10-04T01:00:00Z",
+    additional_information: null,
+    status: "PENDING_APPROVAL",
+    requested_by_user_id: "customer-user",
+    inspector_user_id: null,
+    reviewed_by_user_id: null,
+    reviewed_at: null,
+    rejection_reason: null,
+    created_at: "2027-10-01T00:00:00Z",
+    appointment: null,
+    change_requests: [],
+    ...overrides
+  };
+}
+
+function confirmedAppointment(start: string, end: string, zone = "Australia/Sydney", offset = "+11:00"): Json {
+  return {
+    id: "appointment-1", status: "CONFIRMED", starts_at: "2027-10-04T00:00:00Z", ends_at: "2027-10-04T01:00:00Z",
+    revision_number: 1, timezone_id: zone, local_start_snapshot: start, local_end_snapshot: end,
+    utc_offset_start: offset, utc_offset_end: offset, tzdata_version: "2026a"
+  };
+}
+
+function slot(id: string, start: string, end: string, expires = "2099-01-01T00:00:00Z"): Json {
+  return { quote_id: id, starts_at: start, ends_at: end, expires_at: expires };
+}
+
+interface Stub {
+  bookings: Json[];
+  availability: Array<Json[] | number>;
+  posts: Array<{ path: string; status: number }>;
+  calls: string[];
+  customerJson: Json;
+  failBookingsFrom?: number;
+  postDelayMs?: number;
+}
+
+function stubPortal(options: Partial<Stub> = {}): Stub {
+  const state: Stub = {
+    bookings: [], availability: [], posts: [], calls: [], customerJson: customer("customer-a", "Customer A"), ...options
+  };
+  let bookingReads = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    const requestUrl = new URL(String(url), "http://test");
+    const path = requestUrl.pathname;
+    state.calls.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/api/v1/customers") return response({ total: 1, limit: 100, offset: 0, items: [state.customerJson] });
+    if (path === "/api/v1/assets") return response({ total: 1, limit: 100, offset: 0, items: [asset("customer-a")] });
+    if (path === "/api/v1/inspection-availability") {
+      const next = state.availability.shift();
+      if (typeof next === "number") return new Response(JSON.stringify({ error: { code: "server", message: "Availability service unavailable" } }), { status: next });
+      return response({ items: next ?? [] });
+    }
+    if (path === "/api/v1/inspection-bookings" && (init?.method ?? "GET") === "GET") {
+      bookingReads += 1;
+      if (state.failBookingsFrom && bookingReads >= state.failBookingsFrom) {
+        return new Response(JSON.stringify({ error: { code: "server", message: "Bookings are temporarily unavailable" } }), { status: 503 });
+      }
+      return response({ total: state.bookings.length, limit: 100, offset: 0, items: state.bookings });
+    }
+    if (init?.method === "POST") {
+      if (state.postDelayMs) await new Promise((resolve) => setTimeout(resolve, state.postDelayMs));
+      const planned = state.posts.shift();
+      if (planned && planned.status >= 400) {
+        return new Response(JSON.stringify({ detail: "The selected availability is no longer valid. Choose another time." }), { status: planned.status });
+      }
+      return response(rawBooking({ status: "CANCELLED" }));
+    }
+    if (path === "/api/v1/notifications/me") return response({ total: 0, unread_total: 0, limit: 100, offset: 0, items: [] });
+    return response({ total: 0, limit: 100, offset: 0, items: [] });
+  }));
+  return state;
+}
+
+function withZone(zone: string | null): Json {
+  const base = customer("customer-a", "Customer A") as unknown as { locations: Array<Json> };
+  return { ...base, locations: base.locations.map((location) => ({ ...location, scheduling_timezone: zone })) };
+}
+
+async function pickSlotSearch(user: ReturnType<typeof userEvent.setup>, date = "2027-10-04") {
+  await user.selectOptions(await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Booking asset" }), "asset-customer-a");
+  fireEvent.change(screen.getByLabelText("Preferred date"), { target: { value: date } });
+  await user.click(screen.getByRole("button", { name: "Find availability" }));
+}
+
+describe("availability selection", () => {
+  it("says so when a date has no times, and when availability cannot be loaded, with a working retry", async () => {
+    const stub = stubPortal({ customerJson: withZone("Australia/Sydney"), availability: [[], 503, [slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z")]] });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    await pickSlotSearch(user);
+    expect(await screen.findByText(/No times are available on Monday 4 October 2027 at Customer A Site/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Find availability" }));
+    const failure = await screen.findByRole("alert");
+    expect(failure).toHaveTextContent(/Availability could not be loaded: Availability service unavailable/);
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("radio")).toBeInTheDocument();
+    expect(stub.calls.filter((call) => call.endsWith("inspection-availability"))).toHaveLength(3);
+  });
+
+  it("shows the site's time zone next to the times, whatever zone the browser is in", async () => {
+    stubPortal({ customerJson: withZone("Australia/Perth"), availability: [[slot("q1", "2027-10-04T01:00:00Z", "2027-10-04T02:00:00Z")]] });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    await pickSlotSearch(user);
+    const group = await screen.findByRole("group", { name: /Available times on Monday 4 October 2027/ });
+    expect(group).toHaveTextContent("Australia/Perth");
+    expect(within(group).getByText(/9:00\s?am to 10:00\s?am/i)).toBeInTheDocument(); // 01:00Z is 09:00 in Perth (UTC+8)
+  });
+
+  it("labels the two 2:30 times on a Sydney fall-back day by their offsets, and the spring-forward day without the missing hour", async () => {
+    stubPortal({
+      customerJson: withZone("Australia/Sydney"),
+      availability: [[slot("q1", "2027-10-02T16:00:00Z", "2027-10-02T17:00:00Z")], [slot("q2", "2027-04-03T15:30:00Z", "2027-04-03T16:30:00Z")]]
+    });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    await pickSlotSearch(user, "2027-10-03");
+    // Clocks went forward at 2:00 am, so the first bookable hour after it is 3:00 am (AEDT).
+    const spring = await screen.findByRole("group", { name: /Sunday 3 October 2027/ });
+    expect(within(spring).getByText(/3:00\s?am to 4:00\s?am/i)).toBeInTheDocument();
+    expect(spring).toHaveTextContent(/AEDT|GMT\+11/);
+
+    fireEvent.change(screen.getByLabelText("Preferred date"), { target: { value: "2027-04-04" } });
+    await user.click(screen.getByRole("button", { name: "Find availability" }));
+    const fall = await screen.findByRole("group", { name: /Sunday 4 April 2027/ });
+    // 2:30 happens twice that night: the label says which one this slot is.
+    expect(within(fall).getByText(/2:30\s?am (AEDT|GMT\+11) to 2:30\s?am (AEST|GMT\+10)/i)).toBeInTheDocument();
+  });
+
+  it("shows what will be requested before it is sent, and clears the choice when the date changes", async () => {
+    stubPortal({ customerJson: withZone("Australia/Sydney"), availability: [[slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z")]] });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    await pickSlotSearch(user);
+    const submit = screen.getByRole("button", { name: "Submit booking request" });
+    expect(submit).toBeDisabled();
+    await user.click(await screen.findByRole("radio"));
+    expect(submit).toBeEnabled();
+    expect(screen.getByText(/You are requesting/)).toHaveTextContent(/Customer A Site.*ASSET-customer-a.*Monday 4 October 2027, 8:00\s?am to 9:00\s?am/i);
+
+    fireEvent.change(screen.getByLabelText("Preferred date"), { target: { value: "2027-10-05" } });
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.queryByText(/You are requesting/)).toBeNull();
+    expect(submit).toBeDisabled();
+  });
+
+  it("drops times that expire while on screen and asks for a fresh search", async () => {
+    const soon = new Date(Date.now() + 400).toISOString();
+    stubPortal({ customerJson: withZone("Australia/Sydney"), availability: [[slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z", soon)]] });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    await pickSlotSearch(user);
+    await user.click(await screen.findByRole("radio"));
+    expect(await screen.findByText(/have expired/, undefined, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.getByRole("button", { name: "Submit booking request" })).toBeDisabled();
+  });
+
+  it("explains an empty organisation and a location with no assets", async () => {
+    stubPortal({ customerJson: { ...(customer("customer-a", "Customer A") as object), locations: [] } });
+    const first = render(<WorkspaceHarness activeModule="bookings" />);
+    expect(await screen.findByText(/No approved locations are available/)).toBeInTheDocument();
+    first.unmount();
+
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url), "http://test").pathname;
+      if (path === "/api/v1/customers") return response({ total: 1, limit: 100, offset: 0, items: [customer("customer-a", "Customer A")] });
+      return response({ total: 0, limit: 100, offset: 0, items: [] });
+    }));
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
+    expect(screen.getByText(/No assets are assigned to this location/)).toBeInTheDocument();
+  });
+});
+
+describe("submitting a booking", () => {
+  it("sends it once even when the button is pressed twice, and confirms with a focused notice", async () => {
+    const stub = stubPortal({ customerJson: withZone("Australia/Sydney"), availability: [[slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z")]], postDelayMs: 50 });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    await pickSlotSearch(user);
+    await user.click(await screen.findByRole("radio"));
+    const submit = screen.getByRole("button", { name: "Submit booking request" });
+    // Two clicks before React can re-render: only a lock, not the disabled button, stops the second.
+    act(() => {
+      fireEvent.click(submit);
+      fireEvent.click(submit);
+    });
+    const notice = await screen.findByText("Your inspection request was submitted for approval.");
+    expect(stub.calls.filter((call) => call === "POST /api/v1/inspection-bookings")).toHaveLength(1);
+    expect(notice).toHaveFocus();
+    expect(screen.queryByRole("radio")).toBeNull(); // the form starts fresh
+  });
+
+  it.each([422, 409])("keeps the site, asset and date and demands fresh times when the server returns %i", async (status) => {
+    stubPortal({
+      customerJson: withZone("Australia/Sydney"),
+      availability: [[slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z")]],
+      posts: [{ path: "create", status }]
+    });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    await pickSlotSearch(user);
+    await user.click(await screen.findByRole("radio"));
+    await user.click(screen.getByRole("button", { name: "Submit booking request" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/no longer available/);
+    expect(alert).toHaveTextContent(/check availability again/);
+    expect(screen.getByRole("combobox", { name: "Booking location" })).toHaveValue("location-customer-a");
+    expect(screen.getByRole("combobox", { name: "Booking asset" })).toHaveValue("asset-customer-a");
+    expect(screen.getByLabelText("Preferred date")).toHaveValue("2027-10-04");
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(screen.getByRole("button", { name: "Submit booking request" })).toBeDisabled();
+  });
+});
+
+describe("booking history", () => {
+  it("uses plain wording for every state instead of backend codes", async () => {
+    stubPortal({
+      bookings: [
+        rawBooking({ id: "b-pending" }),
+        rawBooking({ id: "b-confirmed", status: "APPROVED", appointment: confirmedAppointment("2027-10-04T11:00:00", "2027-10-04T12:00:00") }),
+        rawBooking({ id: "b-rejected", status: "REJECTED", rejection_reason: "No inspector is free that day." }),
+        rawBooking({ id: "b-cancelled", status: "CANCELLED" })
+      ]
+    });
+    render(<WorkspaceHarness activeModule="bookings" />);
+    const list = await screen.findByRole("list");
+    for (const label of ["Awaiting approval", "Confirmed", "Declined", "Cancelled"]) {
+      expect(within(list).getByText(label)).toBeInTheDocument();
+    }
+    expect(list).not.toHaveTextContent(/PENDING_APPROVAL|APPROVED|REJECTED|CANCELLED/);
+    expect(list).toHaveTextContent("Reason: No inspector is free that day.");
+  });
+
+  it("shows the recorded site-local time, including a visit that runs past midnight", async () => {
+    stubPortal({
+      bookings: [rawBooking({ status: "APPROVED", appointment: confirmedAppointment("2027-10-04T23:30:00", "2027-10-05T00:30:00") })]
+    });
+    render(<WorkspaceHarness activeModule="bookings" />);
+    const card = (await screen.findByText(/Australia\/Sydney \(UTC\+11:00\)/)).closest("li") as HTMLElement;
+    expect(card).toHaveTextContent(/Monday 4 October 2027, 11:30\s?pm to Tuesday 5 October 2027, 12:30\s?am/i);
+  });
+
+  it("shows a proposed new time before asking the customer to confirm it, then confirms it", async () => {
+    const stub = stubPortal({
+      bookings: [rawBooking({
+        status: "APPROVED",
+        appointment: confirmedAppointment("2027-10-04T11:00:00", "2027-10-04T12:00:00"),
+        change_requests: [{ id: "change-1", status: "PENDING_CUSTOMER_CONFIRMATION", starts_at: "2027-10-05T00:00:00Z", ends_at: "2027-10-05T01:00:00Z", reason: "Site closed", emergency: false, created_at: "2027-10-01T00:00:00Z" }]
+      })]
+    });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    const proposal = await screen.findByText(/Proposed new time:/);
+    expect(proposal).toHaveTextContent(/Tuesday 5 October 2027, 11:00\s?am/i);
+    expect(screen.queryByRole("button", { name: "Request reschedule" })).toBeNull(); // one change at a time
+    await user.click(screen.getByRole("button", { name: "Confirm new time" }));
+    expect(await screen.findByText("The new time is confirmed.")).toBeInTheDocument();
+    expect(stub.calls).toContain("POST /api/v1/inspection-booking-change-requests/change-1/confirm");
+  });
+
+  it("asks before cancelling, lets the customer back out, and refreshes when the booking has already changed", async () => {
+    const stub = stubPortal({ bookings: [rawBooking()], posts: [{ path: "cancel", status: 409 }] });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    await user.click(await screen.findByRole("button", { name: "Cancel booking" }));
+    expect(stub.calls.some((call) => call.endsWith("/cancel"))).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Keep booking" }));
+    expect(screen.getByRole("button", { name: "Cancel booking" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancel booking" }));
+    const readsBefore = stub.calls.filter((call) => call === "GET /api/v1/inspection-bookings").length;
+    await user.click(screen.getByRole("button", { name: "Yes, cancel this booking" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/has changed since you opened it, so nothing was cancelled/);
+    expect(alert).toHaveFocus();
+    await waitFor(() => expect(stub.calls.filter((call) => call === "GET /api/v1/inspection-bookings").length).toBeGreaterThan(readsBefore));
+  });
+
+  it("keeps the last loaded bookings, and says so, when a later refresh fails", async () => {
+    const stub = stubPortal({ bookings: [rawBooking()], failBookingsFrom: 2 });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    await user.click(await screen.findByRole("button", { name: "Cancel booking" }));
+    await user.click(screen.getByRole("button", { name: "Yes, cancel this booking" }));
+    const banner = await screen.findByText(/could not be refreshed, so the last loaded data is shown/);
+    expect(banner).toHaveTextContent("Bookings are temporarily unavailable");
+    expect(screen.getByText("Customer A Site", { selector: "strong" })).toBeInTheDocument(); // not blanked
+    expect(stub.calls).toContain("POST /api/v1/inspection-bookings/booking-1/cancel");
+  });
+});
+
+describe("keyboard use and long names", () => {
+  it("can book from the keyboard alone", async () => {
+    stubPortal({ customerJson: withZone("Australia/Sydney"), availability: [[slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z")]] });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    const location = await screen.findByRole("combobox", { name: "Booking location" });
+    await user.selectOptions(location, "location-customer-a");
+    await user.tab();
+    expect(screen.getByRole("combobox", { name: "Booking asset" })).toHaveFocus();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Booking asset" }), "asset-customer-a");
+    fireEvent.change(screen.getByLabelText("Preferred date"), { target: { value: "2027-10-04" } });
+    const find = screen.getByRole("button", { name: "Find availability" });
+    find.focus();
+    await user.keyboard("{Enter}");
+    const radio = await screen.findByRole("radio");
+    radio.focus();
+    await user.keyboard(" ");
+    expect(radio).toBeChecked();
+    const submit = screen.getByRole("button", { name: "Submit booking request" });
+    submit.focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("Your inspection request was submitted for approval.")).toBeInTheDocument();
+  });
+
+  it("keeps very long location and asset names whole in the form and the history", async () => {
+    const longName = "Port Botany Bulk Liquids Terminal Berth 4 Extended Operations Name With Many Words";
+    const base = customer("customer-a", "Customer A") as unknown as { locations: Array<Json> };
+    stubPortal({
+      customerJson: { ...base, locations: base.locations.map((location) => ({ ...location, name: longName })) },
+      bookings: [rawBooking({ location: { id: "location-customer-a", name: longName, address_1: null, address_2: null, city: null, state: null, country: null, scheduling_timezone: "Australia/Sydney" } })]
+    });
+    render(<WorkspaceHarness activeModule="bookings" />);
+    expect(await screen.findByRole("option", { name: longName })).toBeInTheDocument();
+    expect(screen.getByText(longName, { selector: "strong" })).toBeInTheDocument();
   });
 });
