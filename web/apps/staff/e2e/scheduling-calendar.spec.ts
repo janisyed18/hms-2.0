@@ -295,21 +295,106 @@ test.describe("staff scheduling and dispatch calendar", () => {
     }
   });
 
-  test("G: the schedule stays usable at 1024px and 768px without sideways page scroll", async ({ browser }) => {
+  test("G: the schedule stays usable from desktop to phone width without sideways page scroll", async ({ browser }) => {
     test.setTimeout(240_000);
     const s = await scene(browser);
     try {
-      await openScheduling(s.admin.page);
-      for (const [width, height] of [[1440, 900], [1024, 800], [768, 1024]] as const) {
-        await s.admin.page.setViewportSize({ width, height });
-        await expect(dayGrid(s.admin.page)).toBeVisible();
-        const overflow = await s.admin.page.evaluate(
-          () => document.documentElement.scrollWidth - document.documentElement.clientWidth
-        );
-        expect(overflow).toBeLessThanOrEqual(1);
-        await expect(s.admin.page.getByRole("button", { name: "Book inspection" })).toBeVisible();
-        await s.admin.page.screenshot({ path: test.info().outputPath(`schedule-${width}.png`) });
+      // A long customer name is the realistic way to push a filter or table past the screen.
+      execFileSync(
+        "docker",
+        ["compose", "exec", "-T", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "hms", "-d", "hms", "-c",
+          "UPDATE customers SET name = 'Vopak Terminals Australia Pty Ltd Port Botany Bulk Liquids Division' WHERE name = 'Vopak';"],
+        { cwd: repoRoot, encoding: "utf8" }
+      );
+      const page = s.admin.page;
+      await page.reload();
+      await openScheduling(page);
+      const pageOverflow = () =>
+        page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      for (const [width, height] of [[1440, 900], [1280, 800], [1024, 800], [768, 1024], [390, 844]] as const) {
+        await page.setViewportSize({ width, height });
+        for (const view of ["Calendar", "List", "Pending requests"]) {
+          await page.getByRole("tab", { name: view }).click();
+          if (view === "Calendar") await expect(dayGrid(page)).toBeVisible();
+          if (view === "List") await expect(page.getByRole("table", { name: "Scheduled inspections" })).toBeVisible();
+          if (view === "Pending requests") await expect(page.getByRole("button", { name: /Review request from/ }).first()).toBeVisible();
+          expect(await pageOverflow(), `${view} at ${width}px`).toBeLessThanOrEqual(1);
+          await expect(page.getByRole("button", { name: "Book inspection" })).toBeVisible();
+        }
+        await page.getByRole("tab", { name: "Calendar" }).click();
+        await page.screenshot({ path: test.info().outputPath(`schedule-${width}.png`) });
       }
+
+      // The review action is a normal button, not a stretched bar, at tablet width.
+      await page.setViewportSize({ width: 1024, height: 800 });
+      await page.getByRole("tab", { name: "Pending requests" }).click();
+      const review = await page.getByRole("button", { name: /Review request from/ }).first().boundingBox();
+      expect(review!.width).toBeLessThan(200);
+
+      // On a phone the filters fold away until asked for, and the schedule is not pushed off screen.
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.getByRole("tab", { name: "Calendar" }).click();
+      const toggle = page.getByRole("button", { name: /^Filters/ });
+      await expect(toggle).toBeVisible();
+      await expect(toggle).toHaveAttribute("aria-expanded", "false");
+      await expect(page.getByRole("group", { name: "Schedule filters" })).toBeHidden();
+      await toggle.click();
+      await expect(page.getByRole("group", { name: "Schedule filters" })).toBeVisible();
+      expect(await pageOverflow()).toBeLessThanOrEqual(1);
+      await toggle.click();
+      await expect(page.getByRole("group", { name: "Schedule filters" })).toBeHidden();
+      await expect(dayGrid(page)).toBeInViewport();
+    } finally {
+      // Later tests find the seeded customer by its original name.
+      execFileSync(
+        "docker",
+        ["compose", "exec", "-T", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "hms", "-d", "hms", "-c",
+          "UPDATE customers SET name = 'Vopak' WHERE name LIKE 'Vopak Terminals Australia%';"],
+        { cwd: repoRoot, encoding: "utf8" }
+      );
+      await Promise.all([s.customer.context.close(), s.admin.context.close()]);
+    }
+  });
+
+  test("H: Day, Week and Month navigation keeps the viewed day, and a request flows from Pending to a refreshed schedule", async ({ browser }) => {
+    test.setTimeout(240_000);
+    const s = await scene(browser);
+    try {
+      const page = s.admin.page;
+      await openScheduling(page);
+      await page.getByRole("button", { name: "Week", exact: true }).click();
+      await expect(page.getByRole("heading", { level: 3, name: /4 Oct to 10 Oct 2027/ })).toBeVisible();
+      await page.getByRole("button", { name: "Month", exact: true }).click();
+      await expect(page.getByRole("heading", { level: 3, name: "October 2027" })).toBeVisible();
+      // Opening a day from the month returns to Day view on that day.
+      await page.getByRole("button", { name: /4 October/ }).first().click();
+      await expect(page.getByRole("button", { name: "Day", exact: true })).toHaveAttribute("aria-pressed", "true");
+      await expect(dayGrid(page)).toBeVisible();
+
+      // Changing the calendar zone keeps the same calendar day on screen.
+      await page.getByLabel("Calendar time zone").selectOption("Australia/Perth");
+      await expect(page.getByRole("heading", { level: 3, name: /4 October 2027/ })).toBeVisible();
+      await page.getByLabel("Calendar time zone").selectOption("Australia/Sydney");
+
+      // Pending -> drawer -> action -> refreshed state, driven from the keyboard.
+      await page.getByRole("tab", { name: /^Pending requests/ }).focus();
+      await page.keyboard.press("Enter");
+      const review = page.getByRole("button", { name: /Review request from/ }).first();
+      await review.focus();
+      await page.keyboard.press("Enter");
+      const drawer = page.getByRole("dialog");
+      await expect(drawer).toBeVisible();
+      await drawer.getByLabel("Inspector to assign").selectOption({ label: INSPECTOR_EMAIL });
+      await drawer.getByRole("button", { name: "Assign & approve" }).click();
+      await expect(drawer).toContainText("Booking approved and inspector assigned.");
+      // Wait for the queue refresh to drop the request, so focus has nowhere else to return.
+      await expect(page.getByRole("button", { name: /Review request from/ })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(drawer).toHaveCount(0);
+      // The request has left the queue, so focus falls back to the open view's tab.
+      await expect(page.getByRole("tab", { name: /^Pending requests/ })).toBeFocused();
+      await page.getByRole("tab", { name: "Calendar" }).click();
+      await expect(dayGrid(page).getByRole("button", { name: /Awaiting approval/ })).toHaveCount(0);
     } finally {
       await Promise.all([s.customer.context.close(), s.admin.context.close()]);
     }
