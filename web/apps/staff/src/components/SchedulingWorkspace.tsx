@@ -1,5 +1,5 @@
-import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { InspectionBookingForm } from "./InspectionBookingForm";
 import { AppointmentDrawer } from "./scheduling/AppointmentDrawer";
@@ -63,6 +63,23 @@ export function SchedulingWorkspace({
   initialDate?: string;
 }) {
   const workspace = useSchedulingWorkspace({ canApprove: canApproveBookings, initialDate });
+  // On small screens the filters and legend fold away so the schedule is not pushed off screen.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  // Arrow keys move between the views as one tab stop (the tabs pattern).
+  const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const current = VIEWS.findIndex((item) => item.id === workspace.view);
+    const next =
+      event.key === "ArrowRight" ? (current + 1) % VIEWS.length
+      : event.key === "ArrowLeft" ? (current + VIEWS.length - 1) % VIEWS.length
+      : event.key === "Home" ? 0
+      : event.key === "End" ? VIEWS.length - 1
+      : -1;
+    if (next < 0) return;
+    event.preventDefault();
+    workspace.setView(VIEWS[next].id);
+    tabRefs.current[next]?.focus();
+  };
   // "Now" only drives the current-time line and the Today highlight.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -97,14 +114,25 @@ export function SchedulingWorkspace({
         ) : null}
       </header>
 
-      <div aria-label="Scheduling views" className="scheduling-tabs" role="tablist">
-        {VIEWS.map((item) => (
+      <div
+        aria-label="Scheduling views"
+        className="scheduling-tabs"
+        onKeyDown={onTabKeyDown}
+        role="tablist"
+      >
+        {VIEWS.map((item, index) => (
           <button
+            aria-controls="scheduling-panel"
             aria-selected={workspace.view === item.id}
             className={workspace.view === item.id ? "is-active" : ""}
+            id={`scheduling-tab-${item.id}`}
             key={item.id}
             onClick={() => workspace.setView(item.id)}
+            ref={(node) => {
+              tabRefs.current[index] = node;
+            }}
             role="tab"
+            tabIndex={workspace.view === item.id ? 0 : -1}
             type="button"
           >
             {item.label}
@@ -126,6 +154,12 @@ export function SchedulingWorkspace({
         </p>
       ) : null}
 
+      <div
+        aria-labelledby={`scheduling-tab-${workspace.view}`}
+        className="scheduling-panel"
+        id="scheduling-panel"
+        role="tabpanel"
+      >
       {workspace.view !== "pending" ? (
         <>
           <div className="scheduling-toolbar">
@@ -168,6 +202,16 @@ export function SchedulingWorkspace({
               <CalendarDays aria-hidden="true" size={18} />
               {periodLabel(workspace.mode, workspace.anchor)}
             </h3>
+            <button
+              aria-controls="scheduling-filters scheduling-legend"
+              aria-expanded={filtersOpen}
+              className="secondary-button scheduling-filter-toggle"
+              onClick={() => setFiltersOpen((open) => !open)}
+              type="button"
+            >
+              <SlidersHorizontal aria-hidden="true" size={16} />
+              Filters{filtered ? ` (${workspace.activeFilterCount})` : ""}
+            </button>
             <label className="scheduling-zone">
               <span>Calendar time zone</span>
               <select
@@ -183,7 +227,12 @@ export function SchedulingWorkspace({
             </label>
           </div>
 
-          <div aria-label="Schedule filters" className="scheduling-filters" role="group">
+          <div
+            aria-label="Schedule filters"
+            className={`scheduling-filters${filtersOpen ? " is-open" : ""}`}
+            id="scheduling-filters"
+            role="group"
+          >
             <label>
               <span>Inspector</span>
               <select
@@ -263,7 +312,11 @@ export function SchedulingWorkspace({
             </button>
           </div>
 
-          <ul aria-label="Status legend" className="schedule-legend">
+          <ul
+            aria-label="Status legend"
+            className={`schedule-legend${filtersOpen ? " is-open" : ""}`}
+            id="scheduling-legend"
+          >
             {STATUS_ORDER.map((status) => (
               <li className={`status-${status}`} key={status} title={STATUS_META[status].hint}>
                 {STATUS_META[status].label}
@@ -366,6 +419,7 @@ export function SchedulingWorkspace({
           requests={workspace.queues.requests}
         />
       )}
+      </div>
 
       {/* The booking form is a modal of its own: the details drawer steps aside for it. */}
       {workspace.selected && !workspace.form.open ? (

@@ -25,6 +25,9 @@ export interface GridColumn {
 }
 
 const PX_PER_MINUTE = 1.2;
+// Overlapping visits share a lane side by side; a lane grows (the grid scrolls) rather than
+// squeezing them below the width at which a time and a customer name stay readable.
+const MIN_BLOCK_WIDTH_PX = 124;
 const DEFAULT_START = 6 * 60;
 const DEFAULT_END = 19 * 60;
 
@@ -91,13 +94,21 @@ export function TimeGrid({
   const hours: number[] = [];
   for (let minute = windowStart; minute < windowEnd; minute += 60) hours.push(minute);
   const base = columns[0] ? zonedMidnight(columns[0].ymd, gridZone) : 0;
+  const laneWidths = placedByColumn.map((placed) => {
+    const widest = placed.reduce((most, item) => Math.max(most, item.columns), 1);
+    return `max(var(--lane-min), ${widest * MIN_BLOCK_WIDTH_PX}px)`;
+  });
 
   return (
     <div
       aria-label={label}
       className="time-grid"
       role="group"
-      style={{ ["--grid-columns" as string]: columns.length }}
+      style={{
+        ["--grid-columns" as string]: columns.length,
+        ["--grid-lanes" as string]: laneWidths.map((width) => `minmax(${width}, 1fr)`).join(" "),
+        ["--grid-min" as string]: `calc(var(--time-column) + ${laneWidths.join(" + ")})`
+      }}
     >
       <div className="time-grid__head">
         <span className="time-grid__corner" aria-hidden="true">

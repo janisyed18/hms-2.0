@@ -61,14 +61,27 @@ export function AppointmentDrawer({
   const [inspectorId, setInspectorId] = useState("");
   const [confirming, setConfirming] = useState<"decline" | "cancel" | null>(null);
 
-  // Focus moves into the drawer when it opens and returns to the block that opened it.
+  // Below this width the drawer covers the whole screen, so it behaves as a modal dialog.
+  const [fullScreen] = useState(
+    () => typeof window.matchMedia === "function" && window.matchMedia("(max-width: 800px)").matches
+  );
+  const drawer = useRef<HTMLElement>(null);
+  // Focus moves into the drawer when it opens and returns to the block that opened it. When the
+  // opener is gone (an approved request leaves the pending list) it lands on the open view's tab.
   useEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     heading.current?.focus();
     return () => {
       if (opener && document.contains(opener)) opener.focus();
+      else document.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus();
     };
   }, []);
+  // An action can remove the very button that was focused (an approved request no longer offers
+  // "Assign & approve"). Focus would then fall to the page, out of the drawer, where Escape and
+  // Tab no longer reach it: bring it back to the heading, which also announces the new state.
+  useEffect(() => {
+    if (document.activeElement === document.body) heading.current?.focus();
+  }, [entry.status, notice]);
   // A different booking starts with a clean slate.
   useEffect(() => {
     setInspectorId("");
@@ -105,10 +118,29 @@ export function AppointmentDrawer({
   return (
     <aside
       aria-labelledby="schedule-drawer-title"
+      aria-modal={fullScreen ? true : undefined}
       className="schedule-drawer"
       onKeyDown={(event) => {
         if (event.key === "Escape") onClose();
+        if (event.key !== "Tab" || !fullScreen || !drawer.current) return;
+        // Tab stays inside a full-screen drawer: nothing behind it can be seen or used.
+        const focusable = Array.from(
+          drawer.current.querySelectorAll<HTMLElement>("button:not(:disabled), select:not(:disabled)")
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        // The heading takes focus on open and is not itself a tab stop, so it counts as "before first".
+        const atStart = document.activeElement === first || document.activeElement === heading.current;
+        if (event.shiftKey && atStart) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }}
+      ref={drawer}
       role="dialog"
     >
       <header>
@@ -213,9 +245,14 @@ export function AppointmentDrawer({
                 Assign &amp; approve
               </button>
               {confirming === "decline" ? (
-                <button disabled={busy} onClick={() => void onDecline(booking.id).then(() => setConfirming(null))} type="button">
-                  Confirm decline
-                </button>
+                <>
+                  <button disabled={busy} onClick={() => void onDecline(booking.id).then(() => setConfirming(null))} type="button">
+                    Confirm decline
+                  </button>
+                  <button disabled={busy} onClick={() => setConfirming(null)} type="button">
+                    Keep request
+                  </button>
+                </>
               ) : (
                 <button disabled={busy} onClick={() => setConfirming("decline")} type="button">
                   Decline
@@ -256,9 +293,14 @@ export function AppointmentDrawer({
               Request reschedule
             </button>
             {confirming === "cancel" ? (
-              <button disabled={busy} onClick={() => void onCancel(booking.id).then(() => setConfirming(null))} type="button">
-                Confirm cancel booking
-              </button>
+              <>
+                <button disabled={busy} onClick={() => void onCancel(booking.id).then(() => setConfirming(null))} type="button">
+                  Confirm cancel booking
+                </button>
+                <button disabled={busy} onClick={() => setConfirming(null)} type="button">
+                  Keep booking
+                </button>
+              </>
             ) : (
               <button disabled={busy} onClick={() => setConfirming("cancel")} type="button">
                 Cancel booking

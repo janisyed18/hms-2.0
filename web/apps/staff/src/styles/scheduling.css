@@ -55,6 +55,8 @@
   font-size: 0.75rem;
 }
 
+.scheduling-panel { display: grid; gap: var(--space-2); min-width: 0; }
+
 .scheduling-workspace button:focus-visible,
 .scheduling-workspace select:focus-visible,
 .scheduling-workspace input:focus-visible {
@@ -118,8 +120,19 @@
   font-size: 1.05rem;
 }
 
+/* A long customer or location name must not widen the filter row past the screen. */
+.scheduling-filters select,
+.scheduling-zone select {
+  min-width: 0;
+  max-width: min(100%, 22rem);
+  text-overflow: ellipsis;
+}
+
+.scheduling-filter-toggle { display: none; }
+
 .scheduling-zone {
   display: grid;
+  max-width: 100%;
   margin-left: auto;
   gap: 2px;
   color: var(--muted);
@@ -135,6 +148,8 @@
 
 .scheduling-filters label {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 2px;
   color: var(--muted);
   font-size: 0.78rem;
@@ -242,8 +257,8 @@
 .time-grid__head,
 .time-grid__body {
   display: grid;
-  grid-template-columns: var(--time-column) repeat(var(--grid-columns), minmax(var(--lane-min), 1fr));
-  min-width: calc(var(--time-column) + var(--grid-columns) * var(--lane-min));
+  grid-template-columns: var(--time-column) var(--grid-lanes);
+  min-width: var(--grid-min);
 }
 
 .time-grid__head {
@@ -452,9 +467,10 @@
 
 /* --- List, pending, empty and loading states ------------------------------------- */
 
-.schedule-list { display: grid; gap: var(--space-1); }
+.schedule-list { display: grid; gap: var(--space-1); min-width: 0; }
 .schedule-search { display: grid; gap: 2px; max-width: 420px; color: var(--muted); font-size: 0.78rem; }
-.schedule-list__table { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-md); }
+/* Positioned so the table's visually hidden header text is clipped with it, not left to widen the page. */
+.schedule-list__table { position: relative; overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-md); }
 
 .schedule-list table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 .schedule-list th,
@@ -466,6 +482,7 @@
 .schedule-pending { display: grid; gap: var(--space-3); }
 .schedule-pending h3 { margin: 0 0 var(--space-1); font-size: 1rem; }
 .schedule-pending ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.schedule-pending li > button { justify-self: end; }
 .schedule-pending li {
   display: grid;
   grid-template-columns: minmax(160px, 1fr) minmax(220px, 2fr) auto auto;
@@ -554,12 +571,21 @@
 
 @media (max-width: 1100px) {
   .time-grid { --lane-min: 170px; }
-  .schedule-pending li { grid-template-columns: 1fr auto; }
-  .schedule-pending li > :nth-child(2) { grid-column: 1 / -1; order: 3; }
+  .schedule-pending li { grid-template-columns: minmax(0, 1fr) auto; }
+  .schedule-pending li > :nth-child(1) { grid-column: 1; grid-row: 1; }
+  .schedule-pending li > :nth-child(3) { grid-column: 2; grid-row: 1; }
+  .schedule-pending li > :nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .schedule-pending li > button { grid-column: 1 / -1; grid-row: 3; justify-self: start; }
 }
 
 @media (max-width: 800px) {
   .scheduling-header { flex-direction: column; }
+  .scheduling-filter-toggle { display: inline-flex; align-items: center; gap: 8px; }
+  .scheduling-filters:not(.is-open),
+  .schedule-legend:not(.is-open) { display: none; }
+  .scheduling-filters label { flex: 1 1 140px; }
+  .scheduling-filters select,
+  .scheduling-zone select { width: 100%; max-width: 100%; }
   .scheduling-zone { margin-left: 0; }
   .scheduling-tabs button { flex: 1; padding: 0 8px; }
   .time-grid { --time-column: 64px; --lane-min: 160px; max-height: 60vh; }

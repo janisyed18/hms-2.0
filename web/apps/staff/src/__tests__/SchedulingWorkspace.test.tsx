@@ -1097,3 +1097,255 @@ describe("Pending badge", () => {
     expect(await screen.findByLabelText("7 waiting")).toBeInTheDocument();
   });
 });
+
+// --- final calendar polish: keyboard, small screens, crowded lanes, hard dates ----------
+
+describe("view tabs and the folding filters", () => {
+  it("is one tab stop: arrows, Home and End move between views and the panel follows", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    const calendar = screen.getByRole("tab", { name: "Calendar" });
+    const list = screen.getByRole("tab", { name: "List" });
+    expect(calendar).toHaveAttribute("tabindex", "0");
+    expect(list).toHaveAttribute("tabindex", "-1");
+
+    calendar.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(list).toHaveFocus();
+    expect(list).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName("List");
+
+    await user.keyboard("{End}");
+    expect(screen.getByRole("tab", { name: /^Pending requests/ })).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expect(calendar).toHaveFocus(); // wraps round
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: /^Pending requests/ })).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(calendar).toHaveFocus();
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Calendar");
+  });
+
+  it("lets small screens open and close the filters, announcing the state and the active count", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    const toggle = screen.getByRole("button", { name: "Filters" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const filters = screen.getByRole("group", { name: "Schedule filters" });
+    expect(toggle).toHaveAttribute("aria-controls", expect.stringContaining(filters.id));
+    expect(filters).not.toHaveClass("is-open");
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(filters).toHaveClass("is-open");
+    await user.selectOptions(within(filters).getByLabelText("Status"), "pending");
+    expect(screen.getByRole("button", { name: "Filters (1)" })).toBeInTheDocument();
+  });
+});
+
+describe("crowded lanes and hard dates", () => {
+  const overlapping = (index: number) =>
+    booking({
+      id: `o${index}`,
+      customer: `Customer ${index}`,
+      customerId: `cust-${index}`,
+      start: "2027-03-01T03:00:00Z",
+      end: "2027-03-01T04:00:00Z",
+      inspector: null,
+      status: "PENDING_APPROVAL",
+      appointmentStatus: null
+    });
+
+  it("keeps visits that overlap separately clickable and gives the lane room for all of them", async () => {
+    client.listInspectionSchedule.mockResolvedValue(scheduleResult([overlapping(1), overlapping(2), overlapping(3)]));
+    renderWorkspace();
+    await ready();
+    const names = ["Customer 1", "Customer 2", "Customer 3"];
+    for (const name of names) {
+      expect(screen.getByRole("button", { name: new RegExp(`${name},.*Unassigned, Awaiting approval`) })).toBeInTheDocument();
+    }
+    // Three side by side need three readable widths, not a third of one narrow lane.
+    const grid = screen.getByRole("group", { name: /Dispatch schedule for/ });
+    expect(grid.style.getPropertyValue("--grid-lanes")).toContain(`${3 * 124}px`);
+    expect(grid.style.getPropertyValue("--grid-min")).toContain(`${3 * 124}px`);
+  });
+
+  it("does not widen a lane that has no overlap", async () => {
+    client.listInspectionSchedule.mockResolvedValue(scheduleResult([confirmedA]));
+    renderWorkspace();
+    await ready();
+    const grid = screen.getByRole("group", { name: /Dispatch schedule for/ });
+    expect(grid.style.getPropertyValue("--grid-lanes")).toContain("max(var(--lane-min), 124px)");
+  });
+
+  it("keeps long customer, location and inspector names whole for assistive technology", async () => {
+    const customer = "Vopak Terminals Australia Pty Ltd Port Botany Bulk Liquids Division";
+    const location = "Port Botany Bulk Liquids Terminal Berth 4 Extended Name";
+    client.listInspectionSchedule.mockResolvedValue(
+      scheduleResult([booking({ id: "long", customer, location, start: "2027-03-01T00:00:00Z", end: "2027-03-01T01:00:00Z" })])
+    );
+    renderWorkspace();
+    await ready();
+    const block = screen.getByRole("button", { name: new RegExp(`${customer}, ${location}, Ada Archer, Confirmed`) });
+    expect(block).toHaveTextContent(customer); // truncation is CSS only; the text is all there
+  });
+
+  it("widens the day to fit early and late visits, in the visit's own wall-clock time", async () => {
+    client.listInspectionSchedule.mockResolvedValue(
+      scheduleResult([
+        booking({ id: "early", start: "2027-02-28T17:30:00Z", end: "2027-02-28T18:30:00Z", snapshot: ["2027-03-01T04:30:00", "2027-03-01T05:30:00"] }),
+        booking({ id: "late", customer: "Shell", customerId: "cust-shell", start: "2027-03-01T10:00:00Z", end: "2027-03-01T11:30:00Z", snapshot: ["2027-03-01T21:00:00", "2027-03-01T22:30:00"] })
+      ])
+    );
+    renderWorkspace();
+    await ready();
+    const grid = screen.getByRole("group", { name: /Dispatch schedule for/ });
+    expect(within(grid).getByText("4:00 am")).toBeInTheDocument();
+    expect(within(grid).getByText("10:00 pm")).toBeInTheDocument();
+    expect(within(grid).getByRole("button", { name: /4:30 am to 5:30 am/ })).toBeInTheDocument();
+    expect(within(grid).getByRole("button", { name: /9:00 pm to 10:30 pm/ })).toBeInTheDocument();
+  });
+
+  it("shows a visit that runs past midnight on both of the days it touches", async () => {
+    // 23:30 to 00:30 Sydney time across 1 and 2 March.
+    const overnight = booking({
+      id: "night",
+      start: "2027-03-01T12:30:00Z",
+      end: "2027-03-01T13:30:00Z",
+      snapshot: ["2027-03-01T23:30:00", "2027-03-02T00:30:00"]
+    });
+    client.listInspectionSchedule.mockResolvedValue(scheduleResult([overnight]));
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    expect(screen.getByRole("button", { name: /Monday 1 March, 11:30 pm to 12:30 am/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next day" }));
+    await waitFor(() => expect(screen.getByRole("group", { name: /Dispatch schedule for Tuesday 2 March/ })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /Tuesday 2 March, 11:30 pm to 12:30 am/ })).toBeInTheDocument();
+  });
+
+  it("lays out the 23-hour spring-forward day without a missing or repeated hour", async () => {
+    // Sunday 3 October 2027: at 2:00 am the clocks go forward to 3:00 am.
+    client.listInspectionSchedule.mockResolvedValue(
+      scheduleResult([
+        booking({ id: "spring", start: "2027-10-02T14:30:00Z", end: "2027-10-02T15:30:00Z", snapshot: ["2027-10-03T00:30:00", "2027-10-03T01:30:00"] })
+      ])
+    );
+    renderWorkspace({ initialDate: "2027-10-03" });
+    const grid = await screen.findByRole("group", { name: /Dispatch schedule for Sunday 3 October/ });
+    const hours = Array.from(grid.querySelectorAll(".time-grid__hours span")).map((span) => span.textContent);
+    expect(hours.slice(0, 3)).toEqual(["12:00 am", "1:00 am", "3:00 am"]);
+    expect(hours).not.toContain("2:00 am"); // that hour does not exist on this date
+    expect(hours).toContain("3:00 am");
+    expect(new Set(hours).size).toBe(hours.length);
+  });
+});
+
+describe("drawer focus and back-out", () => {
+  it("lets a confirm step be abandoned without calling the server", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await user.click(screen.getByRole("button", { name: /Unassigned, Awaiting approval/ }));
+    let drawer = await screen.findByRole("dialog");
+    await user.click(within(drawer).getByRole("button", { name: "Decline" }));
+    await user.click(within(drawer).getByRole("button", { name: "Keep request" }));
+    expect(within(drawer).getByRole("button", { name: "Decline" })).toBeInTheDocument();
+    expect(client.rejectInspectionBooking).not.toHaveBeenCalled();
+
+    await user.click(within(drawer).getByRole("button", { name: "Close appointment details" }));
+    await user.click(screen.getByRole("button", { name: /Orica, Kwinana, Ben Brook/ }));
+    drawer = await screen.findByRole("dialog");
+    await user.click(within(drawer).getByRole("button", { name: "Cancel booking" }));
+    await user.click(within(drawer).getByRole("button", { name: "Keep booking" }));
+    expect(within(drawer).getByRole("button", { name: "Cancel booking" })).toBeInTheDocument();
+    expect(client.cancelInspectionBooking).not.toHaveBeenCalled();
+  });
+
+  it("returns focus to the open view's tab when the opening request has left the queue", async () => {
+    client.approveInspectionBooking.mockResolvedValue(undefined);
+    let waiting = [pending];
+    client.listInspectionBookings.mockImplementation(async (options: { hasPendingChange?: boolean }) =>
+      options.hasPendingChange ? { total: 0, items: [], etag: null } : { total: waiting.length, items: waiting, etag: null }
+    );
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await user.click(screen.getByRole("tab", { name: /^Pending requests/ }));
+    await user.click(await screen.findByRole("button", { name: /Review request from Vopak/ }));
+    const drawer = await screen.findByRole("dialog");
+    await user.selectOptions(within(drawer).getByLabelText("Inspector to assign"), "insp-a");
+    waiting = [];
+    await user.click(within(drawer).getByRole("button", { name: "Assign & approve" }));
+    await within(drawer).findByText("Booking approved and inspector assigned.");
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Review request from Vopak/ })).not.toBeInTheDocument());
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: /^Pending requests/ })).toHaveFocus();
+  });
+
+  it("keeps keyboard focus in the drawer when an action removes the focused button", async () => {
+    const approved = booking({ id: "b4", start: "2027-03-01T03:00:00Z", end: "2027-03-01T04:00:00Z", inspector: "insp-a" });
+    client.approveInspectionBooking.mockImplementation(async () => {
+      client.listInspectionSchedule.mockResolvedValue(
+        scheduleResult(everything.map((item) => (item.id === "b4" ? approved : item)))
+      );
+    });
+    client.getInspectionBooking.mockResolvedValue(approved);
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await user.click(screen.getByRole("button", { name: /Unassigned, Awaiting approval/ }));
+    const drawer = await screen.findByRole("dialog");
+    await user.selectOptions(within(drawer).getByLabelText("Inspector to assign"), "insp-a");
+    await user.click(within(drawer).getByRole("button", { name: "Assign & approve" }));
+    await within(drawer).findByText("Booking approved and inspector assigned.");
+    await waitFor(() => expect(within(drawer).queryByRole("button", { name: "Assign & approve" })).not.toBeInTheDocument());
+
+    expect(drawer).toContainElement(document.activeElement as HTMLElement);
+    await user.keyboard("{Escape}"); // still reaches the drawer
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("behaves as a modal on a phone-width screen: Tab wraps inside the drawer", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: true, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+    try {
+      const user = userEvent.setup();
+      renderWorkspace();
+      await ready();
+      await user.click(screen.getByRole("button", { name: /Unassigned, Awaiting approval/ }));
+      const drawer = await screen.findByRole("dialog");
+      expect(drawer).toHaveAttribute("aria-modal", "true");
+      const close = within(drawer).getByRole("button", { name: "Close appointment details" });
+      const decline = within(drawer).getByRole("button", { name: "Decline" });
+      decline.focus();
+      await user.tab();
+      expect(close).toHaveFocus(); // from the last control back to the first
+      await user.tab({ shift: true });
+      expect(decline).toHaveFocus();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("disables every action while one is in flight, so nothing is submitted twice", async () => {
+    let finish: () => void = () => undefined;
+    client.approveInspectionBooking.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await user.click(screen.getByRole("button", { name: /Unassigned, Awaiting approval/ }));
+    const drawer = await screen.findByRole("dialog");
+    await user.selectOptions(within(drawer).getByLabelText("Inspector to assign"), "insp-a");
+    const assign = within(drawer).getByRole("button", { name: "Assign & approve" });
+    await user.click(assign);
+    await waitFor(() => expect(assign).toBeDisabled());
+    expect(within(drawer).getByRole("button", { name: "Decline" })).toBeDisabled();
+    await user.click(assign);
+    expect(client.approveInspectionBooking).toHaveBeenCalledTimes(1);
+    await act(async () => finish());
+  });
+});

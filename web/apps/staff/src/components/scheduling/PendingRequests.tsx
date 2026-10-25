@@ -207,6 +207,7 @@ function Row({
             ? `Review request from ${booking.customer.name} at ${booking.location.name}`
             : `Review reschedule for ${booking.customer.name} at ${booking.location.name}`
         }
+        className="secondary-button"
         onClick={() => onSelect(entry)}
         type="button"
       >
