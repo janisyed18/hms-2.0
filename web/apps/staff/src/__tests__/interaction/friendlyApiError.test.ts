@@ -17,13 +17,34 @@ describe("friendlyApiError", () => {
     expect(friendlyApiError(api(status, "ignored by this category")).message).toMatch(pattern);
   });
 
-  it("treats 404 and 409 as 'refresh before retrying' and 412 as a stale edit", () => {
+  it("treats 404 as 'refresh' and a 412 version mismatch as a stale edit", () => {
     expect(friendlyApiError(api(404, "x")).needsRefresh).toBe(true);
-    const conflict = friendlyApiError(api(409, "Serial number is already assigned to another asset."));
-    expect(conflict.needsRefresh).toBe(true);
-    expect(conflict.message).toContain("Serial number is already assigned to another asset.");
-    expect(conflict.message).toMatch(/refresh to review the latest version/i);
-    expect(friendlyApiError(api(412, "Precondition failed")).kind).toBe("conflict");
+    const stale = friendlyApiError(api(412, "Resource version does not match"));
+    expect(stale.kind).toBe("conflict");
+    expect(stale.needsRefresh).toBe(true);
+    expect(stale.message).toMatch(/changed by someone else.*refresh/i);
+  });
+
+  it("keeps a 409 as a business conflict: its own message, and no forced refresh", () => {
+    const duplicate = friendlyApiError(api(409, "Serial number is already assigned to another asset."));
+    expect(duplicate.kind).toBe("conflict");
+    expect(duplicate.needsRefresh).toBe(false);
+    expect(duplicate.message).toBe("Serial number is already assigned to another asset.");
+
+    const state = friendlyApiError(api(409, "Only pending inspection bookings can be approved"));
+    expect(state.needsRefresh).toBe(false);
+    expect(state.message).toBe("Only pending inspection bookings can be approved");
+    expect(state.message).not.toMatch(/changed by someone else|refresh/i);
+
+    expect(friendlyApiError(api(409, "Traceback (most recent call last)"), { fallback: "Could not approve." }).message).toBe("Could not approve.");
+  });
+
+  it("refreshes on a 409 only when the caller says its conflict means the record moved on", () => {
+    const taken = friendlyApiError(api(409, "The inspector is no longer available for the selected time"), { conflictNeedsRefresh: true });
+    expect(taken.needsRefresh).toBe(true);
+    expect(taken.message).toBe("The inspector is no longer available for the selected time");
+    const bare = friendlyApiError(api(409, "Traceback ..."), { fallback: "That time was taken.", conflictNeedsRefresh: true });
+    expect(bare.message).toBe("That time was taken. Refresh to review the latest version.");
   });
 
   it("uses a business message for validation, but only when it is safe to show", () => {

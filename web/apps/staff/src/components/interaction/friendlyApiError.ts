@@ -28,6 +28,12 @@ export interface FriendlyErrorOptions {
   fallback?: string;
   /** Maps backend field names (snake_case request fields) to the form's field names. */
   fieldMap?: Record<string, string>;
+  /**
+   * A 409 is an ordinary business-state conflict ("only a confirmed booking can be
+   * rescheduled", "serial number already assigned"), so it does not mean "refresh" by itself.
+   * A caller that knows its 409 means the record moved on (a slot taken meanwhile) says so here.
+   */
+  conflictNeedsRefresh?: boolean;
 }
 
 const UNSAFE = /^HMS API request failed|traceback|exception|sqlalchemy|psycopg|asyncpg|postgres|integrityerror|\b(select|insert|update|delete)\b.+\b(from|into|set)\b|internal server|arn:aws|amazonaws|errno|\bfile "|\bat \S+\(.+:\d+\)|\.py\b|[{}]\s*$/i;
@@ -91,10 +97,18 @@ export function friendlyApiError(error: unknown, options: FriendlyErrorOptions =
       message: "This item no longer exists. It may have been removed or archived by someone else. Refresh to see the current list."
     };
   }
-  if (status === 409 || status === 412) {
+  if (status === 412) {
+    // An If-Match version no longer matches: the record was edited since it was loaded.
     return {
       ...base, kind: "conflict", status, needsRefresh: true,
-      message: `${server ? `${server.replace(/[.!]*$/, "")}. ` : "This item was changed by someone else. "}Refresh to review the latest version, then try again.`
+      message: "This item was changed by someone else since you opened it. Refresh to review the latest version, then try again."
+    };
+  }
+  if (status === 409) {
+    const refresh = options.conflictNeedsRefresh === true;
+    return {
+      ...base, kind: "conflict", status, needsRefresh: refresh,
+      message: server ?? (refresh ? `${fallback} Refresh to review the latest version.` : fallback)
     };
   }
   if (status === 413) {
