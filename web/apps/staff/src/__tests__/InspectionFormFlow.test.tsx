@@ -252,7 +252,8 @@ describe("saved inspection (staff)", () => {
     expect(props.onSubmit).not.toHaveBeenCalled();
     const gap = await screen.findByRole("alert");
     expect(gap).toHaveTextContent(/still needed.*Certificate result.*Ohms total|still needed.*Ohms total.*Certificate result/i);
-    expect(gap).toHaveFocus();
+    // Focus moves to the notice in a deferred step after it renders.
+    await waitFor(() => expect(gap).toHaveFocus());
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     expect(props.onSaveDraft).toHaveBeenCalledTimes(1);
 
