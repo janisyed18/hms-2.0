@@ -8,7 +8,10 @@ import {
   useCertificatesWorkspace
 } from "../hooks/useCertificatesWorkspace";
 import type { CertificateRecord } from "../domain/types";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { ConfirmDialog } from "./interaction/ConfirmDialog";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
+import { assetLabel } from "../utils/identity";
 
 const statusFilters: Array<{ label: string; value: CertificateStatusFilter }> = [
   { label: "All Certificates", value: "ALL" },
@@ -75,7 +78,7 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
     },
     {
       header: "Asset",
-      render: (certificate) => certificate.asset.assetNumber
+      render: (certificate) => assetLabel(certificate.asset)
     },
     {
       header: "Customer",
@@ -169,6 +172,12 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
         ))}
       </div>
 
+      {workspace.notice ? (
+        <ActionNotice kind={workspace.notice.kind} onDismiss={workspace.dismissNotice} title={workspace.notice.title}>
+          {workspace.notice.message}
+        </ActionNotice>
+      ) : null}
+      {workspace.loadError ? <ActionNotice kind="error" title="Certificates unavailable">{workspace.loadError}</ActionNotice> : null}
       <div className={`inspection-layout certificate-layout${workspace.selectedCertificate ? "" : " detail-closed"}`}>
         <div className="inspection-table-wrap certificate-table-wrap">
           <ModuleTable
@@ -241,8 +250,8 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
             canManage={canManage}
             certificate={workspace.selectedCertificate}
             onClose={workspace.closeDetail}
-            onRevoke={workspace.revokeCertificate}
-            onSupersede={workspace.supersedeCertificate}
+            onRequestRevoke={() => workspace.requestLifecycle("revoke")}
+            onRequestSupersede={() => workspace.requestLifecycle("supersede")}
           />
         ) : null}
       </div>
@@ -259,6 +268,21 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
         </div>
       </section>
 
+      <ConfirmDialog
+        confirmLabel={workspace.lifecycle.target?.action === "revoke" ? "Revoke certificate" : "Mark superseded"}
+        error={workspace.lifecycle.error}
+        message={workspace.lifecycle.target?.action === "revoke"
+          ? "A revoked certificate no longer verifies as valid. This cannot be undone."
+          : "The certificate will be marked as replaced by a newer one. This cannot be undone."}
+        onCancel={workspace.lifecycle.cancel}
+        onConfirm={() => void workspace.lifecycle.confirm()}
+        open={workspace.lifecycle.target !== null}
+        pending={workspace.lifecycle.pending}
+        pendingLabel={workspace.lifecycle.target?.action === "revoke" ? "Revoking…" : "Updating…"}
+        title={workspace.lifecycle.target
+          ? `${workspace.lifecycle.target.action === "revoke" ? "Revoke" : "Supersede"} certificate ${workspace.lifecycle.target.certificate.number}?`
+          : "Change certificate?"}
+      />
       {canManage ? (
         <CertificateForm
           inspectionOptions={workspace.eligibleInspections}

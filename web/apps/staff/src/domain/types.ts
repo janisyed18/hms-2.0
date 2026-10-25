@@ -409,6 +409,8 @@ export type InspectionType = "NEW_ASSET" | "SERVICE";
 export interface InspectionAssetSummary {
   id: string;
   assetNumber: string;
+  /** The name people know the asset by; absent on older API responses. */
+  assetName?: string | null;
   tag: string | null;
   lifecycleStatus: string;
 }

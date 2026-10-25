@@ -219,6 +219,18 @@ async def api_client(
         yield client
 
 
+
+async def _name_asset(
+    session_factory: async_sessionmaker[AsyncSession], number: str, name: str
+) -> None:
+    async with session_factory() as session:
+        asset = (
+            await session.scalars(select(Asset).where(Asset.asset_number == number))
+        ).one()
+        asset.asset_name = name
+        await session.commit()
+
+
 @pytest.mark.asyncio
 async def test_reference_standards_endpoint_returns_enabled_standards_only(
     session_factory: async_sessionmaker[AsyncSession],
@@ -2427,6 +2439,8 @@ async def test_retest_schedules_endpoint_lists_with_asset_customer_context(
         customer_ids=frozenset(),
     )
 
+    await _name_asset(session_factory, "997950", "Main Pump Hose")
+
     async with api_client(session_factory, principal) as client:
         list_response = await client.get(
             "/api/v1/retest-schedules",
@@ -2445,6 +2459,7 @@ async def test_retest_schedules_endpoint_lists_with_asset_customer_context(
     assert body["items"][0]["id"] == schedule_id
     assert body["items"][0]["status"] == "OVERDUE"
     assert body["items"][0]["asset"]["asset_number"] == "997950"
+    assert body["items"][0]["asset"]["asset_name"] == "Main Pump Hose"
     assert body["items"][0]["customer"]["code"] == "VOPA"
     assert body["items"][0]["product"]["code"] == "1000GY"
     assert detail_response.status_code == 200
@@ -2975,6 +2990,8 @@ async def test_customer_booking_approval_creates_per_asset_drafts(
         "additional_information": "Access via gate three.",
     }
 
+    await _name_asset(session_factory, "997950", "Main Pump Hose")
+
     async with api_client(session_factory, customer) as client:
         availability = await client.get(
             "/api/v1/inspection-availability",
@@ -2998,6 +3015,7 @@ async def test_customer_booking_approval_creates_per_asset_drafts(
         "997950",
         "997951",
     ]
+    assert [asset["asset_name"] for asset in booking["assets"]][0] == "Main Pump Hose"
     async with session_factory() as session:
         request_events = (
             await session.scalars(
@@ -4061,6 +4079,8 @@ async def test_inspections_endpoint_lists_with_asset_customer_product_context(
         customer_ids=frozenset(),
     )
 
+    await _name_asset(session_factory, "997950", "Main Pump Hose")
+
     async with api_client(session_factory, principal) as client:
         response = await client.get(
             "/api/v1/inspections",
@@ -4071,6 +4091,7 @@ async def test_inspections_endpoint_lists_with_asset_customer_product_context(
     body = response.json()
     assert body["total"] == 2
     assert body["items"][0]["asset"]["asset_number"] == "997950"
+    assert body["items"][0]["asset"]["asset_name"] == "Main Pump Hose"
     assert body["items"][0]["customer"]["code"] == "VOPA"
     assert body["items"][0]["product"]["code"] == "1000GY"
     assert body["items"][1]["asset"]["asset_number"] == "ORIC-100"
@@ -4550,6 +4571,8 @@ async def test_certificates_endpoint_lists_with_asset_customer_inspection_contex
         customer_ids=frozenset(),
     )
 
+    await _name_asset(session_factory, "997950", "Main Pump Hose")
+
     async with api_client(session_factory, principal) as client:
         response = await client.get(
             "/api/v1/certificates",
@@ -4566,6 +4589,7 @@ async def test_certificates_endpoint_lists_with_asset_customer_inspection_contex
     certificate = body["items"][0]
     assert certificate["number"] == "CERT-997950-1"
     assert certificate["asset"]["asset_number"] == "997950"
+    assert certificate["asset"]["asset_name"] == "Main Pump Hose"
     assert certificate["customer"]["code"] == "VOPA"
     assert certificate["product"]["code"] == "1000GY"
     assert certificate["inspection"]["inspection_type"] == "SERVICE"

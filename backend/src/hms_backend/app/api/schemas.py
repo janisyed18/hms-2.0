@@ -609,6 +609,7 @@ class InspectionAppointmentChangeRequestRead(BaseModel):
 class InspectionAssetSummary(BaseModel):
     id: str
     asset_number: str
+    asset_name: str | None = None
     tag: str | None
     lifecycle_status: str
 

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { ActionNotice } from "./interaction/ActionNotice";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
 import { RetestScheduleDetail } from "./RetestScheduleDetail";
 import {
@@ -21,6 +22,7 @@ import {
 } from "../hooks/useRetestScheduleWorkspace";
 import type { RetestScheduleRecord, RetestScheduleStatus } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
+import { assetLabel } from "../utils/identity";
 
 const statusFilters: Array<{ label: string; value: RetestScheduleStatusFilter }> = [
   { label: "All schedules", value: "ALL" },
@@ -132,7 +134,7 @@ export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
   const columns: ModuleColumn<RetestScheduleRecord>[] = [
     {
       header: "Asset",
-      render: (schedule) => <strong>{schedule.asset.assetNumber}</strong>
+      render: (schedule) => <strong>{assetLabel(schedule.asset)}</strong>
     },
     {
       header: "Customer",
@@ -170,7 +172,7 @@ export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
       render: (schedule) => (
         <span className="row-actions">
           <button
-            aria-label={`Open schedule ${schedule.asset.assetNumber}`}
+            aria-label={`Open schedule ${assetLabel(schedule.asset)}`}
             className="icon-button light"
             onClick={() => workspace.openDetail(schedule)}
             type="button"
@@ -235,6 +237,12 @@ export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
 
       <div className="retest-schedule-layout">
         <div className="retest-schedule-primary">
+          {workspace.notice ? (
+            <ActionNotice kind={workspace.notice.kind} onDismiss={workspace.dismissNotice} title={workspace.notice.title}>
+              {workspace.notice.message}
+            </ActionNotice>
+          ) : null}
+          {workspace.loadError ? <ActionNotice kind="error" title="Retest schedules unavailable">{workspace.loadError}</ActionNotice> : null}
           <ModuleTable
             actionLabel="Open schedule"
             actionsInToolbar
@@ -399,7 +407,7 @@ export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
                   <button key={schedule.id} onClick={() => workspace.openDetail(schedule)} type="button">
                     <span className={`retest-priority-marker ${schedule.status.toLowerCase()}`} aria-hidden="true" />
                     <span>
-                      <strong>{schedule.asset.assetNumber}</strong>
+                      <strong>{assetLabel(schedule.asset)}</strong>
                       <small>{schedule.customer.name} · {schedule.product.name}</small>
                     </span>
                     <em className={`retest-due-${schedule.status.toLowerCase()}`}>{dueSummary(schedule)}</em>

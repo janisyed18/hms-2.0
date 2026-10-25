@@ -1,14 +1,15 @@
 import { Ban, Copy, Download, FileCheck2, RotateCcw, X } from "lucide-react";
-import { useState } from "react";
 
+import { ActionButton } from "./interaction/ActionButton";
 import type { CertificateRecord } from "../domain/types";
+import { assetLabel } from "../utils/identity";
 
 interface CertificateDetailProps {
   canManage: boolean;
   certificate: CertificateRecord | null;
   onClose: () => void;
-  onRevoke: () => Promise<void>;
-  onSupersede: () => Promise<void>;
+  onRequestRevoke: () => void;
+  onRequestSupersede: () => void;
 }
 
 function statusClass(status: string) {
@@ -29,11 +30,9 @@ export function CertificateDetail({
   canManage,
   certificate,
   onClose,
-  onRevoke,
-  onSupersede
+  onRequestRevoke,
+  onRequestSupersede
 }: CertificateDetailProps) {
-  const [pendingAction, setPendingAction] = useState<"revoke" | "supersede" | null>(null);
-
   if (!certificate) {
     return (
       <aside className="inspection-detail-panel certificate-detail-panel" aria-label="Certificate detail">
@@ -45,22 +44,12 @@ export function CertificateDetail({
     );
   }
 
-  async function runLifecycleAction(action: "revoke" | "supersede") {
-    setPendingAction(action);
-    if (action === "revoke") {
-      await onRevoke();
-    } else {
-      await onSupersede();
-    }
-    setPendingAction(null);
-  }
-
   return (
     <aside className="inspection-detail-panel certificate-detail-panel" aria-label="Certificate detail">
       <div className="inspection-detail-header">
         <div>
           <h2>{certificate.number}</h2>
-          <p>{certificate.customer.name} / {certificate.asset.assetNumber}</p>
+          <p>{certificate.customer.name} / {assetLabel(certificate.asset)}</p>
         </div>
         <div className="certificate-detail-header-actions">
           <a
@@ -92,7 +81,7 @@ export function CertificateDetail({
       <div className="inspection-facts">
         <div>
           <span>Asset</span>
-          <strong>{certificate.asset.assetNumber}</strong>
+          <strong>{assetLabel(certificate.asset)}</strong>
         </div>
         <div>
           <span>Product</span>
@@ -139,24 +128,14 @@ export function CertificateDetail({
             <span>Lifecycle changes are retained as certificate status history.</span>
           </div>
           <div className="inspection-action-row">
-            <button
-              className="secondary-button"
-              disabled={pendingAction !== null}
-              onClick={() => runLifecycleAction("supersede")}
-              type="button"
-            >
+            <ActionButton onClick={onRequestSupersede} variant="secondary">
               <RotateCcw aria-hidden="true" size={16} />
-              {pendingAction === "supersede" ? "Updating..." : "Mark superseded"}
-            </button>
-            <button
-              className="danger-button"
-              disabled={pendingAction !== null}
-              onClick={() => runLifecycleAction("revoke")}
-              type="button"
-            >
+              Mark superseded
+            </ActionButton>
+            <ActionButton onClick={onRequestRevoke} variant="secondary">
               <Ban aria-hidden="true" size={16} />
-              {pendingAction === "revoke" ? "Updating..." : "Revoke certificate"}
-            </button>
+              Revoke certificate
+            </ActionButton>
           </div>
         </div>
       ) : null}

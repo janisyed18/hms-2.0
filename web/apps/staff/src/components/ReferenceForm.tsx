@@ -1,6 +1,11 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 
+import { ActionButton } from "./interaction/ActionButton";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { Field, RequiredNote } from "./interaction/FormPrimitives";
+import { friendlyApiError } from "./interaction/friendlyApiError";
+import { focusFirstInvalid, isBlank, useFormErrors, type FieldErrors } from "./interaction/useFormErrors";
 import type {
   ReferenceCatalogFormValues,
   ReferenceCatalogRecord
@@ -25,6 +30,9 @@ export function ReferenceForm({
   const [name, setName] = useState("");
   const [isSubmitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const { errors, setErrors, clearError, clearAll } = useFormErrors();
+  const formRef = useRef<HTMLFormElement>(null);
+  const submitLock = useRef(false);
 
   useEffect(() => {
     if (!open) {
@@ -33,6 +41,8 @@ export function ReferenceForm({
     setCode(standard?.code ?? "");
     setName(standard?.name ?? "");
     setSubmitError(null);
+    clearAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, standard]);
 
   if (!open) {
@@ -41,20 +51,38 @@ export function ReferenceForm({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitLock.current) return;
+    setSubmitError(null);
+    const found: FieldErrors = {};
+    if (isBlank(code)) found.code = `Enter a ${entityLabel.toLowerCase()} code.`;
+    if (isBlank(name)) found.name = `Enter a ${entityLabel.toLowerCase()} name.`;
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      focusFirstInvalid(formRef.current, ["code", "name"], found);
+      return;
+    }
+    submitLock.current = true;
+    setSubmitting(true);
     try {
-      setSubmitting(true);
-      setSubmitError(null);
-      await onSubmit({ code, name });
+      await onSubmit({ code: code.trim(), name: name.trim() });
     } catch (reason) {
-      setSubmitError(reason instanceof Error ? reason.message : "Unable to save this record.");
+      const friendly = friendlyApiError(reason, { fallback: `The ${entityLabel.toLowerCase()} could not be saved. Try again.`, fieldMap: { code: "code", name: "name" } });
+      setErrors(friendly.fieldErrors);
+      setSubmitError(friendly.message);
+      window.setTimeout(() => {
+        if (!focusFirstInvalid(formRef.current, ["code", "name"], friendly.fieldErrors)) {
+          formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus();
+        }
+      }, 0);
     } finally {
+      submitLock.current = false;
       setSubmitting(false);
     }
   }
 
   return (
     <div className="drawer-backdrop">
-      <form className="customer-drawer" onSubmit={handleSubmit}>
+      <form className="customer-drawer" noValidate onSubmit={handleSubmit} ref={formRef}>
         <div className="drawer-header">
           <div>
             <h2>{standard ? `Edit ${entityLabel}` : `Add ${entityLabel}`}</h2>
@@ -64,32 +92,17 @@ export function ReferenceForm({
             <X size={18} />
           </button>
         </div>
-        <label>
-          <span>{entityLabel} code</span>
-          <input
-            aria-label={`${entityLabel} code`}
-            required
-            value={code}
-            onChange={(event) => setCode(event.target.value.toUpperCase())}
-          />
-        </label>
-        <label>
-          <span>{entityLabel} name</span>
-          <input
-            aria-label={`${entityLabel} name`}
-            required
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        {submitError ? <p className="form-error" role="alert">{submitError}</p> : null}
+        {submitError ? <ActionNotice kind="error" title={`${entityLabel} could not be saved`}>{submitError}</ActionNotice> : null}
+        <RequiredNote />
+        <Field error={errors.code} label={`${entityLabel} code`} name="code" required>
+          {(props) => <input {...props} aria-label={`${entityLabel} code`} value={code} onChange={(event) => { setCode(event.target.value.toUpperCase()); clearError("code"); }} />}
+        </Field>
+        <Field error={errors.name} label={`${entityLabel} name`} name="name" required>
+          {(props) => <input {...props} aria-label={`${entityLabel} name`} value={name} onChange={(event) => { setName(event.target.value); clearError("name"); }} />}
+        </Field>
         <div className="drawer-actions">
-          <button className="secondary-button" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Saving..." : `Save ${entityLabel.toLowerCase()}`}
-          </button>
+          <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
+          <ActionButton pending={isSubmitting} pendingLabel="Saving…" type="submit" variant="primary">{`Save ${entityLabel.toLowerCase()}`}</ActionButton>
         </div>
       </form>
     </div>

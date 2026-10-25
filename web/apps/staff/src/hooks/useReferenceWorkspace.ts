@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
+import { useActionNotice } from "../components/interaction/ActionNotice";
+import { friendlyApiError } from "../components/interaction/friendlyApiError";
+import { useConfirmedAction } from "../components/interaction/useConfirmedAction";
+import { nameAndCode } from "../utils/identity";
 import type { ReferenceCatalogFormValues, ReferenceCatalogKey, ReferenceCatalogRecord } from "../domain/types";
 
 export const referenceCatalogMeta: Record<ReferenceCatalogKey, { description: string; plural: string; singular: string }> = {
@@ -24,13 +28,14 @@ export function useReferenceWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [editingRecord, setEditingRecord] = useState<ReferenceCatalogRecord | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
+  const { notice, notify, clear: dismissNotice } = useActionNotice();
 
   useEffect(() => {
     let active = true;
     setLoading(true); setError(null);
     void createHmsClient().listReferenceCatalog(activeCategory)
       .then((result) => { if (active) setCatalogs((current) => ({ ...current, [activeCategory]: result.items })); })
-      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Unable to load catalog data."); })
+      .catch((reason: unknown) => { if (active) setError(friendlyApiError(reason, { fallback: "Catalog data could not be loaded." }).message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [activeCategory]);
@@ -49,11 +54,15 @@ export function useReferenceWorkspace() {
     const saved = editingRecord ? await client.updateReferenceCatalogItem(activeCategory, editingRecord.id, values, editingRecord.etag) : await client.createReferenceCatalogItem(activeCategory, values);
     setCatalogs((current) => ({ ...current, [activeCategory]: editingRecord ? current[activeCategory].map((record) => record.id === editingRecord.id ? saved : record) : [saved, ...current[activeCategory]] }));
     setEditingRecord(null); setFormOpen(false);
+    notify({ kind: "success", title: `${activeMeta.singular} saved`, message: `${nameAndCode(saved)} ${editingRecord ? "saved" : "created"} successfully.` });
   }
-  async function archiveRecord(record: ReferenceCatalogRecord) {
-    if (!window.confirm(`Archive ${record.name}?`)) return;
-    await createHmsClient().archiveReferenceCatalogItem(activeCategory, record.id, record.etag);
-    setCatalogs((current) => ({ ...current, [activeCategory]: current[activeCategory].filter((item) => item.id !== record.id) }));
-  }
-  return { activeCategory, activeMeta, archiveRecord, editingRecord, error, isFormOpen, isLoading, openCreate, openEdit, query, saveRecord, selectCategory, setFormOpen, setQuery, visibleRecords };
+  const archive = useConfirmedAction<ReferenceCatalogRecord>(
+    async (record) => {
+      await createHmsClient().archiveReferenceCatalogItem(activeCategory, record.id, record.etag);
+      setCatalogs((current) => ({ ...current, [activeCategory]: current[activeCategory].filter((item) => item.id !== record.id) }));
+      notify({ kind: "success", title: `${activeMeta.singular} archived`, message: `${nameAndCode(record)} was archived.` });
+    },
+    (record) => ({ fallback: `${nameAndCode(record)} could not be archived. Try again.` })
+  );
+  return { activeCategory, activeMeta, archive, dismissNotice, notice, editingRecord, error, isFormOpen, isLoading, openCreate, openEdit, query, saveRecord, selectCategory, setFormOpen, setQuery, visibleRecords };
 }

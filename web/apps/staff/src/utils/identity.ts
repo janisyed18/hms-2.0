@@ -10,6 +10,11 @@ function pair(name: string | null | undefined, code: string | null | undefined):
   return readable || reference || "";
 }
 
+/** Any catalog record with a name and a code: "Hydraulic Hose — PROD-014". */
+export function nameAndCode(record: { code?: string | null; name?: string | null }): string {
+  return pair(record.name, record.code);
+}
+
 /** "Main Pump Hose — HMS-001842" */
 export function assetLabel(asset: { assetNumber: string; assetName?: string | null }): string {
   return pair(asset.assetName, asset.assetNumber);

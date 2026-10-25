@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
+import { useActionNotice } from "../components/interaction/ActionNotice";
+import { friendlyApiError } from "../components/interaction/friendlyApiError";
+import { useConfirmedAction } from "../components/interaction/useConfirmedAction";
+import { assetLabel } from "../utils/identity";
 import type { CertificateIssueValues, CertificateRecord, CertificateStatus, InspectionRecord } from "../domain/types";
 
 export type CertificateStatusFilter = "ALL" | CertificateStatus;
@@ -14,6 +18,8 @@ export function useCertificatesWorkspace() {
   const [validTo, setValidTo] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
+  const { notice, notify, clear: dismissNotice } = useActionNotice();
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -22,6 +28,9 @@ export function useCertificatesWorkspace() {
       .then(([certificateResult, inspectionResult]) => {
         if (!active) return;
         setCertificates(certificateResult.items); setInspections(inspectionResult.items);
+      })
+      .catch((reason: unknown) => {
+        if (active) setLoadError(friendlyApiError(reason, { fallback: "Certificates could not be loaded." }).message);
       });
     return () => { active = false; };
   }, []);
@@ -50,10 +59,19 @@ export function useCertificatesWorkspace() {
   async function issueCertificate(values: CertificateIssueValues) {
     const issued = await createHmsClient().issueCertificate(values);
     setCertificates((current) => [issued, ...current]); setSelectedId(issued.id); setFormOpen(false); setQuery(""); setStatusFilter("ALL"); setValidFrom(""); setValidTo("");
+    notify({ kind: "success", title: "Certificate issued", message: `Certificate ${issued.number} for ${assetLabel(issued.asset)} issued successfully.` });
   }
-  async function revokeCertificate() { if (selectedCertificate) replaceCertificate(await createHmsClient().revokeCertificate(selectedCertificate.id)); }
-  async function supersedeCertificate() { if (selectedCertificate) replaceCertificate(await createHmsClient().supersedeCertificate(selectedCertificate.id)); }
+  const lifecycle = useConfirmedAction<{ action: "revoke" | "supersede"; certificate: CertificateRecord }>(
+    async ({ action, certificate }) => {
+      const client = createHmsClient();
+      const updated = action === "revoke" ? await client.revokeCertificate(certificate.id) : await client.supersedeCertificate(certificate.id);
+      replaceCertificate(updated);
+      notify({ kind: "success", title: action === "revoke" ? "Certificate revoked" : "Certificate superseded", message: `Certificate ${updated.number} for ${assetLabel(updated.asset)} was ${action === "revoke" ? "revoked" : "marked superseded"}.` });
+    },
+    ({ action, certificate }) => ({ fallback: `Certificate ${certificate.number} could not be ${action === "revoke" ? "revoked" : "marked superseded"}. Try again.` })
+  );
+  function requestLifecycle(action: "revoke" | "supersede") { if (selectedCertificate) lifecycle.request({ action, certificate: selectedCertificate }); }
   function clearCertificateFilters() { setValidFrom(""); setValidTo(""); }
   const activeFilterCount = [Boolean(validFrom), Boolean(validTo)].filter(Boolean).length;
-  return { activeFilterCount, certificates, clearCertificateFilters, closeDetail, eligibleInspections, isFormOpen, issueCertificate, openCreate, openDetail, query, selectedCertificate, setFormOpen, setQuery, setStatusFilter, setValidFrom, setValidTo, statusFilter, validFrom, validTo, revokeCertificate, supersedeCertificate, visibleCertificates };
+  return { activeFilterCount, certificates, dismissNotice, lifecycle, loadError, notice, requestLifecycle, clearCertificateFilters, closeDetail, eligibleInspections, isFormOpen, issueCertificate, openCreate, openDetail, query, selectedCertificate, setFormOpen, setQuery, setStatusFilter, setValidFrom, setValidTo, statusFilter, validFrom, validTo, visibleCertificates };
 }

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 
 import {
@@ -8,7 +8,12 @@ import {
 } from "../domain/inspectionForm";
 import type { InspectionFormState } from "../domain/inspectionForm";
 import type { AssetRecord, InspectionCreateValues, InspectionType } from "../domain/types";
+import { ActionButton } from "./interaction/ActionButton";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { Field, RequiredNote } from "./interaction/FormPrimitives";
+import { friendlyApiError } from "./interaction/friendlyApiError";
 import { InspectionFormFields } from "./InspectionFormFields";
+import { assetLabel } from "../utils/identity";
 
 interface InspectionFormProps {
   assetOptions: AssetRecord[];
@@ -28,6 +33,9 @@ export function InspectionForm({
   const [form, setForm] = useState<InspectionFormState>(() => blankFormState(null));
   const [isSubmitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [assetError, setAssetError] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const lock = useRef(false);
 
   useEffect(() => {
     if (!open) return;
@@ -36,6 +44,7 @@ export function InspectionForm({
     setInspectionType("SERVICE");
     setForm(blankFormState(null));
     setError(null);
+    setAssetError(null);
   }, [open]);
 
   if (!open) {
@@ -49,6 +58,7 @@ export function InspectionForm({
     // another asset carries over.
     setForm(blankFormState(next?.pressureRating ?? null));
     setError(null);
+    setAssetError(null);
   }
 
   const gaps = draftGaps(form);
@@ -56,9 +66,20 @@ export function InspectionForm({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!assetId || !built) return;
-    setSubmitting(true);
+    if (lock.current) return;
     setError(null);
+    if (!assetId) {
+      setAssetError("Select the asset being inspected.");
+      formRef.current?.querySelector<HTMLElement>('[data-field="assetId"]')?.focus();
+      return;
+    }
+    if (!built) {
+      setError(`To save a draft, still needed: ${gaps.join(", ")}.`);
+      window.setTimeout(() => formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus(), 0);
+      return;
+    }
+    lock.current = true;
+    setSubmitting(true);
     try {
       await onSubmit({
         assetId,
@@ -67,15 +88,17 @@ export function InspectionForm({
         pressureTest: built.pressureTest
       });
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "The inspection could not be saved.");
+      setError(friendlyApiError(reason, { fallback: "The inspection could not be saved. Try again." }).message);
+      window.setTimeout(() => formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus(), 0);
     } finally {
+      lock.current = false;
       setSubmitting(false);
     }
   }
 
   return (
     <div className="drawer-backdrop">
-      <form className="customer-drawer" onSubmit={handleSubmit}>
+      <form className="customer-drawer" noValidate onSubmit={handleSubmit} ref={formRef}>
         <div className="drawer-header">
           <div>
             <h2>Add Inspection</h2>
@@ -90,22 +113,20 @@ export function InspectionForm({
             <X size={18} />
           </button>
         </div>
-        <label>
-          <span>Asset</span>
-          <select
-            aria-label="Inspection asset"
-            required
-            value={assetId}
-            onChange={(event) => chooseAsset(event.target.value)}
-          >
-            <option value="">Select an asset</option>
-            {assetOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.assetNumber} - {option.customer.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        {error ? <ActionNotice kind="error" title="Inspection not saved">{error}</ActionNotice> : null}
+        <RequiredNote />
+        <Field error={assetError ?? undefined} label="Asset" name="assetId" required>
+          {(props) => (
+            <select {...props} aria-label="Inspection asset" value={assetId} onChange={(event) => chooseAsset(event.target.value)}>
+              <option value="">Select an asset</option>
+              {assetOptions.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {assetLabel(option)} - {option.customer.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
         <label>
           <span>Inspection type</span>
           <select
@@ -129,18 +150,9 @@ export function InspectionForm({
             To save a draft, still needed: {gaps.join(", ")}.
           </p>
         ) : null}
-        {error ? <p className="form-error" role="alert">{error}</p> : null}
         <div className="drawer-actions">
-          <button className="secondary-button" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="primary-button"
-            disabled={isSubmitting || !assetId || !built}
-            type="submit"
-          >
-            {isSubmitting ? "Saving..." : "Save inspection"}
-          </button>
+          <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
+          <ActionButton pending={isSubmitting} pendingLabel="Saving…" type="submit" variant="primary">Save inspection</ActionButton>
         </div>
       </form>
     </div>

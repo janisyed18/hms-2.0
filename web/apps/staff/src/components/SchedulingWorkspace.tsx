@@ -425,6 +425,7 @@ export function SchedulingWorkspace({
       {workspace.selected && !workspace.form.open ? (
         <AppointmentDrawer
           busy={workspace.busy}
+          busyKey={workspace.busyKey}
           canApproveBookings={canApproveBookings}
           canBook={canBook}
           entry={workspace.selected}
