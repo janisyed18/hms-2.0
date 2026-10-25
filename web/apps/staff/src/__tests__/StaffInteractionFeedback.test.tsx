@@ -113,7 +113,8 @@ describe("Asset form", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Asset could not be saved");
     expect(alert).toHaveTextContent("Serial number is already assigned to another asset.");
-    expect(alert).toHaveFocus();
+    // The form moves focus to the notice in a deferred step after rendering it.
+    await waitFor(() => expect(alert).toHaveFocus());
     expect(screen.getByRole("heading", { name: "Add Asset" })).toBeInTheDocument();
     expect(screen.getByLabelText("Asset Name")).toHaveValue("Boom Hose");
     expect(screen.getByLabelText("Serial Number")).toHaveValue("SN-77");
