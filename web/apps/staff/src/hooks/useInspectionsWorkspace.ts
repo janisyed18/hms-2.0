@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { createHmsClient } from "../api/hmsClient";
+import { HmsApiError, createHmsClient } from "../api/hmsClient";
 import { useActionNotice } from "../components/interaction/ActionNotice";
 import { friendlyApiError } from "../components/interaction/friendlyApiError";
 import { useActionRunner } from "../components/interaction/useActionRunner";
@@ -130,35 +130,56 @@ export function useInspectionsWorkspace(
     const saved = await client.getInspectionBooking(changeBooking.id);
     setBookings((current) => current.map((booking) => booking.id === saved.id ? saved : booking));
   }
+  /**
+   * The mutation is what the user asked for; reloading afterwards is secondary. A reload that fails
+   * after a successful mutation is reported as a refresh problem, never as a failed action.
+   */
+  const REFRESH_WARNING = "but the latest view could not be refreshed. Reload to see the current state.";
+  async function tryRefresh(refresh: () => Promise<void>): Promise<boolean> {
+    try { await refresh(); return false; } catch { return true; }
+  }
+  const outcome = (title: string, done: string) => (refreshFailed: boolean) =>
+    refreshFailed ? { kind: "warning" as const, title, message: `${done}, ${REFRESH_WARNING}` } : { title, message: `${done}.` };
   function confirmInspectionBookingReschedule(id: string) {
     return run(`confirm:${id}`, async () => {
       await createHmsClient().confirmInspectionBookingReschedule(id);
-      await reloadBookingOf(id);
-    }, { ...bookingFailure("Reschedule could not be confirmed"), fallback: "The reschedule could not be confirmed. Try again.", success: () => ({ title: "Reschedule confirmed", message: "The new time is confirmed." }) });
+      return tryRefresh(() => reloadBookingOf(id));
+    }, { ...bookingFailure("Reschedule could not be confirmed"), fallback: "The reschedule could not be confirmed. Try again.", success: outcome("Reschedule confirmed", "The new time is confirmed") });
   }
   function approveInspectionBookingReschedule(id: string, inspectorUserId: string) {
     return run(`approve-change:${id}`, async () => {
       await createHmsClient().approveInspectionBookingReschedule(id, inspectorUserId);
-      await reloadBookingOf(id);
-    }, { ...bookingFailure("Reschedule could not be approved"), fallback: "The reschedule could not be approved. Try again.", success: () => ({ title: "Reschedule approved", message: "The reschedule was approved and sent to the customer to confirm." }) });
+      return tryRefresh(() => reloadBookingOf(id));
+    }, { ...bookingFailure("Reschedule could not be approved"), fallback: "The reschedule could not be approved. Try again.", success: outcome("Reschedule approved", "The reschedule was approved and sent to the customer to confirm") });
   }
   function approveInspectionBooking(id: string, inspectorUserId: string) {
     const booking = bookings.find((item) => item.id === id);
     return run(`approve:${id}`, async () => {
+      // The approval returns the updated booking, so it is applied at once; the inspection list is secondary.
       const saved = await createHmsClient().approveInspectionBooking(id, inspectorUserId);
       setBookings((current) => current.map((item) => item.id === saved.id ? saved : item));
-      const refreshed = await createHmsClient().listInspections({ sort: "-created_at" });
-      setInspections(refreshed.items);
-    }, { ...bookingFailure("Booking could not be approved"), fallback: "The booking could not be approved. Try again.", success: () => ({ title: "Booking approved", message: `Booking at ${booking?.location.name ?? "the site"} approved and an inspector assigned.` }) });
+      return tryRefresh(async () => {
+        const refreshed = await createHmsClient().listInspections({ sort: "-created_at" });
+        setInspections(refreshed.items);
+      });
+    }, { ...bookingFailure("Booking could not be approved"), fallback: "The booking could not be approved. Try again.", success: outcome("Booking approved", `Booking at ${booking?.location.name ?? "the site"} approved and an inspector assigned`) });
   }
+  // Declining and cancelling are not availability actions: a 409 is an ordinary state conflict and is
+  // shown as stated. The booking is reloaded separately, so a failed reload never changes that message.
   const bookingDecision = useConfirmedAction<{ action: "reject" | "cancel"; booking: InspectionBookingRecord }>(
     async ({ action, booking }) => {
       const client = createHmsClient();
-      const saved = action === "reject" ? await client.rejectInspectionBooking(booking.id) : await client.cancelInspectionBooking(booking.id);
+      let saved: InspectionBookingRecord;
+      try {
+        saved = action === "reject" ? await client.rejectInspectionBooking(booking.id) : await client.cancelInspectionBooking(booking.id);
+      } catch (reason) {
+        if (reason instanceof HmsApiError && [404, 409, 412].includes(reason.status)) void refreshBookingsAndInspections();
+        throw reason;
+      }
       setBookings((current) => current.map((item) => item.id === saved.id ? saved : item));
       notify({ kind: "success", title: action === "reject" ? "Booking declined" : "Booking cancelled", message: `Booking at ${booking.location.name} was ${action === "reject" ? "declined" : "cancelled"}.` });
     },
-    ({ action, booking }) => ({ conflictNeedsRefresh: true, fallback: `The booking at ${booking.location.name} could not be ${action === "reject" ? "declined" : "cancelled"}. Try again.` })
+    ({ action, booking }) => ({ fallback: `The booking at ${booking.location.name} could not be ${action === "reject" ? "declined" : "cancelled"}. Try again.` })
   );
   async function saveInspectionUpdate(values: InspectionUpdateValues) {
     if (!selectedInspection) return;

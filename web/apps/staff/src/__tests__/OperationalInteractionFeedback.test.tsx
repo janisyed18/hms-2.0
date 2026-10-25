@@ -27,7 +27,8 @@ const client = vi.hoisted(() => ({
   approveInspectionBooking: vi.fn(),
   rejectInspectionBooking: vi.fn(),
   cancelInspectionBooking: vi.fn(),
-  getInspectionBooking: vi.fn()
+  getInspectionBooking: vi.fn(),
+  confirmInspectionBookingReschedule: vi.fn()
 }));
 
 vi.mock("../api/hmsClient", async (importOriginal) => ({
@@ -292,5 +293,74 @@ describe("Inspection bookings", () => {
     await renderBookings();
     const card = screen.getByText("Kooragang").closest("article") as HTMLElement;
     expect(within(card).getByText("Main Pump Hose — HMS-001842")).toBeInTheDocument();
+  });
+});
+
+describe("A successful booking action is never reported as a failure because a later reload failed", () => {
+  it("approve booking: the approval stands and is shown when the inspection list reload fails", async () => {
+    const approved = { ...booking, status: "APPROVED", inspectorUserId: "ins-1" } as unknown as InspectionBookingRecord;
+    client.approveInspectionBooking.mockResolvedValue(approved);
+    client.listInspections.mockResolvedValueOnce({ total: 0, etag: null, items: [] }); // initial load
+    client.listInspections.mockRejectedValueOnce(api(500, "Internal server error")); // the secondary reload
+    client.listInspectionBookings.mockResolvedValue({ total: 1, etag: null, items: [booking] });
+    client.listAdminUsers.mockResolvedValue({ total: 1, etag: null, items: [{ id: "ins-1", displayName: "Ben Brook", role: "INSPECTOR", accountStatus: "ACTIVE" }] });
+    const user = userEvent.setup();
+    render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
+    await screen.findByText("Kooragang");
+    await user.selectOptions(screen.getByLabelText("Assign inspector for Kooragang"), "ins-1");
+    await user.click(screen.getByRole("button", { name: "Assign & approve" }));
+
+    const notice = (await screen.findByText(/approved and an inspector assigned, but the latest view could not be refreshed/)).closest('[role="status"]');
+    expect(notice).toHaveTextContent("Booking approved");
+    expect(notice).toHaveTextContent("Reload to see the current state.");
+    expect(screen.queryByText(/could not be approved/i)).toBeNull();
+    expect(client.approveInspectionBooking).toHaveBeenCalledTimes(1);
+    // The booking returned by the approval is already applied, so the card no longer offers approval.
+    expect(screen.queryByRole("button", { name: "Assign & approve" })).toBeNull();
+    expect(within(screen.getByText("Kooragang").closest("article") as HTMLElement).getByText("APPROVED")).toBeInTheDocument();
+  });
+
+  it("confirm reschedule: the confirmation stands when the booking reload fails, and says the view is stale", async () => {
+    const proposal = { ...booking, status: "APPROVED", appointment: { status: "CONFIRMED" }, changeRequests: [{ id: "chg-1", status: "PENDING_CUSTOMER_CONFIRMATION", startsAt: "2027-03-05T00:00:00Z", endsAt: "2027-03-05T01:00:00Z", reason: null, emergency: false, createdAt: "2027-02-01T00:00:00Z" }] } as unknown as InspectionBookingRecord;
+    client.listInspectionBookings.mockResolvedValue({ total: 1, etag: null, items: [proposal] });
+    client.confirmInspectionBookingReschedule.mockResolvedValue(undefined);
+    client.getInspectionBooking.mockRejectedValue(api(503, "Service unavailable"));
+    const user = userEvent.setup();
+    render(<InspectionsWorkspace canApprove={false} canApproveBookings={false} canBook canWrite={false} />);
+    await user.click(await screen.findByRole("button", { name: "Confirm reschedule" }));
+
+    const notice = (await screen.findByText(/The new time is confirmed, but the latest view could not be refreshed/)).closest('[role="status"]');
+    expect(notice).toHaveTextContent("Reschedule confirmed");
+    expect(screen.queryByText(/could not be confirmed/i)).toBeNull();
+    expect(client.confirmInspectionBookingReschedule).toHaveBeenCalledTimes(1);
+  });
+
+  it("decline 409: the business message stands as written, with no stale-edit wording, and the booking is reloaded afterwards", async () => {
+    client.rejectInspectionBooking.mockRejectedValueOnce(api(409, "Only pending inspection bookings can be declined."));
+    client.listInspectionBookings.mockResolvedValue({ total: 1, etag: null, items: [booking] });
+    client.listAdminUsers.mockResolvedValue({ total: 1, etag: null, items: [{ id: "ins-1", displayName: "Ben Brook", role: "INSPECTOR", accountStatus: "ACTIVE" }] });
+    const user = userEvent.setup();
+    render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
+    await screen.findByText("Kooragang");
+    const loads = client.listInspectionBookings.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Decline booking" }));
+
+    const alert = await within(await screen.findByRole("alertdialog")).findByRole("alert");
+    expect(alert).toHaveTextContent("Only pending inspection bookings can be declined.");
+    expect(alert).not.toHaveTextContent(/someone else|refresh/i);
+    await waitFor(() => expect(client.listInspectionBookings.mock.calls.length).toBeGreaterThan(loads));
+  });
+
+  it("decline 409 whose follow-up reload also fails still shows the original, truthful action error", async () => {
+    client.rejectInspectionBooking.mockRejectedValueOnce(api(409, "Only pending inspection bookings can be declined."));
+    client.listInspectionBookings.mockResolvedValueOnce({ total: 1, etag: null, items: [booking] });
+    client.listInspectionBookings.mockRejectedValue(api(503, "Service unavailable"));
+    const user = userEvent.setup();
+    render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
+    await screen.findByText("Kooragang");
+    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Decline booking" }));
+    expect(await within(await screen.findByRole("alertdialog")).findByRole("alert")).toHaveTextContent("Only pending inspection bookings can be declined.");
   });
 });

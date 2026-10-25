@@ -5,7 +5,7 @@ import { friendlyApiError, type FriendlyError, type FriendlyErrorOptions } from 
 
 export interface RunOptions<T> extends FriendlyErrorOptions {
   /** What to say once the server has confirmed success. Omit for a silent success. */
-  success?: (result: T) => Omit<NoticeState, "kind"> | string;
+  success?: (result: T) => (Omit<NoticeState, "kind"> & { kind?: NoticeState["kind"] }) | string;
   /** Called with the translated error after the failure notice is shown. */
   onError?: (error: FriendlyError) => void;
   /** Title for the failure notice, e.g. "Booking could not be approved". */
@@ -32,7 +32,7 @@ export function useActionRunner(notify: (notice: NoticeState) => void) {
         const value = await action();
         if (options.success) {
           const said = options.success(value);
-          notify({ kind: "success", ...(typeof said === "string" ? { message: said } : said) });
+          notify({ kind: "success", ...(typeof said === "string" ? { message: said } : said) } as NoticeState);
         }
         return { ok: true, value };
       } catch (reason) {
