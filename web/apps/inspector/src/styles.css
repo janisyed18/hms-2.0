@@ -632,9 +632,15 @@ button:disabled {
 
 .inspector-auth {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding:
+    max(24px, env(safe-area-inset-top))
+    max(24px, env(safe-area-inset-right))
+    max(24px, env(safe-area-inset-bottom))
+    max(24px, env(safe-area-inset-left));
+  overflow-y: auto;
   color: #e5eefb;
   background:
     linear-gradient(145deg, rgba(37, 99, 235, 0.15), transparent 42%),
@@ -643,6 +649,7 @@ button:disabled {
 
 .inspector-auth__panel {
   width: min(100%, 440px);
+  min-width: 0;
   padding: 32px;
   border: 1px solid #29415f;
   border-radius: 16px;
@@ -695,10 +702,16 @@ button:disabled {
   margin: 10px 0 0;
   color: #b3c3d7;
   line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.inspector-auth__loading {
+  color: #b3c3d7;
 }
 
 .inspector-auth__form {
   display: grid;
+  min-width: 0;
   gap: 16px;
   margin-top: 24px;
 }
@@ -712,19 +725,24 @@ button:disabled {
 }
 
 .inspector-auth__form input {
-  min-height: 46px;
+  min-height: 48px;
   width: 100%;
   border: 1px solid #385574;
   border-radius: 8px;
   padding: 0 12px;
   color: #f7fbff;
   background: #0b192d;
+  font-size: 16px;
   outline: none;
 }
 
-.inspector-auth__form input:focus {
+.inspector-auth__form input:focus-visible,
+.inspector-auth__button:focus-visible,
+.inspector-auth__link:focus-visible {
   border-color: #5597f5;
   box-shadow: 0 0 0 3px rgba(85, 151, 245, 0.2);
+  outline: 2px solid #b7d5ff;
+  outline-offset: 2px;
 }
 
 .inspector-auth__button {
@@ -764,6 +782,7 @@ button:disabled {
   background: rgba(246, 188, 79, 0.1);
   font-size: 13px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .inspector-auth__manual-key,
@@ -788,6 +807,7 @@ button:disabled {
 .inspector-auth__codes li {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 560px) {
@@ -812,15 +832,37 @@ button:disabled {
 
   .inspector-auth {
     place-items: start center;
-    padding: 0;
+    min-height: 100dvh;
+    padding:
+      max(22px, env(safe-area-inset-top))
+      max(20px, env(safe-area-inset-right))
+      max(28px, env(safe-area-inset-bottom))
+      max(20px, env(safe-area-inset-left));
   }
 
   .inspector-auth__panel {
-    min-height: 100vh;
+    min-height: calc(100dvh - max(44px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
     width: 100%;
     border: 0;
     border-radius: 0;
-    padding: 28px 22px;
+    padding: 20px 2px;
+    box-shadow: none;
+  }
+}
+
+@media (max-width: 360px) {
+  .inspector-auth__brand {
+    align-items: flex-start;
+  }
+
+  .inspector-auth__codes {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-height: 640px) {
+  .inspector-auth {
+    place-items: start center;
   }
 }
 
