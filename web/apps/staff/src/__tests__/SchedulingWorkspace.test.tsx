@@ -959,15 +959,13 @@ describe("the inspector roster beyond one page", () => {
         accountStatus: "ACTIVE"
       }))
     ];
-    const calls: Array<{ limit: number; offset: number }> = [];
-    client.listAdminUsers.mockImplementation(async (options: { limit: number; offset: number }) => {
-      calls.push({ limit: options.limit, offset: options.offset });
-      // A user near a page boundary can appear on two pages if the list shifts between requests.
-      const overlap = options.offset > 0 ? 1 : 0;
-      return {
-        total: users.length,
-        items: users.slice(Math.max(options.offset - overlap, 0), options.offset + options.limit)
-      };
+    const calls: Array<{ limit: number; after: string | undefined }> = [];
+    client.listAdminUsers.mockImplementation(async (options: { limit: number; after?: string }) => {
+      calls.push({ limit: options.limit, after: options.after });
+      const start = options.after === undefined ? 0 : users.findIndex((u) => u.id === options.after) + 1;
+      // A user at a page boundary can appear on two pages; the roster must still list them once.
+      const items = users.slice(Math.max(start - (start > 0 ? 1 : 0), 0), start + options.limit);
+      return { total: users.length, items, nextAfter: users.length - start > options.limit ? items[items.length - 1].id : null };
     });
     return { calls, users };
   }
@@ -984,7 +982,7 @@ describe("the inspector roster beyond one page", () => {
     await ready();
     await waitFor(() => expect(served.calls.length).toBe(Math.ceil(167 / 100)));
     expect(served.calls.every((call) => call.limit <= 100)).toBe(true);
-    expect(served.calls.map((call) => call.offset)).toEqual([0, 100]);
+    expect(served.calls.map((call) => call.after)).toEqual([undefined, "ins-099"]);
 
     const options = await waitFor(async () => {
       const found = await filterOptions();
@@ -1056,8 +1054,8 @@ describe("the inspector roster beyond one page", () => {
     serveUsers(130);
     const original = client.listAdminUsers.getMockImplementation()!;
     let failed = false;
-    client.listAdminUsers.mockImplementation(async (options: { limit: number; offset: number }) => {
-      if (options.offset > 0 && !failed) {
+    client.listAdminUsers.mockImplementation(async (options: { limit: number; after?: string }) => {
+      if (options.after !== undefined && !failed) {
         failed = true;
         throw new Error("Users unavailable");
       }

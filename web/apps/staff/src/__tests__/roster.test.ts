@@ -7,11 +7,18 @@ function user(index: number): AdminUserRecord {
   return { id, displayName: `Inspector ${id}`, role: "INSPECTOR", accountStatus: "ACTIVE" } as AdminUserRecord;
 }
 
+type Call = { sort: string; limit: number; after?: string };
+
+/** Mimics the API's keyset contract over `backing` (in id order): a cursor only when more users remain. */
+function page(backing: AdminUserRecord[], { limit, after }: Call) {
+  const rest = after === undefined ? backing : backing.filter((u) => u.id > after);
+  const items = rest.slice(0, limit);
+  return { items, nextAfter: rest.length > limit ? items[items.length - 1].id : null };
+}
+
 function serve(total: number) {
-  return vi.fn(async ({ offset, limit }: { sort: string; limit: number; offset: number }) => ({
-    total,
-    items: Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, i) => user(offset + i))
-  }));
+  const backing = Array.from({ length: total }, (_, i) => user(i));
+  return vi.fn(async (call: Call) => page(backing, call));
 }
 
 describe("loadActiveInspectors page cap", () => {
@@ -23,24 +30,40 @@ describe("loadActiveInspectors page cap", () => {
     expect(result.inspectors).toHaveLength(ROSTER_PAGE_SIZE * 3);
   });
 
-  it("is complete, with no error, when the last allowed page reaches the total", async () => {
-    const result = await loadActiveInspectors(serve(ROSTER_PAGE_SIZE * 3), 3);
+  it("is complete, with no error, when exactly maxPages full pages hold every user", async () => {
+    const list = serve(ROSTER_PAGE_SIZE * 3);
+    const result = await loadActiveInspectors(list, 3);
+    expect(list).toHaveBeenCalledTimes(3);
     expect(result.error).toBeNull();
     expect(result.inspectors).toHaveLength(ROSTER_PAGE_SIZE * 3);
   });
 
-  it("reports the list as incomplete, keeping what loaded, when an empty page arrives before the total is read", async () => {
-    const list = vi.fn(async ({ offset }: { sort: string; limit: number; offset: number }) => ({
-      total: ROSTER_PAGE_SIZE * 2,
-      items: offset === 0 ? Array.from({ length: ROSTER_PAGE_SIZE }, (_, i) => user(i)) : []
-    }));
+  it("reports the cap error when one user is left beyond maxPages full pages", async () => {
+    const result = await loadActiveInspectors(serve(ROSTER_PAGE_SIZE * 3 + 1), 3);
+    expect(result.error).toMatch(/too many users/i);
+    expect(result.inspectors).toHaveLength(ROSTER_PAGE_SIZE * 3);
+  });
+
+  it("reports the list as incomplete, keeping what loaded, when an empty page still promises more", async () => {
+    const list = vi.fn(async ({ after }: Call) =>
+      after === undefined
+        ? { items: Array.from({ length: ROSTER_PAGE_SIZE }, (_, i) => user(i)), nextAfter: "ins-0099" }
+        : { items: [], nextAfter: "ins-0099" }
+    );
     const result = await loadActiveInspectors(list);
     expect(list).toHaveBeenCalledTimes(2);
     expect(result.error).toMatch(/inspector list incomplete/i);
     expect(result.inspectors).toHaveLength(ROSTER_PAGE_SIZE);
   });
 
-  it("treats an empty roster whose total is zero as complete", async () => {
+  it("stops with an incomplete error when the cursor does not advance", async () => {
+    const list = vi.fn(async () => ({ items: [user(0)], nextAfter: "ins-0000" }));
+    const result = await loadActiveInspectors(list);
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(result.error).toMatch(/inspector list incomplete/i);
+  });
+
+  it("treats an empty roster as complete", async () => {
     const result = await loadActiveInspectors(serve(0));
     expect(result.error).toBeNull();
     expect(result.inspectors).toEqual([]);
@@ -48,25 +71,23 @@ describe("loadActiveInspectors page cap", () => {
 });
 
 describe("loadActiveInspectors under concurrent changes", () => {
-  // KNOWN GAP: offset pagination skips a user when an already-read user is removed
-  // between pages. `it.fails` keeps CI green while the gap exists; once pagination is
-  // stable (cursor or snapshot) this starts passing, Vitest reports the unexpected
-  // pass, and the test must become a normal `it`.
-  it.fails("does not skip a user when an already-read user is removed between pages", async () => {
+  it("does not skip a user when an already-read user is removed between pages", async () => {
     const backing = Array.from({ length: ROSTER_PAGE_SIZE + 2 }, (_, i) => user(i));
-    const list = vi.fn(async ({ offset, limit }: { sort: string; limit: number; offset: number }) => {
-      if (offset === ROSTER_PAGE_SIZE) {
+    const list = vi.fn(async (call: Call) => {
+      if (call.after !== undefined) {
         // Page 1 is already read; one of its users is removed before page 2.
-        backing.splice(50, 1);
+        const at = backing.findIndex((u) => u.id === "ins-0050");
+        if (at >= 0) backing.splice(at, 1);
       }
-      return { total: backing.length, items: backing.slice(offset, offset + limit) };
+      return page(backing, call);
     });
 
     const result = await loadActiveInspectors(list);
 
-    // ins-0100 still exists, but it shifted into the already-read range, so
-    // offset 100 now starts after it and it never reaches the roster.
     expect(backing.map((u) => u.id)).toContain("ins-0100");
-    expect(result.inspectors.map((inspector) => inspector.id)).toContain("ins-0100");
+    const ids = result.inspectors.map((inspector) => inspector.id);
+    expect(ids).toContain("ins-0100");
+    expect(ids).toContain("ins-0101");
+    expect(result.error).toBeNull();
   });
 });

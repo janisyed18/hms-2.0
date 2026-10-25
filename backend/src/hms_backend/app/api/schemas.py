@@ -976,6 +976,7 @@ class UserListResponse(BaseModel):
     limit: int
     offset: int
     items: list[UserRead]
+    next_after: str | None = None
 
 
 class UserCreate(BaseModel):

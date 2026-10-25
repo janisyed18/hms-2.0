@@ -91,6 +91,11 @@ The current resolved session is available at:
 Admin endpoints added in Phase 3C:
 
 - `GET/POST/PATCH/DELETE /api/v1/admin/users`
+  - `GET` pages by `limit`/`offset`. For a read that must stay correct while users change, use
+    `sort=id` and pass the previous response's `next_after` (a user id) as `after`; `next_after`
+    is null on the last page. Every user present for the whole walk is returned exactly once even
+    if others are deleted or have their email edited; users created mid-walk usually appear (ids
+    are time-ordered) but that is not guaranteed. `after` cannot be combined with `offset` or other sorts.
 - `GET/PATCH /api/v1/admin/devices`
 - `GET /api/v1/admin/audit-events`
 

@@ -1648,6 +1648,24 @@ describe("hmsClient", () => {
     });
   });
 
+  it("passes the keyset cursor to the admin users list and returns the next one", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ total: 0, limit: 100, offset: 0, items: [], next_after: "u-9" })
+    });
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    const page = await client.listAdminUsers({ sort: "id", limit: 100, after: "u-1" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/admin/users?limit=100&offset=0&sort=id&after=u-1",
+      expect.any(Object)
+    );
+    expect(page.nextAfter).toBe("u-9");
+  });
+
   it("surfaces structured HMS API errors", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
