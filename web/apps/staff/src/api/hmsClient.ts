@@ -502,6 +502,7 @@ interface ApiAdminUserList {
   limit: number;
   offset: number;
   items: ApiAdminUser[];
+  next_after?: string | null;
 }
 
 interface ApiAdminUserCreateResult {
@@ -700,6 +701,8 @@ interface ListAdminUserOptions {
   sort?: string;
   limit?: number;
   offset?: number;
+  /** Resume after this email (the previous page's `nextAfter`); needs sort "email" and no offset. */
+  after?: string;
 }
 
 interface ListDeviceOptions {
@@ -2200,15 +2203,17 @@ export function createHmsClient(options: HmsClientOptions = {}) {
 
     async listAdminUsers(
       listOptions: ListAdminUserOptions = {}
-    ): Promise<ApiListResult<AdminUserRecord>> {
+    ): Promise<ApiListResult<AdminUserRecord> & { nextAfter: string | null }> {
       const response = await request<ApiAdminUserList>("/api/v1/admin/users", {}, {
         limit: listOptions.limit ?? 50,
         offset: listOptions.offset ?? 0,
         search: listOptions.search?.trim() || undefined,
-        sort: listOptions.sort
+        sort: listOptions.sort,
+        after: listOptions.after
       });
       return {
         total: response.data.total,
+        nextAfter: response.data.next_after ?? null,
         etag: response.etag,
         items: response.data.items.map((user) => toAdminUser(user, response.etag))
       };

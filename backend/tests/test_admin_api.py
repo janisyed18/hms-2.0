@@ -326,3 +326,110 @@ async def test_admin_error_envelope_for_missing_identity(
         "message": "Missing HMS user identity",
         "details": None,
     }
+
+
+async def seed_emails(
+    session_factory: async_sessionmaker[AsyncSession], count: int
+) -> list[str]:
+    emails = [f"user-{index:03d}@example.com" for index in range(count)]
+    for index, email in enumerate(emails):
+        await seed_user(
+            session_factory,
+            oidc_subject=f"keyset-{index:03d}",
+            email=email,
+            role=Role.INSPECTOR,
+        )
+    return emails
+
+
+@pytest.mark.asyncio
+async def test_user_list_keyset_cursor_walks_every_user_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed_user(session_factory, email="aaa-admin@example.com")
+    emails = ["aaa-admin@example.com", *await seed_emails(session_factory, 7)]
+
+    seen: list[str] = []
+    params: dict[str, str | int] = {"sort": "email", "limit": 3}
+    async with admin_client(session_factory) as client:
+        for _ in range(10):
+            body = (await client.get("/api/v1/admin/users", params=params)).json()
+            seen += [item["email"] for item in body["items"]]
+            assert body["total"] == len(emails)
+            if body["next_after"] is None:
+                break
+            params["after"] = body["next_after"]
+
+    assert seen == sorted(emails)
+
+
+@pytest.mark.asyncio
+async def test_user_list_keyset_cursor_survives_removal_of_an_already_read_user(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed_user(session_factory, email="aaa-admin@example.com")
+    emails = await seed_emails(session_factory, 6)
+
+    async with admin_client(session_factory) as client:
+        first = (
+            await client.get(
+                "/api/v1/admin/users", params={"sort": "email", "limit": 4}
+            )
+        ).json()
+        read = [item["email"] for item in first["items"]]
+        # Soft-delete an already-read user (and the cursor user itself) between pages.
+        async with session_factory() as session:
+            for email in (read[1], first["next_after"]):
+                user = await session.scalar(select(User).where(User.email == email))
+                assert user is not None
+                user.deleted_at = datetime.now(UTC)
+            await session.commit()
+        rest = (
+            await client.get(
+                "/api/v1/admin/users",
+                params={"sort": "email", "limit": 4, "after": first["next_after"]},
+            )
+        ).json()
+
+    # Every still-active user after the cursor is returned; none shifted past it.
+    assert [item["email"] for item in rest["items"]] == emails[3:]
+
+
+@pytest.mark.asyncio
+async def test_user_list_offset_paging_is_unchanged_without_a_cursor(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await seed_user(session_factory, email="aaa-admin@example.com")
+    emails = await seed_emails(session_factory, 4)
+
+    async with admin_client(session_factory) as client:
+        body = (
+            await client.get("/api/v1/admin/users", params={"limit": 2, "offset": 2})
+        ).json()
+        by_role = (
+            await client.get("/api/v1/admin/users", params={"sort": "role", "limit": 2})
+        ).json()
+
+    assert [item["email"] for item in body["items"]] == emails[1:3]
+    assert body["offset"] == 2
+    assert by_role["next_after"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"after": "x@example.com", "offset": 1},
+        {"after": "x@example.com", "sort": "-email"},
+        {"after": "x@example.com", "sort": "role"},
+    ],
+)
+async def test_user_list_cursor_rejects_unresumable_orderings(
+    session_factory: async_sessionmaker[AsyncSession], params: dict[str, str | int]
+) -> None:
+    await seed_user(session_factory)
+
+    async with admin_client(session_factory) as client:
+        response = await client.get("/api/v1/admin/users", params=params)
+
+    assert response.status_code == 400

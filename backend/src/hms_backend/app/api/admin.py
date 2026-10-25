@@ -165,8 +165,17 @@ async def list_users(
     sort: str | None = None,
     limit: LimitParam = 50,
     offset: OffsetParam = 0,
+    after: Annotated[str | None, Query(min_length=1, max_length=320)] = None,
 ) -> UserListResponse:
     _require_admin(principal, Permission.USER_ADMIN)
+    # Keyset paging: `after` is the email of the last user already read. Email is
+    # unique, so it is a total order on its own, and unlike an offset it stays correct
+    # when users before the cursor (or the cursor user itself) are removed mid-walk.
+    if after is not None and (offset != 0 or (sort or "email") != "email"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="after requires sort=email and offset=0",
+        )
 
     statement = select(User).where(User.deleted_at.is_(None))
     if search:
@@ -181,6 +190,8 @@ async def list_users(
             )
         )
     total = await _count(session, statement)
+    if after is not None:
+        statement = statement.where(User.email > after)
     statement = _apply_sort(
         statement,
         User,
@@ -189,11 +200,16 @@ async def list_users(
         default="email",
     ).options(selectinload(User.customer_accesses)).limit(limit).offset(offset)
     users = (await session.scalars(statement)).all()
+    resumable = (sort or "email") == "email" and len(users) == limit
+    next_after = users[-1].email if resumable else None
     return UserListResponse(
         total=total,
         limit=limit,
         offset=offset,
         items=[_user_read(user) for user in users],
+        # Only the unique email order can be resumed from; a full page may be the last
+        # one, so the client then gets one short or empty page and stops.
+        next_after=next_after,
     )
 
 
