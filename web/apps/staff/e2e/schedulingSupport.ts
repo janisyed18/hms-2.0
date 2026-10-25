@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import { expect, type Browser, type Page } from "@playwright/test";
 
+import { clearRateLimits } from "./global-setup";
+
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 export const schedulingDate = "2027-10-04";
@@ -66,18 +68,7 @@ export function prepareSchedulingFixture({
     ["compose", "exec", "-T", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "hms", "-d", "hms", "-c", statement],
     { cwd: repoRoot, encoding: "utf8" }
   );
-  const limiterKeys = execFileSync(
-    "docker",
-    ["compose", "exec", "-T", "redis", "redis-cli", "--scan", "--pattern", "hms:login-rate:*"],
-    { cwd: repoRoot, encoding: "utf8" }
-  ).trim().split("\n").filter(Boolean);
-  if (limiterKeys.length) {
-    execFileSync(
-      "docker",
-      ["compose", "exec", "-T", "redis", "redis-cli", "DEL", ...limiterKeys],
-      { cwd: repoRoot, encoding: "utf8" }
-    );
-  }
+  clearRateLimits();
 }
 
 export function decodeBase32(value: string): Buffer {
