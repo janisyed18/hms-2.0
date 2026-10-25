@@ -908,7 +908,6 @@ describe("App", () => {
     const fetchMock = dashboardActionsFetch();
     const downloadClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("confirm", vi.fn(() => true));
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:test") });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     const user = userEvent.setup();
@@ -920,7 +919,13 @@ describe("App", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Downloaded the current overdue retest page.");
 
     await user.click(screen.getByRole("button", { name: "Send Escalation" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("Queued escalations for 1 overdue asset.");
+    // Nothing is sent until the dialog is confirmed.
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/retest-schedules/escalate-overdue"),
+      expect.anything()
+    );
+    await user.click(within(await screen.findByRole("alertdialog", { name: "Send overdue retest escalations?" })).getByRole("button", { name: "Send escalations" }));
+    expect(await screen.findByText("1 overdue retest escalated successfully.")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/api/v1/retest-schedules/escalate-overdue"),
       expect.objectContaining({ method: "POST" })

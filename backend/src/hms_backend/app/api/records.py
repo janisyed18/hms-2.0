@@ -4444,6 +4444,7 @@ def _retest_schedule_read(schedule: RetestSchedule) -> RetestScheduleRead:
         asset=InspectionAssetSummary(
             id=schedule.asset.id,
             asset_number=schedule.asset.asset_number,
+            asset_name=schedule.asset.asset_name,
             tag=schedule.asset.tag,
             lifecycle_status=schedule.asset.lifecycle_status,
         ),
@@ -4476,6 +4477,7 @@ def _inspection_read(inspection: Inspection) -> InspectionRead:
         asset=InspectionAssetSummary(
             id=inspection.asset.id,
             asset_number=inspection.asset.asset_number,
+            asset_name=inspection.asset.asset_name,
             tag=inspection.asset.tag,
             lifecycle_status=inspection.asset.lifecycle_status,
         ),
@@ -5134,6 +5136,7 @@ def _inspection_booking_read(booking: InspectionBooking) -> InspectionBookingRea
             InspectionAssetSummary(
                 id=booking_asset.asset.id,
                 asset_number=booking_asset.asset.asset_number,
+                asset_name=booking_asset.asset.asset_name,
                 tag=booking_asset.asset.tag,
                 lifecycle_status=booking_asset.asset.lifecycle_status,
             )
@@ -5203,6 +5206,7 @@ def _certificate_read(certificate: Certificate) -> CertificateRead:
         asset=InspectionAssetSummary(
             id=certificate.asset.id,
             asset_number=certificate.asset.asset_number,
+            asset_name=certificate.asset.asset_name,
             tag=certificate.asset.tag,
             lifecycle_status=certificate.asset.lifecycle_status,
         ),

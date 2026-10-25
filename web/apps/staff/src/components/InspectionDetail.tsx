@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Save, Send, X } from "lucide-react";
 
 import {
@@ -10,7 +10,11 @@ import {
 } from "../domain/inspectionForm";
 import type { InspectionFormState, PressureRating } from "../domain/inspectionForm";
 import type { InspectionRecord, InspectionUpdateValues } from "../domain/types";
+import { ActionButton } from "./interaction/ActionButton";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { friendlyApiError } from "./interaction/friendlyApiError";
 import { InspectionFormFields } from "./InspectionFormFields";
+import { assetLabel } from "../utils/identity";
 
 interface InspectionDetailProps {
   canApprove: boolean;
@@ -20,6 +24,8 @@ interface InspectionDetailProps {
   ratingFor?: (assetId: string) => PressureRating | null;
   onApprove: () => Promise<void>;
   onClose: () => void;
+  /** Reload the inspection lists after a conflict showed the screen was out of date. */
+  onRefresh?: () => void;
   onSaveDraft: (values: InspectionUpdateValues) => Promise<void>;
   onSubmit: (values: InspectionUpdateValues) => Promise<void>;
 }
@@ -44,12 +50,15 @@ export function InspectionDetail({
   ratingFor,
   onApprove,
   onClose,
+  onRefresh,
   onSaveDraft,
   onSubmit
 }: InspectionDetailProps) {
   const [form, setForm] = useState<InspectionFormState>(() => blankFormState(null));
   const [isSaving, setSaving] = useState(false);
   const [isSubmitting, setSubmitting] = useState(false);
+  const [isApproving, setApproving] = useState(false);
+  const lock = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -82,37 +91,60 @@ export function InspectionDetail({
     return built ? { result: built.result, pressureTest: built.pressureTest } : null;
   }
 
-  async function run(
-    action: (values: InspectionUpdateValues) => Promise<void>,
-    setBusy: (busy: boolean) => void
-  ) {
-    const values = draftValues();
-    if (!values) return;
+  /** Run one action once at a time; a failure is shown here and leaves the form as typed. */
+  async function guarded(action: () => Promise<void>, setBusy: (busy: boolean) => void, fallback: string) {
+    if (lock.current) return;
+    lock.current = true;
     setBusy(true);
     setError(null);
     try {
-      await action(values);
+      await action();
     } catch (reason: unknown) {
-      setError(reason instanceof Error ? reason.message : "The inspection could not be saved.");
+      const friendly = friendlyApiError(reason, { fallback });
+      setError(friendly.message);
+      // The record may have moved on (already approved, wrong state): reload what is shown.
+      if (friendly.kind === "conflict" || friendly.kind === "missing") onRefresh?.();
+      window.setTimeout(() => document.querySelector<HTMLElement>(".inspection-detail-form .action-notice")?.focus(), 0);
     } finally {
+      lock.current = false;
       setBusy(false);
     }
   }
 
+  async function run(
+    action: (values: InspectionUpdateValues) => Promise<void>,
+    setBusy: (busy: boolean) => void,
+    missing: string[],
+    fallback: string
+  ) {
+    const values = draftValues();
+    if (!values || missing.length > 0) {
+      // Say what is still needed instead of leaving a dead button.
+      setError(`Still needed: ${missing.join(", ")}.`);
+      window.setTimeout(() => document.querySelector<HTMLElement>(".inspection-detail-form .action-notice")?.focus(), 0);
+      return;
+    }
+    await guarded(() => action(values), setBusy, fallback);
+  }
+
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await run(onSaveDraft, setSaving);
+    await run(onSaveDraft, setSaving, draftMissing, "The inspection draft could not be saved. Try again.");
   }
 
   async function handleSubmitInspection() {
-    await run(onSubmit, setSubmitting);
+    await run(onSubmit, setSubmitting, [...draftMissing, ...submitMissing], "The inspection could not be submitted. Try again.");
+  }
+
+  async function handleApprove() {
+    await guarded(onApprove, setApproving, "The inspection could not be approved. Try again.");
   }
 
   return (
     <aside className="inspection-detail-panel" aria-label="Inspection detail">
       <div className="inspection-detail-header">
         <div>
-          <h2>Inspection {inspection.asset.assetNumber}</h2>
+          <h2>Inspection {assetLabel(inspection.asset)}</h2>
           <p>{inspection.customer.name} / {inspection.product.name}</p>
         </div>
         <button
@@ -167,35 +199,26 @@ export function InspectionDetail({
             To submit, still needed: {submitMissing.join(", ")}.
           </p>
         ) : null}
-        {error ? <p className="form-error" role="alert">{error}</p> : null}
+        {error ? <ActionNotice kind="error" title="Inspection not saved">{error}</ActionNotice> : null}
 
         <div className="inspection-action-row">
           {canWrite && inspection.status === "DRAFT" ? (
             <>
-              <button className="secondary-button" disabled={isSaving || !built} type="submit">
+              <ActionButton disabled={isSubmitting || isApproving} pending={isSaving} pendingLabel="Saving…" type="submit" variant="secondary">
                 <Save aria-hidden="true" size={16} />
-                {isSaving ? "Saving..." : "Save draft"}
-              </button>
-              <button
-                className="primary-button"
-                disabled={isSubmitting || submitMissing.length > 0}
-                onClick={handleSubmitInspection}
-                type="button"
-              >
+                Save draft
+              </ActionButton>
+              <ActionButton disabled={isSaving || isApproving} onClick={handleSubmitInspection} pending={isSubmitting} pendingLabel="Submitting…" variant="primary">
                 <Send aria-hidden="true" size={16} />
-                {isSubmitting ? "Submitting..." : "Submit inspection"}
-              </button>
+                Submit inspection
+              </ActionButton>
             </>
           ) : null}
           {canApprove && inspection.status === "SUBMITTED" ? (
-            <button
-              className="primary-button"
-              onClick={onApprove}
-              type="button"
-            >
+            <ActionButton onClick={handleApprove} pending={isApproving} pendingLabel="Approving…" variant="primary">
               <CheckCircle2 aria-hidden="true" size={16} />
               Approve inspection
-            </button>
+            </ActionButton>
           ) : null}
         </div>
       </form>

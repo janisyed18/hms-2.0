@@ -11,7 +11,11 @@ import { useState } from "react";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
 import { ProductsWorkspace } from "./ProductsWorkspace";
 import { ManagementHeader } from "./ManagementPrimitives";
+import { ActionButton } from "./interaction/ActionButton";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { ConfirmDialog } from "./interaction/ConfirmDialog";
 import { ReferenceForm } from "./ReferenceForm";
+import { nameAndCode } from "../utils/identity";
 import { useReferenceWorkspace } from "../hooks/useReferenceWorkspace";
 import { PresencePanel } from "../motion/MotionPrimitives";
 import type { ReferenceCatalogKey, ReferenceCatalogRecord } from "../domain/types";
@@ -44,8 +48,8 @@ export function ReferenceWorkspace({ canManage }: ReferenceWorkspaceProps) {
       header: "Actions",
       render: (record) => canManage ? (
         <span className="row-actions">
-          <button type="button" onClick={() => workspace.openEdit(record)}>Edit</button>
-          <button type="button" onClick={() => void workspace.archiveRecord(record)}>Archive</button>
+          <ActionButton onClick={() => workspace.openEdit(record)} variant="secondary">Edit</ActionButton>
+          <ActionButton onClick={() => workspace.archive.request(record)} variant="ghost">Archive</ActionButton>
         </span>
       ) : "Read only"
     }
@@ -105,6 +109,11 @@ export function ReferenceWorkspace({ canManage }: ReferenceWorkspaceProps) {
               {canManage ? "Managed access" : "Read only"}
             </span>
           </div>
+          {workspace.notice ? (
+            <ActionNotice kind={workspace.notice.kind} onDismiss={workspace.dismissNotice} title={workspace.notice.title}>
+              {workspace.notice.message}
+            </ActionNotice>
+          ) : null}
           <ModuleTable
             actionLabel={canManage ? `Add ${workspace.activeMeta.singular}` : undefined}
             columns={columns}
@@ -121,6 +130,17 @@ export function ReferenceWorkspace({ canManage }: ReferenceWorkspaceProps) {
             searchLabel={`Search ${workspace.activeMeta.plural.toLowerCase()}`}
             searchPlaceholder={`Search ${workspace.activeMeta.plural.toLowerCase()}...`}
             tableLabel={`${workspace.activeMeta.plural} catalog`}
+          />
+          <ConfirmDialog
+            confirmLabel={`Archive ${workspace.activeMeta.singular.toLowerCase()}`}
+            error={workspace.archive.error}
+            message="It will no longer be offered when configuring assets and products. Records already using it are not changed."
+            onCancel={workspace.archive.cancel}
+            onConfirm={() => void workspace.archive.confirm()}
+            open={workspace.archive.target !== null}
+            pending={workspace.archive.pending}
+            pendingLabel="Archiving…"
+            title={workspace.archive.target ? `Archive ${nameAndCode(workspace.archive.target)}?` : `Archive ${workspace.activeMeta.singular.toLowerCase()}?`}
           />
           <ReferenceForm
             entityLabel={workspace.activeMeta.singular}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { createHmsClient, HmsApiError } from "../api/hmsClient";
+import { createHmsClient } from "../api/hmsClient";
+import { friendlyApiError } from "../components/interaction/friendlyApiError";
 import type {
   AssetRecord,
   InspectionBookingCreateValues,
@@ -95,6 +96,7 @@ export function useSchedulingWorkspace({
   const [rosterToken, setRosterToken] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
   const [notice, setNotice] = useState<ActionNotice | null>(null);
   const [form, setForm] = useState<FormState>({ open: false, reschedule: null, initialDate: "" });
   const [assets, setAssets] = useState<AssetRecord[]>([]);
@@ -324,8 +326,20 @@ export function useSchedulingWorkspace({
     }
   }
 
-  async function run(bookingId: string | null, success: string, action: () => Promise<unknown>) {
+  /**
+   * `availability` marks actions whose 409 means the offered time or inspector was taken meanwhile:
+   * those say the booking changed and was refreshed. Any other 409 is an ordinary business
+   * conflict ("only pending bookings can be approved") and is explained as the server states it.
+   * Either way the booking is reloaded so the screen shows what is true now.
+   */
+  async function run(
+    bookingId: string | null,
+    success: string,
+    action: () => Promise<unknown>,
+    options: { key: string; fallback: string; availability?: boolean }
+  ) {
     setBusy(true);
+    setBusyKey(options.key);
     setNotice(null);
     try {
       await action();
@@ -334,15 +348,10 @@ export function useSchedulingWorkspace({
       refresh();
       return true;
     } catch (reason) {
-      const conflict =
-        reason instanceof HmsApiError && (reason.status === 409 || reason.status === 404);
+      const friendly = friendlyApiError(reason, { fallback: options.fallback, conflictNeedsRefresh: options.availability });
       setNotice({
-        kind: conflict ? "conflict" : "error",
-        message: conflict
-          ? `${CONFLICT_COPY} (${reason.message})`
-          : reason instanceof Error
-            ? reason.message
-            : "The action could not be completed."
+        kind: friendly.needsRefresh ? "conflict" : "error",
+        message: friendly.needsRefresh && friendly.kind === "conflict" ? `${CONFLICT_COPY} (${friendly.message})` : friendly.message
       });
       // Show what the server now says, keeping the user where they are.
       if (bookingId) await reloadBooking(bookingId);
@@ -350,31 +359,31 @@ export function useSchedulingWorkspace({
       return false;
     } finally {
       setBusy(false);
+      setBusyKey(null);
     }
   }
 
   const approveBooking = (id: string, inspectorUserId: string) =>
     run(id, "Booking approved and inspector assigned.", () =>
-      createHmsClient().approveInspectionBooking(id, inspectorUserId)
-    );
+      createHmsClient().approveInspectionBooking(id, inspectorUserId),
+    { key: "approve", fallback: "The booking could not be approved. Try again.", availability: true });
   const declineBooking = (id: string) =>
-    run(id, "Booking declined.", () => createHmsClient().rejectInspectionBooking(id));
+    run(id, "Booking declined.", () => createHmsClient().rejectInspectionBooking(id),
+    { key: "decline", fallback: "The booking could not be declined. Try again." });
   const cancelBooking = (id: string) =>
-    run(id, "Booking cancelled.", () => createHmsClient().cancelInspectionBooking(id));
+    run(id, "Booking cancelled.", () => createHmsClient().cancelInspectionBooking(id),
+    { key: "cancel", fallback: "The booking could not be cancelled. Try again." });
   const approveReschedule = (bookingId: string, changeId: string, inspectorUserId: string) =>
     run(bookingId, "Reschedule approved.", () =>
-      createHmsClient().approveInspectionBookingReschedule(changeId, inspectorUserId)
-    );
+      createHmsClient().approveInspectionBookingReschedule(changeId, inspectorUserId),
+    { key: "approve-reschedule", fallback: "The reschedule could not be approved. Try again.", availability: true });
 
   async function ensureAssets() {
     if (assets.length > 0) return;
     try {
       setAssets((await createHmsClient().listAllAssets({ sort: "asset_number" })).items);
     } catch (reason) {
-      setNotice({
-        kind: "error",
-        message: reason instanceof Error ? reason.message : "Assets could not be loaded."
-      });
+      setNotice({ kind: "error", message: friendlyApiError(reason, { fallback: "Assets could not be loaded." }).message });
     }
   }
 
@@ -403,8 +412,9 @@ export function useSchedulingWorkspace({
     try {
       await createHmsClient().requestInspectionBookingReschedule(id, values);
     } catch (reason) {
-      if (reason instanceof HmsApiError && (reason.status === 409 || reason.status === 404)) {
-        setNotice({ kind: "conflict", message: `${CONFLICT_COPY} (${reason.message})` });
+      const friendly = friendlyApiError(reason, { fallback: "The reschedule could not be requested. Try again.", conflictNeedsRefresh: true });
+      if (friendly.needsRefresh) {
+        setNotice({ kind: "conflict", message: friendly.kind === "conflict" ? `${CONFLICT_COPY} (${friendly.message})` : friendly.message });
         await reloadBooking(id);
         refresh();
       }
@@ -423,6 +433,7 @@ export function useSchedulingWorkspace({
     approveReschedule,
     assets,
     busy,
+    busyKey,
     cancelBooking,
     changeTimeZone,
     closeForm,

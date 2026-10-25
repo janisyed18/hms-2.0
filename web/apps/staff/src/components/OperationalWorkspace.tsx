@@ -27,6 +27,10 @@ import {
 import type { AuditEventRecord, DashboardRecord } from "../domain/types";
 import { PresencePanel, StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { motionTokens } from "../motion/motionTokens";
+import { ActionButton } from "./interaction/ActionButton";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { ConfirmDialog } from "./interaction/ConfirmDialog";
+import { friendlyApiError } from "./interaction/friendlyApiError";
 import { WorkspaceState } from "./WorkspaceState";
 import { downloadCsv } from "./ModuleTable";
 import { PaginationControls, usePagination } from "./Pagination";
@@ -70,6 +74,8 @@ export function OperationalWorkspace({
   const [dashboardNotice, setDashboardNotice] = useState<string | null>(null);
   const [dashboardActionError, setDashboardActionError] = useState<string | null>(null);
   const [isEscalating, setEscalating] = useState(false);
+  const [isConfirmingEscalation, setConfirmingEscalation] = useState(false);
+  const [escalationError, setEscalationError] = useState<string | null>(null);
   const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>(() => reportingPeriodForPreset("last_month"));
   const [dashboardNow] = useState(() => Date.now());
   const reducedMotion = useReducedMotion();
@@ -199,23 +205,28 @@ export function OperationalWorkspace({
     if (!canEscalate || !currentDashboard || currentDashboard.overdueTotal === 0 || isEscalating) {
       return;
     }
-    if (!window.confirm(`Send overdue retest escalations for ${currentDashboard.overdueTotal} asset${currentDashboard.overdueTotal === 1 ? "" : "s"}?`)) {
-      return;
-    }
     setEscalating(true);
     setDashboardNotice(null);
     setDashboardActionError(null);
+    setEscalationError(null);
     try {
       const client = createHmsClient();
       const dispatched = await client.escalateOverdueRetests();
-      setDashboard(await client.getDashboard(overduePageSize, overdueStart, reportingPeriod));
+      setConfirmingEscalation(false);
       setDashboardNotice(
         dispatched
-          ? `Queued escalations for ${dispatched} overdue asset${dispatched === 1 ? "" : "s"}.`
+          ? `${dispatched} overdue retest${dispatched === 1 ? "" : "s"} escalated successfully.`
           : "All overdue retests have already been escalated today."
       );
+      try {
+        setDashboard(await client.getDashboard(overduePageSize, overdueStart, reportingPeriod));
+      } catch {
+        // The escalation itself worked; only the refreshed numbers are stale.
+        setDashboardActionError("The escalation was sent, but the dashboard could not be refreshed. Reload to see the latest numbers.");
+      }
     } catch (error: unknown) {
-      setDashboardActionError(errorMessage(error, "Unable to send overdue retest escalations."));
+      // Nothing was sent: keep the dialog open and say why.
+      setEscalationError(friendlyApiError(error, { fallback: "The overdue retest escalations could not be sent. Try again." }).message);
     } finally {
       setEscalating(false);
     }
@@ -339,19 +350,29 @@ export function OperationalWorkspace({
                   <Download aria-hidden="true" size={15} />
                   Export
                 </button>
-                <button
-                  className="danger-button"
-                  disabled={!canEscalate || dashboard.overdueTotal === 0 || isEscalating}
-                  onClick={() => void sendOverdueEscalation()}
-                  type="button"
+                <ActionButton
+                  disabled={!canEscalate || dashboard.overdueTotal === 0}
+                  onClick={() => { setEscalationError(null); setConfirmingEscalation(true); }}
+                  variant="secondary"
                 >
                   <Send aria-hidden="true" size={14} />
-                  {isEscalating ? "Sending..." : "Send Escalation"}
-                </button>
+                  Send Escalation
+                </ActionButton>
               </div>
             </div>
-            {dashboardNotice ? <p className="dashboard-action-notice" role="status">{dashboardNotice}</p> : null}
-            {dashboardActionError ? <p className="dashboard-action-error" role="alert">{dashboardActionError}</p> : null}
+            {dashboardNotice ? <ActionNotice kind="success" onDismiss={() => setDashboardNotice(null)}>{dashboardNotice}</ActionNotice> : null}
+            {dashboardActionError ? <ActionNotice kind="error" onDismiss={() => setDashboardActionError(null)}>{dashboardActionError}</ActionNotice> : null}
+            <ConfirmDialog
+              confirmLabel="Send escalations"
+              error={escalationError}
+              message={`This notifies the owners of ${dashboard.overdueTotal} overdue asset${dashboard.overdueTotal === 1 ? "" : "s"}. Assets already escalated today are skipped.`}
+              onCancel={() => { if (!isEscalating) { setConfirmingEscalation(false); setEscalationError(null); } }}
+              onConfirm={() => void sendOverdueEscalation()}
+              open={isConfirmingEscalation}
+              pending={isEscalating}
+              pendingLabel="Sending…"
+              title="Send overdue retest escalations?"
+            />
             <PresencePanel presenceKey={`overdue-${overduePage}-${overduePageSize}`}>
               <OperationsTable
                 ariaLabel="Overdue retests"

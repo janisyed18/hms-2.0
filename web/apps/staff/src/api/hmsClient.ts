@@ -328,6 +328,7 @@ interface ApiAssetList {
 interface ApiInspectionAssetSummary {
   id: string;
   asset_number: string;
+  asset_name?: string | null;
   tag: string | null;
   lifecycle_status: string;
 }
@@ -1098,6 +1099,7 @@ function toInspection(
       asset: {
         id: inspection.asset.id,
         assetNumber: inspection.asset.asset_number,
+        assetName: inspection.asset.asset_name ?? null,
         tag: inspection.asset.tag,
         lifecycleStatus: inspection.asset.lifecycle_status
       },
@@ -1164,6 +1166,7 @@ function toInspectionAssetSummary(
   return {
     id: asset.id,
     assetNumber: asset.asset_number,
+    assetName: asset.asset_name ?? null,
     tag: asset.tag,
     lifecycleStatus: asset.lifecycle_status
   };

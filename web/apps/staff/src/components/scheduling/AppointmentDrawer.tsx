@@ -11,7 +11,10 @@ import {
 } from "../../scheduling/scheduleModel";
 import { formatDateTime, zoneLabel } from "../../scheduling/zonedTime";
 import type { ActionNotice } from "../../hooks/useSchedulingWorkspace";
+import { ActionButton } from "../interaction/ActionButton";
+import { RequiredMark } from "../interaction/FormPrimitives";
 import { visitTimes } from "./TimeGrid";
+import { assetLabel } from "../../utils/identity";
 
 const CHANGE_LABEL: Record<string, string> = {
   PENDING_ADMIN_APPROVAL: "Waiting for admin approval",
@@ -29,6 +32,7 @@ function age(from: string): string {
 
 export function AppointmentDrawer({
   busy,
+  busyKey,
   canApproveBookings,
   canBook,
   entry,
@@ -43,6 +47,8 @@ export function AppointmentDrawer({
   onReschedule
 }: {
   busy: boolean;
+  /** Which action is in flight, so its button can say what it is doing. */
+  busyKey?: string | null;
   canApproveBookings: boolean;
   canBook: boolean;
   entry: ScheduleEntry;
@@ -60,6 +66,8 @@ export function AppointmentDrawer({
   const heading = useRef<HTMLHeadingElement>(null);
   const [inspectorId, setInspectorId] = useState("");
   const [confirming, setConfirming] = useState<"decline" | "cancel" | null>(null);
+  const [inspectorError, setInspectorError] = useState<string | null>(null);
+  const chooserRef = useRef<HTMLSelectElement>(null);
 
   // Below this width the drawer covers the whole screen, so it behaves as a modal dialog.
   const [fullScreen] = useState(
@@ -86,7 +94,18 @@ export function AppointmentDrawer({
   useEffect(() => {
     setInspectorId("");
     setConfirming(null);
+    setInspectorError(null);
   }, [booking.id]);
+
+  /** Assigning needs an inspector: say so next to the field instead of leaving a dead button. */
+  function needInspector(run: () => void) {
+    if (!inspectorId) {
+      setInspectorError("Choose an inspector to assign.");
+      chooserRef.current?.focus();
+      return;
+    }
+    run();
+  }
 
   const zone = entry.timeZone;
   const appointment = booking.appointment;
@@ -102,8 +121,13 @@ export function AppointmentDrawer({
 
   const chooser = (
     <select
+      aria-describedby={inspectorError ? "schedule-inspector-error" : undefined}
+      aria-invalid={inspectorError ? true : undefined}
       aria-label="Inspector to assign"
-      onChange={(event) => setInspectorId(event.target.value)}
+      aria-required="true"
+      onChange={(event) => { setInspectorId(event.target.value); setInspectorError(null); }}
+      ref={chooserRef}
+      required
       value={inspectorId}
     >
       <option value="">Choose an inspector</option>
@@ -194,7 +218,7 @@ export function AppointmentDrawer({
         </div>
         <div>
           <dt>Assets ({booking.assets.length})</dt>
-          <dd>{booking.assets.map((asset) => asset.assetNumber).join(", ") || "None"}</dd>
+          <dd>{booking.assets.map(assetLabel).join(", ") || "None"}</dd>
         </div>
         {booking.additionalInformation ? (
           <div>
@@ -232,31 +256,33 @@ export function AppointmentDrawer({
         {isPending && canApproveBookings ? (
           <>
             <label>
-              <span>Inspector</span>
+              <span>Inspector<RequiredMark /></span>
               {chooser}
+              {inspectorError ? <small className="field-error" id="schedule-inspector-error">{inspectorError}</small> : null}
             </label>
             <div className="row-actions">
-              <button
-                className="primary-button"
-                disabled={busy || !inspectorId}
-                onClick={() => void onApprove(booking.id, inspectorId)}
-                type="button"
+              <ActionButton
+                disabled={busy && busyKey !== "approve"}
+                onClick={() => needInspector(() => void onApprove(booking.id, inspectorId))}
+                pending={busy && busyKey === "approve"}
+                pendingLabel="Approving…"
+                variant="primary"
               >
                 Assign &amp; approve
-              </button>
+              </ActionButton>
               {confirming === "decline" ? (
                 <>
-                  <button disabled={busy} onClick={() => void onDecline(booking.id).then(() => setConfirming(null))} type="button">
+                  <ActionButton disabled={busy && busyKey !== "decline"} onClick={() => void onDecline(booking.id).then(() => setConfirming(null))} pending={busy && busyKey === "decline"} pendingLabel="Declining…" variant="danger">
                     Confirm decline
-                  </button>
-                  <button disabled={busy} onClick={() => setConfirming(null)} type="button">
+                  </ActionButton>
+                  <ActionButton disabled={busy} onClick={() => setConfirming(null)} variant="ghost">
                     Keep request
-                  </button>
+                  </ActionButton>
                 </>
               ) : (
-                <button disabled={busy} onClick={() => setConfirming("decline")} type="button">
+                <ActionButton disabled={busy} onClick={() => setConfirming("decline")} variant="ghost">
                   Decline
-                </button>
+                </ActionButton>
               )}
             </div>
           </>
@@ -266,17 +292,19 @@ export function AppointmentDrawer({
           ? pendingAdmin.map((change) => (
               <div className="schedule-drawer__approve" key={change.id}>
                 <label>
-                  <span>Inspector for the new time</span>
+                  <span>Inspector for the new time<RequiredMark /></span>
                   {chooser}
+                  {inspectorError ? <small className="field-error" id="schedule-inspector-error">{inspectorError}</small> : null}
                 </label>
-                <button
-                  className="primary-button"
-                  disabled={busy || !inspectorId}
-                  onClick={() => void onApproveReschedule(booking.id, change.id, inspectorId)}
-                  type="button"
+                <ActionButton
+                  disabled={busy && busyKey !== "approve-reschedule"}
+                  onClick={() => needInspector(() => void onApproveReschedule(booking.id, change.id, inspectorId))}
+                  pending={busy && busyKey === "approve-reschedule"}
+                  pendingLabel="Approving…"
+                  variant="primary"
                 >
                   Approve reschedule
-                </button>
+                </ActionButton>
               </div>
             ))
           : null}
@@ -289,22 +317,22 @@ export function AppointmentDrawer({
 
         {isConfirmed && canBook && !hasOpenChange ? (
           <div className="row-actions">
-            <button disabled={busy} onClick={() => onReschedule(booking)} type="button">
+            <ActionButton disabled={busy} onClick={() => onReschedule(booking)} variant="secondary">
               Request reschedule
-            </button>
+            </ActionButton>
             {confirming === "cancel" ? (
               <>
-                <button disabled={busy} onClick={() => void onCancel(booking.id).then(() => setConfirming(null))} type="button">
+                <ActionButton disabled={busy && busyKey !== "cancel"} onClick={() => void onCancel(booking.id).then(() => setConfirming(null))} pending={busy && busyKey === "cancel"} pendingLabel="Cancelling…" variant="danger">
                   Confirm cancel booking
-                </button>
-                <button disabled={busy} onClick={() => setConfirming(null)} type="button">
+                </ActionButton>
+                <ActionButton disabled={busy} onClick={() => setConfirming(null)} variant="ghost">
                   Keep booking
-                </button>
+                </ActionButton>
               </>
             ) : (
-              <button disabled={busy} onClick={() => setConfirming("cancel")} type="button">
+              <ActionButton disabled={busy} onClick={() => setConfirming("cancel")} variant="ghost">
                 Cancel booking
-              </button>
+              </ActionButton>
             )}
           </div>
         ) : null}

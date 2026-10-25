@@ -41,8 +41,8 @@ describe("CertificateDetail", () => {
         canManage
         certificate={certificate}
         onClose={vi.fn()}
-        onRevoke={vi.fn()}
-        onSupersede={vi.fn()}
+        onRequestRevoke={vi.fn()}
+        onRequestSupersede={vi.fn()}
       />
     );
 

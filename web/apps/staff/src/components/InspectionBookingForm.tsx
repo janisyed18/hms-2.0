@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 
 import { createHmsClient } from "../api/hmsClient";
@@ -9,6 +9,11 @@ import type {
   InspectionBookingCreateValues,
   InspectionBookingRecord
 } from "../domain/types";
+import { assetLabel } from "../utils/identity";
+import { ActionButton } from "./interaction/ActionButton";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { RequiredMark, RequiredNote } from "./interaction/FormPrimitives";
+import { friendlyApiError } from "./interaction/friendlyApiError";
 
 interface InspectionBookingFormProps {
   assetOptions: AssetRecord[];
@@ -77,6 +82,9 @@ export function InspectionBookingForm({
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [additionalInformation, setAdditionalInformation] = useState("");
   const [isSubmitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const submitLock = useRef(false);
   const availableAssets = useMemo(
     () => assetOptions.filter((asset) => asset.location?.id === locationId),
     [assetOptions, locationId]
@@ -84,7 +92,7 @@ export function InspectionBookingForm({
   const customerId = rescheduleBooking?.customer.id ?? availableAssets[0]?.customer.id;
   // A reschedule shows the booking's own assets, which need not be in the loaded list.
   const assetChoices = rescheduleBooking
-    ? rescheduleBooking.assets.map((asset) => ({ id: asset.id, assetNumber: asset.assetNumber }))
+    ? rescheduleBooking.assets.map((asset) => ({ id: asset.id, assetNumber: asset.assetNumber, assetName: asset.assetName ?? null }))
     : availableAssets;
   const schedulingTimezone = locations.find((location) => location.id === locationId)?.timezone ?? "UTC";
   const availabilityKey = locationId && bookingDate ? `${locationId}|${bookingDate}` : "";
@@ -109,6 +117,7 @@ export function InspectionBookingForm({
     setLoadingAvailability(false);
     setAvailabilityError(null);
     setAdditionalInformation("");
+    setSubmitError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, rescheduleKey]);
 
@@ -171,7 +180,10 @@ export function InspectionBookingForm({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!customerId || !locationId || assetIds.length === 0 || !availabilityQuoteId) return;
+    if (submitLock.current) return;
+    submitLock.current = true;
     setSubmitting(true);
+    setSubmitError(null);
     try {
       if (rescheduleBooking && onReschedule) {
         await onReschedule(rescheduleBooking.id, {
@@ -188,14 +200,24 @@ export function InspectionBookingForm({
           additionalInformation: additionalInformation.trim() || null,
         });
       }
+    } catch (reason) {
+      // Keep the chosen site, assets and date; a gone or taken time must be chosen again.
+      const friendly = friendlyApiError(reason, {
+        fallback: rescheduleBooking ? "The reschedule could not be requested. Try again." : "The booking could not be created. Try again.",
+        conflictNeedsRefresh: true
+      });
+      if (friendly.kind === "validation" || friendly.kind === "conflict" || friendly.kind === "missing") setChosenQuoteId("");
+      setSubmitError(friendly.message);
+      window.setTimeout(() => formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus(), 0);
     } finally {
+      submitLock.current = false;
       setSubmitting(false);
     }
   }
 
   return (
     <div className="drawer-backdrop">
-      <form className="customer-drawer inspection-booking-form" onSubmit={handleSubmit}>
+      <form className="customer-drawer inspection-booking-form" onSubmit={handleSubmit} ref={formRef}>
         <div className="drawer-header">
           <div>
             <h2>{rescheduleBooking ? "Request reschedule" : "Book inspection"}</h2>
@@ -210,10 +232,13 @@ export function InspectionBookingForm({
             <X size={18} />
           </button>
         </div>
+        {submitError ? <ActionNotice kind="error" title={rescheduleBooking ? "Reschedule not requested" : "Booking not created"}>{submitError}</ActionNotice> : null}
+        <RequiredNote />
         <label>
-          <span>Location</span>
+          <span>Location<RequiredMark /></span>
           <select
             aria-label="Booking location"
+            aria-required="true"
             required
             disabled={Boolean(rescheduleBooking)}
             value={locationId}
@@ -228,7 +253,7 @@ export function InspectionBookingForm({
           </select>
         </label>
         <fieldset className="booking-asset-list" disabled={Boolean(rescheduleBooking)}>
-          <legend>Assets</legend>
+          <legend>Assets<RequiredMark /></legend>
           {!locationId ? <p className="field-hint">Choose a location to see its assets.</p> : null}
           {locationId && assetChoices.length === 0 ? (
             <p className="field-hint">No assets are assigned to this location.</p>
@@ -240,14 +265,15 @@ export function InspectionBookingForm({
                 onChange={() => toggleAsset(asset.id)}
                 type="checkbox"
               />
-              <span>{asset.assetNumber}</span>
+              <span>{assetLabel(asset)}</span>
             </label>
           ))}
         </fieldset>
         <label>
-          <span>Preferred inspection date</span>
+          <span>Preferred inspection date<RequiredMark /></span>
           <input
             aria-label="Preferred inspection date"
+            aria-required="true"
             disabled={!locationId}
             required
             type="date"
@@ -257,9 +283,10 @@ export function InspectionBookingForm({
         </label>
         {bookingDate ? (
           <label>
-            <span>Available time ({schedulingTimezone})</span>
+            <span>Available time ({schedulingTimezone})<RequiredMark /></span>
             <select
               aria-label="Available inspection time"
+              aria-required="true"
               disabled={isLoadingAvailability || availableSlots.length === 0}
               required
               value={availabilityQuoteId}
@@ -291,9 +318,10 @@ export function InspectionBookingForm({
         ) : null}
         {rescheduleBooking && requiresInspector ? (
           <label>
-            <span>Inspector</span>
+            <span>Inspector<RequiredMark /></span>
             <select
               aria-label="Inspector for rescheduled inspection"
+              aria-required="true"
               required
               value={inspectorUserId}
               onChange={(event) => setInspectorUserId(event.target.value)}
@@ -315,16 +343,16 @@ export function InspectionBookingForm({
           />
         </label>
         <div className="drawer-actions">
-          <button className="secondary-button" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            className="primary-button"
-            disabled={isSubmitting || !locationId || assetIds.length === 0 || !availabilityQuoteId || (rescheduleBooking !== null && requiresInspector && !inspectorUserId)}
+          <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
+          <ActionButton
+            disabled={!locationId || assetIds.length === 0 || !availabilityQuoteId || (rescheduleBooking !== null && requiresInspector && !inspectorUserId)}
+            pending={isSubmitting}
+            pendingLabel="Saving…"
             type="submit"
+            variant="primary"
           >
-            {isSubmitting ? "Saving..." : rescheduleBooking ? "Request reschedule" : "Create booking"}
-          </button>
+            {rescheduleBooking ? "Request reschedule" : "Create booking"}
+          </ActionButton>
         </div>
       </form>
     </div>

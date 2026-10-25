@@ -589,8 +589,15 @@ describe("actions go through the existing validated endpoints", () => {
     await user.click(screen.getByRole("button", { name: /Unassigned, Awaiting approval/ }));
     const drawer = await screen.findByRole("dialog");
     const assign = within(drawer).getByRole("button", { name: "Assign & approve" });
-    expect(assign).toBeDisabled();
-    await user.selectOptions(within(drawer).getByLabelText("Inspector to assign"), "insp-b");
+    // Without an inspector it says what is missing, focuses the chooser, and sends nothing.
+    const chooser = within(drawer).getByLabelText("Inspector to assign");
+    expect(chooser).toBeRequired();
+    await user.click(assign);
+    expect(chooser).toHaveAccessibleDescription("Choose an inspector to assign.");
+    expect(chooser).toHaveFocus();
+    expect(client.approveInspectionBooking).not.toHaveBeenCalled();
+    await user.selectOptions(chooser, "insp-b");
+    expect(chooser).not.toHaveAttribute("aria-invalid");
     await user.click(assign);
     await waitFor(() => expect(client.approveInspectionBooking).toHaveBeenCalledWith("b4", "insp-b"));
     expect(await within(drawer).findByText("Booking approved and inspector assigned.")).toBeInTheDocument();
@@ -709,6 +716,25 @@ describe("actions go through the existing validated endpoints", () => {
     expect(client.getInspectionBooking).toHaveBeenCalledWith("b4"); // refreshed from the server
     await waitFor(() => expect(client.listInspectionSchedule.mock.calls.length).toBeGreaterThan(callsBefore));
     expect(screen.getByRole("dialog")).toBeInTheDocument(); // still open: nothing was lost
+  });
+
+  it("explains an ordinary state conflict as the server states it, without the stale-edit wording", async () => {
+    const { HmsApiError } = await import("../api/hmsClient");
+    client.rejectInspectionBooking.mockRejectedValue(
+      new HmsApiError(409, "conflict", "Only pending inspection bookings can be declined.", null)
+    );
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await user.click(screen.getByRole("button", { name: /Unassigned, Awaiting approval/ }));
+    const drawer = await screen.findByRole("dialog");
+    await user.click(within(drawer).getByRole("button", { name: "Decline" }));
+    await user.click(within(drawer).getByRole("button", { name: "Confirm decline" }));
+
+    const alert = await within(drawer).findByRole("alert");
+    expect(alert).toHaveTextContent("Only pending inspection bookings can be declined.");
+    expect(alert).not.toHaveTextContent(/changed while you were working/);
+    expect(client.getInspectionBooking).toHaveBeenCalledWith("b4"); // still reloaded, so the screen is true
   });
 
   it("offers only what the role and state allow", async () => {

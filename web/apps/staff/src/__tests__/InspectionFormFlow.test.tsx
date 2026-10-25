@@ -1,3 +1,4 @@
+import { HmsApiError } from "../api/hmsClient";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -50,12 +51,17 @@ async function fillEverything(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("new inspection (staff)", () => {
-  it("starts with no asset chosen and nothing to save", () => {
-    renderForm();
+  it("starts with no asset chosen, and saving says an asset is needed instead of doing nothing", async () => {
+    const user = userEvent.setup();
+    const props = renderForm();
     expect((field("Inspection asset") as HTMLSelectElement).value).toBe("");
     expect(screen.getByText("Select an asset")).toBeInTheDocument();
     expect(screen.queryByLabelText("Working pressure kPa")).not.toBeInTheDocument();
-    expect(save()).toBeDisabled();
+    expect(field("Inspection asset")).toBeRequired();
+    await user.click(save());
+    expect(field("Inspection asset")).toHaveAccessibleDescription("Select the asset being inspected.");
+    expect(field("Inspection asset")).toHaveFocus();
+    expect(props.onSubmit).not.toHaveBeenCalled();
   });
 
   it("prefills the pressures from the chosen asset's product rating and nothing else", async () => {
@@ -71,7 +77,8 @@ describe("new inspection (staff)", () => {
     }
     for (const { label } of CONDITION_CHECKS) expect(field(label)).toHaveValue("");
     expect(field("Ohms end A")).toHaveValue("");
-    expect(save()).toBeDisabled();
+    await user.click(save());
+    expect(await screen.findByRole("alert")).toHaveTextContent(/still needed.*Test time/i);
     expect(screen.getByRole("status")).toHaveTextContent("Test time");
   });
 
@@ -155,7 +162,7 @@ describe("new inspection (staff)", () => {
 
   it("reports a save failure", async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn().mockRejectedValue(new Error("Request validation failed"));
+    const onSubmit = vi.fn().mockRejectedValue(new HmsApiError(422, "validation", "Request validation failed", null));
     render(<InspectionForm assetOptions={[rated]} onClose={vi.fn()} onSubmit={onSubmit} open />);
     await user.selectOptions(field("Inspection asset"), "asset-rated");
     await fillEverything(user);
@@ -237,10 +244,15 @@ describe("saved inspection (staff)", () => {
     const props = renderDetail(savedInspection(partial));
     const submit = screen.getByRole("button", { name: "Submit inspection" });
 
-    expect(submit).toBeDisabled();
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent("Certificate result");
     expect(status).toHaveTextContent("Ohms total");
+    // An incomplete form cannot be submitted, and says why instead of sitting dead.
+    await user.click(submit);
+    expect(props.onSubmit).not.toHaveBeenCalled();
+    const gap = await screen.findByRole("alert");
+    expect(gap).toHaveTextContent(/still needed.*Certificate result.*Ohms total|still needed.*Ohms total.*Certificate result/i);
+    expect(gap).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     expect(props.onSaveDraft).toHaveBeenCalledTimes(1);
 
@@ -274,7 +286,7 @@ describe("saved inspection (staff)", () => {
   it("shows a submit failure from the server", async () => {
     const user = userEvent.setup();
     const props = renderDetail(savedInspection(completeState), {
-      onSubmit: vi.fn().mockRejectedValue(new Error("Inspection is incomplete: Ohms total"))
+      onSubmit: vi.fn().mockRejectedValue(new HmsApiError(422, "validation", "Inspection is incomplete: Ohms total", null))
     });
     await user.click(screen.getByRole("button", { name: "Submit inspection" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Inspection is incomplete"));
