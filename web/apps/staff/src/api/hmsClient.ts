@@ -701,7 +701,7 @@ interface ListAdminUserOptions {
   sort?: string;
   limit?: number;
   offset?: number;
-  /** Resume after this email (the previous page's `nextAfter`); needs sort "email" and no offset. */
+  /** Resume after this user id (the previous page's `nextAfter`); needs sort "id" and no offset. */
   after?: string;
 }
 

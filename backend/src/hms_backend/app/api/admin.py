@@ -168,13 +168,16 @@ async def list_users(
     after: Annotated[str | None, Query(min_length=1, max_length=320)] = None,
 ) -> UserListResponse:
     _require_admin(principal, Permission.USER_ADMIN)
-    # Keyset paging: `after` is the email of the last user already read. Email is
-    # unique, so it is a total order on its own, and unlike an offset it stays correct
-    # when users before the cursor (or the cursor user itself) are removed mid-walk.
-    if after is not None and (offset != 0 or (sort or "email") != "email"):
+    # Keyset paging (`sort=id`): `after` is the id of the last user already read. The id
+    # is immutable (email is editable, so it cannot anchor a cursor), so every user that
+    # exists for the whole walk is returned exactly once, whatever is deleted or edited
+    # meanwhile. Ids are time-ordered UUIDv7, so users created mid-walk sort after the
+    # cursor and are normally included; there is no snapshot, so that is not guaranteed.
+    keyset = sort == "id"
+    if after is not None and (offset != 0 or not keyset):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="after requires sort=email and offset=0",
+            detail="after requires sort=id and offset=0",
         )
 
     statement = select(User).where(User.deleted_at.is_(None))
@@ -191,24 +194,23 @@ async def list_users(
         )
     total = await _count(session, statement)
     if after is not None:
-        statement = statement.where(User.email > after)
+        statement = statement.where(User.id > after)
     statement = _apply_sort(
         statement,
         User,
         sort,
-        frozenset({"email", "oidc_subject", "role", "created_at", "updated_at"}),
+        frozenset({"id", "email", "oidc_subject", "role", "created_at", "updated_at"}),
         default="email",
-    ).options(selectinload(User.customer_accesses)).limit(limit).offset(offset)
-    users = (await session.scalars(statement)).all()
-    resumable = (sort or "email") == "email" and len(users) == limit
-    next_after = users[-1].email if resumable else None
+    ).options(selectinload(User.customer_accesses)).limit(limit + 1).offset(offset)
+    # One extra row says whether another page exists, so a full last page ends the walk.
+    rows = (await session.scalars(statement)).all()
+    users = rows[:limit]
+    next_after = users[-1].id if keyset and len(rows) > limit else None
     return UserListResponse(
         total=total,
         limit=limit,
         offset=offset,
         items=[_user_read(user) for user in users],
-        # Only the unique email order can be resumed from; a full page may be the last
-        # one, so the client then gets one short or empty page and stops.
         next_after=next_after,
     )
 

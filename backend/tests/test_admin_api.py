@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 import pytest
@@ -328,71 +330,159 @@ async def test_admin_error_envelope_for_missing_identity(
     }
 
 
-async def seed_emails(
+async def seed_inspectors(
     session_factory: async_sessionmaker[AsyncSession], count: int
-) -> list[str]:
-    emails = [f"user-{index:03d}@example.com" for index in range(count)]
-    for index, email in enumerate(emails):
+) -> list[User]:
+    return [
         await seed_user(
             session_factory,
             oidc_subject=f"keyset-{index:03d}",
-            email=email,
+            email=f"user-{index:03d}@example.com",
             role=Role.INSPECTOR,
         )
-    return emails
+        for index in range(count)
+    ]
+
+
+async def page(
+    client: httpx.AsyncClient, **params: str | int
+) -> dict[str, Any]:
+    response = await client.get(
+        "/api/v1/admin/users", params={"sort": "id", "limit": 4, **params}
+    )
+    assert response.status_code == 200
+    body: dict[str, Any] = response.json()
+    return body
+
+
+async def walk(client: httpx.AsyncClient, **params: str | int) -> list[str]:
+    seen: list[str] = []
+    cursor: str | None = None
+    for _ in range(20):
+        body = await page(
+            client, **params, **({"after": cursor} if cursor is not None else {})
+        )
+        seen += [item["id"] for item in body["items"]]
+        cursor = body["next_after"]
+        if cursor is None:
+            return seen
+    raise AssertionError("walk did not end")
+
+
+async def update_user(
+    session_factory: async_sessionmaker[AsyncSession], user_id: str, **values: Any
+) -> None:
+    async with session_factory() as session:
+        user = await session.get(User, user_id)
+        assert user is not None
+        for key, value in values.items():
+            setattr(user, key, value)
+        await session.commit()
 
 
 @pytest.mark.asyncio
 async def test_user_list_keyset_cursor_walks_every_user_once(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    await seed_user(session_factory, email="aaa-admin@example.com")
-    emails = ["aaa-admin@example.com", *await seed_emails(session_factory, 7)]
+    admin = await seed_user(session_factory, email="aaa-admin@example.com")
+    users = [admin, *await seed_inspectors(session_factory, 7)]
 
-    seen: list[str] = []
-    params: dict[str, str | int] = {"sort": "email", "limit": 3}
     async with admin_client(session_factory) as client:
-        for _ in range(10):
-            body = (await client.get("/api/v1/admin/users", params=params)).json()
-            seen += [item["email"] for item in body["items"]]
-            assert body["total"] == len(emails)
-            if body["next_after"] is None:
-                break
-            params["after"] = body["next_after"]
+        seen = await walk(client, limit=3)
 
-    assert seen == sorted(emails)
+    assert seen == sorted(user.id for user in users)
 
 
 @pytest.mark.asyncio
-async def test_user_list_keyset_cursor_survives_removal_of_an_already_read_user(
+async def test_user_list_keyset_last_full_page_ends_the_walk(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     await seed_user(session_factory, email="aaa-admin@example.com")
-    emails = await seed_emails(session_factory, 6)
+    await seed_inspectors(session_factory, 5)  # 6 users: two full pages of 3
 
     async with admin_client(session_factory) as client:
-        first = (
-            await client.get(
-                "/api/v1/admin/users", params={"sort": "email", "limit": 4}
-            )
-        ).json()
-        read = [item["email"] for item in first["items"]]
-        # Soft-delete an already-read user (and the cursor user itself) between pages.
-        async with session_factory() as session:
-            for email in (read[1], first["next_after"]):
-                user = await session.scalar(select(User).where(User.email == email))
-                assert user is not None
-                user.deleted_at = datetime.now(UTC)
-            await session.commit()
-        rest = (
-            await client.get(
-                "/api/v1/admin/users",
-                params={"sort": "email", "limit": 4, "after": first["next_after"]},
-            )
-        ).json()
+        first = await page(client, limit=3)
+        second = await page(client, limit=3, after=first["next_after"])
 
-    # Every still-active user after the cursor is returned; none shifted past it.
-    assert [item["email"] for item in rest["items"]] == emails[3:]
+    assert first["next_after"] is not None
+    assert len(second["items"]) == 3
+    assert second["next_after"] is None
+
+
+@pytest.mark.asyncio
+async def test_user_list_keyset_survives_removal_of_read_and_cursor_users(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    admin = await seed_user(session_factory, email="aaa-admin@example.com")
+    users = [admin, *await seed_inspectors(session_factory, 5)]
+    ids = sorted(user.id for user in users)
+
+    async with admin_client(session_factory) as client:
+        first = await page(client)
+        assert [item["id"] for item in first["items"]] == ids[:4]
+        # Soft-delete an already-read user and the cursor user between pages.
+        for user_id in (ids[1], ids[3]):
+            await update_user(session_factory, user_id, deleted_at=datetime.now(UTC))
+        rest = await page(client, after=first["next_after"])
+
+    assert [item["id"] for item in rest["items"]] == ids[4:]
+
+
+@pytest.mark.asyncio
+async def test_user_list_keyset_ignores_email_edits_between_pages(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    admin = await seed_user(session_factory, email="aaa-admin@example.com")
+    users = [admin, *await seed_inspectors(session_factory, 7)]
+    ids = sorted(user.id for user in users)
+    by_id = {user.id: user for user in users}
+
+    async with admin_client(session_factory) as client:
+        first = await page(client)
+        read, unread = ids[0], ids[6]
+        cursor_email = by_id[ids[3]].email
+        # An unread user's email moves from after the cursor's to before it, and an
+        # already-read user's moves past it; neither may change what is returned.
+        await update_user(session_factory, unread, email="0-first@example.com")
+        await update_user(session_factory, read, email="zzz-last@example.com")
+        assert cursor_email > "0-first@example.com"
+        rest = await page(client, after=first["next_after"], limit=10)
+
+    returned = [item["id"] for item in first["items"]] + [
+        item["id"] for item in rest["items"]
+    ]
+    assert returned == ids
+
+
+@pytest.mark.asyncio
+async def test_user_list_keyset_includes_users_created_mid_walk_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    admin = await seed_user(session_factory, email="aaa-admin@example.com")
+    users = [admin, *await seed_inspectors(session_factory, 5)]
+
+    async with admin_client(session_factory) as client:
+        first = await page(client)
+        await asyncio.sleep(0.01)  # UUIDv7 ids are time-ordered
+        late = await seed_user(
+            session_factory, oidc_subject="late", email="0-late@example.com"
+        )
+        rest = await walk_after(client, first["next_after"])
+
+    returned = [item["id"] for item in first["items"]] + rest
+    assert sorted(returned) == sorted([*(u.id for u in users), late.id])
+    assert len(set(returned)) == len(returned)
+
+
+async def walk_after(client: httpx.AsyncClient, cursor: str | None) -> list[str]:
+    seen: list[str] = []
+    for _ in range(20):
+        if cursor is None:
+            return seen
+        body = await page(client, after=cursor)
+        seen += [item["id"] for item in body["items"]]
+        cursor = body["next_after"]
+    raise AssertionError("walk did not end")
 
 
 @pytest.mark.asyncio
@@ -400,28 +490,34 @@ async def test_user_list_offset_paging_is_unchanged_without_a_cursor(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     await seed_user(session_factory, email="aaa-admin@example.com")
-    emails = await seed_emails(session_factory, 4)
+    await seed_inspectors(session_factory, 4)
 
     async with admin_client(session_factory) as client:
         body = (
             await client.get("/api/v1/admin/users", params={"limit": 2, "offset": 2})
         ).json()
-        by_role = (
-            await client.get("/api/v1/admin/users", params={"sort": "role", "limit": 2})
+        by_email = (
+            await client.get(
+                "/api/v1/admin/users", params={"sort": "email", "limit": 2}
+            )
         ).json()
 
-    assert [item["email"] for item in body["items"]] == emails[1:3]
+    assert [item["email"] for item in body["items"]] == [
+        "user-001@example.com",
+        "user-002@example.com",
+    ]
     assert body["offset"] == 2
-    assert by_role["next_after"] is None
+    assert by_email["next_after"] is None
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "params",
     [
-        {"after": "x@example.com", "offset": 1},
-        {"after": "x@example.com", "sort": "-email"},
-        {"after": "x@example.com", "sort": "role"},
+        {"after": "x", "sort": "id", "offset": 1},
+        {"after": "x", "sort": "-id"},
+        {"after": "x", "sort": "email"},
+        {"after": "x"},
     ],
 )
 async def test_user_list_cursor_rejects_unresumable_orderings(

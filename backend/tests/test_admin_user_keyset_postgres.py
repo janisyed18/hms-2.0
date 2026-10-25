@@ -1,12 +1,13 @@
 """Admin user-list keyset paging against the migrated PostgreSQL schema.
 
-PostgreSQL orders text with the database collation, so this proves the
-`email > :after` cursor agrees with `ORDER BY email` for punctuated addresses (emails
-are stored lowercased).
+PostgreSQL orders text with the database collation, so this proves the `id > :after`
+cursor agrees with `ORDER BY id`, and that deletes, email edits and new users made
+between pages neither skip nor repeat a user.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -29,7 +30,7 @@ pytestmark = pytest.mark.skipif(
     not POSTGRES_URL, reason="POSTGRES_TEST_DATABASE_URL is not configured"
 )
 
-LOCAL_PARTS = ["a_b", "a.b", "a-c", "a+c", "b1", "b_1", "zed", "zed.x", "m", "m2"]
+EMAIL_PARTS = ["a_b", "a.b", "a-c", "a+c", "b1", "b_1", "zed", "zed.x", "m", "m2"]
 
 
 @pytest_asyncio.fixture
@@ -46,12 +47,11 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 
 
 @pytest.mark.asyncio
-async def test_keyset_walk_matches_database_order_and_survives_removal_on_postgresql(
+async def test_keyset_walk_survives_concurrent_changes_on_postgresql(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     tag = uuid4().hex[:10]
     admin_subject = f"keyset-admin-{tag}"
-    emails = [f"{part}.{tag}@example.com" for part in LOCAL_PARTS]
     async with session_factory() as session:
         session.add(
             User(
@@ -60,11 +60,11 @@ async def test_keyset_walk_matches_database_order_and_survives_removal_on_postgr
                 role=Role.HMS_ADMIN.value,
             )
         )
-        for index, email in enumerate(emails):
+        for index, part in enumerate(EMAIL_PARTS):
             session.add(
                 User(
                     oidc_subject=f"keyset-{index}-{tag}",
-                    email=email,
+                    email=f"{part}.{tag}@example.com",
                     role=Role.INSPECTOR.value,
                 )
             )
@@ -78,49 +78,79 @@ async def test_keyset_walk_matches_database_order_and_survives_removal_on_postgr
 
     app.dependency_overrides[get_session] = override_session
     transport = httpx.ASGITransport(app=app)
-    base: dict[str, str | int] = {"search": tag, "sort": "email", "limit": 3}
+    base: dict[str, str | int] = {"search": tag, "sort": "id", "limit": 3}
+
+    async def edit(current: str, **values: object) -> str:
+        async with session_factory() as session:
+            user = await session.scalar(select(User).where(User.email == current))
+            assert user is not None
+            for key, value in values.items():
+                setattr(user, key, value)
+            await session.commit()
+            return user.id
+
     try:
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://testserver",
             headers={"X-HMS-User-Id": admin_subject},
         ) as client:
-            # Offset paging gives the database's own order; the cursor walk must match.
-            expected: list[str] = []
-            for offset in range(0, len(emails) + 1, 3):
-                page = (
+            # Offset paging gives the database's own id order; the walk must match it.
+            expected: list[dict[str, str]] = []
+            for offset in range(0, len(EMAIL_PARTS) + 1, 3):
+                body = (
                     await client.get(
                         "/api/v1/admin/users", params={**base, "offset": offset}
                     )
                 ).json()
-                expected += [item["email"] for item in page["items"]]
+                expected += body["items"]
+            expected_ids = [item["id"] for item in expected]
+            assert len(expected_ids) == len(EMAIL_PARTS) + 1
 
-            seen: list[str] = []
-            params: dict[str, str | int] = dict(base)
-            first_cursor: str | None = None
+            first = (await client.get("/api/v1/admin/users", params=base)).json()
+            assert first["next_after"] == expected_ids[2]
+            seen = [item["id"] for item in first["items"]]
+            unread_email = expected[-1]["email"]
+            read_email = expected[1]["email"]
+            cursor_email = expected[2]["email"]
+
+            # Between pages: delete a read user and the cursor user, move an unread
+            # user's email before everything and a read user's after everything, and
+            # create a new user.
+            deleted = [
+                await edit(read_email, deleted_at=datetime.now(UTC)),
+                await edit(cursor_email, deleted_at=datetime.now(UTC)),
+            ]
+            await edit(unread_email, email=f"0-first.{tag}@example.com")
+            await edit(expected[0]["email"], email=f"zzz-last.{tag}@example.com")
+            await asyncio.sleep(0.01)
+            async with session_factory() as session:
+                late = User(
+                    oidc_subject=f"keyset-late-{tag}",
+                    email=f"0-late.{tag}@example.com",
+                    role=Role.INSPECTOR.value,
+                )
+                session.add(late)
+                await session.commit()
+                late_id = late.id
+
+            cursor: str | None = first["next_after"]
             for _ in range(10):
-                body = (await client.get("/api/v1/admin/users", params=params)).json()
-                seen += [item["email"] for item in body["items"]]
-                if first_cursor is None:
-                    first_cursor = body["next_after"]
-                    # Remove an already-read user and the cursor user between pages.
-                    async with session_factory() as session:
-                        for email in (seen[0], first_cursor):
-                            user = await session.scalar(
-                                select(User).where(User.email == email)
-                            )
-                            assert user is not None
-                            user.deleted_at = datetime.now(UTC)
-                        await session.commit()
-                if body["next_after"] is None:
+                if cursor is None:
                     break
-                params["after"] = body["next_after"]
+                body = (
+                    await client.get(
+                        "/api/v1/admin/users", params={**base, "after": cursor}
+                    )
+                ).json()
+                seen += [item["id"] for item in body["items"]]
+                cursor = body["next_after"]
 
-        assert len(expected) == len(emails) + 1
-        surviving = [e for e in expected if e not in (seen[0], first_cursor)]
-        # No still-active user is skipped or repeated; removed ones are simply absent.
-        assert [e for e in seen if e not in (seen[0], first_cursor)] == surviving
         assert len(set(seen)) == len(seen)
+        # Every user present throughout is returned once; the new user appears once.
+        surviving = [i for i in expected_ids if i not in deleted]
+        assert [i for i in seen if i not in deleted and i != late_id] == surviving
+        assert seen.count(late_id) == 1
     finally:
         async with session_factory() as session:
             await session.execute(

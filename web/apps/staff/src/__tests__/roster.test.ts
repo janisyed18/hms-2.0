@@ -9,11 +9,11 @@ function user(index: number): AdminUserRecord {
 
 type Call = { sort: string; limit: number; after?: string };
 
-/** Mimics the API's keyset contract over `backing` (already in email order; here the id is the key). */
+/** Mimics the API's keyset contract over `backing` (in id order): a cursor only when more users remain. */
 function page(backing: AdminUserRecord[], { limit, after }: Call) {
   const rest = after === undefined ? backing : backing.filter((u) => u.id > after);
   const items = rest.slice(0, limit);
-  return { items, nextAfter: items.length === limit ? items[items.length - 1].id : null };
+  return { items, nextAfter: rest.length > limit ? items[items.length - 1].id : null };
 }
 
 function serve(total: number) {
@@ -30,11 +30,18 @@ describe("loadActiveInspectors page cap", () => {
     expect(result.inspectors).toHaveLength(ROSTER_PAGE_SIZE * 3);
   });
 
-  it("is complete, with no error, when the last allowed page reaches the end", async () => {
-    // A full final page is followed by one empty page that carries no cursor.
-    const result = await loadActiveInspectors(serve(ROSTER_PAGE_SIZE * 3 - 1), 3);
+  it("is complete, with no error, when exactly maxPages full pages hold every user", async () => {
+    const list = serve(ROSTER_PAGE_SIZE * 3);
+    const result = await loadActiveInspectors(list, 3);
+    expect(list).toHaveBeenCalledTimes(3);
     expect(result.error).toBeNull();
-    expect(result.inspectors).toHaveLength(ROSTER_PAGE_SIZE * 3 - 1);
+    expect(result.inspectors).toHaveLength(ROSTER_PAGE_SIZE * 3);
+  });
+
+  it("reports the cap error when one user is left beyond maxPages full pages", async () => {
+    const result = await loadActiveInspectors(serve(ROSTER_PAGE_SIZE * 3 + 1), 3);
+    expect(result.error).toMatch(/too many users/i);
+    expect(result.inspectors).toHaveLength(ROSTER_PAGE_SIZE * 3);
   });
 
   it("reports the list as incomplete, keeping what loaded, when an empty page still promises more", async () => {

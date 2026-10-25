@@ -965,7 +965,7 @@ describe("the inspector roster beyond one page", () => {
       const start = options.after === undefined ? 0 : users.findIndex((u) => u.id === options.after) + 1;
       // A user at a page boundary can appear on two pages; the roster must still list them once.
       const items = users.slice(Math.max(start - (start > 0 ? 1 : 0), 0), start + options.limit);
-      return { total: users.length, items, nextAfter: items.length === options.limit ? items[items.length - 1].id : null };
+      return { total: users.length, items, nextAfter: users.length - start > options.limit ? items[items.length - 1].id : null };
     });
     return { calls, users };
   }

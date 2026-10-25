@@ -1653,17 +1653,17 @@ describe("hmsClient", () => {
       ok: true,
       status: 200,
       headers: new Headers(),
-      json: async () => ({ total: 0, limit: 100, offset: 0, items: [], next_after: "z@example.com" })
+      json: async () => ({ total: 0, limit: 100, offset: 0, items: [], next_after: "u-9" })
     });
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
 
-    const page = await client.listAdminUsers({ sort: "email", limit: 100, after: "a@example.com" });
+    const page = await client.listAdminUsers({ sort: "id", limit: 100, after: "u-1" });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/admin/users?limit=100&offset=0&sort=email&after=a%40example.com",
+      "/api/v1/admin/users?limit=100&offset=0&sort=id&after=u-1",
       expect.any(Object)
     );
-    expect(page.nextAfter).toBe("z@example.com");
+    expect(page.nextAfter).toBe("u-9");
   });
 
   it("surfaces structured HMS API errors", async () => {

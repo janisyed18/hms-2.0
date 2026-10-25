@@ -20,7 +20,7 @@ export interface RosterResult {
 
 /**
  * Every active Inspector, read with bounded page requests (the API has no role
- * filter, so each page is filtered here). Pages follow an email keyset cursor rather
+ * filter, so each page is filtered here). Pages follow an immutable-id keyset cursor rather
  * than an offset, so users added or removed mid-load cannot shift one out of reach.
  * Deduplicated by user id and ordered by name.
  */
@@ -31,7 +31,7 @@ export async function loadActiveInspectors(list: ListUsers, maxPages = MAX_PAGES
   let reachedEnd = false;
   try {
     for (let page = 0; page < maxPages; page += 1) {
-      const result = await list({ sort: "email", limit: ROSTER_PAGE_SIZE, after });
+      const result = await list({ sort: "id", limit: ROSTER_PAGE_SIZE, after });
       for (const user of result.items) {
         if (user.role === "INSPECTOR" && user.accountStatus === "ACTIVE") {
           found.set(user.id, { id: user.id, name: user.displayName });
