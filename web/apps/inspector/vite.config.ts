@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 const apiTarget = process.env.HMS_API_TARGET ?? "http://127.0.0.1:8000";
@@ -17,6 +17,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: "./src/test/setup.ts",
     globals: true,
-    testTimeout: 10000
+    testTimeout: 10000,
+    exclude: [...configDefaults.exclude, "e2e/**"]
   }
 });

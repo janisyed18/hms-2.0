@@ -162,6 +162,32 @@ describe("Inspector app", () => {
     expect(authClient.me).toHaveBeenCalledWith("inspector-access-token");
   });
 
+  it("keeps the sign-in form disabled while browser authentication is pending", async () => {
+    const user = userEvent.setup();
+    const authClient = createAuthClient(["INSPECTOR"]);
+    let completeLogin: (response: Awaited<ReturnType<BrowserAuthClient["login"]>>) => void;
+    vi.mocked(authClient.login).mockImplementation(
+      () => new Promise((resolve) => { completeLogin = resolve; })
+    );
+    render(<App authClient={authClient} />);
+
+    await user.type(screen.getByLabelText("Email"), "inspector@example.test");
+    await user.type(screen.getByLabelText("Password"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(screen.getByRole("button", { name: "Signing in…" })).toBeDisabled();
+    expect(screen.getByLabelText("Email").closest("form")).toHaveAttribute("aria-busy", "true");
+
+    completeLogin!({
+      next_step: "AUTHENTICATED",
+      access_token: "inspector-access-token",
+      token_type: "bearer",
+      expires_in: 900
+    });
+
+    expect(await screen.findByRole("heading", { name: "Inspector" })).toBeInTheDocument();
+  });
+
   it("denies an authenticated user without the Inspector role", async () => {
     const authClient = createAuthClient(["HMS_ADMIN"]);
     vi.mocked(authClient.refresh).mockResolvedValueOnce({

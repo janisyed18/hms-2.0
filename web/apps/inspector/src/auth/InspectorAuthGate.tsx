@@ -64,8 +64,8 @@ function authState(response: BrowserChallengeResponse): AuthState {
 
 function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <main className="inspector-auth" aria-live="polite">
-      <section className="inspector-auth__panel">
+    <main className="inspector-auth">
+      <section aria-label="Inspector authentication" className="inspector-auth__panel">
         <div className="inspector-auth__brand">
           <img alt="Momentum" src="/brand/momentum-logo.png" />
           <span>Hose Management System</span>
@@ -327,14 +327,14 @@ function LoginForm({ message, onLogin, onForgot }: { message?: string; onLogin: 
     await onLogin(email, password);
     setPending(false);
   }
-  return <AuthLayout><KeyRound aria-hidden="true" className="inspector-auth__icon" size={28} /><p className="inspector-auth__eyebrow">Inspector workspace</p><h1>Inspector sign in</h1><p>Use your Momentum HMS account to access assigned field work.</p><Message>{message}</Message><form className="inspector-auth__form" onSubmit={submit}><label>Email<input autoComplete="username" onChange={(event) => setEmail(event.target.value)} required type="email" value={email} /></label><label>Password<input autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} required type="password" value={password} /></label><button className="inspector-auth__button" disabled={pending} type="submit">{pending ? "Signing in…" : "Sign in"}</button></form><button className="inspector-auth__link" onClick={onForgot} type="button">Forgot password?</button></AuthLayout>;
+  return <AuthLayout><KeyRound aria-hidden="true" className="inspector-auth__icon" size={28} /><p className="inspector-auth__eyebrow">Inspector workspace</p><h1>Inspector sign in</h1><p>Use your Momentum HMS account to access assigned field work.</p><Message>{message}</Message><form aria-busy={pending} className="inspector-auth__form" onSubmit={submit}><label>Email<input autoComplete="username" onChange={(event) => setEmail(event.target.value)} required type="email" value={email} /></label><label>Password<input autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} required type="password" value={password} /></label><button className="inspector-auth__button" disabled={pending} type="submit">{pending ? "Signing in…" : "Sign in"}</button></form><button className="inspector-auth__link" onClick={onForgot} type="button">Forgot password?</button></AuthLayout>;
 }
 
 function EmailForm({ title, action, message, onSubmit, onBack }: { title: string; action: string; message?: string; onSubmit: (email: string) => Promise<void>; onBack: () => void }) {
   const [email, setEmail] = useState("");
   const [pending, setPending] = useState(false);
   async function submit(event: FormEvent) { event.preventDefault(); setPending(true); await onSubmit(email); setPending(false); }
-  return <AuthLayout><p className="inspector-auth__eyebrow">Inspector workspace</p><h1>{title}</h1><p>Enter your work email to receive a one-time reset link.</p><Message>{message}</Message><form className="inspector-auth__form" onSubmit={submit}><label>Email<input autoComplete="email" onChange={(event) => setEmail(event.target.value)} required type="email" value={email} /></label><button className="inspector-auth__button" disabled={pending} type="submit">{pending ? "Sending…" : action}</button></form><button className="inspector-auth__link" onClick={onBack} type="button">Back to sign in</button></AuthLayout>;
+  return <AuthLayout><p className="inspector-auth__eyebrow">Inspector workspace</p><h1>{title}</h1><p>Enter your work email to receive a one-time reset link.</p><Message>{message}</Message><form aria-busy={pending} className="inspector-auth__form" onSubmit={submit}><label>Email<input autoComplete="email" onChange={(event) => setEmail(event.target.value)} required type="email" value={email} /></label><button className="inspector-auth__button" disabled={pending} type="submit">{pending ? "Sending…" : action}</button></form><button className="inspector-auth__link" onClick={onBack} type="button">Back to sign in</button></AuthLayout>;
 }
 
 function PasswordForm({ title, action, message, onSubmit }: { title: string; action: string; message?: string; onSubmit: (password: string) => Promise<void> }) {
@@ -343,16 +343,30 @@ function PasswordForm({ title, action, message, onSubmit }: { title: string; act
   const [pending, setPending] = useState(false);
   const mismatch = Boolean(confirmation) && password !== confirmation;
   async function submit(event: FormEvent) { event.preventDefault(); if (mismatch) return; setPending(true); await onSubmit(password); setPending(false); }
-  return <AuthLayout><p className="inspector-auth__eyebrow">Inspector workspace</p><h1>{title}</h1><Message>{message}</Message><form className="inspector-auth__form" onSubmit={submit}><label>New password<input autoComplete="new-password" onChange={(event) => setPassword(event.target.value)} required type="password" value={password} /></label><label>Confirm password<input autoComplete="new-password" onChange={(event) => setConfirmation(event.target.value)} required type="password" value={confirmation} /></label>{mismatch ? <Message>Passwords do not match.</Message> : null}<button className="inspector-auth__button" disabled={pending || mismatch} type="submit">{pending ? "Saving…" : action}</button></form></AuthLayout>;
+  return <AuthLayout><p className="inspector-auth__eyebrow">Inspector workspace</p><h1>{title}</h1><Message>{message}</Message><form aria-busy={pending} className="inspector-auth__form" onSubmit={submit}><label>New password<input autoComplete="new-password" onChange={(event) => setPassword(event.target.value)} required type="password" value={password} /></label><label>Confirm password<input autoComplete="new-password" onChange={(event) => setConfirmation(event.target.value)} required type="password" value={confirmation} /></label>{mismatch ? <Message>Passwords do not match.</Message> : null}<button className="inspector-auth__button" disabled={pending || mismatch} type="submit">{pending ? "Saving…" : action}</button></form></AuthLayout>;
 }
 
 function EnrollmentForm({ state, onBegin, onConfirm }: { state: Extract<AuthState, { status: "mfa-enrollment" }>; onBegin: (challenge: string) => Promise<void>; onConfirm: (challenge: string, code: string) => Promise<void> }) {
   const [code, setCode] = useState("");
+  const [pending, setPending] = useState(false);
   useEffect(() => { if (!state.manualKey) void onBegin(state.challenge); }, [onBegin, state.challenge, state.manualKey]);
-  return <AuthLayout><p className="inspector-auth__eyebrow">Inspector workspace</p><h1>Set up authenticator</h1><p>Add this manual key to your authenticator application, then enter the six-digit code.</p>{state.manualKey ? <code className="inspector-auth__manual-key">{state.manualKey}</code> : <p>Preparing enrollment…</p>}<Message>{state.message}</Message><form className="inspector-auth__form" onSubmit={(event) => { event.preventDefault(); void onConfirm(state.challenge, code); }}><label>Authentication code<input autoComplete="one-time-code" inputMode="numeric" maxLength={6} onChange={(event) => setCode(event.target.value)} required value={code} /></label><button className="inspector-auth__button" type="submit">Verify authenticator</button></form></AuthLayout>;
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setPending(true);
+    await onConfirm(state.challenge, code);
+    setPending(false);
+  }
+  return <AuthLayout><p className="inspector-auth__eyebrow">Inspector workspace</p><h1>Set up authenticator</h1><p>Add this manual key to your authenticator application, then enter the six-digit code.</p>{state.manualKey ? <code className="inspector-auth__manual-key">{state.manualKey}</code> : <p className="inspector-auth__loading" role="status">Preparing enrollment…</p>}<Message>{state.message}</Message><form aria-busy={pending} className="inspector-auth__form" onSubmit={submit}><label>Authentication code<input autoComplete="one-time-code" inputMode="numeric" maxLength={6} onChange={(event) => setCode(event.target.value)} required value={code} /></label><button className="inspector-auth__button" disabled={pending || !state.manualKey} type="submit">{pending ? "Verifying…" : "Verify authenticator"}</button></form></AuthLayout>;
 }
 
 function MfaForm({ state, onVerify, onToggleRecovery }: { state: Extract<AuthState, { status: "mfa-challenge" }>; onVerify: (challenge: string, code: string, recovery: boolean) => Promise<void>; onToggleRecovery: () => void }) {
   const [code, setCode] = useState("");
-  return <AuthLayout><p className="inspector-auth__eyebrow">Inspector workspace</p><h1>Verify your sign in</h1><p>{state.recovery ? "Enter one of your recovery codes." : "Enter the code from your authenticator application."}</p><Message>{state.message}</Message><form className="inspector-auth__form" onSubmit={(event) => { event.preventDefault(); void onVerify(state.challenge, code, state.recovery); }}><label>{state.recovery ? "Recovery code" : "Authentication code"}<input autoComplete={state.recovery ? "off" : "one-time-code"} inputMode={state.recovery ? "text" : "numeric"} onChange={(event) => setCode(event.target.value)} required value={code} /></label><button className="inspector-auth__button" type="submit">Verify</button></form><button className="inspector-auth__link" onClick={() => { setCode(""); onToggleRecovery(); }} type="button">Use {state.recovery ? "authenticator code" : "recovery code"}</button></AuthLayout>;
+  const [pending, setPending] = useState(false);
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setPending(true);
+    await onVerify(state.challenge, code, state.recovery);
+    setPending(false);
+  }
+  return <AuthLayout><p className="inspector-auth__eyebrow">Inspector workspace</p><h1>Verify your sign in</h1><p>{state.recovery ? "Enter one of your recovery codes." : "Enter the code from your authenticator application."}</p><Message>{state.message}</Message><form aria-busy={pending} className="inspector-auth__form" onSubmit={submit}><label>{state.recovery ? "Recovery code" : "Authentication code"}<input autoComplete={state.recovery ? "off" : "one-time-code"} inputMode={state.recovery ? "text" : "numeric"} onChange={(event) => setCode(event.target.value)} required value={code} /></label><button className="inspector-auth__button" disabled={pending} type="submit">{pending ? "Verifying…" : "Verify"}</button></form><button className="inspector-auth__link" disabled={pending} onClick={() => { setCode(""); onToggleRecovery(); }} type="button">Use {state.recovery ? "authenticator code" : "recovery code"}</button></AuthLayout>;
 }
