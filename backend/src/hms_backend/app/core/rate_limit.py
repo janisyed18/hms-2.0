@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from redis.exceptions import RedisError
 
 from hms_backend.app.core.config import settings
-from hms_backend.app.core.redis import get_redis
+from hms_backend.app.core.redis import fixed_window_hit, get_redis
 
 _KEY_PREFIX = "hms:login-rate:"
 _FALLBACK_MAX_KEYS = 10_000
@@ -52,9 +52,9 @@ class LoginRateLimiter:
         namespaced = f"{_KEY_PREFIX}{key}"
         try:
             client = get_redis()
-            count = int(await client.incr(namespaced))
-            if count == 1:
-                await client.expire(namespaced, self._window)
+            # The window's TTL is created with the counter, so a crash cannot leave a
+            # key that never expires (which would lock this account or IP out for good).
+            count, _ = await fixed_window_hit(client, namespaced, self._window)
             return self._decision(count)
         except (RedisError, RuntimeError, OSError):
             if not settings.is_local_or_test:
