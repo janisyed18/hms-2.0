@@ -14,7 +14,7 @@ from hms_backend.app.core.client_identity import (
     rate_limit_key,
 )
 from hms_backend.app.core.config import settings
-from hms_backend.app.core.redis import get_redis
+from hms_backend.app.core.redis import fixed_window_hit, get_redis
 
 _HEALTH_PATHS = frozenset({"/health", "/health/ready"})
 _RATE_KEY_PREFIX = "hms:api-rate:"
@@ -167,17 +167,15 @@ class ApiRateLimitMiddleware:
         key = f"{_RATE_KEY_PREFIX}{rate_limit_key(client_address_from_scope(scope))}"
         try:
             redis = get_redis()
-            count = int(await redis.incr(key))
-            if count == 1:
-                await redis.expire(key, settings.security_api_rate_limit_window_seconds)
+            count, seconds_left = await fixed_window_hit(
+                redis, key, settings.security_api_rate_limit_window_seconds
+            )
             if count > settings.security_api_rate_limit_max_requests:
-                ttl = await redis.ttl(key)
-                retry_after = max(1, int(ttl))
                 await _json(
                     send,
                     429,
                     {"detail": "Too many requests; please try again later."},
-                    {"retry-after": str(retry_after)},
+                    {"retry-after": str(seconds_left)},
                 )
                 return
         except (RedisError, RuntimeError, OSError):
