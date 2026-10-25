@@ -37,6 +37,28 @@ def set_redis_client(client: aioredis.Redis | None) -> None:
     _client = client
 
 
+async def fixed_window_hit(
+    client: aioredis.Redis, key: str, window_seconds: int
+) -> tuple[int, int]:
+    """Count one hit in a fixed window; return ``(count, seconds_left)``.
+
+    The window's TTL is set in the same MULTI/EXEC as the increment (``SET NX EX``
+    creates the counter with its expiry), so a crash cannot leave a counter that never
+    expires, and later hits never extend the window. A counter that already has no TTL
+    (left by the old ``INCR`` then ``EXPIRE`` code) is given one here, so it repairs
+    itself. ``seconds_left`` is always positive.
+    """
+    async with client.pipeline(transaction=True) as pipe:
+        pipe.set(key, 0, nx=True, ex=window_seconds)
+        pipe.incr(key)
+        pipe.ttl(key)
+        _, count, ttl = await pipe.execute()
+    if int(ttl) < 0:
+        await client.expire(key, window_seconds)
+        ttl = window_seconds
+    return int(count), max(1, int(ttl))
+
+
 async def ping_redis() -> bool:
     """Return True if Redis responds to PING, False otherwise."""
     try:
