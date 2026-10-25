@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
+import { useActionNotice } from "../components/interaction/ActionNotice";
+import { customerLabel } from "../utils/identity";
 import type { CustomerFormValues, CustomerRecord } from "../domain/types";
 
 export function useCustomerWorkspace() {
@@ -15,6 +17,7 @@ export function useCustomerWorkspace() {
   const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null);
   const [isLoading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { notice, notify, clear: dismissNotice } = useActionNotice();
 
   useEffect(() => {
     let active = true;
@@ -81,7 +84,8 @@ export function useCustomerWorkspace() {
     setStatusFilter("All");
     setSelectedId(saved.id);
     closeCustomerForm();
+    notify({ kind: "success", message: `${customerLabel(saved)} ${editingCustomer ? "updated" : "created"} successfully.`, title: "Customer saved" });
   }
 
-  return { activeTab, closeDetail, closeCustomerForm, customers, editingCustomer, error, isFormOpen, isLoading, openCreateCustomer, openEditCustomer, query, riskFilter, saveCustomer, selectCustomer, selectedCustomer, setActiveTab, setQuery, setRiskFilter, setSelectedId, setStatusFilter, statusFilter, totalCount, visibleCustomers };
+  return { activeTab, dismissNotice, notice, closeDetail, closeCustomerForm, customers, editingCustomer, error, isFormOpen, isLoading, openCreateCustomer, openEditCustomer, query, riskFilter, saveCustomer, selectCustomer, selectedCustomer, setActiveTab, setQuery, setRiskFilter, setSelectedId, setStatusFilter, statusFilter, totalCount, visibleCustomers };
 }

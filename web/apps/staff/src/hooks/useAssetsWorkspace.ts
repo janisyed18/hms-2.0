@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
+import { useActionNotice } from "../components/interaction/ActionNotice";
+import { friendlyApiError } from "../components/interaction/friendlyApiError";
+import { assetLabel } from "../utils/identity";
 import type { AssetConfigurationOptions, AssetProductSummary, AssetFormValues, AssetRecord, CustomerLocation, CustomerRecord, ProductRecord, RecordSummary } from "../domain/types";
 
 function uniqueById<T extends { id: string }>(items: T[]): T[] {
@@ -29,6 +32,10 @@ export function useAssetsWorkspace() {
   const [isCopy, setIsCopy] = useState(false);
   const [isFormOpen, setFormOpen] = useState(false);
   const [viewingAsset, setViewingAsset] = useState<AssetRecord | null>(null);
+  const { notice, notify, clear: dismissNotice } = useActionNotice();
+  const [archiveTarget, setArchiveTarget] = useState<AssetRecord | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [isArchiving, setArchiving] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -92,14 +99,27 @@ export function useAssetsWorkspace() {
     setAssets((current) => editingAsset ? current.map((asset) => asset.id === editingAsset.id ? saved : asset) : [saved, ...current]);
     setViewingAsset((current) => current?.id === saved.id ? saved : current);
     setFormOpen(false); setEditingAsset(null); setFormAsset(null); setIsCopy(false);
+    // Only now, with the server's answer in hand, say it worked.
+    notify({ kind: "success", message: `${assetLabel(saved)} ${editingAsset ? "saved" : "created"} successfully.`, title: "Asset saved" });
   }
-  async function archiveAsset(asset: AssetRecord) {
-    if (!window.confirm(`Archive ${asset.assetNumber}?`)) return;
-    await createHmsClient().archiveAsset(asset.id, asset.etag);
-    setAssets((current) => current.filter((item) => item.id !== asset.id));
-    setViewingAsset((current) => current?.id === asset.id ? null : current);
+  function requestArchive(asset: AssetRecord) { setArchiveError(null); setArchiveTarget(asset); }
+  function cancelArchive() { if (!isArchiving) { setArchiveTarget(null); setArchiveError(null); } }
+  async function confirmArchive() {
+    const asset = archiveTarget;
+    if (!asset || isArchiving) return;
+    setArchiving(true); setArchiveError(null);
+    try {
+      await createHmsClient().archiveAsset(asset.id, asset.etag);
+      setAssets((current) => current.filter((item) => item.id !== asset.id));
+      setViewingAsset((current) => current?.id === asset.id ? null : current);
+      setArchiveTarget(null);
+      notify({ kind: "success", message: `${assetLabel(asset)} was archived.`, title: "Asset archived" });
+    } catch (reason) {
+      // Nothing changed on the server, so nothing changes here: the asset stays listed.
+      setArchiveError(friendlyApiError(reason, { fallback: `${assetLabel(asset)} could not be archived. Try again.` }).message);
+    } finally { setArchiving(false); }
   }
   function clearAssetFilters() { setCustomerFilter("ALL"); setProductFilter("ALL"); setLifecycleFilter("ALL"); setDueFrom(""); setDueTo(""); }
   const activeFilterCount = [customerFilter !== "ALL", productFilter !== "ALL", lifecycleFilter !== "ALL", Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
-  return { activeFilterCount, archiveAsset, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openDetailById, openEdit, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, setFormOpen, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
+  return { activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, notice, requestArchive, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openDetailById, openEdit, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, setFormOpen, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
 }

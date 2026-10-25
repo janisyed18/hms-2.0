@@ -13,6 +13,7 @@ import { AppShell, type AppModule, type GlobalSearchSuggestion, type NavItem } f
 import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
 import { CustomerForm } from "./components/CustomerForm";
+import { ActionNotice } from "./components/interaction/ActionNotice";
 import { CustomerTable } from "./components/CustomerTable";
 import type { OperationalModule } from "./components/OperationalWorkspace";
 import { WorkspaceState } from "./components/WorkspaceState";
@@ -452,6 +453,11 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                     </WorkspaceState>
                   ) : (
                     <>
+                      {workspace.notice ? (
+                        <ActionNotice kind={workspace.notice.kind} onDismiss={workspace.dismissNotice} title={workspace.notice.title}>
+                          {workspace.notice.message}
+                        </ActionNotice>
+                      ) : null}
                       <CustomerTable
                         canWrite={hasPermission(session, "customer:write")}
                         allCustomers={workspace.customers}

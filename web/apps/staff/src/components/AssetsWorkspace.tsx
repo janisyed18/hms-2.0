@@ -3,7 +3,11 @@ import { useEffect } from "react";
 
 import { AssetDetail } from "./AssetDetail";
 import { AssetForm } from "./AssetForm";
+import { ActionButton } from "./interaction/ActionButton";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { ConfirmDialog } from "./interaction/ConfirmDialog";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
+import { assetLabel } from "../utils/identity";
 import { useAssetsWorkspace } from "../hooks/useAssetsWorkspace";
 import type { AssetRecord } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
@@ -130,24 +134,24 @@ export function AssetsWorkspace({
       header: "Actions",
       render: (asset) => (
         <span className="row-actions">
-          <button
-            type="button"
+          <ActionButton
             onClick={(event) => {
               event.stopPropagation();
               workspace.openEdit(asset);
             }}
+            variant="secondary"
           >
             Edit
-          </button>
-          <button
-            type="button"
+          </ActionButton>
+          <ActionButton
             onClick={(event) => {
               event.stopPropagation();
-              workspace.archiveAsset(asset);
+              workspace.requestArchive(asset);
             }}
+            variant="ghost"
           >
             Archive
-          </button>
+          </ActionButton>
         </span>
       )
     } satisfies ModuleColumn<AssetRecord>] : [])
@@ -190,6 +194,12 @@ export function AssetsWorkspace({
           <AssetMetric icon={UsersRound} label="Customers with assets" value={assetStats.customers} detail="Active asset ownership" tone="green" />
         </StaggerGroup>
       </section>
+
+      {workspace.notice ? (
+        <ActionNotice kind={workspace.notice.kind} onDismiss={workspace.dismissNotice} title={workspace.notice.title}>
+          {workspace.notice.message}
+        </ActionNotice>
+      ) : null}
 
       <ModuleTable
         actionLabel={canWrite ? "Add Asset" : undefined}
@@ -291,6 +301,17 @@ export function AssetsWorkspace({
         searchPlaceholder="Search assets..."
         tableLabel="Asset records"
         error={workspace.error}
+      />
+      <ConfirmDialog
+        confirmLabel="Archive asset"
+        error={workspace.archiveError}
+        message="It will no longer appear in the asset register. Its inspection and certificate history is kept."
+        onCancel={workspace.cancelArchive}
+        onConfirm={() => void workspace.confirmArchive()}
+        open={workspace.archiveTarget !== null}
+        pending={workspace.isArchiving}
+        pendingLabel="Archiving…"
+        title={workspace.archiveTarget ? `Archive ${assetLabel(workspace.archiveTarget)}?` : "Archive asset?"}
       />
       {canWrite ? (
         <AssetForm

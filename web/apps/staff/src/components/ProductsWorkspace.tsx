@@ -1,6 +1,10 @@
 import { Archive, Boxes, Layers3, ShieldCheck } from "lucide-react";
 
+import { ActionButton } from "./interaction/ActionButton";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { ConfirmDialog } from "./interaction/ConfirmDialog";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
+import { productLabel } from "../utils/identity";
 import { ManagementHeader, ManagementMetric, ManagementMetricStrip } from "./ManagementPrimitives";
 import { ProductDetail } from "./ProductDetail";
 import { ProductForm } from "./ProductForm";
@@ -44,16 +48,16 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
       header: "Actions",
       render: (product) => canManage ? (
         <span className="row-actions">
-          <button type="button" onClick={() => workspace.openEdit(product)}>
+          <ActionButton onClick={() => workspace.openEdit(product)} variant="secondary">
             Edit
-          </button>
-          <button
-            type="button"
+          </ActionButton>
+          <ActionButton
             aria-label={`Archive ${product.name}`}
-            onClick={() => workspace.archiveProduct(product)}
+            onClick={() => workspace.requestArchive(product)}
+            variant="ghost"
           >
             Archive
-          </button>
+          </ActionButton>
         </span>
       ) : "Read only"
     }
@@ -75,6 +79,12 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
           <ManagementMetric icon={Archive} label="Legacy Catalogue" value={legacyCount} detail={workspace.products.length ? `${Math.round((legacyCount / workspace.products.length) * 100)}% of total` : "No product records"} tone="violet" />
         </ManagementMetricStrip>
       </> : null}
+      {workspace.notice ? (
+        <ActionNotice kind={workspace.notice.kind} onDismiss={workspace.dismissNotice} title={workspace.notice.title}>
+          {workspace.notice.message}
+        </ActionNotice>
+      ) : null}
+      {workspace.loadError ? <ActionNotice kind="error" title="Products unavailable">{workspace.loadError}</ActionNotice> : null}
       <div className={`inspection-layout${workspace.selectedProduct ? "" : " detail-closed"}`}>
         <div className="inspection-table-wrap">
           <ModuleTable
@@ -147,6 +157,17 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
           />
         ) : null}
       </div>
+      <ConfirmDialog
+        confirmLabel="Archive product"
+        error={workspace.archiveError}
+        message="It will no longer appear in the product catalog. Assets already using it are not changed."
+        onCancel={workspace.cancelArchive}
+        onConfirm={() => void workspace.confirmArchive()}
+        open={workspace.archiveTarget !== null}
+        pending={workspace.isArchiving}
+        pendingLabel="Archiving…"
+        title={workspace.archiveTarget ? `Archive ${productLabel(workspace.archiveTarget)}?` : "Archive product?"}
+      />
       <ProductForm
         open={workspace.isFormOpen}
         product={workspace.editingProduct}
