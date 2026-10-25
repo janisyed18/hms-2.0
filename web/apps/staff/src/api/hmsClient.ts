@@ -1520,6 +1520,10 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       } catch {
         // Keep the status-derived fallback when the body is unavailable.
       }
+      if (response.status === 429) {
+        const wait = Number(response.headers?.get?.("retry-after"));
+        if (Number.isFinite(wait) && wait > 0) details = { retryAfterSeconds: wait };
+      }
       throw new HmsApiError(response.status, code, message, details);
     }
 

@@ -1146,12 +1146,12 @@ describe("App", () => {
 
     expect(
       within(screen.getByLabelText("Agent")).getByRole("option", {
-        name: "E2E API Customer"
+        name: "E2E API Customer — E2EAPI"
       })
     ).toBeVisible();
     expect(
       within(screen.getByLabelText("Product")).getByRole("option", {
-        name: "API Spare Hose"
+        name: "API Spare Hose — API-2000"
       })
     ).toBeVisible();
   });
@@ -1201,12 +1201,12 @@ describe("App", () => {
 
     expect(
       await within(screen.getByLabelText("Agent")).findByRole("option", {
-        name: "E2E API Customer"
+        name: "E2E API Customer — E2EAPI"
       })
     ).toBeVisible();
     expect(
       await within(screen.getByLabelText("Product")).findByRole("option", {
-        name: "API Spare Hose"
+        name: "API Spare Hose — API-2000"
       })
     ).toBeVisible();
     expect(screen.getByLabelText("Asset Name")).toHaveValue("Async transfer hose");
@@ -1215,18 +1215,22 @@ describe("App", () => {
 
   it("confirms archive actions and calls soft-delete endpoints", async () => {
     const fetchMock = routeFetch();
-    const confirmMock = vi.fn().mockReturnValue(true);
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("confirm", confirmMock);
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Products" }));
     await user.click(await screen.findByRole("button", { name: "Archive API Fuel Hose" }));
+    // Nothing is archived until the dialog is confirmed.
+    const dialog = await screen.findByRole("alertdialog", { name: /Archive API Fuel Hose/ });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/v1/products/product-api-1",
+      expect.objectContaining({ method: "DELETE" })
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Archive product" }));
 
     await waitFor(() => {
-      expect(confirmMock).toHaveBeenCalledWith("Archive API Fuel Hose?");
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/v1/products/product-api-1",
         expect.objectContaining({ method: "DELETE" })

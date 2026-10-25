@@ -1,7 +1,13 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 
 import { AssetEndEditor } from "./AssetEndEditor";
+import { ActionButton } from "./interaction/ActionButton";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { Field, RequiredNote } from "./interaction/FormPrimitives";
+import { friendlyApiError } from "./interaction/friendlyApiError";
+import { focusFirstInvalid, isBlank, useFormErrors, type FieldErrors } from "./interaction/useFormErrors";
+import { customerLabel, productLabel } from "../utils/identity";
 import type {
   AssetConfigurationOptions,
   AssetEndValues,
@@ -26,6 +32,18 @@ interface AssetFormProps {
   onClose: () => void;
   onSubmit: (values: AssetFormValues) => Promise<void>;
 }
+
+/** Form order of the required fields, for focusing the first one that needs attention. */
+const REQUIRED_ORDER = ["customerId", "locationId", "assetName", "serialNumber", "productId"];
+
+/** Backend request fields to this form's fields, so a server rejection lands on the right input. */
+const FIELD_MAP: Record<string, string> = {
+  customer_id: "customerId",
+  location_id: "locationId",
+  asset_name: "assetName",
+  customer_serial_no: "serialNumber",
+  product_id: "productId"
+};
 
 const blankEnd: AssetEndValues = {
   fitting: "",
@@ -64,11 +82,17 @@ export function AssetForm({
   const [aEnd, setAEnd] = useState<AssetEndValues>(blankEnd);
   const [bEnd, setBEnd] = useState<AssetEndValues>(blankEnd);
   const [isSubmitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const { errors, setErrors, clearError, clearAll } = useFormErrors();
+  const formRef = useRef<HTMLFormElement>(null);
+  const submitLock = useRef(false);
 
   useEffect(() => {
     if (!open) {
       return;
     }
+    setSubmitError(null);
+    clearAll();
     setAssetName(asset?.assetName ?? asset?.assetNumber ?? "");
     setSerialNumber(asset?.customerSerialNo ?? "");
     setNotes(asset?.notes ?? asset?.description ?? "");
@@ -84,6 +108,7 @@ export function AssetForm({
     setNominalBoreId(asset?.aEnd.nominalBore?.id ?? asset?.bEnd.nominalBore?.id ?? "");
     setAEnd(asset?.aEnd ?? blankEnd);
     setBEnd(asset?.bEnd ?? blankEnd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asset, open]);
 
   useEffect(() => {
@@ -114,12 +139,39 @@ export function AssetForm({
     ));
   }, [customerLocations, open]);
 
+  // Defaults can arrive after a first validation (option lists load late): an error about a
+  // field that now has a value would be stale.
+  useEffect(() => {
+    if (customerId) clearError("customerId");
+    if (locationId) clearError("locationId");
+    if (productId) clearError("productId");
+  }, [customerId, locationId, productId, clearError]);
+
   if (!open) {
     return null;
   }
 
+  function validate(): FieldErrors {
+    const found: FieldErrors = {};
+    if (!customerId) found.customerId = "Select an agent.";
+    if (!locationId) found.locationId = "Select a location.";
+    if (isBlank(assetName)) found.assetName = "Enter an asset name.";
+    if (isBlank(serialNumber)) found.serialNumber = "Enter a serial number.";
+    if (!productId) found.productId = "Select a product.";
+    return found;
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitLock.current) return;
+    setSubmitError(null);
+    const found = validate();
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      focusFirstInvalid(formRef.current, REQUIRED_ORDER, found);
+      return;
+    }
+    submitLock.current = true;
     setSubmitting(true);
     try {
       await onSubmit({
@@ -139,42 +191,55 @@ export function AssetForm({
         aEnd,
         bEnd
       });
+    } catch (reason) {
+      // The drawer stays open with everything the user entered; say what went wrong.
+      const friendly = friendlyApiError(reason, { fallback: "The asset could not be saved. Try again.", fieldMap: FIELD_MAP });
+      setErrors(friendly.fieldErrors);
+      setSubmitError(friendly.message);
+      window.setTimeout(() => {
+        if (!focusFirstInvalid(formRef.current, REQUIRED_ORDER, friendly.fieldErrors)) {
+          formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus();
+        }
+      }, 0);
     } finally {
+      submitLock.current = false;
       setSubmitting(false);
     }
   }
 
   return (
     <div className="drawer-backdrop">
-      <form className="customer-drawer asset-profile-form" onSubmit={handleSubmit}>
+      <form className="customer-drawer asset-profile-form" noValidate onSubmit={handleSubmit} ref={formRef}>
         <div className="drawer-header">
           <h2>{isCopy ? "Copy Asset" : asset ? "Edit Asset" : "Add Asset"}</h2>
           <button className="icon-button light" type="button" aria-label="Close form" onClick={onClose}>
             <X size={18} />
           </button>
         </div>
-        <label>
-          <span>Agent</span>
-          <select aria-label="Agent" required value={customerId} onChange={(event) => setCustomerId(event.target.value)}>
-            <option value="">Select agent</option>
-            {customerOptions.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
-          </select>
-        </label>
-        <label>
-          <span>Location</span>
-          <select aria-label="Location" required value={locationId} onChange={(event) => setLocationId(event.target.value)}>
-            <option value="">Select location</option>
-            {customerLocations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
-          </select>
-        </label>
-        <label>
-          <span>Asset Name</span>
-          <input aria-label="Asset Name" required value={assetName} onChange={(event) => setAssetName(event.target.value)} />
-        </label>
-        <label>
-          <span>Serial Number</span>
-          <input aria-label="Serial Number" required value={serialNumber} onChange={(event) => setSerialNumber(event.target.value)} />
-        </label>
+        {submitError ? <ActionNotice kind="error" title="Asset could not be saved">{submitError}</ActionNotice> : null}
+        <RequiredNote />
+        <Field error={errors.customerId} label="Agent" name="customerId" required>
+          {(props) => (
+            <select {...props} aria-label="Agent" value={customerId} onChange={(event) => { setCustomerId(event.target.value); clearError("customerId"); }}>
+              <option value="">Select agent</option>
+              {customerOptions.map((customer) => <option key={customer.id} value={customer.id}>{customerLabel(customer)}</option>)}
+            </select>
+          )}
+        </Field>
+        <Field error={errors.locationId} label="Location" name="locationId" required>
+          {(props) => (
+            <select {...props} aria-label="Location" value={locationId} onChange={(event) => { setLocationId(event.target.value); clearError("locationId"); }}>
+              <option value="">Select location</option>
+              {customerLocations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
+            </select>
+          )}
+        </Field>
+        <Field error={errors.assetName} label="Asset Name" name="assetName" required>
+          {(props) => <input {...props} aria-label="Asset Name" value={assetName} onChange={(event) => { setAssetName(event.target.value); clearError("assetName"); }} />}
+        </Field>
+        <Field error={errors.serialNumber} label="Serial Number" name="serialNumber" required>
+          {(props) => <input {...props} aria-label="Serial Number" value={serialNumber} onChange={(event) => { setSerialNumber(event.target.value); clearError("serialNumber"); }} />}
+        </Field>
         <label>
           <span>Notes</span>
           <textarea aria-label="Notes" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
@@ -199,13 +264,14 @@ export function AssetForm({
           <span>Length (m)</span>
           <input aria-label="Length (m)" min="0" step="0.001" type="number" value={lengthM} onChange={(event) => setLengthM(event.target.value)} />
         </label>
-        <label>
-          <span>Product</span>
-          <select aria-label="Product" required value={productId} onChange={(event) => setProductId(event.target.value)}>
-            <option value="">Select product</option>
-            {productOptions.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
-          </select>
-        </label>
+        <Field error={errors.productId} label="Product" name="productId" required>
+          {(props) => (
+            <select {...props} aria-label="Product" value={productId} onChange={(event) => { setProductId(event.target.value); clearError("productId"); }}>
+              <option value="">Select product</option>
+              {productOptions.map((product) => <option key={product.id} value={product.id}>{productLabel(product)}</option>)}
+            </select>
+          )}
+        </Field>
         <label>
           <span>Material</span>
           <select aria-label="Material" value={materialId} onChange={(event) => setMaterialId(event.target.value)}>
@@ -237,10 +303,8 @@ export function AssetForm({
           </select>
         </label>
         <div className="drawer-actions">
-          <button className="secondary-button" type="button" onClick={onClose}>Cancel</button>
-          <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Saving..." : "Save asset"}
-          </button>
+          <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
+          <ActionButton pending={isSubmitting} pendingLabel="Saving…" type="submit" variant="primary">Save asset</ActionButton>
         </div>
       </form>
     </div>

@@ -8,6 +8,7 @@ import type {
   InspectionBookingChangeRequest,
   InspectionBookingRecord
 } from "../domain/types";
+import { assetLabel } from "../utils/identity";
 
 /** The site's own time zone, never the browser's: customers choose a time at the site. */
 function siteZone(zone: string | null | undefined): string {
@@ -87,11 +88,7 @@ export function bookingStatusView(booking: InspectionBookingRecord): BookingStat
   return { label: "Approved", hint: "Approved; the appointment is being finalised.", tone: "waiting" };
 }
 
-/** "Main Pump Discharge Hose — HMS-001842": the name people know, then the HMS number. */
-export function assetLabel(asset: { assetNumber: string; assetName?: string | null }): string {
-  const name = asset.assetName?.trim();
-  return name && name !== asset.assetNumber ? `${name} — ${asset.assetNumber}` : asset.assetNumber;
-}
+export { assetLabel };
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
