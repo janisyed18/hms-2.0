@@ -3569,6 +3569,8 @@ tbody tr.is-selected {
 .portal-form-grid label:last-child { grid-column: 1 / -1; }
 .portal-slot { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 6px 4px; cursor: pointer; }
 .portal-slot input { width: 20px; height: 20px; flex: 0 0 auto; }
+.portal-required { color: var(--danger); font-weight: 700; }
+.portal-required-note { margin: 0; font-size: 13px; }
 .portal-slots { margin: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; }
 .portal-slots legend { padding: 0 6px; font-weight: 700; }
 .portal-zone { color: var(--muted); font-weight: 400; }

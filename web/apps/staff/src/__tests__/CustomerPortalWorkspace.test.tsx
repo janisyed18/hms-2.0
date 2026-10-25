@@ -107,7 +107,7 @@ describe("CustomerPortalWorkspace", () => {
         return response({ total: 1, limit: 100, offset: 0, items: [asset(id)] });
       }
       if (requestUrl.pathname === "/api/v1/inspection-availability") {
-        return response({ items: [{ quote_id: "quote-1", starts_at: "2026-10-22T10:00:00Z", ends_at: "2026-10-22T11:00:00Z", expires_at: "2026-10-22T12:00:00Z" }] });
+        return response({ items: [{ quote_id: "quote-1", starts_at: "2026-10-22T10:00:00Z", ends_at: "2026-10-22T11:00:00Z", expires_at: "2099-01-01T00:00:00Z" }] });
       }
       if (requestUrl.pathname === "/api/v1/notifications/me") return response({ total: 0, unread_total: 0, limit: 12, offset: 0, items: [] });
       return response({ total: 0, limit: 100, offset: 0, items: [] });
@@ -276,6 +276,7 @@ interface Stub {
   customerJson: Json;
   failBookingsFrom?: number;
   postDelayMs?: number;
+  assetName?: string | null;
 }
 
 function stubPortal(options: Partial<Stub> = {}): Stub {
@@ -288,7 +289,7 @@ function stubPortal(options: Partial<Stub> = {}): Stub {
     const path = requestUrl.pathname;
     state.calls.push(`${init?.method ?? "GET"} ${path}`);
     if (path === "/api/v1/customers") return response({ total: 1, limit: 100, offset: 0, items: [state.customerJson] });
-    if (path === "/api/v1/assets") return response({ total: 1, limit: 100, offset: 0, items: [asset("customer-a")] });
+    if (path === "/api/v1/assets") return response({ total: 1, limit: 100, offset: 0, items: [{ ...asset("customer-a"), asset_name: state.assetName ?? null }] });
     if (path === "/api/v1/inspection-availability") {
       const next = state.availability.shift();
       if (typeof next === "number") return new Response(JSON.stringify({ error: { code: "server", message: "Availability service unavailable" } }), { status: next });
@@ -400,6 +401,17 @@ describe("availability selection", () => {
     expect(await screen.findByText(/have expired/, undefined, { timeout: 3000 })).toBeInTheDocument();
     expect(screen.queryByRole("radio")).toBeNull();
     expect(screen.getByRole("button", { name: "Submit booking request" })).toBeDisabled();
+  });
+
+  it("drops expired times even when none was selected", async () => {
+    const soon = new Date(Date.now() + 400).toISOString();
+    stubPortal({ customerJson: withZone("Australia/Sydney"), availability: [[slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z", soon)]] });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    await pickSlotSearch(user);
+    expect(await screen.findByRole("radio")).toBeInTheDocument();
+    expect(await screen.findByText(/have expired/, undefined, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.queryByRole("radio")).toBeNull();
   });
 
   it("explains an empty organisation and a location with no assets", async () => {
@@ -573,5 +585,63 @@ describe("keyboard use and long names", () => {
     render(<WorkspaceHarness activeModule="bookings" />);
     expect(await screen.findByRole("option", { name: longName })).toBeInTheDocument();
     expect(screen.getByText(longName, { selector: "strong" })).toBeInTheDocument();
+  });
+});
+
+describe("asset identity and required fields", () => {
+  const NAME = "Main Pump Discharge Hose";
+
+  it("leads with the asset's name and keeps the HMS number beside it, in the picker, the summary and the history", async () => {
+    stubPortal({
+      customerJson: withZone("Australia/Sydney"),
+      assetName: NAME,
+      availability: [[slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z")]],
+      bookings: [rawBooking()]
+    });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    const label = `${NAME} — ASSET-customer-a`;
+    const picker = await screen.findByRole("combobox", { name: "Booking asset" });
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
+    expect(within(picker).getByRole("option", { name: label })).toBeInTheDocument();
+
+    await user.selectOptions(picker, "asset-customer-a");
+    fireEvent.change(screen.getByLabelText("Preferred date"), { target: { value: "2027-10-04" } });
+    await user.click(screen.getByRole("button", { name: "Find availability" }));
+    await user.click(await screen.findByRole("radio"));
+    expect(screen.getByText(/You are requesting/)).toHaveTextContent(label);
+
+    const history = screen.getByRole("list");
+    expect(within(history).getByText(`Assets: ${label}`)).toBeInTheDocument();
+    expect(history.textContent!.indexOf(NAME)).toBeLessThan(history.textContent!.indexOf("ASSET-customer-a"));
+  });
+
+  it("falls back to the number alone when an asset has no name, or a booked asset is not in the loaded list", async () => {
+    stubPortal({
+      customerJson: withZone("Australia/Sydney"),
+      bookings: [
+        rawBooking({ id: "b-known" }),
+        rawBooking({ id: "b-unknown", assets: [{ id: "asset-elsewhere", asset_number: "ASSET-elsewhere", tag: null, lifecycle_status: "IN_SERVICE" }] })
+      ]
+    });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="bookings" />);
+    expect(await screen.findByText("Assets: ASSET-customer-a")).toBeInTheDocument();
+    expect(screen.getByText("Assets: ASSET-elsewhere")).toBeInTheDocument();
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
+    expect(screen.getByRole("option", { name: "ASSET-customer-a" })).toBeInTheDocument();
+  });
+
+  it("marks location, asset and date as required, visibly and to assistive technology", async () => {
+    stubPortal({ customerJson: withZone("Australia/Sydney") });
+    render(<WorkspaceHarness activeModule="bookings" />);
+    for (const name of ["Booking location", "Booking asset", "Preferred date"]) {
+      const field = await screen.findByLabelText(name);
+      expect(field).toBeRequired();
+      expect(field).toHaveAttribute("aria-required", "true");
+      expect(field.closest("label")).toHaveTextContent("*");
+    }
+    expect(screen.getByText("Required fields", { exact: false })).toHaveTextContent("* Required fields");
+    expect(screen.getByLabelText("Notes (optional)")).not.toBeRequired();
   });
 });

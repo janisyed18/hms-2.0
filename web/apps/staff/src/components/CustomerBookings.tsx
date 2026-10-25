@@ -87,6 +87,12 @@ export function bookingStatusView(booking: InspectionBookingRecord): BookingStat
   return { label: "Approved", hint: "Approved; the appointment is being finalised.", tone: "waiting" };
 }
 
+/** "Main Pump Discharge Hose — HMS-001842": the name people know, then the HMS number. */
+export function assetLabel(asset: { assetNumber: string; assetName?: string | null }): string {
+  const name = asset.assetName?.trim();
+  return name && name !== asset.assetNumber ? `${name} — ${asset.assetNumber}` : asset.assetNumber;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong. Please try again.";
 }
@@ -136,6 +142,12 @@ export function CustomerBookings({
   const formHeading = useRef<HTMLHeadingElement>(null);
 
   const locationAssets = assets.filter((asset) => asset.location?.id === locationId);
+  const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
+  // A booking only carries the asset number; the loaded asset records know the name.
+  const bookedAssetLabel = (booked: { id: string; assetNumber: string }) => {
+    const known = assetsById.get(booked.id);
+    return known ? assetLabel(known) : booked.assetNumber;
+  };
   const location = customer.locations.find((item) => item.id === locationId) ?? null;
   const zone = siteZone(location?.schedulingTimezone);
   const key = locationId && localDate ? `${locationId}|${localDate}` : "";
@@ -148,10 +160,12 @@ export function CustomerBookings({
     if (notice) noticeRef.current?.focus();
   }, [notice]);
 
-  // A quote is only good until it expires: drop it, and say so, rather than fail at submit.
+  // Quotes are only good until they expire: drop the whole set at the earliest expiry, chosen or
+  // not, and say so, rather than leave dead times on screen to fail at submit.
+  const earliestExpiry = slots.length ? Math.min(...slots.map((slot) => new Date(slot.expiresAt).getTime())) : null;
   useEffect(() => {
-    if (!chosen) return;
-    const wait = new Date(chosen.expiresAt).getTime() - Date.now();
+    if (earliestExpiry === null) return;
+    const wait = earliestExpiry - Date.now();
     const expire = () => {
       setAvailability(IDLE);
       setQuoteId("");
@@ -163,7 +177,7 @@ export function CustomerBookings({
     }
     const timer = window.setTimeout(expire, Math.min(wait, 2_147_000_000));
     return () => window.clearTimeout(timer);
-  }, [chosen]);
+  }, [earliestExpiry]);
 
   function clearQuote() {
     request.current += 1;
@@ -317,10 +331,12 @@ export function CustomerBookings({
           <>
             <div className="portal-form-grid">
               <label>
-                Location
+                <span>Location <span aria-hidden="true" className="portal-required">*</span></span>
                 <select
                   aria-label="Booking location"
+                  aria-required="true"
                   disabled={Boolean(reschedule)}
+                  required
                   value={locationId}
                   onChange={(event) => {
                     setLocationId(event.target.value);
@@ -333,10 +349,12 @@ export function CustomerBookings({
                 </select>
               </label>
               <label>
-                Asset
+                <span>Asset <span aria-hidden="true" className="portal-required">*</span></span>
                 <select
                   aria-label="Booking asset"
+                  aria-required="true"
                   disabled={Boolean(reschedule) || !locationId}
+                  required
                   value={assetId}
                   onChange={(event) => {
                     setAssetId(event.target.value);
@@ -344,13 +362,15 @@ export function CustomerBookings({
                   }}
                 >
                   <option value="">Select an asset</option>
-                  {locationAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.assetNumber}</option>)}
+                  {locationAssets.map((asset) => <option key={asset.id} value={asset.id}>{assetLabel(asset)}</option>)}
                 </select>
               </label>
               <label>
-                Preferred date
+                <span>Preferred date <span aria-hidden="true" className="portal-required">*</span></span>
                 <input
                   aria-label="Preferred date"
+                  aria-required="true"
+                  required
                   type="date"
                   value={localDate}
                   onChange={(event) => {
@@ -364,6 +384,7 @@ export function CustomerBookings({
                 <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
               </label>
             </div>
+            <p className="portal-required-note"><span aria-hidden="true" className="portal-required">*</span> Required fields</p>
             {locationId && !reschedule && locationAssets.length === 0 ? (
               <p className="portal-empty">No assets are assigned to this location, so there is nothing to inspect there. Choose another location.</p>
             ) : null}
@@ -433,7 +454,7 @@ export function CustomerBookings({
               <p className="portal-summary" role="status">
                 You are requesting {reschedule ? "to move " : ""}
                 <strong>{location?.name}</strong>
-                {reschedule ? null : <> for <strong>{locationAssets.find((asset) => asset.id === assetId)?.assetNumber}</strong></>} on{" "}
+                {reschedule ? null : <> for <strong>{(() => { const picked = locationAssets.find((asset) => asset.id === assetId); return picked ? assetLabel(picked) : ""; })()}</strong></>} on{" "}
                 <strong>{longDay(new Date(chosen.startsAt), zone)}, {slotRange(chosen, zone)}</strong>{" "}
                 ({zoneWithName(new Date(chosen.startsAt), zone)}).
               </p>
@@ -475,7 +496,7 @@ export function CustomerBookings({
                     <span className="portal-status" title={view.hint}>{view.label}</span>
                   </div>
                   <span>{booking.appointment ? recordedAppointment(booking.appointment) : dayAndTime(booking.scheduledAt, zoneId)}</span>
-                  <span>Assets: {booking.assets.map((asset) => asset.assetNumber).join(", ")}</span>
+                  <span>Assets: {booking.assets.map(bookedAssetLabel).join(", ")}</span>
                   <span className="portal-hint">{view.hint}</span>
                   {booking.rejectionReason ? <span>Reason: {booking.rejectionReason}</span> : null}
                   {proposal ? (
