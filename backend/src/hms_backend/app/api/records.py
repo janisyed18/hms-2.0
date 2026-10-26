@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, 
 from sqlalchemy import and_, desc, false, func, or_, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, lazyload, load_only, selectinload
 from sqlalchemy.sql import Select
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
@@ -32,6 +32,10 @@ from hms_backend.app.api.schemas import (
     AssetPressureRatingRead,
     AssetRead,
     AssetUpdate,
+    AssetWorkflowActionRead,
+    AssetWorkflowContextRead,
+    AssetWorkflowRead,
+    AssetWorkflowRelatedRead,
     CertificateCreate,
     CertificateInspectionSummary,
     CertificateListResponse,
@@ -107,6 +111,7 @@ from hms_backend.app.core.inspector_access import (
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
+    has_permission,
     is_customer_scoped,
     require_permission,
 )
@@ -118,6 +123,10 @@ from hms_backend.app.modules.assets.models import (
     AssetLifecycleStatus,
 )
 from hms_backend.app.modules.assets.pressure import rated_pressures
+from hms_backend.app.modules.assets.workflow import (
+    Capabilities,
+    resolve_asset_workflow,
+)
 from hms_backend.app.modules.certificates.engine_client import (
     CertificateEngineError,
     get_certificate_engine,
@@ -3505,6 +3514,134 @@ async def get_asset(
         )
     _set_etag(response, asset.version)
     return await _asset_read_for_principal(session, asset, principal)
+
+
+@router.get("/assets/{asset_id}/workflow", response_model=AssetWorkflowRead)
+async def get_asset_workflow(
+    asset_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> AssetWorkflowRead:
+    """Where the asset is in its service cycle, and what this principal may do next.
+
+    The asset is found the way the asset itself is (same permission and tenant scope),
+    so a record the caller cannot read answers 404 and nothing about its workflow. For
+    an inspector the bookings and inspections are narrowed to their own assignments.
+    """
+    _require_asset_read(principal)
+    # Only what the resolver reads is loaded. The models' default eager loading
+    # (customer, product, ends and their reference rows...) is switched off with
+    # lazyload("*"), and the few relationships that are needed are joined in, so each
+    # read below is a single statement.
+    statement = (
+        select(Asset)
+        .where(Asset.id == asset_id, Asset.deleted_at.is_(None))
+        .options(
+            load_only(
+                Asset.id,
+                Asset.lifecycle_status,
+                Asset.next_retest_due_at,
+                Asset.customer_id,
+                Asset.deleted_at,
+            ),
+            lazyload("*"),
+            joinedload(Asset.retest_schedule),
+        )
+    )
+    asset = (await session.scalars(_apply_asset_scope(statement, principal))).first()
+    if asset is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Asset not found",
+        )
+
+    booking_statement = (
+        select(InspectionBooking)
+        .join(
+            InspectionBookingAsset,
+            InspectionBookingAsset.booking_id == InspectionBooking.id,
+        )
+        .where(
+            InspectionBookingAsset.asset_id == asset.id,
+            InspectionBookingAsset.deleted_at.is_(None),
+            InspectionBooking.deleted_at.is_(None),
+        )
+        .options(
+            lazyload("*"),
+            joinedload(InspectionBooking.appointment),
+            joinedload(InspectionBooking.change_requests),
+        )
+    )
+    inspection_statement = (
+        select(Inspection)
+        .where(Inspection.asset_id == asset.id, Inspection.deleted_at.is_(None))
+        .options(lazyload("*"), joinedload(Inspection.pressure_test))
+    )
+    certificate_statement = (
+        select(Certificate)
+        .where(Certificate.asset_id == asset.id, Certificate.deleted_at.is_(None))
+        .options(lazyload("*"))
+    )
+    if is_inspector_scoped(principal):
+        visible = assigned_bookings(principal)
+        booking_statement = booking_statement.where(InspectionBooking.id.in_(visible))
+        inspection_statement = inspection_statement.where(
+            Inspection.booking_id.in_(visible)
+        )
+        certificate_statement = certificate_statement.join(
+            Inspection, Certificate.inspection_id == Inspection.id
+        ).where(Inspection.booking_id.in_(visible))
+
+    bookings = (await session.scalars(booking_statement)).unique().all()
+    inspections = (await session.scalars(inspection_statement)).all()
+    certificates = (await session.scalars(certificate_statement)).all()
+
+    customer_scoped = is_customer_scoped(principal)
+    can_book = has_permission(principal, Permission.INSPECTION_BOOK)
+    workflow = resolve_asset_workflow(
+        asset,
+        retest_schedule=asset.retest_schedule,
+        bookings=bookings,
+        inspections=inspections,
+        certificates=certificates,
+        capabilities=Capabilities(
+            edit_asset=has_permission(principal, Permission.ASSET_WRITE),
+            book_inspection=can_book,
+            review_scheduling=can_book and not customer_scoped,
+            confirm_reschedule=can_book and customer_scoped,
+            write_inspection=has_permission(principal, Permission.INSPECTION_WRITE),
+            approve=has_permission(principal, Permission.CERTIFICATE_APPROVE),
+        ),
+    )
+    action = workflow.next_action
+    return AssetWorkflowRead(
+        status=workflow.status.value,
+        label=workflow.label,
+        detail=workflow.detail,
+        attention=workflow.attention,
+        related=AssetWorkflowRelatedRead(
+            booking_id=workflow.related.booking_id,
+            appointment_id=workflow.related.appointment_id,
+            inspection_id=workflow.related.inspection_id,
+            certificate_id=workflow.related.certificate_id,
+        ),
+        context=AssetWorkflowContextRead(
+            scheduled_at=workflow.context.scheduled_at,
+            due_at=workflow.context.due_at,
+            certificate_number=workflow.context.certificate_number,
+        ),
+        next_action=(
+            AssetWorkflowActionRead(
+                code=action.code.value,
+                label=action.label,
+                target_type=action.target_type.value,
+                target_id=action.target_id,
+                inspection_id=action.inspection_id,
+            )
+            if action is not None
+            else None
+        ),
+    )
 
 
 def _asset_statement() -> Select[tuple[Asset]]:

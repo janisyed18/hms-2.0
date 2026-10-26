@@ -9,7 +9,7 @@ import { ConfirmDialog } from "./interaction/ConfirmDialog";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
 import { assetLabel } from "../utils/identity";
 import { useAssetsWorkspace } from "../hooks/useAssetsWorkspace";
-import type { AssetRecord } from "../domain/types";
+import type { AssetRecord, AssetWorkflowAction } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 
 function locationLabel(asset: AssetRecord) {
@@ -66,9 +66,12 @@ function endLabel(asset: AssetRecord) {
 export function AssetsWorkspace({
   canWrite,
   routeAssetId,
-  onAssetRouteChange
+  onAssetRouteChange,
+  workflowNavigation
 }: {
   canWrite: boolean;
+  /** Where the workflow's next action can go in this app. Editing the asset is handled here. */
+  workflowNavigation?: { canOpen: (action: AssetWorkflowAction) => boolean; open: (action: AssetWorkflowAction) => void };
   /** The asset the URL names; the URL, not this component, is the record of which asset is open. */
   routeAssetId?: string | null;
   onAssetRouteChange?: (assetId: string | null, options?: { replace?: boolean }) => void;
@@ -195,6 +198,14 @@ export function AssetsWorkspace({
         onBack={workspace.closeDetail}
         onCopy={workspace.copyAsset}
         onEdit={workspace.openEdit}
+        canOpenWorkflowAction={(action) =>
+          action.code === "EDIT_ASSET" ? canWrite : workflowNavigation?.canOpen(action) ?? false
+        }
+        onWorkflowAction={(action) => {
+          const asset = workspace.viewingAsset;
+          if (action.code === "EDIT_ASSET" && asset) workspace.openEdit(asset);
+          else workflowNavigation?.open(action);
+        }}
       />
     );
   }

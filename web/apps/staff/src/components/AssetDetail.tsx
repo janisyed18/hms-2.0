@@ -1,6 +1,7 @@
 import { ArrowLeft, ClipboardCheck, Copy, FileCheck2, Edit3, X } from "lucide-react";
 
-import type { AssetRecord } from "../domain/types";
+import type { AssetRecord, AssetWorkflowAction } from "../domain/types";
+import { AssetWorkflowCard } from "./AssetWorkflowCard";
 
 interface AssetDetailProps {
   asset: AssetRecord;
@@ -8,6 +9,8 @@ interface AssetDetailProps {
   onBack: () => void;
   onCopy: (asset: AssetRecord) => void;
   onEdit: (asset: AssetRecord) => void;
+  canOpenWorkflowAction: (action: AssetWorkflowAction) => boolean;
+  onWorkflowAction: (action: AssetWorkflowAction) => void;
 }
 
 function locationLabel(asset: AssetRecord) {
@@ -51,7 +54,7 @@ function historyStatus(status: string) {
   return `mini-status ${status.toLowerCase().replaceAll("_", "-")}`;
 }
 
-export function AssetDetail({ asset, canWrite, onBack, onCopy, onEdit }: AssetDetailProps) {
+export function AssetDetail({ asset, canWrite, onBack, onCopy, onEdit, canOpenWorkflowAction, onWorkflowAction }: AssetDetailProps) {
   const assetName = asset.assetName || asset.assetNumber;
   const { inspectionHistory, certificateHistory } = asset;
 
@@ -92,6 +95,8 @@ export function AssetDetail({ asset, canWrite, onBack, onCopy, onEdit }: AssetDe
           <p>{asset.customer.name}{asset.location ? ` · ${asset.location.name}` : ""}</p>
         </div>
       </div>
+
+      <AssetWorkflowCard assetId={asset.id} canOpen={canOpenWorkflowAction} onAction={onWorkflowAction} />
 
       <section className="detail-section">
         <h3>Asset profile</h3>

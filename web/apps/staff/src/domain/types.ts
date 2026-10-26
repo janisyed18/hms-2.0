@@ -331,6 +331,37 @@ export interface AssetRetestSummary {
   status: string;
 }
 
+export type AssetWorkflowTargetType = "ASSET" | "SCHEDULING" | "INSPECTION" | "CERTIFICATES";
+
+/** A semantic next step from the API: what to do and where it lives, never a URL or a command. */
+export interface AssetWorkflowAction {
+  code: string;
+  label: string;
+  targetType: AssetWorkflowTargetType;
+  targetId: string | null;
+  /** The inspection a certificate action is about. */
+  inspectionId: string | null;
+}
+
+export interface AssetWorkflow {
+  status: string;
+  label: string;
+  detail: string;
+  attention: boolean;
+  related: {
+    bookingId: string | null;
+    appointmentId: string | null;
+    inspectionId: string | null;
+    certificateId: string | null;
+  };
+  context: {
+    scheduledAt: string | null;
+    dueAt: string | null;
+    certificateNumber: string | null;
+  };
+  nextAction: AssetWorkflowAction | null;
+}
+
 export interface AssetRecord {
   id: string;
   assetNumber: string;
