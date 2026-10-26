@@ -42,6 +42,10 @@ function fakeClient(overrides: Partial<BrowserAuthClient> = {}): BrowserAuthClie
   } as unknown as BrowserAuthClient;
 }
 
+// Opening Customers loads a lazy workspace and then fails its request; on a loaded runner that takes
+// longer than a findBy/waitFor's default second. Bounded, and only for the waits that cross that boundary.
+const SLOW = { timeout: 5000 };
+
 function ReducedMotionProbe() {
   return <output aria-label="Reduced motion">{String(useReducedMotionConfig())}</output>;
 }
@@ -101,10 +105,11 @@ describe("App auth gating", () => {
     });
     render(<MotionProvider><App authClient={client} /></MotionProvider>);
     // The authenticated shell shows the resolved session's display name.
-    expect(await screen.findAllByText("Sam Admin")).not.toHaveLength(0);
+    expect(await screen.findAllByText("Sam Admin", undefined, SLOW)).not.toHaveLength(0);
     fireEvent.click(screen.getByRole("button", { name: "Customers" }));
-    await waitFor(() =>
-      expect(screen.getByText("Customer data unavailable")).toBeVisible()
+    await waitFor(
+      () => expect(screen.getByText("Customer data unavailable")).toBeVisible(),
+      SLOW
     );
   });
 
