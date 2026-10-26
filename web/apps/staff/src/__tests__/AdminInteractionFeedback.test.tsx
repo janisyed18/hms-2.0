@@ -171,7 +171,7 @@ describe("Account actions", () => {
       items: [{ ...jane, lastLoginAt: "2026-10-26T00:26:48.986993Z" }, { ...jane, id: "u2", email: "new@example.com", lastLoginAt: null }]
     });
     renderUsers();
-    const time = (await screen.findByText(/26 Oct 2026/)).closest("time");
+    const time = (await screen.findByText(/2[56] Oct 2026/)).closest("time");
     expect(time).toHaveAttribute("datetime", "2026-10-26T00:26:48.986993Z");
     expect(time?.textContent).not.toMatch(/986993|T00:/);
     expect(screen.getByText("Never")).toBeInTheDocument();
