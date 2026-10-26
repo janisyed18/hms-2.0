@@ -131,6 +131,9 @@ test.describe("Admin and security interaction feedback", () => {
       await expect(page.getByRole("button", { name: /Restore dev-0123/ })).toBeVisible();
 
       // Notifications: a failed mark-read leaves it unread, keeps the menu open and says why.
+      // A fresh database has no unread notification, so present one; only the read call is the subject.
+      const note = { id: "n-1", category: "inspection", tier: "info", subject: "Inspection submitted", body: "An inspection is ready for review.", customer_id: null, asset_id: null, created_at: new Date().toISOString(), read_at: null };
+      await page.route(/\/api\/v1\/notifications\/me(\?.*)?$/, (route) => route.fulfill({ json: { total: 1, unread_total: 1, limit: 12, offset: 0, items: [note] } }));
       await failOnce(page, /\/api\/v1\/notifications\/[^/]+\/read$/, "POST", 500, "Internal server error");
       await page.getByRole("button", { name: "Notifications" }).click();
       const feed = page.getByRole("dialog", { name: "Notifications" });
@@ -139,6 +142,36 @@ test.describe("Admin and security interaction feedback", () => {
       await unread.click();
       await expect(feed.getByRole("alert")).toContainText(/service is unavailable/i);
       await expect(feed.getByRole("button", { name: /Open unread notification/ }).first()).toBeVisible();
+    } finally {
+      await admin.context.close();
+    }
+  });
+  test("the row action menu is fully reachable on the last row at desktop and phone width", async ({ browser }) => {
+    test.setTimeout(120_000);
+    const admin = await signedInPage(browser, "hms.admin@example.test", permanentPasswords.admin);
+    const page = admin.page;
+    try {
+      for (const [width, height] of [[1440, 800], [390, 844]]) {
+        await page.setViewportSize({ width, height });
+        await page.reload();
+        const navigation = page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Users & Roles", exact: true });
+        if (!(await navigation.isVisible())) await page.getByRole("button", { name: /menu|navigation/i }).first().click();
+        await navigation.click();
+        const manage = page.getByRole("button", { name: /^Manage / });
+        await manage.last().scrollIntoViewIfNeeded();
+        await manage.last().click();
+        // Every item must be inside the viewport and be what a pointer actually reaches.
+        const reachable = await page.getByRole("menu").evaluate((menu) =>
+          [...menu.querySelectorAll("[role=menuitem]")].every((item) => {
+            const r = item.getBoundingClientRect();
+            const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+            return r.top >= 0 && r.bottom <= innerHeight && !!hit && menu.contains(hit);
+          })
+        );
+        expect(reachable, `${width}px`).toBe(true);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+        await page.keyboard.press("Escape");
+      }
     } finally {
       await admin.context.close();
     }

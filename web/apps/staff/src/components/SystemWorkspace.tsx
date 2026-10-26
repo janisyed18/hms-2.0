@@ -17,7 +17,7 @@ import {
   UsersRound,
   Wifi
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
 import type {
@@ -364,6 +364,9 @@ export function SystemWorkspace({
   );
 }
 
+// Five rows of actions plus padding; used only to decide whether the menu fits below its button.
+const USER_MENU_HEIGHT = 210;
+
 function UserTable({
   actorRoles,
   managedUserId,
@@ -383,6 +386,30 @@ function UserTable({
   users: AdminUserRecord[];
 }) {
   const pagination = usePagination(users);
+  const [menuPosition, setMenuPosition] = useState<CSSProperties>({});
+
+  // The menu is fixed to the viewport so the table frame's scroll area cannot clip it, and opens upward
+  // when there is no room below. Anything that moves the button under it closes it instead.
+  useEffect(() => {
+    if (!managedUserId) return;
+    const close = () => onManage(null);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [managedUserId, onManage]);
+
+  function placeMenu(button: HTMLElement) {
+    const rect = button.getBoundingClientRect();
+    const right = window.innerWidth - rect.right;
+    setMenuPosition(
+      rect.bottom + 6 + USER_MENU_HEIGHT > window.innerHeight
+        ? { position: "fixed", right, bottom: window.innerHeight - rect.top + 6, top: "auto" }
+        : { position: "fixed", right, top: rect.bottom + 6 }
+    );
+  }
 
   return (
     <section className="operations-table-panel">
@@ -420,12 +447,15 @@ function UserTable({
                         aria-label={`Manage ${user.email}`}
                         className="icon-button light"
                         type="button"
-                        onClick={() => onManage(managedUserId === user.id ? null : user.id)}
+                        onClick={(event) => {
+                          placeMenu(event.currentTarget);
+                          onManage(managedUserId === user.id ? null : user.id);
+                        }}
                       >
                         <MoreHorizontal aria-hidden="true" size={17} />
                       </button>
                       {managedUserId === user.id ? (
-                        <div className="user-action-menu" role="menu">
+                        <div className="user-action-menu" role="menu" style={menuPosition}>
                           <button type="button" role="menuitem" onClick={() => onEdit(user)}>
                             <Edit3 aria-hidden="true" size={15} /> Edit user
                           </button>
