@@ -289,36 +289,28 @@ describe("SystemWorkspace user lifecycle", () => {
       account_status: "LOCKED",
       locked_until: "2026-07-12T03:00:00Z"
     };
+    // A small server: the list is whatever the actions have made of the records so far, as in life.
+    const records: Record<string, Record<string, unknown>> = { [apiUser.id]: apiUser, [lockedUser.id]: lockedUser };
     const fetchMock = vi.fn(async (request: string | URL | Request, init?: RequestInit) => {
       const url = String(request);
       if (url.includes("/users/summary")) return jsonResponse(summaryBody);
       if (!init?.method && url.startsWith("/api/v1/admin/users?")) {
-        return jsonResponse({
-          total: 2,
-          limit: 50,
-          offset: 0,
-          items: [apiUser, lockedUser]
-        });
+        const items = Object.values(records);
+        return jsonResponse({ total: items.length, limit: 50, offset: 0, items });
       }
-      if (url.endsWith("/disable")) {
-        return jsonResponse({ ...apiUser, account_status: "DISABLED" });
-      }
-      if (url.endsWith("/unlock")) {
-        return jsonResponse({
-          ...lockedUser,
-          account_status: "ACTIVE",
-          locked_until: null
-        });
-      }
+      const change = (id: string, values: Record<string, unknown>) => {
+        records[id] = { ...records[id], ...values };
+        return jsonResponse(records[id]);
+      };
+      if (url.endsWith("/disable")) return change(apiUser.id, { account_status: "DISABLED" });
+      if (url.endsWith("/unlock")) return change(lockedUser.id, { account_status: "ACTIVE", locked_until: null });
       if (url.endsWith("/password-reset")) {
         return jsonResponse({
           user_id: "user-api-1",
           temporary_password: "Reset-Temp-Password-5678"
         });
       }
-      if (url.endsWith("/mfa-reset")) {
-        return jsonResponse({ ...apiUser, mfa_enabled: false });
-      }
+      if (url.endsWith("/mfa-reset")) return change(apiUser.id, { mfa_enabled: false });
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
