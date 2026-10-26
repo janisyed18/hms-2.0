@@ -183,10 +183,10 @@ export function UserAdminDialog({
         </Field>
         <div className="modal-grid">
           <Field className="auth-field" error={errors.firstName} label="First name" name="firstName" required={nameRequired(initial?.firstName)}>
-            {(props) => <input {...props} aria-label="First name" value={firstName} onChange={(event) => setFirstName(event.target.value)} />}
+            {(props) => <input {...props} aria-label="First name" value={firstName} onChange={(event) => { setFirstName(event.target.value); clearError("firstName"); }} />}
           </Field>
           <Field className="auth-field" error={errors.lastName} label="Last name" name="lastName" required={nameRequired(initial?.lastName)}>
-            {(props) => <input {...props} aria-label="Last name" value={lastName} onChange={(event) => setLastName(event.target.value)} />}
+            {(props) => <input {...props} aria-label="Last name" value={lastName} onChange={(event) => { setLastName(event.target.value); clearError("lastName"); }} />}
           </Field>
         </div>
         <Field className="auth-field" label="Role" name="role" required>

@@ -69,6 +69,13 @@ export function useUserDirectory(enabled: boolean) {
       })
       .then((result) => {
         if (request !== latest.current) return;
+        // Removing the last row of the last page (or a filter narrowing the set) can leave this page
+        // past the end: go to the last page that exists and ask again.
+        const lastPage = Math.max(1, Math.ceil(result.total / pageSize));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
         setUsers(result.items);
         setTotal(result.total);
         setError(null);
@@ -115,9 +122,13 @@ export function useUserDirectory(enabled: boolean) {
     status,
     error,
     summary,
-    /** A row changed in place (disable, edit...): keep the page, refresh the counts. */
+    /**
+     * A user changed: show the server's answer for that row at once, then ask the server for the
+     * page again, because the change may move it out of the current filter, order or page.
+     */
     replaceUser: (updated: AdminUserRecord) => {
       setUsers((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      setReloads((count) => count + 1);
       reloadSummary();
     },
     /** The set itself changed (a user was added): ask the server again. */

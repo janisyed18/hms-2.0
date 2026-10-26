@@ -555,6 +555,7 @@ function deferredJson() {
 function routeFetch() {
   // The directory is the server's: a created user is there the next time the list is asked for.
   const createdAdminUsers: unknown[] = [];
+  const disabledAdminUsers = new Set<string>();
   return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const path = String(url);
     if (init?.method === "DELETE") {
@@ -659,6 +660,7 @@ function routeFetch() {
     }
     if (path.startsWith("/api/v1/admin/users")) {
       if (init?.method === "POST" && path.endsWith("/disable")) {
+        disabledAdminUsers.add("user-api-created");
         return okJson({
           ...apiAdminUser,
           id: "user-api-created",
@@ -699,7 +701,9 @@ function routeFetch() {
         total: 1 + createdAdminUsers.length,
         limit: 50,
         offset: 0,
-        items: [...createdAdminUsers, apiAdminUser]
+        items: [...createdAdminUsers, apiAdminUser].map((item) =>
+          disabledAdminUsers.has((item as { id: string }).id) ? { ...(item as object), account_status: "DISABLED" } : item
+        )
       });
     }
     if (path.startsWith("/api/v1/admin/devices")) {

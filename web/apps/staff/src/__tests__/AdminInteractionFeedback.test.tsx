@@ -98,6 +98,21 @@ describe("User dialog", () => {
     expect(client.createAdminUser).not.toHaveBeenCalled();
   });
 
+  it("clears a name's error as soon as the person starts correcting it", async () => {
+    const user = renderUsers();
+    await openAdd(user);
+    await user.click(screen.getByRole("button", { name: "Create user" }));
+    expect(screen.getByLabelText("First name")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Last name")).toHaveAttribute("aria-invalid", "true");
+    await user.type(screen.getByLabelText("First name"), "J");
+    expect(screen.getByLabelText("First name")).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText("Enter the user's first name.")).toBeNull();
+    expect(screen.getByLabelText("Last name")).toHaveAttribute("aria-invalid", "true"); // only the corrected field clears
+    await user.type(screen.getByLabelText("Last name"), "S");
+    expect(screen.getByLabelText("Last name")).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText("Enter the user's last name.")).toBeNull();
+  });
+
   it("keeps the dialog and every value when the server refuses, and explains a duplicate email on the field", async () => {
     client.createAdminUser.mockRejectedValueOnce(api(409, "A user with this email already exists."));
     const user = renderUsers();
@@ -180,6 +195,7 @@ describe("Account actions", () => {
     const busy = await screen.findByRole("button", { name: "Disabling…" });
     expect(busy).toBeDisabled();
     expect(screen.queryByText(/was disabled/)).toBeNull();
+    client.listAdminUsers.mockResolvedValue({ total: 1, etag: null, items: [{ ...jane, accountStatus: "DISABLED" }] });
     await act(async () => done.resolve({ ...jane, accountStatus: "DISABLED" }));
     expect(await screen.findByText("Jane Smith (jane@example.com) was disabled.")).toBeInTheDocument();
     expect(screen.getByText("DISABLED")).toBeInTheDocument();

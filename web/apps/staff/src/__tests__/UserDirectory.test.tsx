@@ -10,7 +10,9 @@ import { greetingName, personName } from "../utils/identity";
 const client = vi.hoisted(() => ({
   listAdminUsers: vi.fn(),
   getAdminUserSummary: vi.fn(),
-  listDevices: vi.fn()
+  listDevices: vi.fn(),
+  disableAdminUser: vi.fn(),
+  updateAdminUser: vi.fn()
 }));
 
 vi.mock("../api/hmsClient", async (importOriginal) => ({
@@ -104,6 +106,57 @@ describe("user discovery", () => {
     expect(screen.getByText("Admin Seats").parentElement).toHaveTextContent("4"); // 3 HMS + 1 Super
     expect(screen.getByText("Reviewer Seats").parentElement).toHaveTextContent("6");
     expect(screen.getByText("20 users")).toBeInTheDocument(); // role matrix: inspectors
+  });
+});
+
+describe("after a change", () => {
+  it("drops a disabled user from an Active filter instead of leaving a DISABLED row under it", async () => {
+    const other = person({ id: "u7", email: "kept@example.com", firstName: "Kept", lastName: "Active", displayName: "Kept Active" });
+    client.listAdminUsers.mockResolvedValue({ total: 2, etag: null, nextAfter: null, items: [jani, other] });
+    client.disableAdminUser.mockResolvedValue({ ...jani, accountStatus: "DISABLED" });
+    const user = renderUsers();
+    await screen.findByText("Jani Syed");
+    await user.selectOptions(screen.getByLabelText("Account status"), "ACTIVE");
+    await waitFor(() => expect(lastCall()).toMatchObject({ accountStatus: "ACTIVE" }));
+
+    // The server now answers the same query without the user it just disabled.
+    client.listAdminUsers.mockResolvedValue({ total: 1, etag: null, nextAfter: null, items: [other] });
+    await user.click(await screen.findByRole("button", { name: "Manage jani@example.com" }));
+    await user.click(screen.getByRole("menuitem", { name: "Disable account" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Disable account" }));
+
+    await waitFor(() => expect(screen.queryByText("Jani Syed")).toBeNull());
+    expect(screen.getByText("Kept Active")).toBeInTheDocument();
+    expect(screen.queryByText("DISABLED")).toBeNull();
+    expect(lastCall()).toMatchObject({ accountStatus: "ACTIVE", offset: 0 }); // asked again with the same filters
+    expect(await screen.findByText("1 user matches these filters.")).toBeInTheDocument();
+  });
+
+  it("moves back to the last page that exists when a change empties the current one", async () => {
+    // 11 users at 10 a page: page 2 holds one. Once that user leaves, page 2 no longer exists.
+    let users = 11;
+    client.listAdminUsers.mockImplementation(async (options: { offset: number }) => ({
+      total: users,
+      etag: null,
+      nextAfter: null,
+      items: options.offset >= users ? [] : [options.offset === 0 ? jani : legacy]
+    }));
+    client.disableAdminUser.mockImplementation(async () => {
+      users = 10;
+      return { ...legacy, accountStatus: "DISABLED" };
+    });
+    const user = renderUsers();
+    await screen.findByText("Jani Syed");
+    await user.click(screen.getByRole("button", { name: "User access records page 2" }));
+    await screen.findByText("old.account@example.com");
+    await user.click(await screen.findByRole("button", { name: "Manage old.account@example.com" }));
+    await user.click(screen.getByRole("menuitem", { name: "Disable account" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Disable account" }));
+
+    await waitFor(() => expect(lastCall()).toMatchObject({ offset: 0 }));
+    expect(await screen.findByText("Jani Syed")).toBeInTheDocument();
+    expect(screen.getByText("Page 1 of 1")).toBeInTheDocument();
+    expect(screen.queryByText("No users yet")).toBeNull();
   });
 });
 
