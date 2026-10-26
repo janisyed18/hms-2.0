@@ -697,8 +697,32 @@ interface ListCertificateOptions {
   offset?: number;
 }
 
+interface ApiAdminUserSummary {
+  total: number;
+  by_role: Record<string, number>;
+  active: number;
+  locked: number;
+  disabled: number;
+  mfa_enabled: number;
+  mfa_setup_required: number;
+}
+
+export interface AdminUserSummary {
+  total: number;
+  byRole: Record<string, number>;
+  active: number;
+  locked: number;
+  disabled: number;
+  mfaEnabled: number;
+  mfaSetupRequired: number;
+}
+
 interface ListAdminUserOptions {
   search?: string;
+  role?: string;
+  accountStatus?: "ACTIVE" | "LOCKED" | "DISABLED";
+  mfa?: "enabled" | "setup_required";
+  customerId?: string;
   sort?: string;
   limit?: number;
   offset?: number;
@@ -2215,6 +2239,10 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         limit: listOptions.limit ?? 50,
         offset: listOptions.offset ?? 0,
         search: listOptions.search?.trim() || undefined,
+        role: listOptions.role || undefined,
+        account_status: listOptions.accountStatus || undefined,
+        mfa: listOptions.mfa || undefined,
+        customer_id: listOptions.customerId || undefined,
         sort: listOptions.sort,
         after: listOptions.after
       });
@@ -2223,6 +2251,20 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         nextAfter: response.data.next_after ?? null,
         etag: response.etag,
         items: response.data.items.map((user) => toAdminUser(user, response.etag))
+      };
+    },
+
+    /** Directory-wide counts; they do not change with a page, a search or a filter. */
+    async getAdminUserSummary(): Promise<AdminUserSummary> {
+      const response = await request<ApiAdminUserSummary>("/api/v1/admin/users/summary");
+      return {
+        total: response.data.total,
+        byRole: response.data.by_role,
+        active: response.data.active,
+        locked: response.data.locked,
+        disabled: response.data.disabled,
+        mfaEnabled: response.data.mfa_enabled,
+        mfaSetupRequired: response.data.mfa_setup_required
       };
     },
 

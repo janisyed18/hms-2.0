@@ -982,14 +982,34 @@ class UserListResponse(BaseModel):
 
 class UserCreate(BaseModel):
     email: str
-    first_name: str | None = None
-    last_name: str | None = None
+    # Required for new users so every account has a name to show; legacy users without
+    # one stay readable and editable (UserUpdate keeps these optional).
+    first_name: str
+    last_name: str
     role: str
     customer_id: str | None = None
     customer_ids: list[str] | None = None
     # Local users get a server-generated subject; an explicit one is accepted only
     # for provisioning an external-IdP identity.
     oidc_subject: str | None = None
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def _name_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
+
+
+class UserSummary(BaseModel):
+    total: int
+    by_role: dict[str, int]
+    active: int
+    locked: int
+    disabled: int
+    mfa_enabled: int
+    mfa_setup_required: int
 
 
 class UserUpdate(BaseModel):

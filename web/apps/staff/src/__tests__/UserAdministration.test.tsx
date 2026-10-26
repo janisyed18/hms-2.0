@@ -111,6 +111,8 @@ describe("UserAdminDialog", () => {
     fireEvent.change(screen.getByLabelText("Email"), {
       target: { value: "new.user@example.com" }
     });
+    fireEvent.change(screen.getByLabelText("First name"), { target: { value: "New" } });
+    fireEvent.change(screen.getByLabelText("Last name"), { target: { value: "User" } });
     fireEvent.change(screen.getByLabelText("Role"), {
       target: { value: "CUSTOMER_USER" }
     });
@@ -215,6 +217,8 @@ const apiUser = {
   updated_at: "2026-07-12T01:00:00Z"
 };
 
+const summaryBody = { total: 2, by_role: { INSPECTOR: 2 }, active: 1, locked: 1, disabled: 0, mfa_enabled: 0, mfa_setup_required: 2 };
+
 function jsonResponse(body: unknown) {
   return {
     ok: true,
@@ -237,17 +241,17 @@ describe("SystemWorkspace user lifecycle", () => {
       mfa_enabled: false,
       must_change_password: true
     };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        jsonResponse({ total: 1, limit: 50, offset: 0, items: [apiUser] })
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          user: createdUser,
-          temporary_password: "Generated-Temp-Password-1234"
-        })
-      );
+    let created = false;
+    const fetchMock = vi.fn(async (request: string | URL | Request, init?: RequestInit) => {
+      const url = String(request);
+      if (url.includes("/users/summary")) return jsonResponse(summaryBody);
+      if (init?.method === "POST") {
+        created = true;
+        return jsonResponse({ user: createdUser, temporary_password: "Generated-Temp-Password-1234" });
+      }
+      const items = created ? [createdUser, apiUser] : [apiUser];
+      return jsonResponse({ total: items.length, limit: 50, offset: 0, items });
+    });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -264,7 +268,7 @@ describe("SystemWorkspace user lifecycle", () => {
     await user.type(screen.getByLabelText("Email"), "new.inspector@example.com");
     await user.type(screen.getByLabelText("First name"), "New");
     await user.type(screen.getByLabelText("Last name"), "Inspector");
-    await user.selectOptions(screen.getByLabelText("Role"), "INSPECTOR");
+    await user.selectOptions(within(screen.getByRole("dialog")).getByLabelText("Role"), "INSPECTOR");
     await user.click(screen.getByRole("button", { name: /create user/i }));
 
     expect(await screen.findByTestId("credential-value")).toHaveTextContent(
@@ -287,6 +291,7 @@ describe("SystemWorkspace user lifecycle", () => {
     };
     const fetchMock = vi.fn(async (request: string | URL | Request, init?: RequestInit) => {
       const url = String(request);
+      if (url.includes("/users/summary")) return jsonResponse(summaryBody);
       if (!init?.method && url.startsWith("/api/v1/admin/users?")) {
         return jsonResponse({
           total: 2,

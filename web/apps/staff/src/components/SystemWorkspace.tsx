@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
-import { createHmsClient } from "../api/hmsClient";
+import { createHmsClient, type AdminUserSummary } from "../api/hmsClient";
 import type {
   AdminUserRecord,
   DeviceRecord,
@@ -27,7 +27,8 @@ import type {
 } from "../domain/types";
 import { formatDateTime } from "../utils/dateTime";
 import { formatDateTime as formatInstant } from "../scheduling/zonedTime";
-import { deviceLabel, userLabel } from "../utils/identity";
+import { deviceLabel, personName, userLabel } from "../utils/identity";
+import { hasActiveFilters, useUserDirectory } from "../hooks/useUserDirectory";
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice, useActionNotice } from "./interaction/ActionNotice";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
@@ -36,6 +37,7 @@ import { useActionRunner } from "./interaction/useActionRunner";
 import { useConfirmedAction } from "./interaction/useConfirmedAction";
 import { OneTimeCredentialDialog, type OneTimeCredential } from "./OneTimeCredentialDialog";
 import { PaginationControls, usePagination } from "./Pagination";
+import { UserDirectoryFilters } from "./UserDirectoryFilters";
 import {
   UserAdminDialog,
   type CustomerOption,
@@ -67,7 +69,7 @@ export function SystemWorkspace({
   actorRoles,
   customerOptions
 }: SystemWorkspaceProps) {
-  const [users, setUsers] = useState<AdminUserRecord[]>([]);
+  const directory = useUserDirectory(module === "users");
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [userDialog, setUserDialog] = useState<{
@@ -82,20 +84,6 @@ export function SystemWorkspace({
   useEffect(() => {
     let active = true;
     setError(null);
-    if (module === "users") {
-      createHmsClient().listAdminUsers({ sort: "email" })
-        .then((result) => {
-          if (!active) {
-            return;
-          }
-          setUsers(result.items);
-        })
-        .catch((loadError: unknown) => {
-          if (active) {
-            setError(errorMessage(loadError));
-          }
-        });
-    }
     if (module === "devices") {
       createHmsClient().listDevices({ sort: "device_id" })
         .then((result) => {
@@ -115,7 +103,7 @@ export function SystemWorkspace({
     };
   }, [module]);
 
-  const roleRows = useMemo(() => roleSummary(users), [users]);
+  const roleRows = useMemo(() => roleSummary(directory.summary), [directory.summary]);
 
   async function saveUser(values: UserAdminValues) {
     // Errors are thrown to the dialog, which stays open with what was typed; success is announced here.
@@ -133,7 +121,8 @@ export function SystemWorkspace({
       notify({ kind: "success", title: "User updated", message: `${userLabel(updated)} updated successfully.` });
     } else {
       const result = await createHmsClient().createAdminUser(body);
-      setUsers((current) => [result.user, ...current]);
+      // The new user may not match the current filters or page: ask the server for the page again.
+      directory.reload();
       notify({ kind: "success", title: "User created", message: `${userLabel(result.user)} created successfully.` });
       setCredential({
         title: "Temporary password",
@@ -146,9 +135,7 @@ export function SystemWorkspace({
   }
 
   function replaceUser(updated: AdminUserRecord) {
-    setUsers((current) =>
-      current.map((item) => (item.id === updated.id ? updated : item))
-    );
+    directory.replaceUser(updated);
   }
 
   type UserAction = "disable" | "enable" | "unlock" | "password" | "mfa";
@@ -288,13 +275,13 @@ export function SystemWorkspace({
         eyebrow="Access management"
         title="Access control"
         description="Manage workspace access, roles, reviewers, and customer-scoped users."
-        context={<><UsersRound aria-hidden="true" size={20} /><span><strong>{users.length} user accounts</strong><small>Role-based workspace access</small></span></>}
+        context={<><UsersRound aria-hidden="true" size={20} /><span><strong>{directory.summary ? directory.summary.total : "-"} user accounts</strong><small>Role-based workspace access</small></span></>}
       />
       <ManagementMetricStrip>
-        <ManagementMetric icon={UsersRound} label="Active Users" value={users.filter((user) => user.accountStatus === "ACTIVE").length} detail="Enabled staff and customer users" />
-        <ManagementMetric icon={ShieldCheck} label="Admin Seats" value={users.filter((user) => user.role === "HMS_ADMIN" || user.role === "SUPER_ADMIN").length} detail="Full HMS access" tone="green" />
-        <ManagementMetric icon={KeyRound} label="Reviewer Seats" value={users.filter((user) => user.role === "REVIEWER").length} detail="Can approve inspections" tone="amber" />
-        <ManagementMetric icon={LockKeyhole} label="Restricted Users" value={users.filter((user) => user.role === "CUSTOMER_USER").length} detail="Scoped customer access" tone="red" />
+        <ManagementMetric icon={UsersRound} label="Active Users" value={directory.summary ? directory.summary.active : "-"} detail="Enabled staff and customer users" />
+        <ManagementMetric icon={ShieldCheck} label="Admin Seats" value={directory.summary ? (directory.summary.byRole.HMS_ADMIN ?? 0) + (directory.summary.byRole.SUPER_ADMIN ?? 0) : "-"} detail="Full HMS access" tone="green" />
+        <ManagementMetric icon={KeyRound} label="Reviewer Seats" value={directory.summary ? directory.summary.byRole.REVIEWER ?? 0 : "-"} detail="Can approve inspections" tone="amber" />
+        <ManagementMetric icon={LockKeyhole} label="Restricted Users" value={directory.summary ? directory.summary.byRole.CUSTOMER_USER ?? 0 : "-"} detail="Scoped customer access" tone="red" />
       </ManagementMetricStrip>
 
       <div className="system-layout">
@@ -309,8 +296,16 @@ export function SystemWorkspace({
               Add User
             </ActionButton>
           </div>
+          <UserDirectoryFilters
+            customers={customerOptions}
+            filters={directory.filters}
+            onChange={directory.changeFilters}
+            onClear={directory.clearFilters}
+          />
           <UserTable
             actorRoles={actorRoles}
+            customerOptions={customerOptions}
+            directory={directory}
             managedUserId={managedUserId}
             onEdit={(user) => {
               setManagedUserId(null);
@@ -318,7 +313,6 @@ export function SystemWorkspace({
             }}
             onManage={setManagedUserId}
             onUserAction={runUserAction}
-            users={users}
           />
         </section>
 
@@ -335,7 +329,7 @@ export function SystemWorkspace({
                   <span>{row.scope}</span>
                   <p>{row.permissions}</p>
                 </div>
-                <em>{row.count} users</em>
+                <em>{row.count === null ? "-" : `${row.count} users`}</em>
               </article>
             ))}
           </div>
@@ -374,13 +368,16 @@ const USER_MENU_HEIGHT = 210;
 
 function UserTable({
   actorRoles,
+  customerOptions,
+  directory,
   managedUserId,
   onEdit,
   onManage,
   onUserAction,
-  users,
 }: {
   actorRoles: StaffRole[];
+  customerOptions: CustomerOption[];
+  directory: ReturnType<typeof useUserDirectory>;
   managedUserId: string | null;
   onEdit: (user: AdminUserRecord) => void;
   onManage: (id: string | null) => void;
@@ -388,9 +385,10 @@ function UserTable({
     user: AdminUserRecord,
     action: "disable" | "enable" | "unlock" | "password" | "mfa"
   ) => void;
-  users: AdminUserRecord[];
 }) {
-  const pagination = usePagination(users);
+  const { users, total, page, pageSize, status } = directory;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const customerNames = useMemo(() => new Map(customerOptions.map((option) => [option.id, option.name])), [customerOptions]);
   const [menuPosition, setMenuPosition] = useState<CSSProperties>({});
   const anchor = useRef<{ button: HTMLElement; top: number; right: number } | null>(null);
 
@@ -426,14 +424,42 @@ function UserTable({
     );
   }
 
+  const filtered = hasActiveFilters(directory.filters);
+  const loadingFirst = status === "loading" && users.length === 0;
+  const showTable = users.length > 0;
+
   return (
     <section className="operations-table-panel">
-      <div className="table-frame">
+      <p aria-live="polite" className="user-result-count" role="status">
+        {status === "ready" && filtered ? `${total} ${total === 1 ? "user matches" : "users match"} these filters.` : ""}
+      </p>
+      {status === "error" ? (
+        <WorkspaceState
+          action={<ActionButton onClick={directory.reload} variant="secondary">Try again</ActionButton>}
+          title="Users could not be loaded"
+          tone="error"
+        >
+          {directory.error ?? "The user list could not be loaded."}
+        </WorkspaceState>
+      ) : null}
+      {loadingFirst ? (
+        <div aria-label="Loading users" className="user-skeleton" role="status">
+          {[0, 1, 2, 3, 4].map((row) => <i key={row} />)}
+        </div>
+      ) : null}
+      {status === "ready" && total === 0 ? (
+        <WorkspaceState
+          action={filtered ? <ActionButton onClick={directory.clearFilters} variant="secondary">Clear filters</ActionButton> : undefined}
+          title={filtered ? "No users match these filters" : "No users yet"}
+        >
+          {filtered ? "Try a different name or email, or clear the filters." : "Add the first user to give someone access."}
+        </WorkspaceState>
+      ) : null}
+      <div aria-busy={status === "loading"} className="table-frame" hidden={!showTable}>
         <table className="console-table" aria-label="User access records">
           <thead>
             <tr>
               <th>User</th>
-              <th>Email</th>
               <th>Role</th>
               <th>Scope</th>
               <th>Status</th>
@@ -443,15 +469,17 @@ function UserTable({
             </tr>
           </thead>
           <tbody>
-            {pagination.items.map((user) => (
+            {users.map((user) => (
               <tr key={user.id}>
-                <td><strong>{user.displayName}</strong></td>
-                <td>{user.email}</td>
-                <td>
+                <td className="user-identity">
+                  {personName(user) ? <strong>{personName(user)}</strong> : <strong className="user-name-missing">Name not set</strong>}
+                  <small>{user.email}</small>
+                </td>
+                <td className="user-role-cell">
                   <span>{user.role}</span>
                   <small>{formatRole(user.role)}</small>
                 </td>
-                <td>{user.customerId ?? "All customers"}</td>
+                <td>{scopeLabel(user, customerNames)}</td>
                 <td><span className={`user-status status-${user.accountStatus.toLowerCase()}`}>{user.accountStatus}</span></td>
                 <td>{user.mfaEnabled ? "Enabled" : "MFA setup required"}</td>
                 <td>
@@ -510,16 +538,18 @@ function UserTable({
           </tbody>
         </table>
       </div>
-      <PaginationControls
-        label="User access records"
-        onPageChange={pagination.setPage}
-        onPageSizeChange={pagination.setPageSize}
-        page={pagination.page}
-        pageCount={pagination.pageCount}
-        pageSize={pagination.pageSize}
-        start={pagination.start}
-        total={pagination.total}
-      />
+      {showTable || total > 0 ? (
+        <PaginationControls
+          label="User access records"
+          onPageChange={directory.setPage}
+          onPageSizeChange={directory.setPageSize}
+          page={page}
+          pageCount={pageCount}
+          pageSize={pageSize}
+          start={(page - 1) * pageSize}
+          total={total}
+        />
+      ) : null}
     </section>
   );
 }
@@ -590,10 +620,19 @@ function DeviceTable({
   );
 }
 
-function roleSummary(users: AdminUserRecord[]) {
+function scopeLabel(user: AdminUserRecord, customerNames: Map<string, string>): string {
+  const ids = user.customerIds ?? (user.customerId ? [user.customerId] : []);
+  if (ids.length === 0) return user.role === "CUSTOMER_USER" ? "No customer assigned" : "All customers";
+  const names = ids.map((id) => customerNames.get(id));
+  // Names when every one is known; otherwise a count, never a raw id or a guess.
+  if (names.every((name): name is string => Boolean(name))) return names.join(", ");
+  return `${ids.length} ${ids.length === 1 ? "customer" : "customers"}`;
+}
+
+function roleSummary(summary: AdminUserSummary | null) {
   return roles.map((role) => ({
     role,
-    count: users.filter((user) => user.role === role).length,
+    count: summary ? summary.byRole[role] ?? 0 : null,
     scope: role === "CUSTOMER_USER" ? "Customer scoped" : "Staff workspace",
     permissions:
       role === "SUPER_ADMIN"

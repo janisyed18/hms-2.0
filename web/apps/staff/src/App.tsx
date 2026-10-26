@@ -23,6 +23,7 @@ import type { BrowserAuthClient } from "./auth/authClient";
 import type { StaffPermission, StaffRole, StaffSession } from "./domain/types";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import { PageMotion } from "./motion/MotionPrimitives";
+import { greetingName } from "./utils/identity";
 
 const AnalyticsWorkspace = lazy(() =>
   import("./components/AnalyticsWorkspace").then(({ AnalyticsWorkspace }) => ({
@@ -435,7 +436,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                   module={renderedActiveModule}
                   onAssetOpen={handleAssetOpen}
                   onModuleChange={handleModuleChange}
-                  userName={session.displayName}
+                  userName={greetingName(session)}
                 />
               </div>
             </main>

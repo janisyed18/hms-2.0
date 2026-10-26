@@ -8,6 +8,7 @@ import type { AdminUserRecord, DeviceRecord } from "../domain/types";
 
 const client = vi.hoisted(() => ({
   listAdminUsers: vi.fn(),
+  getAdminUserSummary: vi.fn(),
   listDevices: vi.fn(),
   createAdminUser: vi.fn(),
   updateAdminUser: vi.fn(),
@@ -45,6 +46,7 @@ const tablet = {
 beforeEach(() => {
   for (const fn of Object.values(client)) fn.mockReset();
   client.listAdminUsers.mockResolvedValue({ total: 1, etag: null, items: [jane] });
+  client.getAdminUserSummary.mockResolvedValue({ total: 1, byRole: { INSPECTOR: 1 }, active: 1, locked: 0, disabled: 0, mfaEnabled: 1, mfaSetupRequired: 0 });
   client.listDevices.mockResolvedValue({ total: 1, etag: null, items: [tablet] });
 });
 
@@ -65,12 +67,14 @@ describe("User dialog", () => {
     await screen.findByRole("dialog", { name: "Add user" });
   }
 
-  it("marks email and role required, validates inline with focus, and sends nothing while invalid", async () => {
+  it("marks email, names and role required, validates inline with focus, and sends nothing while invalid", async () => {
     const user = renderUsers();
     await openAdd(user);
+    const form = within(screen.getByRole("dialog", { name: "Add user" }));
     expect(screen.getByLabelText("Email")).toBeRequired();
-    expect(screen.getByLabelText("Role")).toHaveAttribute("aria-required", "true");
-    expect(screen.getByLabelText("First name")).not.toBeRequired();
+    expect(form.getByLabelText("Role")).toHaveAttribute("aria-required", "true");
+    expect(screen.getByLabelText("First name")).toBeRequired();
+    expect(screen.getByLabelText("Last name")).toBeRequired();
     expect(screen.getByText("Required fields", { exact: false })).toHaveTextContent("* Required fields");
 
     await user.click(screen.getByRole("button", { name: "Create user" }));
@@ -79,6 +83,18 @@ describe("User dialog", () => {
     await user.type(screen.getByLabelText("Email"), "not-an-email");
     await user.click(screen.getByRole("button", { name: "Create user" }));
     expect(screen.getByLabelText("Email")).toHaveAccessibleDescription("Enter a valid email address.");
+    expect(screen.getByLabelText("First name")).toHaveAccessibleDescription("Enter the user's first name.");
+    expect(screen.getByLabelText("Last name")).toHaveAccessibleDescription("Enter the user's last name.");
+    expect(client.createAdminUser).not.toHaveBeenCalled();
+
+    // With a good address the first missing name takes focus; typing a name clears nothing until the next try.
+    await user.clear(screen.getByLabelText("Email"));
+    await user.type(screen.getByLabelText("Email"), "new@example.com");
+    await user.click(screen.getByRole("button", { name: "Create user" }));
+    expect(screen.getByLabelText("First name")).toHaveFocus();
+    await user.type(screen.getByLabelText("First name"), "New");
+    await user.click(screen.getByRole("button", { name: "Create user" }));
+    expect(screen.getByLabelText("Last name")).toHaveFocus();
     expect(client.createAdminUser).not.toHaveBeenCalled();
   });
 
@@ -88,6 +104,7 @@ describe("User dialog", () => {
     await openAdd(user);
     await user.type(screen.getByLabelText("Email"), "jane@example.com");
     await user.type(screen.getByLabelText("First name"), "Jane");
+    await user.type(screen.getByLabelText("Last name"), "Smith");
     await user.click(screen.getByRole("button", { name: "Create user" }));
 
     const alert = await screen.findByRole("alert");
@@ -104,6 +121,8 @@ describe("User dialog", () => {
     const user = renderUsers();
     await openAdd(user);
     await user.type(screen.getByLabelText("Email"), "new@example.com");
+    await user.type(screen.getByLabelText("First name"), "New");
+    await user.type(screen.getByLabelText("Last name"), "Person");
     await user.click(screen.getByRole("button", { name: "Create user" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("You do not have permission to do this.");
@@ -116,6 +135,8 @@ describe("User dialog", () => {
     const user = renderUsers();
     await openAdd(user);
     await user.type(screen.getByLabelText("Email"), "new@example.com");
+    await user.type(screen.getByLabelText("First name"), "New");
+    await user.type(screen.getByLabelText("Last name"), "Person");
     await user.click(screen.getByRole("button", { name: "Create user" }));
     const busy = await screen.findByRole("button", { name: "Creating…" });
     expect(busy).toBeDisabled();
