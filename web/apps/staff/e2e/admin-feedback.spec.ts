@@ -44,6 +44,8 @@ test.describe("Admin and security interaction feedback", () => {
     test.setTimeout(240_000);
     const admin = await signedInPage(browser, "hms.admin@example.test", permanentPasswords.admin);
     const page = admin.page;
+    // A step that cannot find its target should fail with that step named, not hold the run until the test timeout.
+    page.setDefaultTimeout(15_000);
     const email = `e2e.feedback.${Date.now()}@example.test`;
     try {
       await nav(page, "Users & Roles");
@@ -107,6 +109,8 @@ test.describe("Admin and security interaction feedback", () => {
     test.setTimeout(180_000);
     const admin = await signedInPage(browser, "hms.admin@example.test", permanentPasswords.admin);
     const page = admin.page;
+    // A step that cannot find its target should fail with that step named, not hold the run until the test timeout.
+    page.setDefaultTimeout(15_000);
     try {
       // The seed has no devices, so present one and let the PATCH go through a controlled route.
       const device = { device_id: "dev-0123", user_id: "u1", platform: "ios", app_version: "1.0", last_sync_at: null, offline_window_days: 3, revoked: false };
@@ -150,6 +154,8 @@ test.describe("Admin and security interaction feedback", () => {
     test.setTimeout(120_000);
     const admin = await signedInPage(browser, "hms.admin@example.test", permanentPasswords.admin);
     const page = admin.page;
+    // A step that cannot find its target should fail with that step named, not hold the run until the test timeout.
+    page.setDefaultTimeout(15_000);
     try {
       for (const [width, height] of [[1440, 800], [390, 844]]) {
         await page.setViewportSize({ width, height });

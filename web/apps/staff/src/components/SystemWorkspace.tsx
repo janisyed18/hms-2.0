@@ -17,7 +17,7 @@ import {
   UsersRound,
   Wifi
 } from "lucide-react";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
 import type {
@@ -392,22 +392,32 @@ function UserTable({
 }) {
   const pagination = usePagination(users);
   const [menuPosition, setMenuPosition] = useState<CSSProperties>({});
+  const anchor = useRef<{ button: HTMLElement; top: number; right: number } | null>(null);
 
   // The menu is fixed to the viewport so the table frame's scroll area cannot clip it, and opens upward
-  // when there is no room below. Anything that moves the button under it closes it instead.
+  // when there is no room below. It closes only when its button has actually moved: a scroll that
+  // brings the button into view happens as the menu opens and must not dismiss it.
   useEffect(() => {
     if (!managedUserId) return;
-    const close = () => onManage(null);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
+    const closeIfAnchorMoved = () => {
+      const open = anchor.current;
+      if (!open) return;
+      const rect = open.button.getBoundingClientRect();
+      if (!open.button.isConnected || Math.abs(rect.top - open.top) > 1 || Math.abs(rect.right - open.right) > 1) {
+        onManage(null);
+      }
+    };
+    window.addEventListener("scroll", closeIfAnchorMoved, true);
+    window.addEventListener("resize", closeIfAnchorMoved);
     return () => {
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", closeIfAnchorMoved, true);
+      window.removeEventListener("resize", closeIfAnchorMoved);
     };
   }, [managedUserId, onManage]);
 
   function placeMenu(button: HTMLElement) {
     const rect = button.getBoundingClientRect();
+    anchor.current = { button, top: rect.top, right: rect.right };
     const right = window.innerWidth - rect.right;
     setMenuPosition(
       rect.bottom + 6 + USER_MENU_HEIGHT > window.innerHeight
