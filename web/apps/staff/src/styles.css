@@ -3729,3 +3729,114 @@ tbody tr.is-selected {
     grid-column: auto;
   }
 }
+
+/* Asset detail: the workflow summary card. */
+.asset-workflow {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.asset-workflow h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.asset-workflow p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.asset-workflow-status strong {
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.asset-workflow-status[data-attention="true"] strong {
+  color: var(--warning, #b45309);
+}
+
+.asset-workflow-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  margin: 0;
+}
+
+.asset-workflow-context div {
+  display: flex;
+  gap: 6px;
+}
+
+.asset-workflow-context dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.asset-workflow-context dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.asset-workflow-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.asset-workflow-next > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.asset-workflow-next button,
+.asset-workflow-error button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.asset-workflow-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.asset-workflow-skeleton {
+  display: grid;
+  gap: 8px;
+}
+
+.asset-workflow-skeleton i {
+  display: block;
+  height: 18px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--panel-subtle), var(--border), var(--panel-subtle));
+  background-size: 200% 100%;
+  animation: user-shimmer 1.4s linear infinite;
+}
+
+.asset-workflow-skeleton i:first-child {
+  width: 45%;
+  height: 22px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .asset-workflow-skeleton i { animation: none; }
+}

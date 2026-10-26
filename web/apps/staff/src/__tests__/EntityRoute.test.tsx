@@ -12,6 +12,7 @@ const client = vi.hoisted(() => ({
   listAssets: vi.fn(),
   getAsset: vi.fn(),
   getInspection: vi.fn(),
+  getAssetWorkflow: vi.fn(),
   listCustomers: vi.fn(),
   listProducts: vi.fn(),
   getAssetConfigurationOptions: vi.fn(),
@@ -41,6 +42,7 @@ const list = (items: unknown[]) => ({ total: items.length, limit: 100, offset: 0
 
 beforeEach(() => {
   for (const fn of Object.values(client)) fn.mockReset();
+  client.getAssetWorkflow.mockResolvedValue({ status: "CURRENT", label: "Current", detail: "", attention: false, related: { bookingId: null, appointmentId: null, inspectionId: null, certificateId: null }, context: { scheduledAt: null, dueAt: null, certificateNumber: null }, nextAction: null });
   client.listAssets.mockResolvedValue(list([asset("1", "Main Pump Hose"), asset("2", "Spare Hose")]));
   client.listCustomers.mockResolvedValue(list([]));
   client.listProducts.mockResolvedValue(list([]));

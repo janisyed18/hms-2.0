@@ -21,7 +21,7 @@ import type { SystemModule } from "./components/SystemWorkspace";
 import { createHmsClient } from "./api/hmsClient";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import type { BrowserAuthClient } from "./auth/authClient";
-import type { StaffPermission, StaffRole, StaffSession } from "./domain/types";
+import type { AssetWorkflowAction, StaffPermission, StaffRole, StaffSession } from "./domain/types";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import { PageMotion } from "./motion/MotionPrimitives";
 import { useHmsRoute } from "./routing/useHmsRoute";
@@ -408,6 +408,23 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
     navigate((current) => ({ ...emptyRoute("assets"), asset: assetId, customer: portalMode ? current.customer : null }));
   }
 
+  // The workflow's semantic next action, mapped onto this app's routes. An action whose target this
+  // account has no workspace for is not offered at all.
+  function workflowTargetView(action: AssetWorkflowAction): AppModule {
+    if (action.targetType === "INSPECTION") return "inspections";
+    if (action.targetType === "SCHEDULING") return "scheduling";
+    if (action.targetType === "CERTIFICATES") return "certificates";
+    return "assets";
+  }
+  const workflowNavigation = {
+    canOpen: (action: AssetWorkflowAction) =>
+      visibleModules.includes(workflowTargetView(action)) && (action.targetType !== "INSPECTION" || Boolean(action.targetId)),
+    open: (action: AssetWorkflowAction) => {
+      const view = workflowTargetView(action);
+      handleModuleChange(view, action.targetType === "INSPECTION" ? action.targetId ?? undefined : undefined);
+    }
+  };
+
   function handleSearchRecordOpen(suggestion: GlobalSearchSuggestion) {
     if (!visibleModules.includes(suggestion.module)) {
       return;
@@ -552,6 +569,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                     canWrite={hasPermission(session, "asset:write")}
                     onAssetRouteChange={onAssetRouteChange}
                     routeAssetId={route.asset}
+                    workflowNavigation={workflowNavigation}
                   />
                 ) : null}
                 {renderedActiveModule === "analytics" ? (

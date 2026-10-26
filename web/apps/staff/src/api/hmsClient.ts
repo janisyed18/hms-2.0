@@ -13,6 +13,8 @@ import type {
   AssetLocationSummary,
   AssetFormValues,
   AssetRecord,
+  AssetWorkflow,
+  AssetWorkflowTargetType,
   AssetRetestSummary,
   AssetProductSummary,
   AuditEventRecord,
@@ -271,6 +273,31 @@ interface ApiAssetConfigurationOptions {
   coupling_add_ons: ApiSummary[];
   attach_methods: ApiSummary[];
   nominal_bores: ApiSummary[];
+}
+
+interface ApiAssetWorkflow {
+  status: string;
+  label: string;
+  detail: string;
+  attention: boolean;
+  related: {
+    booking_id: string | null;
+    appointment_id: string | null;
+    inspection_id: string | null;
+    certificate_id: string | null;
+  };
+  context: {
+    scheduled_at: string | null;
+    due_at: string | null;
+    certificate_number: string | null;
+  };
+  next_action: {
+    code: string;
+    label: string;
+    target_type: AssetWorkflowTargetType;
+    target_id: string | null;
+    inspection_id: string | null;
+  } | null;
 }
 
 interface ApiAsset {
@@ -1787,6 +1814,39 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         `/api/v1/assets/${encodeURIComponent(id)}`
       );
       return toAsset(response.data, response.etag);
+    },
+
+    /** Where the asset is in its service cycle and what this person may do next. */
+    async getAssetWorkflow(id: string): Promise<AssetWorkflow> {
+      const { data } = await request<ApiAssetWorkflow>(
+        `/api/v1/assets/${encodeURIComponent(id)}/workflow`
+      );
+      return {
+        status: data.status,
+        label: data.label,
+        detail: data.detail,
+        attention: data.attention,
+        related: {
+          bookingId: data.related.booking_id,
+          appointmentId: data.related.appointment_id,
+          inspectionId: data.related.inspection_id,
+          certificateId: data.related.certificate_id
+        },
+        context: {
+          scheduledAt: data.context.scheduled_at,
+          dueAt: data.context.due_at,
+          certificateNumber: data.context.certificate_number
+        },
+        nextAction: data.next_action
+          ? {
+              code: data.next_action.code,
+              label: data.next_action.label,
+              targetType: data.next_action.target_type,
+              targetId: data.next_action.target_id,
+              inspectionId: data.next_action.inspection_id
+            }
+          : null
+      };
     },
 
     async getAssetConfigurationOptions(): Promise<AssetConfigurationOptions> {

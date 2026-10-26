@@ -394,6 +394,39 @@ class AssetPressureRatingRead(BaseModel):
     test_pressure_kpa: int
 
 
+class AssetWorkflowRelatedRead(BaseModel):
+    booking_id: str | None = None
+    appointment_id: str | None = None
+    inspection_id: str | None = None
+    certificate_id: str | None = None
+
+
+class AssetWorkflowContextRead(BaseModel):
+    scheduled_at: datetime | None = None
+    due_at: date | None = None
+    certificate_number: str | None = None
+
+
+class AssetWorkflowActionRead(BaseModel):
+    """A semantic next step: what to do and where it lives, never a URL or a command."""
+
+    code: str
+    label: str
+    target_type: str
+    target_id: str | None = None
+    inspection_id: str | None = None
+
+
+class AssetWorkflowRead(BaseModel):
+    status: str
+    label: str
+    detail: str
+    attention: bool
+    related: AssetWorkflowRelatedRead
+    context: AssetWorkflowContextRead
+    next_action: AssetWorkflowActionRead | None = None
+
+
 class AssetRead(BaseModel):
     id: str
     asset_number: str
