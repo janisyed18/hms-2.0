@@ -26,6 +26,7 @@ import type {
   StaffRole
 } from "../domain/types";
 import { formatDateTime } from "../utils/dateTime";
+import { formatDateTime as formatInstant } from "../scheduling/zonedTime";
 import { deviceLabel, userLabel } from "../utils/identity";
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice, useActionNotice } from "./interaction/ActionNotice";
@@ -364,6 +365,10 @@ export function SystemWorkspace({
   );
 }
 
+function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
 // Five rows of actions plus padding; used only to decide whether the menu fits below its button.
 const USER_MENU_HEIGHT = 210;
 
@@ -439,7 +444,13 @@ function UserTable({
                 <td>{user.customerId ?? "All customers"}</td>
                 <td><span className={`user-status status-${user.accountStatus.toLowerCase()}`}>{user.accountStatus}</span></td>
                 <td>{user.mfaEnabled ? "Enabled" : "MFA setup required"}</td>
-                <td>{user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "Never"}</td>
+                <td>
+                  {user.lastLoginAt ? (
+                    <time dateTime={user.lastLoginAt}>{formatInstant(user.lastLoginAt, browserTimeZone())}</time>
+                  ) : (
+                    "Never"
+                  )}
+                </td>
                 <td className="user-actions-cell">
                   {canManageRole(actorRoles, user.role as StaffRole) ? (
                     <div className="user-actions">

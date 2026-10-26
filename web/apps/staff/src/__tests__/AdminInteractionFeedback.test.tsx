@@ -165,6 +165,18 @@ describe("Account actions", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
+  it("shows a populated last sign-in as a readable time, and Never when there is none", async () => {
+    client.listAdminUsers.mockResolvedValue({
+      total: 2, etag: null,
+      items: [{ ...jane, lastLoginAt: "2026-10-26T00:26:48.986993Z" }, { ...jane, id: "u2", email: "new@example.com", lastLoginAt: null }]
+    });
+    renderUsers();
+    const time = (await screen.findByText(/26 Oct 2026/)).closest("time");
+    expect(time).toHaveAttribute("datetime", "2026-10-26T00:26:48.986993Z");
+    expect(time?.textContent).not.toMatch(/986993|T00:/);
+    expect(screen.getByText("Never")).toBeInTheDocument();
+  });
+
   it("shows the temporary password only after a successful reset", async () => {
     client.resetAdminUserPassword.mockResolvedValue({ userId: "u1", temporaryPassword: "Reset-Temp-1" });
     const user = renderUsers();
