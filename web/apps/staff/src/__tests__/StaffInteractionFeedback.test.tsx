@@ -41,6 +41,8 @@ const asset = {
   aEnd: blankEnd, bEnd: blankEnd
 } as unknown as AssetRecord;
 
+// Focus moves in a deferred step after render; a loaded CI runner can take longer than waitFor's 1s default.
+const FOCUS_WAIT = { timeout: 5000 };
 const api = (status: number, message: string, details: unknown = null) => new HmsApiError(status, "code", message, details);
 
 function deferred<T = void>() {
@@ -95,7 +97,7 @@ describe("Asset form", () => {
     const name = screen.getByLabelText("Asset Name");
     expect(name).toHaveAttribute("aria-invalid", "true");
     expect(name).toHaveAccessibleDescription("Enter an asset name.");
-    expect(name).toHaveFocus();
+    await waitFor(() => expect(name).toHaveFocus(), FOCUS_WAIT);
     expect(screen.getByLabelText("Serial Number")).toHaveValue("SN-77");
     expect(screen.getByLabelText("Serial Number")).not.toHaveAttribute("aria-invalid");
     expect(client.createAsset).not.toHaveBeenCalled();
@@ -114,7 +116,7 @@ describe("Asset form", () => {
     expect(alert).toHaveTextContent("Asset could not be saved");
     expect(alert).toHaveTextContent("Serial number is already assigned to another asset.");
     // The form moves focus to the notice in a deferred step after rendering it.
-    await waitFor(() => expect(alert).toHaveFocus());
+    await waitFor(() => expect(alert).toHaveFocus(), FOCUS_WAIT);
     expect(screen.getByRole("heading", { name: "Add Asset" })).toBeInTheDocument();
     expect(screen.getByLabelText("Asset Name")).toHaveValue("Boom Hose");
     expect(screen.getByLabelText("Serial Number")).toHaveValue("SN-77");
@@ -129,7 +131,7 @@ describe("Asset form", () => {
     await user.click(screen.getByRole("button", { name: "Save asset" }));
 
     const serial = screen.getByLabelText("Serial Number");
-    await waitFor(() => expect(serial).toHaveFocus());
+    await waitFor(() => expect(serial).toHaveFocus(), FOCUS_WAIT);
     expect(serial).toHaveAttribute("aria-invalid", "true");
     expect(serial).toHaveAccessibleDescription("This field is required.");
   });
@@ -186,7 +188,7 @@ describe("Asset archive", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(client.archiveAsset).not.toHaveBeenCalled();
     expect(screen.getByText("Main Pump Hose")).toBeInTheDocument();
-    expect(archiveButton()).toHaveFocus(); // back where the user was
+    await waitFor(() => expect(archiveButton()).toHaveFocus(), FOCUS_WAIT); // back where the user was
   });
 
   it("leaves the asset listed and the dialog open, with the reason, when archiving fails", async () => {
@@ -257,7 +259,7 @@ describe("Product form and archive (same contract)", () => {
     expect(screen.getByLabelText("Sub category")).not.toBeRequired();
     await user.type(screen.getByLabelText("Product name"), "Suction Hose");
     await user.click(screen.getByRole("button", { name: "Save product" }));
-    expect(screen.getByLabelText("Product code")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("Product code")).toHaveFocus(), FOCUS_WAIT);
     expect(screen.getByLabelText("Product code")).toHaveAccessibleDescription("Enter a product code.");
     expect(screen.getByLabelText("Category")).toHaveAccessibleDescription("Enter a category.");
     expect(screen.getByLabelText("Product name")).toHaveValue("Suction Hose");
@@ -314,7 +316,7 @@ describe("Customer form (same contract)", () => {
     await user.type(screen.getByLabelText("Location"), "Kooragang");
     await user.click(screen.getByRole("button", { name: "Save customer" }));
 
-    expect(screen.getByLabelText("Name")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("Name")).toHaveFocus(), FOCUS_WAIT);
     expect(screen.getByLabelText("Name")).toHaveAccessibleDescription("Enter the customer's name.");
     expect(screen.getByLabelText("Site contact email")).toHaveAccessibleDescription("Enter the site contact's email address.");
     expect(onSubmit).not.toHaveBeenCalled();
@@ -324,7 +326,7 @@ describe("Customer form (same contract)", () => {
     await user.type(screen.getByLabelText("Site contact mobile"), "0400000000");
     await user.type(screen.getByLabelText("Site contact email"), "not-an-email");
     await user.click(screen.getByRole("button", { name: "Save customer" }));
-    expect(screen.getByLabelText("Site contact email")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("Site contact email")).toHaveFocus(), FOCUS_WAIT);
     expect(screen.getByLabelText("Site contact email")).toHaveAccessibleDescription("Enter a valid email address.");
   });
 
