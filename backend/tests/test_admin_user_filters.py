@@ -203,7 +203,11 @@ async def test_pagination_stays_truthful_under_filters(
     session_factory: async_sessionmaker[AsyncSession], directory: dict[str, str]
 ) -> None:
     async with client_for(session_factory) as client:
-        params = {"role": "INSPECTOR", "sort": "email", "limit": 2}
+        params: dict[str, str | int] = {
+            "role": "INSPECTOR",
+            "sort": "email",
+            "limit": 2,
+        }
         first = (await client.get("/api/v1/admin/users", params=params)).json()
         second = (
             await client.get("/api/v1/admin/users", params={**params, "offset": 2})
