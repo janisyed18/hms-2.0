@@ -58,8 +58,12 @@ export function useHmsRoute(surface: RouteSurface, allowedViews: readonly string
   // A URL that is not canonical (a bad value, a parameter from another view, an unavailable view) is
   // rewritten in place so the address bar always says what is on screen.
   useEffect(() => {
+    // This correction was worked out for the URL this render saw. If a navigation has landed since
+    // (a click straight after mount), that URL is stale: leave it, and the render it triggers
+    // corrects the new one if it needs it. Otherwise this would undo the person's navigation.
+    if (snapshot() !== location) return;
     const canonical = `${basePath(surface)}${serializeRoute(route, surface)}`;
-    if (canonical !== snapshot()) write(canonical, true);
+    if (canonical !== location) write(canonical, true);
   }, [route, surface, location]);
 
   const navigate = useCallback(
