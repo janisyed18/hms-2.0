@@ -86,11 +86,12 @@ export function useAssetsWorkspace() {
     setFormOpen(true);
   }
   const openDetail = useCallback((asset: AssetRecord) => { setViewingAsset(asset); }, []);
-  const openDetailById = useCallback(async (assetId: string) => {
+  /** Opens an asset by id; false when it could not be opened (missing, or not this person's to see). */
+  const openDetailById = useCallback(async (assetId: string): Promise<boolean> => {
     const loadedAsset = assets.find((asset) => asset.id === assetId);
-    if (loadedAsset) return openDetail(loadedAsset);
-    try { const asset = await createHmsClient().getAsset(assetId); setAssets((current) => uniqueById([asset, ...current])); openDetail(asset); }
-    catch { setError("The selected asset could not be opened."); }
+    if (loadedAsset) { openDetail(loadedAsset); return true; }
+    try { const asset = await createHmsClient().getAsset(assetId); setAssets((current) => uniqueById([asset, ...current])); openDetail(asset); return true; }
+    catch { setError("The selected asset could not be opened."); return false; }
   }, [assets, openDetail]);
   function closeDetail() { setViewingAsset(null); }
   async function saveAsset(values: AssetFormValues) {

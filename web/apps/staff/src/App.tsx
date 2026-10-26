@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bell,
   CalendarClock,
@@ -23,6 +23,8 @@ import type { BrowserAuthClient } from "./auth/authClient";
 import type { StaffPermission, StaffRole, StaffSession } from "./domain/types";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import { PageMotion } from "./motion/MotionPrimitives";
+import { useHmsRoute } from "./routing/useHmsRoute";
+import { emptyRoute, type UsersRouteQuery } from "./routing/routeTypes";
 import { greetingName } from "./utils/identity";
 
 const AnalyticsWorkspace = lazy(() =>
@@ -322,21 +324,22 @@ function CustomerPortalGate() {
 }
 
 export function HmsApp({ session: providedSession, onLogout, portalMode = false }: HmsAppProps) {
-  const [activeModule, setActiveModule] = useState<AppModule>("dashboard");
-  const [pendingAssetId, setPendingAssetId] = useState<string | null>(null);
-  const [pendingInspectionId, setPendingInspectionId] = useState<string | null>(null);
-  const [portalCustomerId, setPortalCustomerId] = useState<string | null>(null);
   const [session, setSession] = useState<StaffSession>(
     normaliseSession(providedSession)
   );
-  const workspace = useCustomerWorkspace();
   const visibleModules = useMemo(
     () => (portalMode ? customerPortalModules : modulesForSession(session)),
     [portalMode, session]
   );
-  const renderedActiveModule = visibleModules.includes(activeModule)
-    ? activeModule
-    : visibleModules[0] ?? "dashboard";
+  // The address bar is the record of where we are: which workspace, and which customer, asset,
+  // inspection or user query is open. A link naming a view this person may not open never renders it.
+  const { route, navigate } = useHmsRoute(portalMode ? "portal" : "staff", visibleModules, visibleModules[0] ?? "dashboard");
+  const renderedActiveModule = route.view as AppModule;
+  const [customerUnavailable, setCustomerUnavailable] = useState(false);
+  const workspace = useCustomerWorkspace({
+    onSelectedChange: (id) => navigate((current) => ({ ...emptyRoute("customers"), customer: id, users: current.users }))
+  });
+  const { setSelectedId: setWorkspaceSelectedId, isLoading: customersLoading, customers: workspaceCustomers } = workspace;
   const activeCopy = portalMode
     ? customerPortalCopy[renderedActiveModule] ?? moduleCopy[renderedActiveModule]
     : moduleCopy[renderedActiveModule];
@@ -346,18 +349,43 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
     setSession(normaliseSession(providedSession));
   }, [providedSession]);
 
+  // URL to the customer detail: the link, or Back/Forward, opens or closes it. A customer that is not
+  // in the register this person can read is not shown, and the link stops naming it.
+  const routeCustomerId = !portalMode && route.view === "customers" ? route.customer : null;
   useEffect(() => {
-    if (!visibleModules.includes(activeModule)) {
-      setActiveModule(visibleModules[0] ?? "dashboard");
+    if (customersLoading) return;
+    if (routeCustomerId && !workspaceCustomers.some((customer) => customer.id === routeCustomerId)) {
+      setWorkspaceSelectedId(null);
+      setCustomerUnavailable(true);
+      navigate({ customer: null }, { replace: true });
+      return;
     }
-  }, [activeModule, visibleModules]);
+    setWorkspaceSelectedId(routeCustomerId);
+  }, [routeCustomerId, customersLoading, workspaceCustomers, setWorkspaceSelectedId, navigate]);
+
+  const onPortalCustomerChange = useCallback(
+    (customerId: string, options?: { replace?: boolean }) => navigate({ customer: customerId, asset: null }, options),
+    [navigate]
+  );
+  const onAssetRouteChange = useCallback(
+    (assetId: string | null, options?: { replace?: boolean }) => navigate({ asset: assetId }, options),
+    [navigate]
+  );
+  const onInspectionRouteChange = useCallback(
+    (inspectionId: string | null, options?: { replace?: boolean }) => navigate({ inspection: inspectionId }, options),
+    [navigate]
+  );
+  const onUsersRouteChange = useCallback(
+    (patch: Partial<UsersRouteQuery>, options?: { replace?: boolean }) =>
+      navigate((current) => ({ ...current, users: { ...current.users, ...patch } }), options),
+    [navigate]
+  );
+  const usersRoute = useMemo(() => ({ query: route.users, onChange: onUsersRouteChange }), [route.users, onUsersRouteChange]);
 
   function handleModuleChange(module: AppModule, inspectionId?: string) {
     if (visibleModules.includes(module)) {
-      if (module === "inspections") {
-        setPendingInspectionId(inspectionId ?? null);
-      }
-      setActiveModule(module);
+      // A new workspace starts clean; the portal keeps its organisation.
+      navigate((current) => ({ ...emptyRoute(module), inspection: module === "inspections" ? inspectionId ?? null : null, customer: portalMode ? current.customer : null }));
     }
   }
 
@@ -365,8 +393,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
     if (!visibleModules.includes("assets")) {
       return;
     }
-    setPendingAssetId(assetId);
-    setActiveModule("assets");
+    navigate((current) => ({ ...emptyRoute("assets"), asset: assetId, customer: portalMode ? current.customer : null }));
   }
 
   function handleSearchRecordOpen(suggestion: GlobalSearchSuggestion) {
@@ -374,8 +401,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
       return;
     }
     if (suggestion.kind === "customer") {
-      workspace.selectCustomer(suggestion.id);
-      setActiveModule("customers");
+      navigate({ ...emptyRoute("customers"), customer: suggestion.id });
       return;
     }
     if (suggestion.kind === "asset") {
@@ -386,7 +412,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
       handleModuleChange("inspections", suggestion.id);
       return;
     }
-    setActiveModule("products");
+    navigate(emptyRoute("products"));
   }
 
   return (
@@ -396,7 +422,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
       description={activeCopy.description}
       hideGlobalSearch={portalMode}
       navGroups={portalMode ? customerPortalNavGroups : undefined}
-      notificationCustomerId={portalMode ? portalCustomerId : undefined}
+      notificationCustomerId={portalMode ? route.customer : undefined}
       notificationModule={portalMode ? "notifications" : undefined}
       onLogout={onLogout}
       onModuleChange={handleModuleChange}
@@ -420,10 +446,12 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
               <div className="record-main">
                 <CustomerPortalWorkspace
                   activeModule={renderedActiveModule}
-                  customerId={portalCustomerId}
-                  key={portalCustomerId ?? "customer"}
-                  onCustomerChange={setPortalCustomerId}
-                  onModuleChange={setActiveModule}
+                  assetId={route.asset}
+                  customerId={route.customer}
+                  key={route.customer ?? "customer"}
+                  onAssetChange={onAssetRouteChange}
+                  onCustomerChange={onPortalCustomerChange}
+                  onModuleChange={handleModuleChange}
                   session={session}
                 />
               </div>
@@ -454,6 +482,11 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                     </WorkspaceState>
                   ) : (
                     <>
+                      {customerUnavailable ? (
+                        <ActionNotice kind="error" onDismiss={() => setCustomerUnavailable(false)} title="Customer unavailable">
+                          That customer could not be found, or you do not have access to it.
+                        </ActionNotice>
+                      ) : null}
                       {workspace.notice ? (
                         <ActionNotice kind={workspace.notice.kind} onDismiss={workspace.dismissNotice} title={workspace.notice.title}>
                           {workspace.notice.message}
@@ -505,8 +538,8 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                 {renderedActiveModule === "assets" ? (
                   <AssetsWorkspace
                     canWrite={hasPermission(session, "asset:write")}
-                    initialAssetId={pendingAssetId}
-                    onInitialAssetOpened={() => setPendingAssetId(null)}
+                    onAssetRouteChange={onAssetRouteChange}
+                    routeAssetId={route.asset}
                   />
                 ) : null}
                 {renderedActiveModule === "analytics" ? (
@@ -534,8 +567,8 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                       role === "SUPER_ADMIN" || role === "HMS_ADMIN"
                     )}
                     canWrite={hasPermission(session, "inspection:write")}
-                    initialInspectionId={pendingInspectionId}
-                    onInitialInspectionOpened={() => setPendingInspectionId(null)}
+                    onInspectionRouteChange={onInspectionRouteChange}
+                    routeInspectionId={route.inspection}
                   />
                 ) : null}
                 {renderedActiveModule === "certificates" ? (
@@ -556,6 +589,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                       name: customer.name
                     }))}
                     module={renderedActiveModule}
+                    usersRoute={usersRoute}
                   />
                 ) : null}
               </div>

@@ -137,11 +137,12 @@ export async function finishAuthentication(
   await expect(primaryNavigation).toBeVisible({ timeout: 60_000 });
 }
 
-export async function completeLogin(page: Page, email: string, permanentPassword: string) {
+/** Signs in starting from `startUrl` (the root by default), so a deep link can be followed through the login. */
+export async function completeLogin(page: Page, email: string, permanentPassword: string, startUrl = "/") {
   const isActivated = activatedAccounts.has(email);
   const password = activePasswords.get(email) ?? credentials()[email];
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
-  await page.goto("/");
+  await page.goto(startUrl);
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();

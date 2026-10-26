@@ -83,12 +83,12 @@ function asset(customerId: string) {
 
 function Harness() {
   const [customerId, setCustomerId] = useState<string | null>(null);
-  return <CustomerPortalWorkspace activeModule="bookings" customerId={customerId} key={customerId ?? "customer"} onCustomerChange={setCustomerId} onModuleChange={vi.fn()} session={session} />;
+  return <CustomerPortalWorkspace activeModule="bookings" assetId={null} customerId={customerId} key={customerId ?? "customer"} onAssetChange={vi.fn()} onCustomerChange={setCustomerId} onModuleChange={vi.fn()} session={session} />;
 }
 
 function WorkspaceHarness({ activeModule }: { activeModule: "dashboard" | "bookings" | "notifications" }) {
   const [customerId, setCustomerId] = useState<string | null>("customer-a");
-  return <CustomerPortalWorkspace activeModule={activeModule} customerId={customerId} key={customerId ?? "customer"} onCustomerChange={setCustomerId} onModuleChange={vi.fn()} session={session} />;
+  return <CustomerPortalWorkspace activeModule={activeModule} assetId={null} customerId={customerId} key={customerId ?? "customer"} onAssetChange={vi.fn()} onCustomerChange={setCustomerId} onModuleChange={vi.fn()} session={session} />;
 }
 
 afterEach(() => vi.unstubAllGlobals());

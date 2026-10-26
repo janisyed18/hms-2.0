@@ -20,7 +20,10 @@ import { WorkspaceState } from "./WorkspaceState";
 interface CustomerPortalWorkspaceProps {
   activeModule: AppModule;
   customerId: string | null;
-  onCustomerChange: (customerId: string) => void;
+  /** The asset the URL names; null when none is open. */
+  assetId: string | null;
+  onAssetChange: (assetId: string | null, options?: { replace?: boolean }) => void;
+  onCustomerChange: (customerId: string, options?: { replace?: boolean }) => void;
   onModuleChange: (module: AppModule) => void;
   session: StaffSession;
 }
@@ -96,6 +99,8 @@ async function loadAllNotifications(customerId: string): Promise<NotificationRec
 export function CustomerPortalWorkspace({
   activeModule,
   customerId,
+  assetId,
+  onAssetChange,
   onCustomerChange,
   onModuleChange,
   session
@@ -133,11 +138,13 @@ export function CustomerPortalWorkspace({
     [customerId, customers]
   );
 
+  // With no organisation chosen the first one is selected (without adding a history entry). An
+  // organisation named by the link that this account cannot see is never swapped for another one.
   useEffect(() => {
-    if (customers.length > 0 && !customer) {
-      onCustomerChange(customers[0].id);
+    if (customers.length > 0 && !customer && !customerId) {
+      onCustomerChange(customers[0].id, { replace: true });
     }
-  }, [customer, customers, onCustomerChange]);
+  }, [customer, customerId, customers, onCustomerChange]);
 
   const loadCustomerData = useCallback(async () => {
     if (!customer) return;
@@ -190,6 +197,17 @@ export function CustomerPortalWorkspace({
   if (customers.length === 0) {
     return <WorkspaceState title="No customer access" tone="empty">Your account is not assigned to an active customer workspace.</WorkspaceState>;
   }
+  if (customerId && !customer) {
+    return (
+      <WorkspaceState
+        action={<button className="secondary-button" type="button" onClick={() => onCustomerChange(customers[0].id, { replace: true })}>Open {customers[0].name}</button>}
+        title="Organisation unavailable"
+        tone="error"
+      >
+        That organisation could not be found, or your account does not have access to it.
+      </WorkspaceState>
+    );
+  }
   if (!customer || status === "loading") {
     return <WorkspaceState title="Loading your workspace" tone="loading">Retrieving only the records assigned to your organisation.</WorkspaceState>;
   }
@@ -225,7 +243,7 @@ export function CustomerPortalWorkspace({
       </header>
 
       {activeModule === "dashboard" ? <Dashboard customer={customer} data={data} onModuleChange={onModuleChange} /> : null}
-      {activeModule === "assets" ? <Assets assets={data.assets} /> : null}
+      {activeModule === "assets" ? <Assets assets={data.assets} assetId={assetId} onAssetChange={onAssetChange} /> : null}
       {activeModule === "locations" ? <Locations customer={customer} assets={data.assets} onModuleChange={onModuleChange} /> : null}
       {activeModule === "bookings" ? (
         <CustomerBookings
@@ -276,13 +294,22 @@ function Metric({ label, value }: { label: string; value: number }) {
   return <article className="customer-portal-metric"><span>{label}</span><strong>{value}</strong></article>;
 }
 
-function Assets({ assets }: { assets: AssetRecord[] }) {
+function Assets({ assets, assetId, onAssetChange }: { assets: AssetRecord[]; assetId: string | null; onAssetChange: (assetId: string | null, options?: { replace?: boolean }) => void }) {
   const [query, setQuery] = useState("");
-  const [assetId, setAssetId] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
   const asset = assets.find((item) => item.id === assetId) ?? null;
+  // An asset the link names that is not among this organisation's is never shown; the link stops naming it.
+  useEffect(() => {
+    if (assetId && !asset) {
+      setUnavailable(true);
+      onAssetChange(null, { replace: true });
+    } else if (asset) {
+      setUnavailable(false);
+    }
+  }, [asset, assetId, onAssetChange]);
   const visibleAssets = assets.filter((item) => `${item.assetNumber} ${item.assetName ?? ""} ${item.tag ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
-  if (asset) return <section className="portal-panel"><button type="button" onClick={() => setAssetId(null)}>Back to assets</button><h2>{asset.assetNumber}</h2><p>{asset.product.name} · {asset.lifecycleStatus}</p><dl className="portal-details"><div><dt>Location</dt><dd>{asset.location?.name ?? "Not assigned"}</dd></div><div><dt>Pressure rating</dt><dd>{asset.pressureRating ? `${asset.pressureRating.workingPressureKpa} kPa working / ${asset.pressureRating.testPressureKpa} kPa test` : "Not recorded"}</dd></div><div><dt>Next retest</dt><dd>{formatDate(asset.nextRetestDueAt)}</dd></div></dl><h3>Inspection history</h3>{asset.inspectionHistory.length ? <ul className="portal-list">{asset.inspectionHistory.map((item) => <li key={item.id}><strong>{item.inspectionType.replaceAll("_", " ")}</strong><span>{item.status} · {item.result ?? "Result pending"} · {formatDate(item.approvedAt ?? item.submittedAt)}</span></li>)}</ul> : <p>No inspection history is available.</p>}<h3>Certificate history</h3>{asset.certificateHistory.length ? <ul className="portal-list">{asset.certificateHistory.map((item) => <li key={item.id}><strong>{item.number}</strong><span>{item.status} · Valid through {formatDate(item.validUntil)}</span></li>)}</ul> : <p>No certificate history is available.</p>}</section>;
-  return <section className="portal-panel"><h2>Assets</h2><label className="portal-search">Search assets<input aria-label="Search assets" value={query} onChange={(event) => setQuery(event.target.value)} /></label>{visibleAssets.length === 0 ? <p>No matching assets are assigned to this organisation.</p> : <ul className="portal-list">{visibleAssets.map((item) => <li key={item.id}><button className="portal-record-button" type="button" onClick={() => setAssetId(item.id)}><strong>{item.assetNumber}</strong><span>{item.product.name} · {item.location?.name ?? "No location"} · {item.lifecycleStatus}</span><span>Next retest: {formatDate(item.nextRetestDueAt)}</span></button></li>)}</ul>}</section>;
+  if (asset) return <section className="portal-panel"><button type="button" onClick={() => onAssetChange(null)}>Back to assets</button><h2>{asset.assetNumber}</h2><p>{asset.product.name} · {asset.lifecycleStatus}</p><dl className="portal-details"><div><dt>Location</dt><dd>{asset.location?.name ?? "Not assigned"}</dd></div><div><dt>Pressure rating</dt><dd>{asset.pressureRating ? `${asset.pressureRating.workingPressureKpa} kPa working / ${asset.pressureRating.testPressureKpa} kPa test` : "Not recorded"}</dd></div><div><dt>Next retest</dt><dd>{formatDate(asset.nextRetestDueAt)}</dd></div></dl><h3>Inspection history</h3>{asset.inspectionHistory.length ? <ul className="portal-list">{asset.inspectionHistory.map((item) => <li key={item.id}><strong>{item.inspectionType.replaceAll("_", " ")}</strong><span>{item.status} · {item.result ?? "Result pending"} · {formatDate(item.approvedAt ?? item.submittedAt)}</span></li>)}</ul> : <p>No inspection history is available.</p>}<h3>Certificate history</h3>{asset.certificateHistory.length ? <ul className="portal-list">{asset.certificateHistory.map((item) => <li key={item.id}><strong>{item.number}</strong><span>{item.status} · Valid through {formatDate(item.validUntil)}</span></li>)}</ul> : <p>No certificate history is available.</p>}</section>;
+  return <section className="portal-panel"><h2>Assets</h2>{unavailable ? <p className="portal-notice is-error" role="alert">That asset could not be found for this organisation.</p> : null}<label className="portal-search">Search assets<input aria-label="Search assets" value={query} onChange={(event) => setQuery(event.target.value)} /></label>{visibleAssets.length === 0 ? <p>No matching assets are assigned to this organisation.</p> : <ul className="portal-list">{visibleAssets.map((item) => <li key={item.id}><button className="portal-record-button" type="button" onClick={() => onAssetChange(item.id)}><strong>{item.assetNumber}</strong><span>{item.product.name} · {item.location?.name ?? "No location"} · {item.lifecycleStatus}</span><span>Next retest: {formatDate(item.nextRetestDueAt)}</span></button></li>)}</ul>}</section>;
 }
 
 function Locations({ customer, assets, onModuleChange }: { customer: CustomerRecord; assets: AssetRecord[]; onModuleChange: (module: AppModule) => void }) {

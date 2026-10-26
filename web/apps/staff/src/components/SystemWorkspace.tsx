@@ -28,7 +28,7 @@ import type {
 import { formatDateTime } from "../utils/dateTime";
 import { formatDateTime as formatInstant } from "../scheduling/zonedTime";
 import { deviceLabel, personName, userLabel } from "../utils/identity";
-import { hasActiveFilters, useUserDirectory } from "../hooks/useUserDirectory";
+import { hasActiveFilters, useUserDirectory, type UsersRouteControl } from "../hooks/useUserDirectory";
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice, useActionNotice } from "./interaction/ActionNotice";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
@@ -53,6 +53,8 @@ interface SystemWorkspaceProps {
   module: SystemModule;
   actorRoles: StaffRole[];
   customerOptions: CustomerOption[];
+  /** The Users & Roles query as the URL holds it, and how to change it. Without it the view keeps its own. */
+  usersRoute?: UsersRouteControl;
 }
 
 const roles: StaffRole[] = [
@@ -67,9 +69,10 @@ const roles: StaffRole[] = [
 export function SystemWorkspace({
   module,
   actorRoles,
-  customerOptions
+  customerOptions,
+  usersRoute
 }: SystemWorkspaceProps) {
-  const directory = useUserDirectory(module === "users");
+  const directory = useUserDirectory(module === "users", usersRoute);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [userDialog, setUserDialog] = useState<{

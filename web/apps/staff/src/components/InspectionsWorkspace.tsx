@@ -69,17 +69,17 @@ export function InspectionsWorkspace({
   canApproveBookings,
   canBook,
   canWrite,
-  initialInspectionId,
-  onInitialInspectionOpened
+  routeInspectionId,
+  onInspectionRouteChange
 }: {
   canApprove: boolean;
   canApproveBookings: boolean;
   canBook: boolean;
   canWrite: boolean;
-  initialInspectionId?: string | null;
-  onInitialInspectionOpened?: () => void;
+  routeInspectionId?: string | null;
+  onInspectionRouteChange?: (inspectionId: string | null, options?: { replace?: boolean }) => void;
 }) {
-  const workspace = useInspectionsWorkspace(canApproveBookings, initialInspectionId, onInitialInspectionOpened);
+  const workspace = useInspectionsWorkspace(canApproveBookings, routeInspectionId, onInspectionRouteChange);
   const [inspectorByBooking, setInspectorByBooking] = useState<Record<string, string>>({});
   const [missingInspector, setMissingInspector] = useState<string | null>(null);
   const draftCount = countByStatus(workspace.inspections, "DRAFT");
