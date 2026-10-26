@@ -17,18 +17,23 @@ import {
   UsersRound,
   Wifi
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
-import {
-  createHmsClient,
-  HmsApiError
-} from "../api/hmsClient";
+import { createHmsClient } from "../api/hmsClient";
 import type {
   AdminUserRecord,
   DeviceRecord,
   StaffRole
 } from "../domain/types";
 import { formatDateTime } from "../utils/dateTime";
+import { formatDateTime as formatInstant } from "../scheduling/zonedTime";
+import { deviceLabel, userLabel } from "../utils/identity";
+import { ActionButton } from "./interaction/ActionButton";
+import { ActionNotice, useActionNotice } from "./interaction/ActionNotice";
+import { ConfirmDialog } from "./interaction/ConfirmDialog";
+import { friendlyApiError } from "./interaction/friendlyApiError";
+import { useActionRunner } from "./interaction/useActionRunner";
+import { useConfirmedAction } from "./interaction/useConfirmedAction";
 import { OneTimeCredentialDialog, type OneTimeCredential } from "./OneTimeCredentialDialog";
 import { PaginationControls, usePagination } from "./Pagination";
 import {
@@ -71,6 +76,8 @@ export function SystemWorkspace({
   } | null>(null);
   const [credential, setCredential] = useState<OneTimeCredential | null>(null);
   const [managedUserId, setManagedUserId] = useState<string | null>(null);
+  const { notice, notify, clear: dismissNotice } = useActionNotice();
+  const { pending: pendingAction, run } = useActionRunner(notify);
 
   useEffect(() => {
     let active = true;
@@ -111,39 +118,31 @@ export function SystemWorkspace({
   const roleRows = useMemo(() => roleSummary(users), [users]);
 
   async function saveUser(values: UserAdminValues) {
-    setError(null);
-    try {
-      if (userDialog?.mode === "edit" && userDialog.user) {
-        const updated = await createHmsClient().updateAdminUser(userDialog.user.id, {
-          email: values.email,
-          firstName: values.firstName || null,
-          lastName: values.lastName || null,
-          role: values.role,
-          customerId: values.customerId,
-          customerIds: values.customerIds
-        });
-        replaceUser(updated);
-      } else {
-        const result = await createHmsClient().createAdminUser({
-          email: values.email,
-          firstName: values.firstName || null,
-          lastName: values.lastName || null,
-          role: values.role,
-          customerId: values.customerId,
-          customerIds: values.customerIds
-        });
-        setUsers((current) => [result.user, ...current]);
-        setCredential({
-          title: "Temporary password",
-          label: "Password",
-          value: result.temporaryPassword,
-          note: "Give this password to the user securely. They must change it at first sign-in."
-        });
-      }
-      setUserDialog(null);
-    } catch (saveError) {
-      setError(errorMessage(saveError));
+    // Errors are thrown to the dialog, which stays open with what was typed; success is announced here.
+    const body = {
+      email: values.email,
+      firstName: values.firstName || null,
+      lastName: values.lastName || null,
+      role: values.role,
+      customerId: values.customerId,
+      customerIds: values.customerIds
+    };
+    if (userDialog?.mode === "edit" && userDialog.user) {
+      const updated = await createHmsClient().updateAdminUser(userDialog.user.id, body);
+      replaceUser(updated);
+      notify({ kind: "success", title: "User updated", message: `${userLabel(updated)} updated successfully.` });
+    } else {
+      const result = await createHmsClient().createAdminUser(body);
+      setUsers((current) => [result.user, ...current]);
+      notify({ kind: "success", title: "User created", message: `${userLabel(result.user)} created successfully.` });
+      setCredential({
+        title: "Temporary password",
+        label: "Password",
+        value: result.temporaryPassword,
+        note: "Give this password to the user securely. They must change it at first sign-in."
+      });
     }
+    setUserDialog(null);
   }
 
   function replaceUser(updated: AdminUserRecord) {
@@ -152,66 +151,78 @@ export function SystemWorkspace({
     );
   }
 
-  async function runUserAction(
-    user: AdminUserRecord,
-    action: "disable" | "enable" | "unlock" | "password" | "mfa"
-  ) {
-    setError(null);
-    setManagedUserId(null);
-    const labels = {
-      disable: "disable this account",
-      enable: "enable this account",
-      unlock: "unlock this account",
-      password: "issue a new temporary password",
-      mfa: "reset MFA enrollment"
-    };
-    if (!window.confirm(`Confirm: ${labels[action]}?`)) {
-      return;
-    }
-    try {
-      if (action === "password") {
-        const result = await createHmsClient().resetAdminUserPassword(user.id);
-        setCredential({
-          title: "Password reset",
-          label: "Temporary password",
-          value: result.temporaryPassword
-        });
-        replaceUser({ ...user, mustChangePassword: true });
-        return;
-      }
+  type UserAction = "disable" | "enable" | "unlock" | "password" | "mfa";
+  const actionCopy: Record<UserAction, { title: string; message: string; confirm: string; pending: string; done: string }> = {
+    disable: { title: "Disable", message: "They will be signed out and unable to sign in until the account is enabled again.", confirm: "Disable account", pending: "Disabling…", done: "was disabled" },
+    enable: { title: "Enable", message: "They will be able to sign in again.", confirm: "Enable account", pending: "Enabling…", done: "was enabled" },
+    unlock: { title: "Unlock", message: "Failed sign-in attempts are cleared and they can try again.", confirm: "Unlock account", pending: "Unlocking…", done: "was unlocked" },
+    password: { title: "Reset the password for", message: "A new temporary password is issued and shown once. The current password stops working.", confirm: "Reset password", pending: "Resetting…", done: "had their password reset" },
+    mfa: { title: "Reset MFA for", message: "They must enrol a new authenticator at their next sign-in. Their recovery codes stop working.", confirm: "Reset MFA", pending: "Resetting…", done: "had MFA reset" }
+  };
+  const userAction = useConfirmedAction<{ user: AdminUserRecord; action: UserAction }>(
+    async ({ user, action }) => {
       const client = createHmsClient();
-      const updated =
-        action === "disable"
-          ? await client.disableAdminUser(user.id)
-          : action === "enable"
-            ? await client.enableAdminUser(user.id)
-            : action === "unlock"
-              ? await client.unlockAdminUser(user.id)
-              : await client.resetAdminUserMfa(user.id);
-      replaceUser(updated);
-    } catch (actionError) {
-      setError(errorMessage(actionError));
-    }
+      if (action === "password") {
+        const result = await client.resetAdminUserPassword(user.id);
+        replaceUser({ ...user, mustChangePassword: true });
+        setCredential({ title: "Password reset", label: "Temporary password", value: result.temporaryPassword });
+      } else {
+        const updated =
+          action === "disable" ? await client.disableAdminUser(user.id)
+          : action === "enable" ? await client.enableAdminUser(user.id)
+          : action === "unlock" ? await client.unlockAdminUser(user.id)
+          : await client.resetAdminUserMfa(user.id);
+        replaceUser(updated);
+      }
+      notify({ kind: "success", title: "Account updated", message: `${userLabel(user)} ${actionCopy[action].done}.` });
+    },
+    ({ user, action }) => ({ fallback: `${userLabel(user)} could not be updated (${actionCopy[action].confirm.toLowerCase()}). Nothing was changed.` })
+  );
+  function runUserAction(user: AdminUserRecord, action: UserAction) {
+    setManagedUserId(null);
+    userAction.request({ user, action });
   }
 
-  async function revokeDevice(device: DeviceRecord) {
-    setError(null);
-    try {
-      const updated = await createHmsClient().updateDevice(device.deviceId, {
-        revoked: !device.revoked
-      });
-      setDevices((current) =>
-        current.map((item) => (item.deviceId === device.deviceId ? updated : item))
-      );
-    } catch (deviceError) {
-      setError(errorMessage(deviceError));
+  const deviceRevoke = useConfirmedAction<DeviceRecord>(
+    async (device) => {
+      const updated = await createHmsClient().updateDevice(device.deviceId, { revoked: true });
+      setDevices((current) => current.map((item) => (item.deviceId === device.deviceId ? updated : item)));
+      notify({ kind: "success", title: "Device revoked", message: `${deviceLabel(device)} was revoked and is blocked from syncing.` });
+    },
+    (device) => ({ fallback: `${deviceLabel(device)} could not be revoked. It is still allowed to sync.` })
+  );
+  function toggleDevice(device: DeviceRecord) {
+    if (!device.revoked) {
+      deviceRevoke.request(device);
+      return;
     }
+    // Restoring is reversible and not destructive: no dialog, but a clear outcome either way.
+    void run(`restore:${device.deviceId}`, async () => {
+      const updated = await createHmsClient().updateDevice(device.deviceId, { revoked: false });
+      setDevices((current) => current.map((item) => (item.deviceId === device.deviceId ? updated : item)));
+    }, {
+      fallback: `${deviceLabel(device)} could not be restored. It is still revoked.`,
+      failureTitle: "Device not restored",
+      success: () => ({ title: "Device restored", message: `${deviceLabel(device)} was restored and can sync again.` })
+    });
   }
 
   if (module === "devices") {
     return (
       <section className="system-workspace" aria-label="Device workspace">
         {error ? <WorkspaceState title="Device admin unavailable" tone="error">{error}</WorkspaceState> : null}
+        {notice ? <ActionNotice kind={notice.kind} onDismiss={dismissNotice} title={notice.title}>{notice.message}</ActionNotice> : null}
+        <ConfirmDialog
+          confirmLabel="Revoke device"
+          error={deviceRevoke.error}
+          message="It is blocked from syncing until it is restored. Data already synced is kept."
+          onCancel={deviceRevoke.cancel}
+          onConfirm={() => void deviceRevoke.confirm()}
+          open={deviceRevoke.target !== null}
+          pending={deviceRevoke.pending}
+          pendingLabel="Revoking…"
+          title={deviceRevoke.target ? `Revoke ${deviceLabel(deviceRevoke.target)}?` : "Revoke device?"}
+        />
         <ManagementHeader
           eyebrow="Device management"
           title="Device management"
@@ -233,7 +244,7 @@ export function SystemWorkspace({
                 <p>Field devices currently known to the HMS workspace.</p>
               </div>
             </div>
-            <DeviceTable devices={devices} onToggleRevoke={revokeDevice} />
+            <DeviceTable devices={devices} onToggleRevoke={toggleDevice} pendingKey={pendingAction} />
           </section>
 
           <section className="data-panel">
@@ -261,6 +272,18 @@ export function SystemWorkspace({
   return (
     <section className="system-workspace" aria-label="Users and roles workspace">
       {error ? <WorkspaceState title="User admin unavailable" tone="error">{error}</WorkspaceState> : null}
+      {notice ? <ActionNotice kind={notice.kind} onDismiss={dismissNotice} title={notice.title}>{notice.message}</ActionNotice> : null}
+      <ConfirmDialog
+        confirmLabel={userAction.target ? actionCopy[userAction.target.action].confirm : "Confirm"}
+        error={userAction.error}
+        message={userAction.target ? actionCopy[userAction.target.action].message : ""}
+        onCancel={userAction.cancel}
+        onConfirm={() => void userAction.confirm()}
+        open={userAction.target !== null}
+        pending={userAction.pending}
+        pendingLabel={userAction.target ? actionCopy[userAction.target.action].pending : "Working…"}
+        title={userAction.target ? `${actionCopy[userAction.target.action].title} ${userLabel(userAction.target.user)}?` : "Change account?"}
+      />
       <ManagementHeader
         eyebrow="Access management"
         title="Access control"
@@ -281,10 +304,10 @@ export function SystemWorkspace({
               <h2>User Directory</h2>
               <p>Persisted access records resolved by the HMS auth boundary.</p>
             </div>
-            <button className="primary-button" type="button" onClick={() => setUserDialog({ mode: "create" })}>
+            <ActionButton onClick={() => setUserDialog({ mode: "create" })} variant="primary">
               <Plus aria-hidden="true" size={15} />
               Add User
-            </button>
+            </ActionButton>
           </div>
           <UserTable
             actorRoles={actorRoles}
@@ -342,6 +365,13 @@ export function SystemWorkspace({
   );
 }
 
+function browserTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+// Five rows of actions plus padding; used only to decide whether the menu fits below its button.
+const USER_MENU_HEIGHT = 210;
+
 function UserTable({
   actorRoles,
   managedUserId,
@@ -361,6 +391,40 @@ function UserTable({
   users: AdminUserRecord[];
 }) {
   const pagination = usePagination(users);
+  const [menuPosition, setMenuPosition] = useState<CSSProperties>({});
+  const anchor = useRef<{ button: HTMLElement; top: number; right: number } | null>(null);
+
+  // The menu is fixed to the viewport so the table frame's scroll area cannot clip it, and opens upward
+  // when there is no room below. It closes only when its button has actually moved: a scroll that
+  // brings the button into view happens as the menu opens and must not dismiss it.
+  useEffect(() => {
+    if (!managedUserId) return;
+    const closeIfAnchorMoved = () => {
+      const open = anchor.current;
+      if (!open) return;
+      const rect = open.button.getBoundingClientRect();
+      if (!open.button.isConnected || Math.abs(rect.top - open.top) > 1 || Math.abs(rect.right - open.right) > 1) {
+        onManage(null);
+      }
+    };
+    window.addEventListener("scroll", closeIfAnchorMoved, true);
+    window.addEventListener("resize", closeIfAnchorMoved);
+    return () => {
+      window.removeEventListener("scroll", closeIfAnchorMoved, true);
+      window.removeEventListener("resize", closeIfAnchorMoved);
+    };
+  }, [managedUserId, onManage]);
+
+  function placeMenu(button: HTMLElement) {
+    const rect = button.getBoundingClientRect();
+    anchor.current = { button, top: rect.top, right: rect.right };
+    const right = window.innerWidth - rect.right;
+    setMenuPosition(
+      rect.bottom + 6 + USER_MENU_HEIGHT > window.innerHeight
+        ? { position: "fixed", right, bottom: window.innerHeight - rect.top + 6, top: "auto" }
+        : { position: "fixed", right, top: rect.bottom + 6 }
+    );
+  }
 
   return (
     <section className="operations-table-panel">
@@ -390,20 +454,29 @@ function UserTable({
                 <td>{user.customerId ?? "All customers"}</td>
                 <td><span className={`user-status status-${user.accountStatus.toLowerCase()}`}>{user.accountStatus}</span></td>
                 <td>{user.mfaEnabled ? "Enabled" : "MFA setup required"}</td>
-                <td>{user.lastLoginAt ? formatDateTime(user.lastLoginAt) : "Never"}</td>
                 <td>
+                  {user.lastLoginAt ? (
+                    <time dateTime={user.lastLoginAt}>{formatInstant(user.lastLoginAt, browserTimeZone())}</time>
+                  ) : (
+                    "Never"
+                  )}
+                </td>
+                <td className="user-actions-cell">
                   {canManageRole(actorRoles, user.role as StaffRole) ? (
                     <div className="user-actions">
                       <button
                         aria-label={`Manage ${user.email}`}
                         className="icon-button light"
                         type="button"
-                        onClick={() => onManage(managedUserId === user.id ? null : user.id)}
+                        onClick={(event) => {
+                          placeMenu(event.currentTarget);
+                          onManage(managedUserId === user.id ? null : user.id);
+                        }}
                       >
                         <MoreHorizontal aria-hidden="true" size={17} />
                       </button>
                       {managedUserId === user.id ? (
-                        <div className="user-action-menu" role="menu">
+                        <div className="user-action-menu" role="menu" style={menuPosition}>
                           <button type="button" role="menuitem" onClick={() => onEdit(user)}>
                             <Edit3 aria-hidden="true" size={15} /> Edit user
                           </button>
@@ -453,10 +526,12 @@ function UserTable({
 
 function DeviceTable({
   devices,
-  onToggleRevoke
+  onToggleRevoke,
+  pendingKey
 }: {
   devices: DeviceRecord[];
   onToggleRevoke: (device: DeviceRecord) => void;
+  pendingKey: string | null;
 }) {
   const pagination = usePagination(devices);
 
@@ -478,16 +553,23 @@ function DeviceTable({
           <tbody>
             {pagination.items.map((device) => (
               <tr key={device.deviceId}>
-                <td><strong>{device.displayName ?? device.deviceId}</strong></td>
+                <td><strong>{deviceLabel(device)}</strong></td>
                 <td>{device.platform}</td>
                 <td>{device.state}</td>
                 <td>{device.lastSyncAt ? formatDateTime(device.lastSyncAt) : "Not synced"}</td>
                 <td>{device.appVersion}</td>
                 <td>{device.offlineWindowDays} days</td>
                 <td>
-                  <button type="button" onClick={() => onToggleRevoke(device)}>
+                  <ActionButton
+                    aria-label={pendingKey === `restore:${device.deviceId}` ? `Restoring ${deviceLabel(device)}` : `${device.revoked ? "Restore" : "Revoke"} ${deviceLabel(device)}`}
+                    disabled={pendingKey !== null && pendingKey !== `restore:${device.deviceId}`}
+                    onClick={() => onToggleRevoke(device)}
+                    pending={pendingKey === `restore:${device.deviceId}`}
+                    pendingLabel="Restoring…"
+                    variant={device.revoked ? "secondary" : "ghost"}
+                  >
                     {device.revoked ? "Restore" : "Revoke"}
-                  </button>
+                  </ActionButton>
                 </td>
               </tr>
             ))}
@@ -552,11 +634,5 @@ function formatRole(role: string): string {
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof HmsApiError) {
-    return error.message;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "Admin workspace data could not be loaded.";
+  return friendlyApiError(error, { fallback: "Admin workspace data could not be loaded." }).message;
 }

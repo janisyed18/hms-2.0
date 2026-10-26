@@ -672,6 +672,11 @@ def _user_read(user: User) -> UserRead:
         role=user.role,
         customer_id=user.customer_id,
         customer_ids=_active_customer_ids(user),
+        account_status=user.account_status,
+        must_change_password=user.must_change_password,
+        mfa_enabled=user.mfa_enabled,
+        locked_until=user.locked_until,
+        last_login_at=user.last_login_at,
         created_at=user.created_at,
         updated_at=user.updated_at,
     )

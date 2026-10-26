@@ -10,6 +10,17 @@ function pair(name: string | null | undefined, code: string | null | undefined):
   return readable || reference || "";
 }
 
+/** "Jane Smith (jane@example.com)": the person first, the sign-in email second. */
+export function userLabel(user: { displayName?: string | null; email: string }): string {
+  const name = user.displayName?.trim();
+  return name && name.toLowerCase() !== user.email.toLowerCase() ? `${name} (${user.email})` : user.email;
+}
+
+/** "Field tablet 01 — dev-0123": the device's name, then its id. */
+export function deviceLabel(device: { displayName?: string | null; deviceId: string }): string {
+  return pair(device.displayName, device.deviceId);
+}
+
 /** Any catalog record with a name and a code: "Hydraulic Hose — PROD-014". */
 export function nameAndCode(record: { code?: string | null; name?: string | null }): string {
   return pair(record.name, record.code);
