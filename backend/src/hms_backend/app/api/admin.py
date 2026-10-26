@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql import Select
@@ -22,6 +22,7 @@ from hms_backend.app.api.schemas import (
     UserCreateResult,
     UserListResponse,
     UserRead,
+    UserSummary,
     UserUpdate,
 )
 from hms_backend.app.core.audit import (
@@ -157,11 +158,89 @@ async def _count(session: AsyncSession, statement: Select[Any]) -> int:
     ) or 0
 
 
+def _sort_users(statement: Select[Any], sort: str | None) -> Select[Any]:
+    """`name` spans columns and `last_login_at` needs a null rule."""
+    requested = sort or "email"
+    descending = requested.startswith("-")
+    field_name = requested[1:] if descending else requested
+    if field_name == "name":
+        name_order = (
+            func.lower(func.coalesce(User.last_name, "")),
+            func.lower(func.coalesce(User.first_name, "")),
+            func.lower(User.email),
+        )
+        return statement.order_by(
+            *(column.desc() if descending else column.asc() for column in name_order)
+        )
+    if field_name == "last_login_at":
+        # Never-signed-in users sort last either way; id keeps pages stable.
+        column = User.last_login_at.desc() if descending else User.last_login_at.asc()
+        return statement.order_by(column.nulls_last(), User.id)
+    return _apply_sort(
+        statement,
+        User,
+        sort,
+        frozenset({"id", "email", "oidc_subject", "role", "created_at", "updated_at"}),
+        default="email",
+    )
+
+
+@router.get("/users/summary", response_model=UserSummary)
+async def users_summary(session: SessionDep, principal: PrincipalDep) -> UserSummary:
+    """Directory-wide counts. They never depend on a page, a search or a filter."""
+    _require_admin(principal, Permission.USER_ADMIN)
+    live = User.deleted_at.is_(None)
+    by_role = {
+        role: count
+        for role, count in (
+            await session.execute(
+                select(User.role, func.count()).where(live).group_by(User.role)
+            )
+        ).all()
+    }
+    by_status = {
+        account_status: count
+        for account_status, count in (
+            await session.execute(
+                select(User.account_status, func.count())
+                .where(live)
+                .group_by(User.account_status)
+            )
+        ).all()
+    }
+    mfa_enabled = (
+        await session.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(live, User.mfa_enabled.is_(True))
+        )
+        or 0
+    )
+    total = sum(by_role.values())
+    return UserSummary(
+        total=total,
+        by_role=by_role,
+        active=by_status.get(AccountStatus.ACTIVE.value, 0),
+        locked=by_status.get(AccountStatus.LOCKED.value, 0),
+        disabled=by_status.get(AccountStatus.DISABLED.value, 0),
+        mfa_enabled=mfa_enabled,
+        mfa_setup_required=total - mfa_enabled,
+    )
+
+
+def _search_terms(search: str) -> list[str]:
+    return [term for term in search.lower().split() if term]
+
+
 @router.get("/users", response_model=UserListResponse)
 async def list_users(
     session: SessionDep,
     principal: PrincipalDep,
     search: str | None = None,
+    role: Annotated[str | None, Query(max_length=40)] = None,
+    account_status: Literal["ACTIVE", "LOCKED", "DISABLED"] | None = None,
+    mfa: Literal["enabled", "setup_required"] | None = None,
+    customer_id: Annotated[str | None, Query(max_length=64)] = None,
     sort: str | None = None,
     limit: LimitParam = 50,
     offset: OffsetParam = 0,
@@ -180,28 +259,45 @@ async def list_users(
             detail="after requires sort=id and offset=0",
         )
 
+    # Every filter narrows this one statement, so the total, the page and the keyset
+    # cursor all describe the same set, and deleted users stay out whatever is asked.
     statement = select(User).where(User.deleted_at.is_(None))
-    if search:
-        search_pattern = f"%{search.lower()}%"
+    # Each word must match somewhere (name, email, id or subject), so "jani syed" finds
+    # Jani Syed and "syed jani" finds them too.
+    for term in _search_terms(search or ""):
+        pattern = f"%{term}%"
         statement = statement.where(
             or_(
-                func.lower(User.oidc_subject).like(search_pattern),
-                func.lower(User.email).like(search_pattern),
-                func.lower(User.first_name).like(search_pattern),
-                func.lower(User.last_name).like(search_pattern),
-                func.lower(User.role).like(search_pattern),
+                func.lower(User.id).like(pattern),
+                func.lower(User.oidc_subject).like(pattern),
+                func.lower(User.email).like(pattern),
+                func.lower(func.coalesce(User.first_name, "")).like(pattern),
+                func.lower(func.coalesce(User.last_name, "")).like(pattern),
+            )
+        )
+    if role:
+        statement = statement.where(User.role == _role_value(role))
+    if account_status:
+        statement = statement.where(User.account_status == account_status)
+    if mfa:
+        statement = statement.where(User.mfa_enabled.is_(mfa == "enabled"))
+    if customer_id:
+        statement = statement.where(
+            or_(
+                User.customer_id == customer_id,
+                exists().where(
+                    UserCustomerAccess.user_id == User.id,
+                    UserCustomerAccess.customer_id == customer_id,
+                    UserCustomerAccess.deleted_at.is_(None),
+                ),
             )
         )
     total = await _count(session, statement)
     if after is not None:
         statement = statement.where(User.id > after)
-    statement = _apply_sort(
-        statement,
-        User,
-        sort,
-        frozenset({"id", "email", "oidc_subject", "role", "created_at", "updated_at"}),
-        default="email",
-    ).options(selectinload(User.customer_accesses)).limit(limit + 1).offset(offset)
+    statement = _sort_users(statement, sort).options(
+        selectinload(User.customer_accesses)
+    ).limit(limit + 1).offset(offset)
     # One extra row says whether another page exists, so a full last page ends the walk.
     rows = (await session.scalars(statement)).all()
     users = rows[:limit]

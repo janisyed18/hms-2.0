@@ -234,6 +234,8 @@ async def test_customer_user_can_hold_multiple_persisted_customer_scopes(
             json={
                 "oidc_subject": "customer-multi",
                 "email": "customer-multi@example.com",
+                "first_name": "Test",
+                "last_name": "Person",
                 "role": "CUSTOMER_USER",
                 "customer_ids": [customer_a.id, customer_b.id],
             },
@@ -267,6 +269,8 @@ async def test_customer_scope_can_be_revoked_and_granted_again(
             json={
                 "oidc_subject": "customer-regrant",
                 "email": "customer-regrant@example.com",
+                "first_name": "Test",
+                "last_name": "Person",
                 "role": "CUSTOMER_USER",
                 "customer_ids": [customer_a.id, customer_b.id],
             },

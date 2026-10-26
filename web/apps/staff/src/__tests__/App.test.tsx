@@ -553,6 +553,9 @@ function deferredJson() {
 }
 
 function routeFetch() {
+  // The directory is the server's: a created user is there the next time the list is asked for.
+  const createdAdminUsers: unknown[] = [];
+  const disabledAdminUsers = new Set<string>();
   return vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const path = String(url);
     if (init?.method === "DELETE") {
@@ -652,8 +655,12 @@ function routeFetch() {
         items: [apiStandard]
       });
     }
+    if (path === "/api/v1/admin/users/summary") {
+      return okJson({ total: 1, by_role: { INSPECTOR: 1 }, active: 1, locked: 0, disabled: 0, mfa_enabled: 0, mfa_setup_required: 1 });
+    }
     if (path.startsWith("/api/v1/admin/users")) {
       if (init?.method === "POST" && path.endsWith("/disable")) {
+        disabledAdminUsers.add("user-api-created");
         return okJson({
           ...apiAdminUser,
           id: "user-api-created",
@@ -668,34 +675,35 @@ function routeFetch() {
         });
       }
       if (init?.method === "POST" && path === "/api/v1/admin/users") {
+        const created = {
+          ...apiAdminUser,
+          id: "user-api-created",
+          oidc_subject: "local:user-api-created",
+          email: "reviewer2@example.com",
+          first_name: "Riley",
+          last_name: "Reviewer",
+          role: "REVIEWER",
+          must_change_password: true,
+          mfa_enabled: false
+        };
+        createdAdminUsers.push(created);
         return {
           ok: true,
           status: 201,
           headers: new Headers(),
-          json: async () => ({
-            user: {
-              ...apiAdminUser,
-              id: "user-api-created",
-              oidc_subject: "local:user-api-created",
-              email: "reviewer2@example.com",
-              first_name: "Riley",
-              last_name: "Reviewer",
-              role: "REVIEWER",
-              must_change_password: true,
-              mfa_enabled: false
-            },
-            temporary_password: "Generated-Temp-Password-1234"
-          })
+          json: async () => ({ user: created, temporary_password: "Generated-Temp-Password-1234" })
         };
       }
       if (init?.method === "DELETE") {
         return noContent();
       }
       return okJson({
-        total: 1,
+        total: 1 + createdAdminUsers.length,
         limit: 50,
         offset: 0,
-        items: [apiAdminUser]
+        items: [...createdAdminUsers, apiAdminUser].map((item) =>
+          disabledAdminUsers.has((item as { id: string }).id) ? { ...(item as object), account_status: "DISABLED" } : item
+        )
       });
     }
     if (path.startsWith("/api/v1/admin/devices")) {
@@ -853,13 +861,24 @@ describe("App", () => {
     expect(screen.queryByRole("dialog", { name: /Vopak API/i })).not.toBeInTheDocument();
   });
 
+  it("greets an account that only has an email without reading the address out", async () => {
+    vi.stubGlobal("fetch", dashboardFetch());
+
+    render(<App initialSession={{ ...adminSession, displayName: "legacy@example.com", email: "legacy@example.com" }} />);
+
+    const dashboard = await screen.findByRole("region", { name: "Dashboard workspace" });
+    const greeting = within(dashboard).getByRole("heading", { name: /^Good (morning|afternoon|evening)$/ });
+    expect(greeting.textContent).not.toContain("legacy");
+    expect(greeting.textContent).not.toContain("@");
+  });
+
   it("keeps the operational dashboard hierarchy and shortcuts explicit", async () => {
     vi.stubGlobal("fetch", dashboardFetch());
 
     render(<App initialSession={adminSession} />);
 
     const dashboard = await screen.findByRole("region", { name: "Dashboard workspace" });
-    expect(within(dashboard).getByRole("heading", { name: /Good (morning|afternoon|evening),/ })).toBeVisible();
+    expect(within(dashboard).getByRole("heading", { name: /^Good (morning|afternoon|evening), Sam Admin$/ })).toBeVisible();
     expect(within(dashboard).getByRole("heading", { name: "Operational Trends" })).toBeVisible();
     expect(within(dashboard).getByRole("heading", { name: "Recent Activity" })).toBeVisible();
 
@@ -1432,7 +1451,7 @@ describe("App", () => {
     await user.type(screen.getByLabelText("Email"), "reviewer2@example.com");
     await user.type(screen.getByLabelText("First name"), "Riley");
     await user.type(screen.getByLabelText("Last name"), "Reviewer");
-    await user.selectOptions(screen.getByLabelText("Role"), "REVIEWER");
+    await user.selectOptions(within(screen.getByRole("dialog")).getByLabelText("Role"), "REVIEWER");
     await user.click(screen.getByRole("button", { name: "Create user" }));
 
     expect(await screen.findByTestId("credential-value")).toHaveTextContent(

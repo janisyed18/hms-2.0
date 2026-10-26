@@ -35,6 +35,8 @@ interface UserAdminDialogProps {
   onSubmit: (values: UserAdminValues) => Promise<void>;
 }
 
+const FOCUS_ORDER = ["email", "firstName", "lastName", "customers"];
+
 export function UserAdminDialog({
   open,
   mode,
@@ -46,6 +48,7 @@ export function UserAdminDialog({
 }: UserAdminDialogProps) {
   const roleOptions = useMemo(() => manageableRoles(actorRoles), [actorRoles]);
   const [email, setEmail] = useState("");
+  const nameRequired = (existing?: string) => mode === "create" || Boolean(existing);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [role, setRole] = useState<StaffRole>(roleOptions[0] ?? "INSPECTOR");
@@ -85,10 +88,18 @@ export function UserAdminDialog({
     const found: FieldErrors = {};
     if (isBlank(email)) found.email = "Enter the user's email address.";
     else if (!/^\S+@\S+\.\S+$/.test(email.trim())) found.email = "Enter a valid email address.";
+    // New users must have a name to show; an existing user keeps whatever they had, and a legacy user
+    // without one can still be edited.
+    if (mode === "create" || initial?.firstName) {
+      if (isBlank(firstName)) found.firstName = "Enter the user's first name.";
+    }
+    if (mode === "create" || initial?.lastName) {
+      if (isBlank(lastName)) found.lastName = "Enter the user's last name.";
+    }
     if (needsCustomer && customerIds.length === 0) found.customers = "Select at least one customer for this user.";
     setErrors(found);
     if (Object.keys(found).length > 0) {
-      focusFirstInvalid(formRef.current, ["email", "customers"], found);
+      focusFirstInvalid(formRef.current, FOCUS_ORDER, found);
       return;
     }
     submitLock.current = true;
@@ -105,7 +116,7 @@ export function UserAdminDialog({
     } catch (reason) {
       const friendly = friendlyApiError(reason, {
         fallback: mode === "create" ? "The user could not be created. Nothing was saved." : "The user could not be updated. Nothing was changed.",
-        fieldMap: { email: "email", customer_ids: "customers", customer_id: "customers" }
+        fieldMap: { email: "email", first_name: "firstName", last_name: "lastName", customer_ids: "customers", customer_id: "customers" }
       });
       const fieldErrors = { ...friendly.fieldErrors };
       // A duplicate address is reported by the server as a conflict about the email.
@@ -113,7 +124,7 @@ export function UserAdminDialog({
       setErrors(fieldErrors);
       setSubmitError(friendly.message);
       window.setTimeout(() => {
-        if (!focusFirstInvalid(formRef.current, ["email", "customers"], fieldErrors)) {
+        if (!focusFirstInvalid(formRef.current, FOCUS_ORDER, fieldErrors)) {
           formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus();
         }
       }, 0);
@@ -171,11 +182,11 @@ export function UserAdminDialog({
           {(props) => <input {...props} aria-label="Email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); clearError("email"); }} />}
         </Field>
         <div className="modal-grid">
-          <Field className="auth-field" label="First name" name="firstName">
-            {(props) => <input {...props} aria-label="First name" value={firstName} onChange={(event) => setFirstName(event.target.value)} />}
+          <Field className="auth-field" error={errors.firstName} label="First name" name="firstName" required={nameRequired(initial?.firstName)}>
+            {(props) => <input {...props} aria-label="First name" value={firstName} onChange={(event) => { setFirstName(event.target.value); clearError("firstName"); }} />}
           </Field>
-          <Field className="auth-field" label="Last name" name="lastName">
-            {(props) => <input {...props} aria-label="Last name" value={lastName} onChange={(event) => setLastName(event.target.value)} />}
+          <Field className="auth-field" error={errors.lastName} label="Last name" name="lastName" required={nameRequired(initial?.lastName)}>
+            {(props) => <input {...props} aria-label="Last name" value={lastName} onChange={(event) => { setLastName(event.target.value); clearError("lastName"); }} />}
           </Field>
         </div>
         <Field className="auth-field" label="Role" name="role" required>

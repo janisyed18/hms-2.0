@@ -127,6 +127,8 @@ async def test_user_lifecycle_audit_events_contain_no_credentials(
             json={
                 "oidc_subject": "inspector-1",
                 "email": "inspector@example.com",
+                "first_name": "Test",
+                "last_name": "Person",
                 "role": "INSPECTOR",
                 "customer_id": None,
             },
@@ -251,6 +253,8 @@ async def test_new_events_chain_correctly_after_historical_unredacted_rows(
             json={
                 "oidc_subject": "inspector-2",
                 "email": "inspector2@example.com",
+                "first_name": "Test",
+                "last_name": "Person",
                 "role": "INSPECTOR",
                 "customer_id": None,
             },

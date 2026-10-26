@@ -59,6 +59,7 @@ test.describe("Admin and security interaction feedback", () => {
       // A refused create keeps the dialog and the typed values, and explains why on the field.
       await dialog.getByLabel("Email").fill(email);
       await dialog.getByLabel("First name").fill("Feedback");
+      await dialog.getByLabel("Last name").fill("Person");
       await failOnce(page, /\/api\/v1\/admin\/users$/, "POST", 409, "A user with this email already exists.");
       await dialog.getByRole("button", { name: "Create user" }).click();
       await expect(dialog.getByRole("alert")).toContainText("A user with this email already exists.");
@@ -69,6 +70,8 @@ test.describe("Admin and security interaction feedback", () => {
       await expect(page.getByRole("status").filter({ hasText: "created successfully" })).toContainText(email);
 
       // Security actions ask first, name the person, and a failure changes nothing.
+      // The directory is sorted by name and paged by the server, so find the new user by their email.
+      await page.getByRole("searchbox", { name: "Search users" }).fill(email);
       const row = page.getByRole("row", { name: new RegExp(email) });
       await expect(row).toBeVisible();
       await page.getByRole("button", { name: `Manage ${email}` }).click();

@@ -40,3 +40,18 @@ export function productLabel(product: { code: string; name?: string | null }): s
 export function customerLabel(customer: { code?: string | null; name: string }): string {
   return pair(customer.name, customer.code);
 }
+
+/**
+ * The name to greet someone by, or null when all we know is their email: a greeting must never
+ * read out a sign-in address. `session.displayName` falls back to the email when no name is set.
+ */
+export function greetingName(session: { displayName: string; email?: string }): string | null {
+  const name = session.displayName.trim();
+  if (!name || name.includes("@") || name.toLowerCase() === session.email?.trim().toLowerCase()) return null;
+  return name;
+}
+
+/** The person's name as stored, or null for a legacy account that never had one. */
+export function personName(user: { firstName?: string | null; lastName?: string | null }): string | null {
+  return [user.firstName, user.lastName].map((part) => part?.trim()).filter(Boolean).join(" ") || null;
+}

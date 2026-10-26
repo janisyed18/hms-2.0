@@ -3623,3 +3623,109 @@ tbody tr.is-selected {
   .portal-details { grid-template-columns: 1fr; }
   .portal-form-grid label:last-child { grid-column: auto; }
 }
+
+/* User directory: filters, name-first identity cell, loading skeleton. */
+.user-filters {
+  padding: 12px 18px 14px;
+}
+
+.user-filters .filter-grid {
+  margin: 0;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.user-filters .filter-field,
+.user-filters .filter-field select,
+.user-filters .filter-field input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.user-filter-search {
+  grid-column: span 2;
+}
+
+.user-role-cell span,
+.user-role-cell small {
+  display: block;
+}
+
+.user-filter-input {
+  position: relative;
+  display: block;
+}
+
+.user-filter-input svg {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.user-filter-input input {
+  width: 100%;
+  padding-left: 32px;
+}
+
+.user-result-count {
+  min-height: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.user-result-count:not(:empty) {
+  margin: 0 18px 8px;
+}
+
+.user-identity strong,
+.user-identity small {
+  display: block;
+}
+
+.user-identity small {
+  margin-top: 2px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.user-name-missing {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.user-skeleton {
+  display: grid;
+  gap: 10px;
+  padding: 12px 0;
+}
+
+.user-skeleton i {
+  display: block;
+  height: 44px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--panel-subtle), var(--border), var(--panel-subtle));
+  background-size: 200% 100%;
+  animation: user-shimmer 1.4s linear infinite;
+}
+
+@keyframes user-shimmer {
+  to { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .user-skeleton i { animation: none; }
+}
+
+.table-frame[aria-busy="true"] {
+  opacity: 0.6;
+}
+
+@media (max-width: 720px) {
+  .user-filter-search {
+    grid-column: auto;
+  }
+}

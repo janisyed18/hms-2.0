@@ -46,7 +46,8 @@ interface OperationalWorkspaceProps {
   module: OperationalModule;
   onAssetOpen: (assetId: string) => void;
   onModuleChange: (module: AppModule, inspectionId?: string) => void;
-  userName: string;
+  /** Null when only an email is known: the greeting then omits the name rather than read the address out. */
+  userName: string | null;
 }
 
 const syncRows = [
@@ -237,7 +238,7 @@ export function OperationalWorkspace({
       <header className="dashboard-source-row dashboard-hero">
         <div>
           <span className="dashboard-context">Dashboard</span>
-          <h2>Good {greetingForCurrentTime(dashboardNow)}, {userName}</h2>
+          <h2>Good {greetingForCurrentTime(dashboardNow)}{userName ? `, ${userName}` : ""}</h2>
           <p>Operational records for {reportingPeriod.label.toLowerCase()}.</p>
         </div>
         <div className="dashboard-hero-actions">
