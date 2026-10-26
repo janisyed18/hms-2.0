@@ -645,3 +645,41 @@ describe("asset identity and required fields", () => {
     expect(screen.getByLabelText("Notes (optional)")).not.toBeRequired();
   });
 });
+
+describe("marking a notification read", () => {
+  const unread = {
+    id: "notification-1", category: "CERTIFICATE_ISSUED", tier: "IMPORTANT", subject: "Certificate issued", body: "A certificate was issued.",
+    customer_id: "customer-a", asset_id: null, created_at: "2027-10-04T00:00:00Z", read_at: null
+  };
+
+  it("shows a failure and leaves the notification unread, then marks it read only after the server answers", async () => {
+    let reads = 0;
+    let first = true;
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = new URL(String(url), "http://test");
+      if (requestUrl.pathname === "/api/v1/customers") return response({ total: 1, limit: 100, offset: 0, items: [customer("customer-a", "Customer A")] });
+      if (requestUrl.pathname === "/api/v1/notifications/me") {
+        reads += 1;
+        return response({ total: 1, unread_total: reads > 1 ? 0 : 1, limit: 100, offset: 0, items: [reads > 1 ? { ...unread, read_at: "2027-10-04T01:00:00Z" } : unread] });
+      }
+      if (requestUrl.pathname === "/api/v1/notifications/notification-1/read" && init?.method === "POST") {
+        if (first) { first = false; return new Response(JSON.stringify({ error: { code: "internal", message: "Internal server error" } }), { status: 500 }); }
+        return response({ ...unread, read_at: "2027-10-04T01:00:00Z" });
+      }
+      return response({ total: 0, limit: 100, offset: 0, items: [] });
+    }));
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="notifications" />);
+    await user.click(await screen.findByRole("button", { name: "Mark as read" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/service is unavailable/i);
+    expect(alert.textContent).not.toMatch(/Internal server error/);
+    expect(screen.getByRole("button", { name: "Mark as read" })).toBeEnabled(); // still unread
+    expect(screen.queryByText("Read")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Mark as read" }));
+    expect(await screen.findByText("Read")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});

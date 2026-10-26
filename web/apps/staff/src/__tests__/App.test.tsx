@@ -1084,6 +1084,44 @@ describe("App", () => {
     expect(notificationButton).not.toHaveTextContent("1");
   });
 
+  it("keeps a notification unread, and the menu open, when marking it read fails, then opens it once it works", async () => {
+    const base = notificationFeedFetch();
+    let failed = false;
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes("notification-1/read") && init?.method === "POST" && !failed) {
+        failed = true;
+        return {
+          ok: false,
+          status: 500,
+          headers: new Headers(),
+          json: async () => ({ error: { code: "internal", message: "Internal server error", details: null } })
+        };
+      }
+      return base(url, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App initialSession={adminSession} />);
+
+    const notificationButton = await screen.findByRole("button", { name: "Notifications" });
+    await waitFor(() => expect(notificationButton).toHaveTextContent("1"));
+    await user.click(notificationButton);
+    const open = () => within(screen.getByRole("dialog", { name: "Notifications" }))
+      .getByRole("button", { name: "Open unread notification Inspection awaiting review" });
+    await user.click(open());
+
+    const alert = await within(screen.getByRole("dialog", { name: "Notifications" })).findByRole("alert");
+    expect(alert).toHaveTextContent(/service is unavailable/i);
+    expect(alert.textContent).not.toMatch(/Internal server error/);
+    expect(notificationButton).toHaveTextContent("1"); // not marked read
+    expect(screen.queryByRole("heading", { name: "Asset Register" })).toBeNull(); // did not navigate
+
+    await user.click(open());
+    expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
+    expect(notificationButton).not.toHaveTextContent("1");
+  });
+
   it("shows backend-backed rows inside each core-record module", async () => {
     vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();
@@ -1407,8 +1445,8 @@ describe("App", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Manage reviewer2@example.com" }));
-    vi.stubGlobal("confirm", vi.fn(() => true));
     await user.click(screen.getByRole("menuitem", { name: "Disable account" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Disable account" }));
     await waitFor(() => {
       expect(screen.getByRole("row", { name: /reviewer2@example.com/i })).toHaveTextContent("DISABLED");
     });
@@ -1448,7 +1486,9 @@ describe("App", () => {
 
     await user.click(await screen.findByRole("button", { name: "Users & Roles" }));
 
-    expect(await screen.findByText("Missing permission: user:admin")).toBeVisible();
+    // The internal permission name is not shown; the user is told plainly what is wrong.
+    expect(await screen.findByText("You do not have permission to do this.")).toBeVisible();
+    expect(screen.queryByText(/user:admin/)).toBeNull();
   });
 
   it("opens remaining topbar menus and applies global search navigation", async () => {

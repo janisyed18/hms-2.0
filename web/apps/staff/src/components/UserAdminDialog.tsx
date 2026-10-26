@@ -3,6 +3,11 @@ import { X } from "lucide-react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 
 import type { StaffRole } from "../domain/types";
+import { ActionButton } from "./interaction/ActionButton";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { Field, RequiredNote } from "./interaction/FormPrimitives";
+import { friendlyApiError } from "./interaction/friendlyApiError";
+import { focusFirstInvalid, isBlank, useFormErrors, type FieldErrors } from "./interaction/useFormErrors";
 import { ROLE_LABELS, manageableRoles, requiresCustomer } from "./roleAdmin";
 
 export interface UserAdminValues {
@@ -26,7 +31,8 @@ interface UserAdminDialogProps {
   customers: CustomerOption[];
   initial?: Partial<UserAdminValues>;
   onClose: () => void;
-  onSubmit: (values: UserAdminValues) => void;
+  /** Rejects when the server refuses; the dialog then stays open with what was typed. */
+  onSubmit: (values: UserAdminValues) => Promise<void>;
 }
 
 export function UserAdminDialog({
@@ -44,7 +50,11 @@ export function UserAdminDialog({
   const [lastName, setLastName] = useState("");
   const [role, setRole] = useState<StaffRole>(roleOptions[0] ?? "INSPECTOR");
   const [customerIds, setCustomerIds] = useState<string[]>([]);
-  const emailRef = useRef<HTMLInputElement>(null);
+  const [isSubmitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const { errors, setErrors, clearError, clearAll } = useFormErrors();
+  const formRef = useRef<HTMLFormElement>(null);
+  const submitLock = useRef(false);
   const reducedMotion = useReducedMotion();
 
   useEffect(() => {
@@ -54,32 +64,63 @@ export function UserAdminDialog({
       setLastName(initial?.lastName ?? "");
       setRole(initial?.role ?? roleOptions[0] ?? "INSPECTOR");
       setCustomerIds(initial?.customerIds ?? (initial?.customerId ? [initial.customerId] : []));
+      setSubmitError(null);
+      clearAll();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial, open, roleOptions]);
 
   useEffect(() => {
     if (open) {
-      emailRef.current?.focus();
+      window.setTimeout(() => formRef.current?.querySelector<HTMLElement>('[data-field="email"]')?.focus(), 0);
     }
   }, [open]);
 
   const needsCustomer = requiresCustomer(role);
-  const customerInvalid = needsCustomer && customerIds.length === 0;
-  const canSubmit = email.trim().length > 0 && !customerInvalid;
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!canSubmit) {
+    if (submitLock.current) return;
+    setSubmitError(null);
+    const found: FieldErrors = {};
+    if (isBlank(email)) found.email = "Enter the user's email address.";
+    else if (!/^\S+@\S+\.\S+$/.test(email.trim())) found.email = "Enter a valid email address.";
+    if (needsCustomer && customerIds.length === 0) found.customers = "Select at least one customer for this user.";
+    setErrors(found);
+    if (Object.keys(found).length > 0) {
+      focusFirstInvalid(formRef.current, ["email", "customers"], found);
       return;
     }
-    onSubmit({
-      email: email.trim(),
-      firstName: firstName.trim(),
-      lastName: lastName.trim(),
-      role,
-      customerId: needsCustomer ? customerIds[0] ?? null : null,
-      customerIds: needsCustomer ? customerIds : []
-    });
+    submitLock.current = true;
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        email: email.trim(),
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        role,
+        customerId: needsCustomer ? customerIds[0] ?? null : null,
+        customerIds: needsCustomer ? customerIds : []
+      });
+    } catch (reason) {
+      const friendly = friendlyApiError(reason, {
+        fallback: mode === "create" ? "The user could not be created. Nothing was saved." : "The user could not be updated. Nothing was changed.",
+        fieldMap: { email: "email", customer_ids: "customers", customer_id: "customers" }
+      });
+      const fieldErrors = { ...friendly.fieldErrors };
+      // A duplicate address is reported by the server as a conflict about the email.
+      if (friendly.kind === "conflict" && /email/i.test(friendly.message)) fieldErrors.email = friendly.message;
+      setErrors(fieldErrors);
+      setSubmitError(friendly.message);
+      window.setTimeout(() => {
+        if (!focusFirstInvalid(formRef.current, ["email", "customers"], fieldErrors)) {
+          formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus();
+        }
+      }, 0);
+    } finally {
+      submitLock.current = false;
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -107,7 +148,9 @@ export function UserAdminDialog({
             className="modal-card"
             exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
             initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
+            noValidate
             onSubmit={submit}
+            ref={formRef}
             transition={{ duration: reducedMotion ? 0 : 0.16 }}
           >
         <div className="modal-header">
@@ -122,77 +165,55 @@ export function UserAdminDialog({
           </button>
         </div>
 
-        <label className="auth-field">
-          <span>Email</span>
-          <input
-            ref={emailRef}
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            required
-          />
-        </label>
+        {submitError ? <ActionNotice kind="error" title={mode === "create" ? "User not created" : "User not updated"}>{submitError}</ActionNotice> : null}
+        <RequiredNote />
+        <Field className="auth-field" error={errors.email} label="Email" name="email" required>
+          {(props) => <input {...props} aria-label="Email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); clearError("email"); }} />}
+        </Field>
         <div className="modal-grid">
-          <label className="auth-field">
-            <span>First name</span>
-            <input
-              value={firstName}
-              onChange={(event) => setFirstName(event.target.value)}
-            />
-          </label>
-          <label className="auth-field">
-            <span>Last name</span>
-            <input
-              value={lastName}
-              onChange={(event) => setLastName(event.target.value)}
-            />
-          </label>
+          <Field className="auth-field" label="First name" name="firstName">
+            {(props) => <input {...props} aria-label="First name" value={firstName} onChange={(event) => setFirstName(event.target.value)} />}
+          </Field>
+          <Field className="auth-field" label="Last name" name="lastName">
+            {(props) => <input {...props} aria-label="Last name" value={lastName} onChange={(event) => setLastName(event.target.value)} />}
+          </Field>
         </div>
-        <label className="auth-field">
-          <span>Role</span>
-          <select
-            aria-label="Role"
-            value={role}
-            onChange={(event) => setRole(event.target.value as StaffRole)}
-          >
-            {roleOptions.map((option) => (
-              <option key={option} value={option}>
-                {ROLE_LABELS[option]}
-              </option>
-            ))}
-          </select>
-        </label>
-        {needsCustomer ? (
-          <label className="auth-field">
-            <span>Customers</span>
-            <select
-              aria-label="Customers"
-              multiple
-              value={customerIds}
-              onChange={(event) => setCustomerIds(Array.from(event.currentTarget.selectedOptions, (option) => option.value))}
-              required
-            >
-              {customers.map((customer) => (
-                <option key={customer.id} value={customer.id}>
-                  {customer.name}
+        <Field className="auth-field" label="Role" name="role" required>
+          {(props) => (
+            <select {...props} aria-label="Role" value={role} onChange={(event) => setRole(event.target.value as StaffRole)}>
+              {roleOptions.map((option) => (
+                <option key={option} value={option}>
+                  {ROLE_LABELS[option]}
                 </option>
               ))}
             </select>
-          </label>
-        ) : null}
-        {customerInvalid ? (
-          <p className="auth-error" role="alert">
-            A Customer User must be assigned to at least one customer.
-          </p>
+          )}
+        </Field>
+        {needsCustomer ? (
+          <Field className="auth-field" error={errors.customers} label="Customers" name="customers" required>
+            {(props) => (
+              <select
+                {...props}
+                aria-label="Customers"
+                multiple
+                value={customerIds}
+                onChange={(event) => { setCustomerIds(Array.from(event.currentTarget.selectedOptions, (option) => option.value)); clearError("customers"); }}
+              >
+                {customers.map((customer) => (
+                  <option key={customer.id} value={customer.id}>
+                    {customer.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
         ) : null}
 
         <div className="modal-actions">
-          <button className="secondary-button" onClick={onClose} type="button">
-            Cancel
-          </button>
-          <button className="primary-button" disabled={!canSubmit} type="submit">
+          <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
+          <ActionButton pending={isSubmitting} pendingLabel={mode === "create" ? "Creating…" : "Saving…"} type="submit" variant="primary">
             {mode === "create" ? "Create user" : "Save changes"}
-          </button>
+          </ActionButton>
         </div>
           </m.form>
         </m.div>

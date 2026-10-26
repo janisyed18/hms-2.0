@@ -40,6 +40,7 @@ import {
 import { createHmsClient } from "../api/hmsClient";
 import type { NotificationRecord, StaffSession } from "../domain/types";
 import { motionTokens } from "../motion/motionTokens";
+import { friendlyApiError } from "./interaction/friendlyApiError";
 
 export type AppModule =
   | "dashboard"
@@ -661,8 +662,9 @@ export function AppShell({
           current.map((item) => (item.id === updated.id ? updated : item))
         );
         setNotificationUnreadTotal((current) => Math.max(0, current - 1));
-      } catch {
-        setNotificationError("This notification could not be marked as read. Try again.");
+      } catch (reason) {
+        // Still unread, and the user stays where they are: nothing was changed on the server.
+        setNotificationError(friendlyApiError(reason, { fallback: "This notification could not be marked as read. Try again." }).message);
         return;
       } finally {
         setMarkingNotificationId(null);
@@ -967,6 +969,11 @@ export function AppShell({
                       <button onClick={() => void loadNotifications()} type="button">
                         Retry
                       </button>
+                    </div>
+                  ) : null}
+                  {notificationStatus === "ready" && notificationError ? (
+                    <div className="notification-feed-message notification-feed-error" role="alert">
+                      <span>{notificationError}</span>
                     </div>
                   ) : null}
                   {notificationStatus === "ready" && notifications.length === 0 ? (

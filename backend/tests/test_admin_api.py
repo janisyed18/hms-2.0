@@ -183,6 +183,41 @@ async def test_admin_user_crud_writes_audit_events(
 
 
 @pytest.mark.asyncio
+async def test_user_responses_carry_account_security_state(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The Staff UI renders these fields, so a disable must read back as DISABLED."""
+    await seed_user(session_factory)
+    async with session_factory() as session:
+        session.add(
+            User(
+                oidc_subject="enrolled-1",
+                email="enrolled@example.com",
+                role=Role.INSPECTOR.value,
+                mfa_enabled=True,
+                last_login_at=datetime(2026, 1, 2, 3, 4, tzinfo=UTC),
+            )
+        )
+        await session.commit()
+
+    async with admin_client(session_factory) as client:
+        listed = (
+            await client.get("/api/v1/admin/users", params={"search": "enrolled"})
+        ).json()["items"][0]
+        disabled = await client.post(f"/api/v1/admin/users/{listed['id']}/disable")
+        relisted = (
+            await client.get("/api/v1/admin/users", params={"search": "enrolled"})
+        ).json()["items"][0]
+
+    assert listed["mfa_enabled"] is True
+    assert listed["last_login_at"] is not None
+    assert listed["account_status"] == "ACTIVE"
+    assert disabled.status_code == 200
+    assert disabled.json()["account_status"] == "DISABLED"
+    assert relisted["account_status"] == "DISABLED"
+
+
+@pytest.mark.asyncio
 async def test_customer_user_can_hold_multiple_persisted_customer_scopes(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

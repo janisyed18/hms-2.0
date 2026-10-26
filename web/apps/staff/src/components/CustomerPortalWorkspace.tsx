@@ -14,6 +14,7 @@ import type {
 } from "../domain/types";
 import type { AppModule } from "./AppShell";
 import { CustomerBookings } from "./CustomerBookings";
+import { friendlyApiError } from "./interaction/friendlyApiError";
 import { WorkspaceState } from "./WorkspaceState";
 
 interface CustomerPortalWorkspaceProps {
@@ -302,5 +303,25 @@ function Retests({ retests, onModuleChange }: { retests: RetestScheduleRecord[];
 
 function Notifications({ notifications, onChanged }: { notifications: NotificationRecord[]; onChanged: () => Promise<void> }) {
   const [pending, setPending] = useState<string | null>(null);
-  return <section className="portal-panel"><h2>Notifications</h2>{notifications.length === 0 ? <p>No notifications for this organisation.</p> : <ul className="portal-list">{notifications.map((notification) => <li key={notification.id}><strong>{notification.subject ?? notification.category}</strong><span>{notification.body}</span><span>{formatDateTime(notification.createdAt)}</span>{notification.readAt ? <span>Read</span> : <button disabled={pending === notification.id} type="button" onClick={async () => { setPending(notification.id); try { await createHmsClient().markNotificationRead(notification.id); await onChanged(); } finally { setPending(null); } }}>Mark as read</button>}</li>)}</ul>}</section>;
+  const [failure, setFailure] = useState<{ id: string; message: string } | null>(null);
+  // Marking read is routine, so success is shown by the item itself reading "Read": no banner per click.
+  async function markRead(notification: NotificationRecord) {
+    if (pending) return;
+    setPending(notification.id);
+    setFailure(null);
+    try {
+      await createHmsClient().markNotificationRead(notification.id);
+    } catch (reason) {
+      setFailure({ id: notification.id, message: friendlyApiError(reason, { fallback: "This notification could not be marked as read. Try again." }).message });
+      setPending(null);
+      return;
+    }
+    try {
+      await onChanged();
+    } finally {
+      setPending(null);
+    }
+  }
+  return <section className="portal-panel"><h2>Notifications</h2>{notifications.length === 0 ? <p>No notifications for this organisation.</p> : <ul className="portal-list">{notifications.map((notification) => <li key={notification.id}><strong>{notification.subject ?? notification.category}</strong><span>{notification.body}</span><span>{formatDateTime(notification.createdAt)}</span>{notification.readAt ? <span>Read</span> : <button className="secondary-button" disabled={pending !== null} type="button" onClick={() => void markRead(notification)}>{pending === notification.id ? "Marking…" : "Mark as read"}</button>}{failure?.id === notification.id ? <span className="portal-error" role="alert">{failure.message}</span> : null}</li>)}</ul>}</section>;
 }
+

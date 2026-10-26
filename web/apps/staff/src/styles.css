@@ -2824,6 +2824,11 @@ tbody tr.is-selected {
   display: inline-flex;
 }
 
+/* The global td clips overflow; the row menu hangs below its cell, so this cell must not. */
+.user-actions-cell {
+  overflow: visible;
+}
+
 .user-action-menu {
   position: absolute;
   z-index: 20;

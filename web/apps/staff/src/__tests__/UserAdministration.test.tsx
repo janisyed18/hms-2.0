@@ -63,7 +63,7 @@ describe("UserAdminDialog", () => {
       />
     );
 
-    expect(screen.getByLabelText("Email")).toHaveFocus();
+    await waitFor(() => expect(screen.getByLabelText("Email")).toHaveFocus());
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -116,11 +116,17 @@ describe("UserAdminDialog", () => {
     });
     // Customer access is required; an operator can assign more than one organisation.
     const submit = screen.getByRole("button", { name: /create user/i });
-    expect(submit).toBeDisabled();
     const user = userEvent.setup();
+    await user.click(submit);
+    // Missing access is explained next to the field instead of leaving a dead button.
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Customers")).toBeRequired();
+    expect(screen.getByLabelText("Customers")).toHaveFocus();
+    expect(screen.getByLabelText("Customers")).toHaveAccessibleDescription("Select at least one customer for this user.");
     await user.selectOptions(screen.getByLabelText("Customers"), ["c1", "c2"]);
-    expect(submit).not.toBeDisabled();
-    fireEvent.click(submit);
+    expect(screen.getByLabelText("Customers")).not.toHaveAttribute("aria-invalid");
+    await user.click(submit);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({
         role: "CUSTOMER_USER",
@@ -311,8 +317,9 @@ describe("SystemWorkspace user lifecycle", () => {
       throw new Error(`Unexpected request: ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("confirm", vi.fn(() => true));
     const user = userEvent.setup();
+    const confirmDialog = async (button: string) =>
+      user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: button }));
 
     render(
       <SystemWorkspace
@@ -325,14 +332,19 @@ describe("SystemWorkspace user lifecycle", () => {
     await screen.findByText("locked@example.com");
     await user.click(screen.getByRole("button", { name: "Manage staff@example.com" }));
     await user.click(screen.getByRole("menuitem", { name: "Disable account" }));
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining("/disable"), expect.anything());
+    await confirmDialog("Disable account");
     await waitFor(() => expect(screen.getByText("DISABLED")).toBeVisible());
+    expect(screen.getByText(/was disabled\./)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Manage locked@example.com" }));
     await user.click(screen.getByRole("menuitem", { name: "Unlock account" }));
+    await confirmDialog("Unlock account");
     await waitFor(() => expect(screen.getAllByText("ACTIVE")).toHaveLength(1));
 
     await user.click(screen.getByRole("button", { name: "Manage staff@example.com" }));
     await user.click(screen.getByRole("menuitem", { name: "Reset password" }));
+    await confirmDialog("Reset password");
     expect(await screen.findByTestId("credential-value")).toHaveTextContent(
       "Reset-Temp-Password-5678"
     );
@@ -340,6 +352,7 @@ describe("SystemWorkspace user lifecycle", () => {
 
     await user.click(screen.getByRole("button", { name: "Manage staff@example.com" }));
     await user.click(screen.getByRole("menuitem", { name: "Reset MFA" }));
+    await confirmDialog("Reset MFA");
     await waitFor(() => expect(screen.getByText("MFA setup required")).toBeVisible());
   });
 });
