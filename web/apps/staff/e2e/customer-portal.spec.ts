@@ -143,6 +143,45 @@ test.describe("customer portal", () => {
     process.env.HMS_E2E_ACCOUNTS_JSON = JSON.stringify(resetAuthTestAccounts());
   });
 
+  test("portal links restore the workspace, organisation and asset, and refuse what is not theirs", async ({ page }) => {
+    test.setTimeout(180_000);
+    preparePortalFixture(false);
+    await signInToPortal(page);
+    page.setDefaultTimeout(20_000);
+    const here = () => new URL(page.url()).pathname + new URL(page.url()).search;
+
+    await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Assets", exact: true }).click();
+    await expect.poll(here).toMatch(/^\/portal\/\?view=assets&customer=[\w-]+$/);
+    await page.locator(".portal-record-button").first().click();
+    await expect.poll(here).toMatch(/^\/portal\/\?view=assets&customer=[\w-]+&asset=[\w-]+$/);
+    const link = here();
+    const heading = await page.locator(".portal-panel h2").first().innerText();
+
+    await page.goto(link);
+    await expect(page.locator(".portal-panel h2").first()).toHaveText(heading);
+    await page.reload();
+    await expect(page.locator(".portal-panel h2").first()).toHaveText(heading);
+    await page.getByRole("button", { name: "Back to assets" }).click();
+    await expect.poll(here).toMatch(/^\/portal\/\?view=assets&customer=[\w-]+$/);
+    await page.goBack();
+    await expect(page.locator(".portal-panel h2").first()).toHaveText(heading);
+
+    // An asset that is not this organisation's is not shown, and the link stops naming it.
+    const organisation = new URL(page.url()).searchParams.get("customer");
+    await page.goto(`/portal/?view=assets&customer=${organisation}&asset=00000000-0000-0000-0000-000000000000`);
+    await expect(page.getByRole("alert").filter({ hasText: "That asset could not be found" })).toBeVisible();
+    await expect.poll(here).toBe(`/portal/?view=assets&customer=${organisation}`);
+
+    // An organisation the account cannot see is never swapped for one it can.
+    await page.goto("/portal/?view=assets&customer=00000000-0000-0000-0000-000000000000");
+    await expect(page.getByText("Organisation unavailable")).toBeVisible();
+
+    // Staff views do not exist under /portal/.
+    await page.goto("/portal/?view=users");
+    await expect(page.getByRole("region", { name: "Customer portal workspace" })).toBeVisible();
+    await expect.poll(() => new URL(page.url()).searchParams.get("view")).toBeNull();
+  });
+
   test("customer completes the native portal journey and cancels a booking", async ({ page }) => {
     preparePortalFixture(false);
     await signInToPortal(page);

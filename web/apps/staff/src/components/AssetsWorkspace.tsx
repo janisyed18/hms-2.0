@@ -1,5 +1,5 @@
 import { BadgeAlert, Boxes, CircleOff, UsersRound } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import { AssetDetail } from "./AssetDetail";
 import { AssetForm } from "./AssetForm";
@@ -65,15 +65,23 @@ function endLabel(asset: AssetRecord) {
 
 export function AssetsWorkspace({
   canWrite,
-  initialAssetId,
-  onInitialAssetOpened
+  routeAssetId,
+  onAssetRouteChange
 }: {
   canWrite: boolean;
-  initialAssetId?: string | null;
-  onInitialAssetOpened?: () => void;
+  /** The asset the URL names; the URL, not this component, is the record of which asset is open. */
+  routeAssetId?: string | null;
+  onAssetRouteChange?: (assetId: string | null, options?: { replace?: boolean }) => void;
 }) {
   const workspace = useAssetsWorkspace();
-  const { isLoading, openDetailById } = workspace;
+  const { isLoading, resolveAsset, openDetail, reportOpenFailure, closeDetail } = workspace;
+  const viewingId = workspace.viewingAsset?.id ?? null;
+  // Each direction reacts only to its own side changing, so the two can never chase each other.
+  const live = useRef({ routeAssetId, viewingId, resolveAsset, openDetail, reportOpenFailure, closeDetail, onAssetRouteChange });
+  useEffect(() => {
+    live.current = { routeAssetId, viewingId, resolveAsset, openDetail, reportOpenFailure, closeDetail, onAssetRouteChange };
+  });
+  const previousViewing = useRef(viewingId);
   const assetStats = {
     total: workspace.assets.length,
     overdue: workspace.assets.filter((asset) => asset.lifecycleStatus === "OVERDUE").length,
@@ -81,12 +89,34 @@ export function AssetsWorkspace({
     customers: new Set(workspace.assets.map((asset) => asset.customer.id)).size
   };
 
+  // URL to screen: a link, or Back/Forward, opens or closes the detail. Finding an asset can take a
+  // request, so what comes back is shown only if the URL still asks for that asset: a slow answer for an
+  // asset the person has already left must neither open it nor undo where they went since.
   useEffect(() => {
-    if (!initialAssetId || isLoading) {
-      return;
+    if (isLoading) return;
+    const { viewingId: open, resolveAsset: resolve, closeDetail: close } = live.current;
+    if (routeAssetId && routeAssetId !== open) {
+      void resolve(routeAssetId).then((found) => {
+        if (live.current.routeAssetId !== routeAssetId) return;
+        if (found) {
+          live.current.openDetail(found);
+        } else {
+          // An asset that is missing or not theirs is not shown, and the link stops naming it.
+          live.current.reportOpenFailure();
+          live.current.onAssetRouteChange?.(null, { replace: true });
+        }
+      });
+    } else if (!routeAssetId && open) {
+      close();
     }
-    void openDetailById(initialAssetId).finally(onInitialAssetOpened);
-  }, [initialAssetId, isLoading, onInitialAssetOpened, openDetailById]);
+  }, [routeAssetId, isLoading]);
+
+  // Screen to URL: opening or closing the detail by hand updates the address.
+  useEffect(() => {
+    if (previousViewing.current === viewingId) return;
+    previousViewing.current = viewingId;
+    if (viewingId !== live.current.routeAssetId) live.current.onAssetRouteChange?.(viewingId);
+  }, [viewingId]);
 
   const assetColumns: ModuleColumn<AssetRecord>[] = [
     {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { HmsApiError, createHmsClient } from "../api/hmsClient";
 import { useActionNotice } from "../components/interaction/ActionNotice";
@@ -13,8 +13,9 @@ export type InspectionTypeFilter = "ALL" | InspectionType;
 
 export function useInspectionsWorkspace(
   canApproveBookings: boolean,
-  initialInspectionId?: string | null,
-  onInitialInspectionOpened?: () => void
+  /** The inspection the URL names; the URL is the record of which one is open. */
+  routeInspectionId?: string | null,
+  onInspectionRouteChange?: (inspectionId: string | null, options?: { replace?: boolean }) => void
 ) {
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [assets, setAssets] = useState<AssetRecord[]>([]);
@@ -68,10 +69,51 @@ export function useInspectionsWorkspace(
   const resultOptions = useMemo(() => Array.from(new Set(inspections.map((inspection) => inspection.result ?? "PENDING"))).sort(), [inspections]);
   const selectedInspection = useMemo(() => inspections.find((inspection) => inspection.id === selectedId) ?? null, [inspections, selectedId]);
 
+  // Each direction reacts only to its own side changing, so the URL and the screen cannot chase each other.
+  const live = useRef({ routeInspectionId, selectedId, onInspectionRouteChange, notify });
   useEffect(() => {
-    if (!initialInspectionId || !inspections.some((inspection) => inspection.id === initialInspectionId)) return;
-    setSelectedId(initialInspectionId); onInitialInspectionOpened?.();
-  }, [initialInspectionId, inspections, onInitialInspectionOpened]);
+    live.current = { routeInspectionId, selectedId, onInspectionRouteChange, notify };
+  });
+  const previousSelected = useRef(selectedId);
+
+  // URL to screen: a link, or Back/Forward, opens or closes the detail. The list holds one page, so an
+  // inspection that is not in it is asked for by id: only if that read fails (missing, or not theirs) is
+  // it "unavailable". What comes back is used only if the URL still asks for it.
+  const fetching = useRef<string | null>(null);
+  useEffect(() => {
+    if (isLoading) return;
+    const open = live.current.selectedId;
+    if (routeInspectionId && routeInspectionId !== open) {
+      if (inspections.some((inspection) => inspection.id === routeInspectionId)) {
+        setSelectedId(routeInspectionId);
+      } else if (fetching.current !== routeInspectionId) {
+        fetching.current = routeInspectionId;
+        createHmsClient().getInspection(routeInspectionId)
+          .then((found) => {
+            if (live.current.routeInspectionId !== routeInspectionId) return;
+            setInspections((current) => (current.some((inspection) => inspection.id === found.id) ? current : [found, ...current]));
+            setSelectedId(found.id);
+          })
+          .catch(() => {
+            if (live.current.routeInspectionId !== routeInspectionId) return;
+            live.current.notify({ kind: "error", title: "Inspection unavailable", message: "That inspection could not be found, or you do not have access to it." });
+            live.current.onInspectionRouteChange?.(null, { replace: true });
+          })
+          .finally(() => {
+            if (fetching.current === routeInspectionId) fetching.current = null;
+          });
+      }
+    } else if (!routeInspectionId && open) {
+      setSelectedId(null);
+    }
+  }, [routeInspectionId, isLoading, inspections]);
+
+  // Screen to URL: opening or closing the detail by hand updates the address.
+  useEffect(() => {
+    if (previousSelected.current === selectedId) return;
+    previousSelected.current = selectedId;
+    if (selectedId !== live.current.routeInspectionId) live.current.onInspectionRouteChange?.(selectedId);
+  }, [selectedId]);
 
   function openCreate() { setFormOpen(true); }
   async function openBooking() {

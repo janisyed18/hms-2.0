@@ -1,11 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
 import { useActionNotice } from "../components/interaction/ActionNotice";
 import { customerLabel } from "../utils/identity";
 import type { CustomerFormValues, CustomerRecord } from "../domain/types";
 
-export function useCustomerWorkspace() {
+/**
+ * `onSelectedChange` lets the owner of the URL decide what selecting (or closing) a customer does;
+ * the selection itself then comes back in through `setSelectedId`. Without it the hook keeps its own.
+ */
+export function useCustomerWorkspace(options: { onSelectedChange?: (id: string | null) => void } = {}) {
+  const { onSelectedChange } = options;
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -31,7 +36,6 @@ export function useCustomerWorkspace() {
         // client-side tally of some page of assets.
         setCustomers(result.items);
         setTotalCount(result.total);
-        setSelectedId(null);
       })
       .catch(() => {
         if (active) setError("Unable to load customer records from the HMS API.");
@@ -64,11 +68,16 @@ export function useCustomerWorkspace() {
     ? customers.find((customer) => customer.id === selectedId) ?? null
     : null;
 
-  function closeDetail() { setSelectedId(null); }
+  function select(id: string | null) { if (onSelectedChange) onSelectedChange(id); else setSelectedId(id); }
+  /** Adds a customer read by id (one that is not on the loaded page) so it can be shown. */
+  const addCustomer = useCallback((customer: CustomerRecord) => {
+    setCustomers((current) => (current.some((item) => item.id === customer.id) ? current : [customer, ...current]));
+  }, []);
+  function closeDetail() { select(null); }
   function closeCustomerForm() { setEditingCustomer(null); setFormOpen(false); }
   function openCreateCustomer() { setEditingCustomer(null); setFormOpen(true); }
   function openEditCustomer(customer: CustomerRecord) { setEditingCustomer(customer); setFormOpen(true); }
-  function selectCustomer(id: string) { setSelectedId(id); setActiveTab("Locations"); }
+  function selectCustomer(id: string) { select(id); setActiveTab("Locations"); }
 
   async function saveCustomer(values: CustomerFormValues) {
     const client = createHmsClient();
@@ -82,10 +91,10 @@ export function useCustomerWorkspace() {
     setQuery("");
     setRiskFilter("All");
     setStatusFilter("All");
-    setSelectedId(saved.id);
+    select(saved.id);
     closeCustomerForm();
     notify({ kind: "success", message: `${customerLabel(saved)} ${editingCustomer ? "updated" : "created"} successfully.`, title: "Customer saved" });
   }
 
-  return { activeTab, dismissNotice, notice, closeDetail, closeCustomerForm, customers, editingCustomer, error, isFormOpen, isLoading, openCreateCustomer, openEditCustomer, query, riskFilter, saveCustomer, selectCustomer, selectedCustomer, setActiveTab, setQuery, setRiskFilter, setSelectedId, setStatusFilter, statusFilter, totalCount, visibleCustomers };
+  return { activeTab, addCustomer, dismissNotice, notice, closeDetail, closeCustomerForm, customers, editingCustomer, error, isFormOpen, isLoading, openCreateCustomer, openEditCustomer, query, riskFilter, saveCustomer, selectCustomer, selectedCustomer, setActiveTab, setQuery, setRiskFilter, setSelectedId, setStatusFilter, statusFilter, totalCount, visibleCustomers };
 }

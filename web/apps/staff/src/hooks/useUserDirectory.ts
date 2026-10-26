@@ -3,77 +3,98 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createHmsClient, type AdminUserSummary } from "../api/hmsClient";
 import type { AdminUserRecord } from "../domain/types";
 import { friendlyApiError } from "../components/interaction/friendlyApiError";
+import { DEFAULT_USERS_QUERY, type UsersRouteQuery } from "../routing/routeTypes";
 
 export interface UserFilters {
   search: string;
   role: string;
-  accountStatus: "" | "ACTIVE" | "LOCKED" | "DISABLED";
-  mfa: "" | "enabled" | "setup_required";
+  accountStatus: UsersRouteQuery["status"];
+  mfa: UsersRouteQuery["mfa"];
   customerId: string;
-  sort: "name" | "email" | "role" | "-last_login_at";
+  sort: UsersRouteQuery["sort"];
 }
 
-export const emptyUserFilters: UserFilters = {
-  search: "",
-  role: "",
-  accountStatus: "",
-  mfa: "",
-  customerId: "",
-  sort: "name"
-};
-
-const DEFAULT_PAGE_SIZE = 10;
 const SEARCH_DELAY_MS = 300;
 
 export function hasActiveFilters(filters: UserFilters): boolean {
   return Boolean(filters.search.trim() || filters.role || filters.accountStatus || filters.mfa || filters.customerId);
 }
 
+/** Where the directory's query lives. Given by the URL when there is one; otherwise the hook keeps its own. */
+export interface UsersRouteControl {
+  query: UsersRouteQuery;
+  onChange: (patch: Partial<UsersRouteQuery>, options?: { replace?: boolean }) => void;
+}
+
 /**
- * The user directory as the server describes it: one page of the users that match the filters,
- * the size of the whole matching set, and directory-wide counts that ignore both.
+ * The user directory as the server describes it: one page of the users that match the query, the size
+ * of the whole matching set, and directory-wide counts that ignore both. The query is the URL's.
  */
-export function useUserDirectory(enabled: boolean) {
-  const [filters, setFilters] = useState<UserFilters>(emptyUserFilters);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+export function useUserDirectory(enabled: boolean, control?: UsersRouteControl) {
+  const [localQuery, setLocalQuery] = useState<UsersRouteQuery>(DEFAULT_USERS_QUERY);
+  const query = control?.query ?? localQuery;
+  const live = useRef({ control, query });
+  useEffect(() => {
+    live.current = { control, query };
+  });
+  const change = useCallback((patch: Partial<UsersRouteQuery>, options?: { replace?: boolean }) => {
+    const owner = live.current.control;
+    if (owner) owner.onChange(patch, options);
+    else setLocalQuery((current) => ({ ...current, ...patch }));
+  }, []);
+
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<AdminUserSummary | null>(null);
   const [reloads, setReloads] = useState(0);
-  // The text actually sent: typing waits briefly so each keystroke is not a request.
-  const [sentSearch, setSentSearch] = useState("");
   const latest = useRef(0);
 
+  // Typing is held in the box at once and reaches the query (and so the URL) after a short pause, as a
+  // replacement of the current history entry, so four keystrokes are not four Back presses.
+  const [searchText, setSearchText] = useState(query.q);
+  const lastSent = useRef(query.q);
   useEffect(() => {
-    const timer = window.setTimeout(() => setSentSearch(filters.search), filters.search === "" ? 0 : SEARCH_DELAY_MS);
+    if (query.q !== lastSent.current) {
+      // The query changed from outside (Back/Forward, a link, Clear): the box follows it.
+      lastSent.current = query.q;
+      setSearchText(query.q);
+    }
+  }, [query.q]);
+  useEffect(() => {
+    const wanted = searchText.trim();
+    if (wanted === live.current.query.q) return;
+    const timer = window.setTimeout(() => {
+      lastSent.current = wanted;
+      change({ q: wanted, page: 1 }, { replace: true });
+    }, wanted === "" ? 0 : SEARCH_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [filters.search]);
+  }, [searchText, change]);
 
+  const { q, role, status: accountStatus, mfa, customer, sort, page, pageSize } = query;
   useEffect(() => {
     if (!enabled) return;
     const request = ++latest.current;
     setStatus("loading");
     createHmsClient()
       .listAdminUsers({
-        search: sentSearch,
-        role: filters.role,
-        accountStatus: filters.accountStatus || undefined,
-        mfa: filters.mfa || undefined,
-        customerId: filters.customerId,
-        sort: filters.sort,
+        search: q,
+        role,
+        accountStatus: accountStatus || undefined,
+        mfa: mfa || undefined,
+        customerId: customer,
+        sort,
         limit: pageSize,
         offset: (page - 1) * pageSize
       })
       .then((result) => {
         if (request !== latest.current) return;
         // Removing the last row of the last page (or a filter narrowing the set) can leave this page
-        // past the end: go to the last page that exists and ask again.
+        // past the end: go to the last page that exists, which also corrects the URL, and ask again.
         const lastPage = Math.max(1, Math.ceil(result.total / pageSize));
         if (page > lastPage) {
-          setPage(lastPage);
+          change({ page: lastPage }, { replace: true });
           return;
         }
         setUsers(result.items);
@@ -86,7 +107,7 @@ export function useUserDirectory(enabled: boolean) {
         setError(friendlyApiError(reason, { fallback: "The user list could not be loaded." }).message);
         setStatus("error");
       });
-  }, [enabled, sentSearch, filters.role, filters.accountStatus, filters.mfa, filters.customerId, filters.sort, page, pageSize, reloads]);
+  }, [enabled, q, role, accountStatus, mfa, customer, sort, page, pageSize, reloads, change]);
 
   const reloadSummary = useCallback(() => {
     // Counts are secondary: if they cannot be refreshed the last good numbers stay.
@@ -97,26 +118,30 @@ export function useUserDirectory(enabled: boolean) {
     if (enabled) reloadSummary();
   }, [enabled, reloadSummary]);
 
-  function changeFilters(next: Partial<UserFilters>) {
-    setFilters((current) => ({ ...current, ...next }));
-    setPage(1);
-  }
+  const filters: UserFilters = { search: searchText, role, accountStatus, mfa, customerId: customer, sort };
 
   return {
     filters,
-    changeFilters,
+    changeFilters: (next: Partial<UserFilters>) => {
+      if (next.search !== undefined) setSearchText(next.search);
+      const patch: Partial<UsersRouteQuery> = {};
+      if (next.role !== undefined) patch.role = next.role;
+      if (next.accountStatus !== undefined) patch.status = next.accountStatus;
+      if (next.mfa !== undefined) patch.mfa = next.mfa;
+      if (next.customerId !== undefined) patch.customer = next.customerId;
+      if (next.sort !== undefined) patch.sort = next.sort;
+      // Any change to what is asked for starts again from the first page.
+      if (Object.keys(patch).length > 0) change({ ...patch, page: 1 });
+    },
     clearFilters: () => {
-      setFilters(emptyUserFilters);
-      setSentSearch("");
-      setPage(1);
+      lastSent.current = "";
+      setSearchText("");
+      change({ q: "", role: "", status: "", mfa: "", customer: "", page: 1 });
     },
     page,
-    setPage,
+    setPage: (next: number) => change({ page: next }),
     pageSize,
-    setPageSize: (size: number) => {
-      setPageSize(size);
-      setPage(1);
-    },
+    setPageSize: (size: number) => change({ pageSize: size, page: 1 }),
     users,
     total,
     status,
