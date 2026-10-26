@@ -1,4 +1,5 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, waitFor } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { describe, expect, it } from "vitest";
 
 import { parseRoute } from "../routing/routeParser";
@@ -186,5 +187,21 @@ describe("the route hook", () => {
     act(() => result.current.navigate({ view: "inspections" }));
     expect(window.location.search).toBe("?view=inspections");
     expect(result.current.route.asset).toBeNull();
+  });
+
+  it("does not rewrite a newer URL with the correction worked out for an older render", () => {
+    // A navigation that lands between a render and that render's effects (a click straight after
+    // mount, on a loaded machine) must win: the effect is about the URL it rendered, not this one.
+    open("/");
+    function Probe() {
+      useHmsRoute("staff", all, "dashboard");
+      useLayoutEffect(() => {
+        // Runs after the render, before its passive effects.
+        window.history.pushState(null, "", "/?view=users");
+      }, []);
+      return null;
+    }
+    render(<Probe />);
+    expect(window.location.search).toBe("?view=users");
   });
 });
