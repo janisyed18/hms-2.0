@@ -86,13 +86,18 @@ export function useAssetsWorkspace() {
     setFormOpen(true);
   }
   const openDetail = useCallback((asset: AssetRecord) => { setViewingAsset(asset); }, []);
-  /** Opens an asset by id; false when it could not be opened (missing, or not this person's to see). */
-  const openDetailById = useCallback(async (assetId: string): Promise<boolean> => {
+  /**
+   * Finds an asset by id: the loaded register first, then the API. It only finds; it never opens, so the
+   * caller can check the request is still the one that is wanted before showing anything. Null when the
+   * asset is missing or not this person's to see.
+   */
+  const resolveAsset = useCallback(async (assetId: string): Promise<AssetRecord | null> => {
     const loadedAsset = assets.find((asset) => asset.id === assetId);
-    if (loadedAsset) { openDetail(loadedAsset); return true; }
-    try { const asset = await createHmsClient().getAsset(assetId); setAssets((current) => uniqueById([asset, ...current])); openDetail(asset); return true; }
-    catch { setError("The selected asset could not be opened."); return false; }
-  }, [assets, openDetail]);
+    if (loadedAsset) return loadedAsset;
+    try { const asset = await createHmsClient().getAsset(assetId); setAssets((current) => uniqueById([asset, ...current])); return asset; }
+    catch { return null; }
+  }, [assets]);
+  const reportOpenFailure = useCallback(() => setError("The selected asset could not be opened."), []);
   function closeDetail() { setViewingAsset(null); }
   async function saveAsset(values: AssetFormValues) {
     const client = createHmsClient();
@@ -122,5 +127,5 @@ export function useAssetsWorkspace() {
   }
   function clearAssetFilters() { setCustomerFilter("ALL"); setProductFilter("ALL"); setLifecycleFilter("ALL"); setDueFrom(""); setDueTo(""); }
   const activeFilterCount = [customerFilter !== "ALL", productFilter !== "ALL", lifecycleFilter !== "ALL", Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
-  return { activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, notice, requestArchive, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openDetailById, openEdit, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, setFormOpen, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
+  return { activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, notice, requestArchive, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, setFormOpen, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
 }

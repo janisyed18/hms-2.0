@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   CalendarClock,
@@ -18,6 +18,7 @@ import { CustomerTable } from "./components/CustomerTable";
 import type { OperationalModule } from "./components/OperationalWorkspace";
 import { WorkspaceState } from "./components/WorkspaceState";
 import type { SystemModule } from "./components/SystemWorkspace";
+import { createHmsClient } from "./api/hmsClient";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import type { BrowserAuthClient } from "./auth/authClient";
 import type { StaffPermission, StaffRole, StaffSession } from "./domain/types";
@@ -339,7 +340,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
   const workspace = useCustomerWorkspace({
     onSelectedChange: (id) => navigate((current) => ({ ...emptyRoute("customers"), customer: id, users: current.users }))
   });
-  const { setSelectedId: setWorkspaceSelectedId, isLoading: customersLoading, customers: workspaceCustomers } = workspace;
+  const { setSelectedId: setWorkspaceSelectedId, addCustomer: addWorkspaceCustomer, isLoading: customersLoading, customers: workspaceCustomers } = workspace;
   const activeCopy = portalMode
     ? customerPortalCopy[renderedActiveModule] ?? moduleCopy[renderedActiveModule]
     : moduleCopy[renderedActiveModule];
@@ -349,19 +350,30 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
     setSession(normaliseSession(providedSession));
   }, [providedSession]);
 
-  // URL to the customer detail: the link, or Back/Forward, opens or closes it. A customer that is not
-  // in the register this person can read is not shown, and the link stops naming it.
+  // URL to the customer detail: the link, or Back/Forward, opens or closes it. The register loads one page,
+  // so a customer that is not in it is asked for by id; only if that read fails (missing, or not theirs) is it
+  // unavailable, and the link then stops naming it. What comes back is used only if the URL still asks for it.
   const routeCustomerId = !portalMode && route.view === "customers" ? route.customer : null;
+  const wantedCustomer = useRef<string | null>(null);
   useEffect(() => {
+    wantedCustomer.current = routeCustomerId;
     if (customersLoading) return;
-    if (routeCustomerId && !workspaceCustomers.some((customer) => customer.id === routeCustomerId)) {
-      setWorkspaceSelectedId(null);
-      setCustomerUnavailable(true);
-      navigate({ customer: null }, { replace: true });
+    if (!routeCustomerId || workspaceCustomers.some((customer) => customer.id === routeCustomerId)) {
+      setWorkspaceSelectedId(routeCustomerId);
       return;
     }
-    setWorkspaceSelectedId(routeCustomerId);
-  }, [routeCustomerId, customersLoading, workspaceCustomers, setWorkspaceSelectedId, navigate]);
+    setWorkspaceSelectedId(null);
+    createHmsClient().getCustomer(routeCustomerId)
+      .then((found) => {
+        if (wantedCustomer.current !== routeCustomerId) return;
+        addWorkspaceCustomer(found);
+      })
+      .catch(() => {
+        if (wantedCustomer.current !== routeCustomerId) return;
+        setCustomerUnavailable(true);
+        navigate({ customer: null }, { replace: true });
+      });
+  }, [routeCustomerId, customersLoading, workspaceCustomers, setWorkspaceSelectedId, addWorkspaceCustomer, navigate]);
 
   const onPortalCustomerChange = useCallback(
     (customerId: string, options?: { replace?: boolean }) => navigate({ customer: customerId, asset: null }, options),

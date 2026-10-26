@@ -1646,6 +1646,12 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       };
     },
 
+    /** One customer by id, read with the caller's own permissions (404/403 when it is not theirs). */
+    async getCustomer(id: string): Promise<CustomerRecord> {
+      const response = await request<ApiCustomer>(`/api/v1/customers/${encodeURIComponent(id)}`);
+      return toCustomer(response.data, response.etag);
+    },
+
     async createCustomer(values: CustomerFormValues): Promise<CustomerRecord> {
       const response = await request<ApiCustomer>(
         "/api/v1/customers",
@@ -1839,6 +1845,12 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           toInspection(inspection, response.etag)
         )
       };
+    },
+
+    /** One inspection by id, read with the caller's own permissions (404/403 when it is not theirs). */
+    async getInspection(id: string): Promise<InspectionRecord> {
+      const response = await request<ApiInspection>(`/api/v1/inspections/${encodeURIComponent(id)}`);
+      return toInspection(response.data, response.etag);
     },
 
     async listInspectionBookings(

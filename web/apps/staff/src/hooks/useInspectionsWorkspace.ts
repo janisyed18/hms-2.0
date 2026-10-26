@@ -76,17 +76,32 @@ export function useInspectionsWorkspace(
   });
   const previousSelected = useRef(selectedId);
 
-  // URL to screen: a link, or Back/Forward, opens or closes the detail.
+  // URL to screen: a link, or Back/Forward, opens or closes the detail. The list holds one page, so an
+  // inspection that is not in it is asked for by id: only if that read fails (missing, or not theirs) is
+  // it "unavailable". What comes back is used only if the URL still asks for it.
+  const fetching = useRef<string | null>(null);
   useEffect(() => {
     if (isLoading) return;
     const open = live.current.selectedId;
     if (routeInspectionId && routeInspectionId !== open) {
       if (inspections.some((inspection) => inspection.id === routeInspectionId)) {
         setSelectedId(routeInspectionId);
-      } else {
-        // Not in what this person can see: say so, and stop the link naming it.
-        live.current.notify({ kind: "error", title: "Inspection unavailable", message: "That inspection could not be found, or you do not have access to it." });
-        live.current.onInspectionRouteChange?.(null, { replace: true });
+      } else if (fetching.current !== routeInspectionId) {
+        fetching.current = routeInspectionId;
+        createHmsClient().getInspection(routeInspectionId)
+          .then((found) => {
+            if (live.current.routeInspectionId !== routeInspectionId) return;
+            setInspections((current) => (current.some((inspection) => inspection.id === found.id) ? current : [found, ...current]));
+            setSelectedId(found.id);
+          })
+          .catch(() => {
+            if (live.current.routeInspectionId !== routeInspectionId) return;
+            live.current.notify({ kind: "error", title: "Inspection unavailable", message: "That inspection could not be found, or you do not have access to it." });
+            live.current.onInspectionRouteChange?.(null, { replace: true });
+          })
+          .finally(() => {
+            if (fetching.current === routeInspectionId) fetching.current = null;
+          });
       }
     } else if (!routeInspectionId && open) {
       setSelectedId(null);

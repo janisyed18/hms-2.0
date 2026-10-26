@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
 import { useActionNotice } from "../components/interaction/ActionNotice";
@@ -69,6 +69,10 @@ export function useCustomerWorkspace(options: { onSelectedChange?: (id: string |
     : null;
 
   function select(id: string | null) { if (onSelectedChange) onSelectedChange(id); else setSelectedId(id); }
+  /** Adds a customer read by id (one that is not on the loaded page) so it can be shown. */
+  const addCustomer = useCallback((customer: CustomerRecord) => {
+    setCustomers((current) => (current.some((item) => item.id === customer.id) ? current : [customer, ...current]));
+  }, []);
   function closeDetail() { select(null); }
   function closeCustomerForm() { setEditingCustomer(null); setFormOpen(false); }
   function openCreateCustomer() { setEditingCustomer(null); setFormOpen(true); }
@@ -92,5 +96,5 @@ export function useCustomerWorkspace(options: { onSelectedChange?: (id: string |
     notify({ kind: "success", message: `${customerLabel(saved)} ${editingCustomer ? "updated" : "created"} successfully.`, title: "Customer saved" });
   }
 
-  return { activeTab, dismissNotice, notice, closeDetail, closeCustomerForm, customers, editingCustomer, error, isFormOpen, isLoading, openCreateCustomer, openEditCustomer, query, riskFilter, saveCustomer, selectCustomer, selectedCustomer, setActiveTab, setQuery, setRiskFilter, setSelectedId, setStatusFilter, statusFilter, totalCount, visibleCustomers };
+  return { activeTab, addCustomer, dismissNotice, notice, closeDetail, closeCustomerForm, customers, editingCustomer, error, isFormOpen, isLoading, openCreateCustomer, openEditCustomer, query, riskFilter, saveCustomer, selectCustomer, selectedCustomer, setActiveTab, setQuery, setRiskFilter, setSelectedId, setStatusFilter, statusFilter, totalCount, visibleCustomers };
 }

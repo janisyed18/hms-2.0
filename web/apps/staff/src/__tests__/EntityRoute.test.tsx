@@ -11,6 +11,7 @@ import { useInspectionsWorkspace } from "../hooks/useInspectionsWorkspace";
 const client = vi.hoisted(() => ({
   listAssets: vi.fn(),
   getAsset: vi.fn(),
+  getInspection: vi.fn(),
   listCustomers: vi.fn(),
   listProducts: vi.fn(),
   getAssetConfigurationOptions: vi.fn(),
@@ -101,6 +102,73 @@ describe("the asset detail follows the URL", () => {
   });
 });
 
+describe("a slow asset lookup cannot undo where the person went", () => {
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+  };
+
+  function RaceHarness({ onChange }: { onChange: (id: string | null, options?: { replace?: boolean }) => void }) {
+    const [routeId, setRouteId] = useState<string | null>("far-a");
+    return (
+      <>
+        <button onClick={() => setRouteId("far-b")} type="button">Route: to B</button>
+        <button onClick={() => setRouteId(null)} type="button">Route: close</button>
+        <AssetsWorkspace canWrite onAssetRouteChange={(id, options) => { onChange(id, options); setRouteId(id); }} routeAssetId={routeId} />
+      </>
+    );
+  }
+
+  it("A pending, route moves to B, A answers last: B stays open and the URL is never pointed back at A", async () => {
+    const a = deferred<AssetRecord>();
+    const b = deferred<AssetRecord>();
+    client.getAsset.mockImplementation((id: string) => (id === "far-a" ? a.promise : b.promise));
+    const onChange = vi.fn();
+    render(<RaceHarness onChange={onChange} />);
+    await waitFor(() => expect(client.getAsset).toHaveBeenCalledWith("far-a"));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Route: to B" }));
+    await waitFor(() => expect(client.getAsset).toHaveBeenCalledWith("far-b"));
+
+    await act(async () => b.resolve(asset("far-b", "Asset B")));
+    expect(await screen.findByRole("complementary", { name: "Asset detail" })).toHaveTextContent("Asset B");
+    await act(async () => a.resolve(asset("far-a", "Asset A")));
+
+    expect(screen.getByRole("complementary", { name: "Asset detail" })).toHaveTextContent("Asset B");
+    expect(onChange).not.toHaveBeenCalled(); // nothing wrote A (or anything) back into the URL
+  });
+
+  it("A pending, the person closes it, A answers: it stays closed and A is not added to the URL", async () => {
+    const a = deferred<AssetRecord>();
+    client.getAsset.mockReturnValue(a.promise);
+    const onChange = vi.fn();
+    render(<RaceHarness onChange={onChange} />);
+    await waitFor(() => expect(client.getAsset).toHaveBeenCalledWith("far-a"));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Route: close" }));
+    await act(async () => a.resolve(asset("far-a", "Asset A")));
+
+    expect(screen.queryByRole("complementary", { name: "Asset detail" })).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a lookup that fails after the person has moved on does not clear where they went", async () => {
+    const a = deferred<AssetRecord>();
+    const b = deferred<AssetRecord>();
+    client.getAsset.mockImplementation((id: string) => (id === "far-a" ? a.promise : b.promise));
+    const onChange = vi.fn();
+    render(<RaceHarness onChange={onChange} />);
+    await waitFor(() => expect(client.getAsset).toHaveBeenCalledWith("far-a"));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Route: to B" }));
+    await act(async () => b.resolve(asset("far-b", "Asset B")));
+    await screen.findByRole("complementary", { name: "Asset detail" });
+    await act(async () => a.reject(new Error("404")));
+
+    expect(screen.getByRole("complementary", { name: "Asset detail" })).toHaveTextContent("Asset B");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
 describe("the inspection detail follows the URL", () => {
   const inspection = { id: "insp-1", status: "DRAFT", inspectionType: "ANNUAL", result: null, asset: { assetNumber: "A", tag: null }, customer: { code: "C", name: "C" }, product: { code: "P", name: "P" } };
   beforeEach(() => {
@@ -116,12 +184,36 @@ describe("the inspection detail follows the URL", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("selects nothing for an inspection that is not in the list, says so, and the link stops naming it", async () => {
+  it("asks for an inspection that is not on the loaded page by id, and opens it when that works", async () => {
+    client.getInspection.mockResolvedValue({ ...inspection, id: "insp-far" });
+    const onChange = vi.fn();
+    const { result } = renderHook(() => useInspectionsWorkspace(false, "insp-far", onChange));
+    await waitFor(() => expect(result.current.selectedInspection?.id).toBe("insp-far"));
+    expect(client.getInspection).toHaveBeenCalledTimes(1);
+    expect(client.getInspection).toHaveBeenCalledWith("insp-far");
+    expect(result.current.inspections.map((item) => item.id)).toContain("insp-far");
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("selects nothing for an inspection that cannot be read, says so, and the link stops naming it", async () => {
+    client.getInspection.mockRejectedValue(new Error("404"));
     const onChange = vi.fn();
     const { result } = renderHook(() => useInspectionsWorkspace(false, "nobody", onChange));
     await waitFor(() => expect(onChange).toHaveBeenCalledWith(null, { replace: true }));
     expect(result.current.selectedInspection).toBeNull();
     expect(result.current.notice).toMatchObject({ kind: "error", title: "Inspection unavailable" });
+  });
+
+  it("ignores a slow inspection lookup once the URL has moved on", async () => {
+    let resolveFar: (value: unknown) => void = () => undefined;
+    client.getInspection.mockReturnValue(new Promise((resolve) => { resolveFar = resolve; }));
+    const onChange = vi.fn();
+    const { result, rerender } = renderHook(({ route }: { route: string | null }) => useInspectionsWorkspace(false, route, onChange), { initialProps: { route: "insp-far" as string | null } });
+    await waitFor(() => expect(client.getInspection).toHaveBeenCalled());
+    rerender({ route: null });
+    await act(async () => resolveFar({ ...inspection, id: "insp-far" }));
+    expect(result.current.selectedInspection).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("reports opening and closing to the URL and follows it back", async () => {

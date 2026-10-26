@@ -94,18 +94,29 @@ describe("staff deep links", () => {
     expect(window.location.search).toBe("?view=assets");
   });
 
-  it("restores the customer detail from the link, and a customer that is not theirs is never shown", async () => {
+  it("restores the customer detail from the link, also for a customer that is not on the first page", async () => {
     open("/?view=customers&customer=c2");
     const first = render(<App initialSession={admin} />);
     expect(await screen.findByRole("dialog", { name: /Orica/ })).toBeInTheDocument();
     first.unmount();
 
+    // Not among the 50 the register loaded, but the API says it is theirs: it opens.
+    const getCustomer = vi.fn(async () => customer("c-far", "Far Away Shipping"));
+    client.overrides.getCustomer = getCustomer;
+    open("/?view=customers&customer=c-far");
+    render(<App initialSession={admin} />);
+    expect(await screen.findByRole("dialog", { name: /Far Away Shipping/ })).toBeInTheDocument();
+    expect(getCustomer).toHaveBeenCalledWith("c-far");
+    expect(window.location.search).toBe("?view=customers&customer=c-far");
+  });
+
+  it("shows nothing of a customer the API refuses, and the link stops naming it", async () => {
+    client.overrides.getCustomer = async () => { throw new Error("404"); };
     open("/?view=customers&customer=not-mine");
     render(<App initialSession={admin} />);
     await waitFor(() => expect(window.location.search).toBe("?view=customers"));
     expect(await screen.findByRole("alert")).toHaveTextContent("Customer unavailable");
     expect(screen.queryByRole("dialog", { name: /Vopak|Orica/ })).toBeNull();
-    expect(window.location.search).toBe("?view=customers");
   });
 
   it("opens customers, assets and inspections found by global search at their canonical links", async () => {
