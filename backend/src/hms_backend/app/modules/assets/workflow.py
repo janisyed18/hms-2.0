@@ -71,7 +71,6 @@ class ActionCode(StrEnum):
     CONFIRM_RESCHEDULE = "CONFIRM_RESCHEDULE"
     CONTINUE_INSPECTION = "CONTINUE_INSPECTION"
     REVIEW_INSPECTION = "REVIEW_INSPECTION"
-    UPDATE_INSPECTION = "UPDATE_INSPECTION"
     ISSUE_CERTIFICATE = "ISSUE_CERTIFICATE"
 
 
@@ -220,22 +219,9 @@ def _aware(value: datetime | None) -> datetime | None:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
-def _inspection_activity(inspection: Inspection) -> datetime:
-    """When this inspection last did anything: the newest of its own timestamps."""
-    stamps = [
-        _aware(value)
-        for value in (
-            inspection.created_at,
-            inspection.submitted_at,
-            inspection.approved_at,
-            inspection.rejected_at,
-        )
-    ]
-    return max((stamp for stamp in stamps if stamp is not None), default=_EPOCH)
-
-
 def _inspection_key(inspection: Inspection) -> tuple[datetime, str]:
-    return (_inspection_activity(inspection), inspection.id)
+    """Where the inspection's own cycle began; later review does not move it."""
+    return (_aware(inspection.created_at) or _EPOCH, inspection.id)
 
 
 def _booking_key(booking: InspectionBooking) -> tuple[datetime, str]:
@@ -246,15 +232,22 @@ def _change_key(change: InspectionAppointmentChangeRequest) -> tuple[datetime, s
     return (_aware(change.created_at) or _EPOCH, change.id)
 
 
-def _issued_certificate(
+def _live_certificates(
     inspection: Inspection, certificates: Iterable[Certificate]
-) -> Certificate | None:
+) -> list[Certificate]:
+    """Every certificate record the inspection has, whatever its state."""
+    return [
+        certificate
+        for certificate in certificates
+        if certificate.inspection_id == inspection.id and certificate.deleted_at is None
+    ]
+
+
+def _issued(certificates: Iterable[Certificate]) -> Certificate | None:
     issued = [
         certificate
         for certificate in certificates
-        if certificate.inspection_id == inspection.id
-        and certificate.status == CertificateStatus.ISSUED.value
-        and certificate.deleted_at is None
+        if certificate.status == CertificateStatus.ISSUED.value
     ]
     return max(
         issued,
@@ -312,6 +305,8 @@ class _Cycle:
     context: Context
     booking: InspectionBooking | None = None
     inspection: Inspection | None = None
+    # A finished cycle with nothing left to show or do; the schedule speaks instead.
+    settled: bool = False
 
 
 def _inspection_cycle(
@@ -327,10 +322,9 @@ def _inspection_cycle(
     elif is_failed(inspection):
         status = S.FAILED
     else:
-        certificate = _issued_certificate(inspection, certificates)
-        if certificate is None:
-            status = S.READY_FOR_CERTIFICATE
-        else:
+        records = _live_certificates(inspection, certificates)
+        certificate = _issued(records)
+        if certificate is not None:
             return _Cycle(
                 S.CERTIFIED,
                 Related(
@@ -341,6 +335,14 @@ def _inspection_cycle(
                 Context(certificate_number=certificate.number),
                 inspection=inspection,
             )
+        if records:
+            # A revoked, superseded or draft certificate still occupies the inspection
+            # (one certificate per inspection), so it can never be "ready" for one.
+            # The cycle is closed and the schedule says what the asset needs next.
+            return _Cycle(
+                S.CURRENT, related, Context(), inspection=inspection, settled=True
+            )
+        status = S.READY_FOR_CERTIFICATE
     return _Cycle(status, related, Context(), inspection=inspection)
 
 
@@ -385,23 +387,30 @@ def _current_cycle(
     bookings: list[InspectionBooking],
     certificates: list[Certificate],
 ) -> _Cycle | None:
-    """The newest piece of work: a booking not yet inspected, or the latest inspection.
+    """The newest piece of work: the newest booking's cycle, or a later inspection.
 
-    A newer booking starts a new cycle, so last year's issued certificate cannot hide
-    it; an inspection made from the newest booking (or later than it) is that
-    cycle's current state.
+    Cycles are ordered by where they began, never by later activity: an old inspection
+    approved after a newer booking was made is still the older cycle. The newest booking
+    owns its cycle, and the inspections made from it are that cycle's current
+    state. Only an inspection with no booking, begun after the newest booking,
+    supersedes it; one belonging to an older booking never does.
     """
-    inspection = max(inspections, key=_inspection_key, default=None)
     booking = max(bookings, key=_booking_key, default=None)
-    if inspection is None and booking is None:
-        return None
-    if inspection is not None and (
-        booking is None
-        or inspection.booking_id == booking.id
-        or _inspection_key(inspection) >= _booking_key(booking)
-    ):
+    if booking is None:
+        inspection = max(inspections, key=_inspection_key, default=None)
+        return (
+            None if inspection is None else _inspection_cycle(inspection, certificates)
+        )
+
+    made_from_it = [item for item in inspections if item.booking_id == booking.id]
+    begun_after = [
+        item
+        for item in inspections
+        if item.booking_id is None and _inspection_key(item) >= _booking_key(booking)
+    ]
+    inspection = max(made_from_it + begun_after, key=_inspection_key, default=None)
+    if inspection is not None:
         return _inspection_cycle(inspection, certificates)
-    assert booking is not None
     return _booking_cycle(booking)
 
 
@@ -457,13 +466,9 @@ def _next_action(
             TargetType.INSPECTION,
             inspection_id,
         )
-    if status == S.CHANGES_REQUIRED and can.write_inspection:
-        return NextAction(
-            ActionCode.UPDATE_INSPECTION,
-            "Update inspection",
-            TargetType.INSPECTION,
-            inspection_id,
-        )
+    # CHANGES_REQUIRED has no action yet: a rejected inspection cannot be edited, so
+    # offering to open it would lead nowhere. The lifecycle work that adds a rework
+    # step adds it.
     if status == S.READY_FOR_CERTIFICATE and can.approve:
         return NextAction(
             ActionCode.ISSUE_CERTIFICATE,
@@ -508,8 +513,9 @@ def resolve_asset_workflow(
     else:
         cycle = _current_cycle(live_inspections, live_bookings, certificate_list)
         lifecycle = _lifecycle_status(asset, retest_schedule)
-        if cycle is None:
+        if cycle is None or cycle.settled:
             status = lifecycle
+            cycle = None
         elif cycle.status == S.CERTIFIED and lifecycle != S.CURRENT:
             # That certificate closed an earlier cycle; the schedule says the next
             # one is due.

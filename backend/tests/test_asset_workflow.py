@@ -415,6 +415,110 @@ def test_an_inspection_newer_than_the_latest_booking_is_the_current_cycle() -> N
     assert result.status is WorkflowStatus.INSPECTION_DRAFT
 
 
+def test_late_review_of_an_old_inspection_does_not_hide_a_newer_booking() -> None:
+    """The booking began a new cycle on June 10; approving the May inspection on June 11
+    is late review of the old cycle, not a newer cycle."""
+    may = datetime(2026, 5, 1, 9, tzinfo=UTC)
+    june_10 = datetime(2026, 6, 10, 9, tzinfo=UTC)
+    june_11 = datetime(2026, 6, 11, 9, tzinfo=UTC)
+    for linked in (None, "b-old"):
+        old = inspection(
+            "i-old",
+            InspectionStatus.APPROVED.value,
+            booking_id=linked,
+            created=may,
+            submitted=june_11,
+            approved=june_11,
+            result="PASS",
+            certificate_result="PASS",
+        )
+        bookings = [booking("b-new", PENDING, created=june_10)]
+        if linked:
+            bookings.append(booking(linked, APPROVED_BOOKING, created=may))
+        result = resolve(bookings=bookings, inspections=[old])
+        assert result.status is WorkflowStatus.SCHEDULE_REQUESTED, linked
+        assert result.related.booking_id == "b-new"
+        assert result.related.inspection_id is None
+
+
+@pytest.mark.parametrize(
+    "late",
+    [
+        {"status": InspectionStatus.SUBMITTED.value, "submitted": True},
+        {"status": InspectionStatus.REJECTED.value, "rejected": True},
+    ],
+)
+def test_late_submission_or_rejection_does_not_hide_a_newer_booking(
+    late: dict[str, object],
+) -> None:
+    may = datetime(2026, 5, 1, 9, tzinfo=UTC)
+    june_10 = datetime(2026, 6, 10, 9, tzinfo=UTC)
+    june_11 = datetime(2026, 6, 11, 9, tzinfo=UTC)
+    old = inspection(
+        "i-old",
+        str(late["status"]),
+        booking_id="b-old",
+        created=may,
+        submitted=june_11 if late.get("submitted") else None,
+        rejected=june_11 if late.get("rejected") else None,
+    )
+    result = resolve(
+        bookings=[
+            booking("b-old", APPROVED_BOOKING, created=may),
+            booking("b-new", PENDING, created=june_10),
+        ],
+        inspections=[old],
+    )
+    assert result.status is WorkflowStatus.SCHEDULE_REQUESTED
+
+
+def test_an_inspection_made_from_the_newest_booking_is_its_current_state() -> None:
+    june_10 = datetime(2026, 6, 10, 9, tzinfo=UTC)
+    started = inspection(
+        "i-new", InspectionStatus.DRAFT.value, booking_id="b-new", created=june_10
+    )
+    older = approved("i-old", datetime(2026, 5, 1, 9, tzinfo=UTC), booking_id="b-old")
+    result = resolve(
+        bookings=[
+            booking(
+                "b-old", APPROVED_BOOKING, created=datetime(2026, 5, 1, 9, tzinfo=UTC)
+            ),
+            booking("b-new", APPROVED_BOOKING, created=june_10),
+        ],
+        inspections=[older, started],
+    )
+    assert result.status is WorkflowStatus.INSPECTION_DRAFT
+    assert result.related.inspection_id == "i-new"
+
+
+def test_an_older_bookings_later_inspection_cannot_beat_the_newest_booking() -> None:
+    june_10 = datetime(2026, 6, 10, 9, tzinfo=UTC)
+    odd = inspection(
+        "i-odd",
+        InspectionStatus.DRAFT.value,
+        booking_id="b-old",
+        created=june_10 + timedelta(days=2),
+    )
+    result = resolve(
+        bookings=[
+            booking("b-old", APPROVED_BOOKING, created=june_10 - timedelta(days=40)),
+            booking("b-new", PENDING, created=june_10),
+        ],
+        inspections=[odd],
+    )
+    assert result.status is WorkflowStatus.SCHEDULE_REQUESTED
+
+
+def test_a_rejected_inspection_explains_itself_but_offers_nothing_yet() -> None:
+    rejected = inspection(
+        "i1", InspectionStatus.REJECTED.value, rejected=T0, submitted=T0
+    )
+    result = resolve(inspections=[rejected])
+    assert result.status is WorkflowStatus.CHANGES_REQUIRED
+    assert result.attention is True
+    assert result.next_action is None
+
+
 def test_an_approved_failing_inspection_is_failed_not_ready_for_a_certificate() -> None:
     for kwargs in (
         {"certificate_result": "FAIL"},
@@ -435,13 +539,41 @@ def test_an_approved_failing_inspection_is_failed_not_ready_for_a_certificate() 
     )
 
 
-def test_a_revoked_or_superseded_certificate_does_not_certify() -> None:
-    for state in (CertificateStatus.REVOKED.value, CertificateStatus.DRAFT.value):
+@pytest.mark.parametrize(
+    "state",
+    [
+        CertificateStatus.REVOKED.value,
+        CertificateStatus.SUPERSEDED.value,
+        CertificateStatus.DRAFT.value,
+    ],
+)
+def test_a_certificate_record_that_is_not_issued_never_offers_to_issue_one(
+    state: str,
+) -> None:
+    """One certificate per inspection: any live row means none can be issued."""
+    for lifecycle, expected in (
+        ("IN_SERVICE", WorkflowStatus.CURRENT),
+        ("OVERDUE", WorkflowStatus.OVERDUE),
+        ("DUE", WorkflowStatus.DUE),
+    ):
         result = resolve(
+            lifecycle=lifecycle,
             inspections=[approved("i1")],
             certificates=[certificate("c1", "i1", status=state)],
         )
-        assert result.status is WorkflowStatus.READY_FOR_CERTIFICATE
+        assert result.status is expected, (state, lifecycle)
+        assert result.status is not WorkflowStatus.READY_FOR_CERTIFICATE
+        assert result.next_action is None or (
+            result.next_action.code is not ActionCode.ISSUE_CERTIFICATE
+        )
+        assert result.related.inspection_id is None  # the closed cycle is not presented
+
+
+def test_a_deleted_certificate_row_does_not_block_issuing() -> None:
+    gone = certificate("c1", "i1", status=CertificateStatus.REVOKED.value)
+    gone.deleted_at = T0
+    result = resolve(inspections=[approved("i1")], certificates=[gone])
+    assert result.status is WorkflowStatus.READY_FOR_CERTIFICATE
 
 
 def test_a_certificate_for_another_inspection_does_not_certify_this_one() -> None:
@@ -550,10 +682,6 @@ def test_each_status_offers_the_expected_navigational_action() -> None:
             ActionCode.REVIEW_INSPECTION,
             TargetType.INSPECTION,
         ),
-        WorkflowStatus.CHANGES_REQUIRED: (
-            ActionCode.UPDATE_INSPECTION,
-            TargetType.INSPECTION,
-        ),
         WorkflowStatus.READY_FOR_CERTIFICATE: (
             ActionCode.ISSUE_CERTIFICATE,
             TargetType.CERTIFICATES,
@@ -574,7 +702,6 @@ def test_inspection_actions_point_at_the_exact_inspection() -> None:
         if status in {
             WorkflowStatus.INSPECTION_DRAFT,
             WorkflowStatus.AWAITING_REVIEW,
-            WorkflowStatus.CHANGES_REQUIRED,
         }:
             got = action(case)
             assert got is not None and got.target_id == "i1"
@@ -602,7 +729,6 @@ def test_scheduling_actions_carry_the_booking() -> None:
         (WorkflowStatus.RESCHEDULE_REQUESTED, "review_scheduling"),
         (WorkflowStatus.RESCHEDULE_AWAITING_CONFIRMATION, "confirm_reschedule"),
         (WorkflowStatus.INSPECTION_DRAFT, "write_inspection"),
-        (WorkflowStatus.CHANGES_REQUIRED, "write_inspection"),
         (WorkflowStatus.AWAITING_REVIEW, "approve"),
         (WorkflowStatus.READY_FOR_CERTIFICATE, "approve"),
     ],
@@ -854,3 +980,85 @@ async def test_endpoint_narrows_an_inspector_to_their_own_booking(
     assert body["related"]["inspection_id"] is None
     assert body["related"]["booking_id"] is not None
     assert world["inspection"] not in response.text
+
+
+async def _fill(
+    session_factory: async_sessionmaker[AsyncSession], asset_id: str, count: int
+) -> None:
+    """Bookings with appointments and requests, inspections with pressure tests."""
+    async with session_factory() as session:
+        asset = await session.get(Asset, asset_id)
+        assert asset is not None
+        base = datetime(2025, 1, 1, tzinfo=UTC)
+        for index in range(count):
+            when = base + timedelta(days=index)
+            booking_row = InspectionBooking(
+                customer_id=asset.customer_id,
+                location_id="loc",
+                status=InspectionBookingStatus.APPROVED.value,
+                scheduled_at=when + timedelta(days=3),
+                requested_by_user_id="c",
+                created_at=when,
+            )
+            booking_row.assets.append(InspectionBookingAsset(asset=asset))
+            booking_row.appointment = InspectionAppointment(
+                customer_id=asset.customer_id,
+                location_id="loc",
+                status=InspectionAppointmentStatus.CONFIRMED.value,
+            )
+            for _ in range(2):
+                InspectionAppointmentChangeRequest(
+                    booking=booking_row,
+                    appointment=booking_row.appointment,
+                    availability_quote_id="q",
+                    requested_by_user_id="c",
+                    status=InspectionChangeRequestStatus.APPLIED.value,
+                )
+            done = Inspection(
+                asset=asset,
+                booking=booking_row,
+                inspection_type=InspectionType.SERVICE.value,
+                status=InspectionStatus.APPROVED.value,
+                result="PASS",
+                created_at=when,
+                approved_at=when,
+            )
+            done.pressure_test = PressureTestResult(
+                applied_pressure_kpa=1000,
+                hold_time_seconds=60,
+                passed=True,
+                measurements={"certificate_result": "PASS"},
+            )
+            session.add_all([booking_row, done])
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_the_endpoint_reads_with_four_statements_however_much_history_there_is(
+    session_factory: async_sessionmaker[AsyncSession], world: dict[str, str]
+) -> None:
+    """Asset, bookings, inspections, certificates: no per-row or eager-graph loads."""
+    from sqlalchemy import event
+
+    engine = session_factory.kw["bind"].sync_engine
+    statements: list[str] = []
+
+    def count(conn: object, cursor: object, statement: str, *rest: object) -> None:
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", count)
+    path = f"/api/v1/assets/{world['review']}/workflow"
+    try:
+        async with api_client(session_factory, principal(Role.REVIEWER)) as client:
+            await client.get(path)
+            small = len(statements)
+            statements.clear()
+            await _fill(session_factory, world["review"], 12)
+            statements.clear()
+            response = await client.get(path)
+            large = len(statements)
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
+
+    assert response.status_code == 200
+    assert small == large == 4, statements

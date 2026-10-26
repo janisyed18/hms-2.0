@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, 
 from sqlalchemy import and_, desc, false, func, or_, select
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, lazyload, load_only, selectinload
 from sqlalchemy.sql import Select
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
@@ -3529,9 +3529,24 @@ async def get_asset_workflow(
     an inspector the bookings and inspections are narrowed to their own assignments.
     """
     _require_asset_read(principal)
-    statement = _asset_statement().where(
-        Asset.id == asset_id,
-        Asset.deleted_at.is_(None),
+    # Only what the resolver reads is loaded. The models' default eager loading
+    # (customer, product, ends and their reference rows...) is switched off with
+    # lazyload("*"), and the few relationships that are needed are joined in, so each
+    # read below is a single statement.
+    statement = (
+        select(Asset)
+        .where(Asset.id == asset_id, Asset.deleted_at.is_(None))
+        .options(
+            load_only(
+                Asset.id,
+                Asset.lifecycle_status,
+                Asset.next_retest_due_at,
+                Asset.customer_id,
+                Asset.deleted_at,
+            ),
+            lazyload("*"),
+            joinedload(Asset.retest_schedule),
+        )
     )
     asset = (await session.scalars(_apply_asset_scope(statement, principal))).first()
     if asset is None:
@@ -3552,17 +3567,20 @@ async def get_asset_workflow(
             InspectionBooking.deleted_at.is_(None),
         )
         .options(
-            selectinload(InspectionBooking.appointment),
-            selectinload(InspectionBooking.change_requests),
+            lazyload("*"),
+            joinedload(InspectionBooking.appointment),
+            joinedload(InspectionBooking.change_requests),
         )
     )
     inspection_statement = (
         select(Inspection)
         .where(Inspection.asset_id == asset.id, Inspection.deleted_at.is_(None))
-        .options(selectinload(Inspection.pressure_test))
+        .options(lazyload("*"), joinedload(Inspection.pressure_test))
     )
-    certificate_statement = select(Certificate).where(
-        Certificate.asset_id == asset.id, Certificate.deleted_at.is_(None)
+    certificate_statement = (
+        select(Certificate)
+        .where(Certificate.asset_id == asset.id, Certificate.deleted_at.is_(None))
+        .options(lazyload("*"))
     )
     if is_inspector_scoped(principal):
         visible = assigned_bookings(principal)

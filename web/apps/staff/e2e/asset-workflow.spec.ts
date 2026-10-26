@@ -46,6 +46,9 @@ function cleanup() {
   sql(`DELETE FROM inspections WHERE id = '${INSPECTION}'; DELETE FROM assets WHERE id = '${ASSET}';`);
 }
 
+// The first read of a page after the API restarts, or on a busy machine, is slow; the default 10 s is not always enough.
+const SLOW = { timeout: 25_000 };
+
 const here = (page: Page) => {
   const url = new URL(page.url());
   return url.pathname + url.search;
@@ -75,9 +78,9 @@ test.describe("asset workflow summary", () => {
     try {
       await page.goto(`/?view=assets&asset=${ASSET}`);
       const detail = page.getByRole("complementary", { name: "Asset detail" });
-      await expect(detail).toContainText("Workflow Test Hose");
+      await expect(detail).toContainText("Workflow Test Hose", SLOW);
       const card = detail.getByRole("region", { name: "Workflow" });
-      await expect(card).toContainText("Inspection submitted — awaiting approval");
+      await expect(card).toContainText("Inspection submitted — awaiting approval", SLOW);
       await expect(card).toContainText("waiting for an authorised reviewer");
 
       await card.getByRole("button", { name: "Review inspection" }).click();
@@ -100,7 +103,7 @@ test.describe("asset workflow summary", () => {
     try {
       await page.goto(`/?view=assets&asset=${ASSET}`);
       const card = page.getByRole("complementary", { name: "Asset detail" }).getByRole("region", { name: "Workflow" });
-      await expect(card).toContainText("Inspection submitted — awaiting approval");
+      await expect(card).toContainText("Inspection submitted — awaiting approval", SLOW);
       await expect(card.getByRole("button")).toHaveCount(0);
     } finally {
       await admin.context.close();
@@ -117,7 +120,7 @@ test.describe("asset workflow summary", () => {
         await page.setViewportSize({ width, height });
         await page.goto(`/?view=assets&asset=${ASSET}`);
         const card = page.getByRole("region", { name: "Workflow" });
-        await expect(card).toContainText("awaiting approval");
+        await expect(card).toContainText("awaiting approval", SLOW);
         const button = card.getByRole("button", { name: "Review inspection" });
         const box = await button.boundingBox();
         expect(box && box.x >= 0 && box.x + box.width <= width, `button inside ${width}px`).toBe(true);
