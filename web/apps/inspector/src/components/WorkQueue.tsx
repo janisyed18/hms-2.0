@@ -2,6 +2,7 @@ import { Search, SlidersHorizontal } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { OutboxOperation, WorkItem } from "../domain/types";
 import { StatusPill } from "./StatusPill";
+import { urgencyLabel } from "./workStatus";
 
 interface WorkQueueProps {
   workItems: WorkItem[];
@@ -10,19 +11,6 @@ interface WorkQueueProps {
 }
 
 type WorkFilter = "all" | "overdue" | "due-today" | "draft";
-
-function urgencyLabel(item: WorkItem) {
-  switch (item.urgency) {
-    case "overdue":
-      return { tone: "danger" as const, label: "Overdue retest" };
-    case "due-today":
-      return { tone: "warning" as const, label: "Due today" };
-    case "draft":
-      return { tone: "info" as const, label: "Draft saved" };
-    case "synced":
-      return { tone: "success" as const, label: "Synced" };
-  }
-}
 
 function matchesFilter(item: WorkItem, filter: WorkFilter) {
   if (filter === "all") {
@@ -84,6 +72,7 @@ export function WorkQueue({ workItems, outbox, onOpenWorkItem }: WorkQueueProps)
         </article>
       </div>
 
+      <div className="work-toolbar">
       <label className="search-field">
         <Search aria-hidden="true" size={18} />
         <span className="sr-only">Search work</span>
@@ -110,6 +99,7 @@ export function WorkQueue({ workItems, outbox, onOpenWorkItem }: WorkQueueProps)
           </button>
         ))}
       </div>
+      </div>
 
       <div className="work-list">
         {visibleItems.length === 0 ? (
@@ -132,15 +122,15 @@ export function WorkQueue({ workItems, outbox, onOpenWorkItem }: WorkQueueProps)
                 </div>
                 <dl className="work-meta">
                   <div>
-                    <dt>Product</dt>
-                    <dd>{item.productName}</dd>
-                  </div>
-                  <div>
                     <dt>Location</dt>
                     <dd>
                       {item.locationName ?? "Unassigned"}
                       {item.locationAddress ? <span>{item.locationAddress}</span> : null}
                     </dd>
+                  </div>
+                  <div>
+                    <dt>Product</dt>
+                    <dd>{item.productName}</dd>
                   </div>
                 </dl>
                 <button

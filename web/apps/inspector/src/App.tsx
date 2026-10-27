@@ -1,9 +1,11 @@
+import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "./components/AppShell";
 import { InspectionCapture } from "./components/InspectionCapture";
 import { ScanUnavailable } from "./components/ScanUnavailable";
 import { SyncQueue } from "./components/SyncQueue";
+import { UnsavedChangesDialog } from "./components/UnsavedChangesDialog";
 import { WorkQueue } from "./components/WorkQueue";
-import { useInspectorWorkspace } from "./hooks/useInspectorWorkspace";
+import { useInspectorWorkspace, type InspectorView } from "./hooks/useInspectorWorkspace";
 import {
   InspectorAuthGate,
   type BrowserAuthClient
@@ -27,13 +29,46 @@ function InspectorWorkspace({ userId }: { userId: string }) {
   const workspace = useInspectorWorkspace(userId);
   const sourceLabel = workspace.lastSyncLabel;
 
+  // A capture holding edits that never reached the outbox is protected: leaving it (another view, the
+  // Work queue, opening another assignment) asks first. A clean capture, or any other view, never asks.
+  const [captureDirty, setCaptureDirty] = useState(false);
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
+  const protectedCapture = workspace.view === "capture" && captureDirty;
+  const leave = (action: () => void) => {
+    if (protectedCapture) setPendingLeave(() => action);
+    else action();
+  };
+  const navigate = (next: InspectorView) => {
+    if (next !== workspace.view) leave(() => workspace.setView(next));
+  };
+  const onDirtyChange = useCallback((dirty: boolean) => {
+    setCaptureDirty(dirty);
+    if (!dirty) setPendingLeave(null);
+  }, []);
+
+  // The browser's own leave prompt exists only while there is something to lose.
+  useEffect(() => {
+    if (!protectedCapture) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => window.removeEventListener("beforeunload", beforeUnload);
+  }, [protectedCapture]);
+
+  const captureKey =
+    workspace.selectedWorkItem?.workContext?.assignment_id ?? workspace.selectedWorkItem?.id ?? "none";
+
   let content;
 
   if (workspace.view === "capture") {
     content = (
       <InspectionCapture
         draftFor={workspace.draftFor}
-        onBack={() => workspace.setView("work")}
+        key={captureKey}
+        onBack={() => leave(() => workspace.setView("work"))}
+        onDirtyChange={onDirtyChange}
         onQueueAssetUpdate={workspace.queueAssetUpdate}
         onQueuePressureTest={workspace.queuePressureTest}
         onSaveDraft={(values) =>
@@ -61,7 +96,7 @@ function InspectorWorkspace({ userId }: { userId: string }) {
   } else {
     content = (
       <WorkQueue
-        onOpenWorkItem={workspace.openWorkItem}
+        onOpenWorkItem={(item) => leave(() => workspace.openWorkItem(item))}
         outbox={workspace.outbox.operations}
         workItems={workspace.workItems}
       />
@@ -71,12 +106,22 @@ function InspectorWorkspace({ userId }: { userId: string }) {
   return (
     <AppShell
       isOnline={workspace.isOnline}
-      onNavigate={workspace.setView}
+      onNavigate={navigate}
       queuedCount={workspace.queuedCount}
       sourceLabel={sourceLabel}
       view={workspace.view}
     >
       {content}
+      {pendingLeave ? (
+        <UnsavedChangesDialog
+          onDiscard={() => {
+            const action = pendingLeave;
+            setPendingLeave(null);
+            action();
+          }}
+          onKeepEditing={() => setPendingLeave(null)}
+        />
+      ) : null}
     </AppShell>
   );
 }
