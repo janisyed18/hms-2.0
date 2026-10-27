@@ -363,7 +363,7 @@ export function AssetsWorkspace({
           locationOptions={workspace.locationOptions}
           productOptions={workspace.productOptions}
           open={workspace.isFormOpen}
-          onClose={() => workspace.setFormOpen(false)}
+          onClose={workspace.closeForm}
           onSubmit={workspace.saveAsset}
         />
       ) : null}

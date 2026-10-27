@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
 import { useActionNotice } from "../components/interaction/ActionNotice";
@@ -31,6 +31,8 @@ export function useAssetsWorkspace() {
   const [formAsset, setFormAsset] = useState<AssetRecord | null>(null);
   const [isCopy, setIsCopy] = useState(false);
   const [isFormOpen, setFormOpen] = useState(false);
+  // Which opening of the form is current: a save that finishes after the form moved on must not close it.
+  const formSession = useRef(0);
   const [viewingAsset, setViewingAsset] = useState<AssetRecord | null>(null);
   const { notice, notify, clear: dismissNotice } = useActionNotice();
   const [archiveTarget, setArchiveTarget] = useState<AssetRecord | null>(null);
@@ -76,9 +78,10 @@ export function useAssetsWorkspace() {
   const customerOptions = useMemo(() => customers.length ? customers.map(customerSummary) : uniqueById(assets.map((asset) => asset.customer)), [assets, customers]);
   const locationOptions = useMemo(() => customers.map((customer) => ({ customerId: customer.id, locations: (customer.locations ?? []).filter((location): location is CustomerLocation => Boolean(location)) })), [customers]);
   const productOptions = useMemo(() => products.length ? products : uniqueById(assets.map((asset) => asset.product)), [assets, products]);
-  function openCreate() { setEditingAsset(null); setFormAsset(null); setIsCopy(false); setFormOpen(true); }
-  function openEdit(asset: AssetRecord) { setViewingAsset(null); setEditingAsset(asset); setFormAsset(asset); setIsCopy(false); setFormOpen(true); }
+  function openCreate() { formSession.current += 1; setEditingAsset(null); setFormAsset(null); setIsCopy(false); setFormOpen(true); }
+  function openEdit(asset: AssetRecord) { formSession.current += 1; setViewingAsset(null); setEditingAsset(asset); setFormAsset(asset); setIsCopy(false); setFormOpen(true); }
   function copyAsset(asset: AssetRecord) {
+    formSession.current += 1;
     setViewingAsset(null);
     setEditingAsset(null);
     setFormAsset({ ...asset, assetName: `${asset.assetName || asset.assetNumber} copy`, customerSerialNo: "", etag: null });
@@ -99,12 +102,15 @@ export function useAssetsWorkspace() {
   }, [assets]);
   const reportOpenFailure = useCallback(() => setError("The selected asset could not be opened."), []);
   function closeDetail() { setViewingAsset(null); }
+  function closeForm() { formSession.current += 1; setFormOpen(false); }
   async function saveAsset(values: AssetFormValues) {
     const client = createHmsClient();
+    const session = formSession.current;
     const saved = editingAsset ? await client.updateAsset(editingAsset.id, values, editingAsset.etag) : await client.createAsset(values);
     setAssets((current) => editingAsset ? current.map((asset) => asset.id === editingAsset.id ? saved : asset) : [saved, ...current]);
     setViewingAsset((current) => current?.id === saved.id ? saved : current);
-    setFormOpen(false); setEditingAsset(null); setFormAsset(null); setIsCopy(false);
+    // The saved record always lands in the register; the form only closes if it is still the one that saved.
+    if (session === formSession.current) { formSession.current += 1; setFormOpen(false); setEditingAsset(null); setFormAsset(null); setIsCopy(false); }
     // Only now, with the server's answer in hand, say it worked.
     notify({ kind: "success", message: `${assetLabel(saved)} ${editingAsset ? "saved" : "created"} successfully.`, title: "Asset saved" });
   }
@@ -127,5 +133,5 @@ export function useAssetsWorkspace() {
   }
   function clearAssetFilters() { setCustomerFilter("ALL"); setProductFilter("ALL"); setLifecycleFilter("ALL"); setDueFrom(""); setDueTo(""); }
   const activeFilterCount = [customerFilter !== "ALL", productFilter !== "ALL", lifecycleFilter !== "ALL", Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
-  return { activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, notice, requestArchive, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, setFormOpen, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
+  return { activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, notice, requestArchive, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, closeForm, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
 }

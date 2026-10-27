@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
+import { guardNavigation, hasNavigationGuard } from "./navigationGuard";
 import { parseRoute } from "./routeParser";
 import { serializeRoute } from "./routeSerializer";
 import type { HmsRoute, RouteSurface } from "./routeTypes";
@@ -25,10 +26,30 @@ function snapshot(): string {
 // Each app lives at one path; the route is carried in the query string, which the hosting already serves.
 const basePath = (surface: RouteSurface) => (surface === "portal" ? "/portal/" : "/");
 
+// The last address the person was deliberately on, so Back/Forward can be undone while a form holds
+// unsaved changes.
+let settledUrl = snapshot();
+
 function write(url: string, replace: boolean) {
   if (replace) window.history.replaceState(window.history.state, "", url);
   else window.history.pushState(null, "", url);
+  settledUrl = snapshot();
   listeners.forEach((listener) => listener());
+}
+
+// Registered at import time so it runs before any component's own popstate listener. While a dirty form
+// guards navigation, Back/Forward cannot be cancelled, so the address is put back (as a new entry) and
+// the person is asked; discarding replays the move they asked for.
+if (typeof window !== "undefined") {
+  window.addEventListener("popstate", () => {
+    const target = snapshot();
+    if (!hasNavigationGuard()) {
+      settledUrl = target;
+      return;
+    }
+    window.history.pushState(null, "", settledUrl);
+    guardNavigation(() => write(target, false));
+  });
 }
 
 export interface NavigateOptions {
@@ -74,7 +95,7 @@ export function useHmsRoute(surface: RouteSurface, allowedViews: readonly string
       const target = next.view && allowedViews.includes(next.view) ? next : { ...next, view: fallbackView };
       const url = `${basePath(surface)}${serializeRoute(target, surface)}`;
       if (url === snapshot()) return;
-      write(url, options.replace ?? false);
+      guardNavigation(() => write(url, options.replace ?? false));
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [surface, allowedKey, fallbackView]

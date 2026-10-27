@@ -1,10 +1,10 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
 
 import { AssetEndEditor } from "./AssetEndEditor";
-import { ActionButton } from "./interaction/ActionButton";
-import { ActionNotice } from "./interaction/ActionNotice";
-import { Field, RequiredNote } from "./interaction/FormPrimitives";
+import { FormGrid, FormSection } from "./forms/FormLayout";
+import { FormShell } from "./forms/FormShell";
+import { useDirtyTracker } from "./forms/useDirtyTracker";
+import { Field } from "./interaction/FormPrimitives";
 import { friendlyApiError } from "./interaction/friendlyApiError";
 import { focusFirstInvalid, isBlank, useFormErrors, type FieldErrors } from "./interaction/useFormErrors";
 import { customerLabel, productLabel } from "../utils/identity";
@@ -35,6 +35,14 @@ interface AssetFormProps {
 
 /** Form order of the required fields, for focusing the first one that needs attention. */
 const REQUIRED_ORDER = ["customerId", "locationId", "assetName", "serialNumber", "productId"];
+
+const FIELD_LABELS: Record<string, string> = {
+  customerId: "Agent",
+  locationId: "Location",
+  assetName: "Asset Name",
+  serialNumber: "Serial Number",
+  productId: "Product"
+};
 
 /** Backend request fields to this form's fields, so a server rejection lands on the right input. */
 const FIELD_MAP: Record<string, string> = {
@@ -86,11 +94,31 @@ export function AssetForm({
   const { errors, setErrors, clearError, clearAll } = useFormErrors();
   const formRef = useRef<HTMLFormElement>(null);
   const submitLock = useRef(false);
+  const { dirty, markClean, touch } = useDirtyTracker(JSON.stringify([
+    customerId, locationId, assetName, serialNumber, notes, purchaseOrderNumber, installationDate, graveDate,
+    nextInspectionDate, lengthM, productId, materialId, nominalBoreId, aEnd, bEnd
+  ]));
+  useEffect(() => { dirtyRef.current = dirty; });
+
+  // The form re-seeds when it opens or is pointed at a different record, never because the same record
+  // arrived again from a list refresh. A refreshed copy of the record only replaces a form nobody has
+  // edited. Each seeding starts a new session so a slow save for the previous record is ignored.
+  const sourceKey = open ? `${asset?.id ?? "new"}:${isCopy ? "copy" : "edit"}` : null;
+  const sourceSignature = JSON.stringify(asset ?? null);
+  const dirtyRef = useRef(false);
+  const seededKey = useRef<string | null>(null);
+  const session = useRef(0);
 
   useEffect(() => {
-    if (!open) {
+    if (sourceKey === null) {
+      seededKey.current = null;
       return;
     }
+    if (seededKey.current === sourceKey && dirtyRef.current) return;
+    seededKey.current = sourceKey;
+    session.current += 1;
+    submitLock.current = false;
+    setSubmitting(false);
     setSubmitError(null);
     clearAll();
     setAssetName(asset?.assetName ?? asset?.assetNumber ?? "");
@@ -108,8 +136,9 @@ export function AssetForm({
     setNominalBoreId(asset?.aEnd.nominalBore?.id ?? asset?.bEnd.nominalBore?.id ?? "");
     setAEnd(asset?.aEnd ?? blankEnd);
     setBEnd(asset?.bEnd ?? blankEnd);
+    markClean();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asset, open]);
+  }, [sourceKey, sourceSignature]);
 
   useEffect(() => {
     if (open && !asset?.customer.id) {
@@ -161,7 +190,7 @@ export function AssetForm({
     return found;
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (submitLock.current) return;
     setSubmitError(null);
@@ -171,6 +200,7 @@ export function AssetForm({
       focusFirstInvalid(formRef.current, REQUIRED_ORDER, found);
       return;
     }
+    const startedIn = session.current;
     submitLock.current = true;
     setSubmitting(true);
     try {
@@ -191,7 +221,10 @@ export function AssetForm({
         aEnd,
         bEnd
       });
+      // A save that finishes after the form moved to another record says nothing about that record.
+      if (startedIn === session.current) markClean();
     } catch (reason) {
+      if (startedIn !== session.current) return;
       // The drawer stays open with everything the user entered; say what went wrong.
       const friendly = friendlyApiError(reason, { fallback: "The asset could not be saved. Try again.", fieldMap: FIELD_MAP });
       setErrors(friendly.fieldErrors);
@@ -202,111 +235,134 @@ export function AssetForm({
         }
       }, 0);
     } finally {
-      submitLock.current = false;
-      setSubmitting(false);
+      if (startedIn === session.current) {
+        submitLock.current = false;
+        setSubmitting(false);
+      }
     }
   }
 
   return (
     <div className="drawer-backdrop">
-      <form className="customer-drawer asset-profile-form" noValidate onSubmit={handleSubmit} ref={formRef}>
-        <div className="drawer-header">
-          <h2>{isCopy ? "Copy Asset" : asset ? "Edit Asset" : "Add Asset"}</h2>
-          <button className="icon-button light" type="button" aria-label="Close form" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-        {submitError ? <ActionNotice kind="error" title="Asset could not be saved">{submitError}</ActionNotice> : null}
-        <RequiredNote />
-        <Field error={errors.customerId} label="Agent" name="customerId" required>
-          {(props) => (
-            <select {...props} aria-label="Agent" value={customerId} onChange={(event) => { setCustomerId(event.target.value); clearError("customerId"); }}>
-              <option value="">Select agent</option>
-              {customerOptions.map((customer) => <option key={customer.id} value={customer.id}>{customerLabel(customer)}</option>)}
-            </select>
-          )}
-        </Field>
-        <Field error={errors.locationId} label="Location" name="locationId" required>
-          {(props) => (
-            <select {...props} aria-label="Location" value={locationId} onChange={(event) => { setLocationId(event.target.value); clearError("locationId"); }}>
-              <option value="">Select location</option>
-              {customerLocations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
-            </select>
-          )}
-        </Field>
-        <Field error={errors.assetName} label="Asset Name" name="assetName" required>
-          {(props) => <input {...props} aria-label="Asset Name" value={assetName} onChange={(event) => { setAssetName(event.target.value); clearError("assetName"); }} />}
-        </Field>
-        <Field error={errors.serialNumber} label="Serial Number" name="serialNumber" required>
-          {(props) => <input {...props} aria-label="Serial Number" value={serialNumber} onChange={(event) => { setSerialNumber(event.target.value); clearError("serialNumber"); }} />}
-        </Field>
-        <label>
-          <span>Notes</span>
-          <textarea aria-label="Notes" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
-        </label>
-        <label>
-          <span>Purchase Order Number</span>
-          <input aria-label="Purchase Order Number" value={purchaseOrderNumber} onChange={(event) => setPurchaseOrderNumber(event.target.value)} />
-        </label>
-        <label>
-          <span>Installation Date</span>
-          <input aria-label="Installation Date" type="date" value={installationDate} onChange={(event) => setInstallationDate(event.target.value)} />
-        </label>
-        <label>
-          <span>Grave Date</span>
-          <input aria-label="Grave Date" type="date" value={graveDate} onChange={(event) => setGraveDate(event.target.value)} />
-        </label>
-        <label>
-          <span>Next Inspection Date</span>
-          <input aria-label="Next Inspection Date" type="date" value={nextInspectionDate} onChange={(event) => setNextInspectionDate(event.target.value)} />
-        </label>
-        <label>
-          <span>Length (m)</span>
-          <input aria-label="Length (m)" min="0" step="0.001" type="number" value={lengthM} onChange={(event) => setLengthM(event.target.value)} />
-        </label>
-        <Field error={errors.productId} label="Product" name="productId" required>
-          {(props) => (
-            <select {...props} aria-label="Product" value={productId} onChange={(event) => { setProductId(event.target.value); clearError("productId"); }}>
-              <option value="">Select product</option>
-              {productOptions.map((product) => <option key={product.id} value={product.id}>{productLabel(product)}</option>)}
-            </select>
-          )}
-        </Field>
-        <label>
-          <span>Material</span>
-          <select aria-label="Material" value={materialId} onChange={(event) => setMaterialId(event.target.value)}>
-            <option value="">Select material</option>
-            {configurationOptions.materials.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-          </select>
-        </label>
-        <AssetEndEditor
-          attachMethods={configurationOptions.attachMethods}
-          couplingAddOns={configurationOptions.couplingAddOns}
-          couplings={configurationOptions.couplings}
-          label="A"
-          values={aEnd}
-          onChange={setAEnd}
-        />
-        <AssetEndEditor
-          attachMethods={configurationOptions.attachMethods}
-          couplingAddOns={configurationOptions.couplingAddOns}
-          couplings={configurationOptions.couplings}
-          label="B"
-          values={bEnd}
-          onChange={setBEnd}
-        />
-        <label>
-          <span>Nominal Bore</span>
-          <select aria-label="Nominal Bore" value={nominalBoreId} onChange={(event) => setNominalBoreId(event.target.value)}>
-            <option value="">Select nominal bore</option>
-            {configurationOptions.nominalBores.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-          </select>
-        </label>
-        <div className="drawer-actions">
-          <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
-          <ActionButton pending={isSubmitting} pendingLabel="Saving…" type="submit" variant="primary">Save asset</ActionButton>
-        </div>
-      </form>
+      <FormShell
+        dirty={dirty}
+        errorSummaryTitle="Asset could not be saved"
+        errors={errors}
+        fieldLabels={FIELD_LABELS}
+        fieldOrder={REQUIRED_ORDER}
+        formClassName="customer-drawer asset-profile-form"
+        formRef={formRef}
+        headerClassName="drawer-header"
+        isSubmitting={isSubmitting}
+        onClose={onClose}
+        onEdit={touch}
+        onSubmit={handleSubmit}
+        pendingLabel="Saving…"
+        submitError={submitError}
+        submitLabel="Save asset"
+        title={isCopy ? "Copy Asset" : asset ? "Edit Asset" : "Add Asset"}
+      >
+        <FormSection title="Ownership">
+          <FormGrid>
+            <Field error={errors.customerId} label="Agent" name="customerId" required>
+              {(props) => (
+                <select {...props} aria-label="Agent" value={customerId} onChange={(event) => { setCustomerId(event.target.value); clearError("customerId"); }}>
+                  <option value="">Select agent</option>
+                  {customerOptions.map((customer) => <option key={customer.id} value={customer.id}>{customerLabel(customer)}</option>)}
+                </select>
+              )}
+            </Field>
+            <Field error={errors.locationId} label="Location" name="locationId" required>
+              {(props) => (
+                <select {...props} aria-label="Location" value={locationId} onChange={(event) => { setLocationId(event.target.value); clearError("locationId"); }}>
+                  <option value="">Select location</option>
+                  {customerLocations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
+                </select>
+              )}
+            </Field>
+          </FormGrid>
+        </FormSection>
+        <FormSection title="Identity">
+          <FormGrid>
+            <Field error={errors.assetName} label="Asset Name" name="assetName" required>
+              {(props) => <input {...props} aria-label="Asset Name" value={assetName} onChange={(event) => { setAssetName(event.target.value); clearError("assetName"); }} />}
+            </Field>
+            <Field error={errors.serialNumber} label="Serial Number" name="serialNumber" required>
+              {(props) => <input {...props} aria-label="Serial Number" value={serialNumber} onChange={(event) => { setSerialNumber(event.target.value); clearError("serialNumber"); }} />}
+            </Field>
+            <Field label="Purchase Order Number" name="purchaseOrderNumber">
+              {(props) => <input {...props} aria-label="Purchase Order Number" value={purchaseOrderNumber} onChange={(event) => setPurchaseOrderNumber(event.target.value)} />}
+            </Field>
+            <Field className="form-field--wide" label="Notes" name="notes">
+              {(props) => <textarea {...props} aria-label="Notes" rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />}
+            </Field>
+          </FormGrid>
+        </FormSection>
+        <FormSection title="Dates">
+          <FormGrid>
+            <Field label="Installation Date" name="installationDate">
+              {(props) => <input {...props} aria-label="Installation Date" type="date" value={installationDate} onChange={(event) => setInstallationDate(event.target.value)} />}
+            </Field>
+            <Field label="Grave Date" name="graveDate">
+              {(props) => <input {...props} aria-label="Grave Date" type="date" value={graveDate} onChange={(event) => setGraveDate(event.target.value)} />}
+            </Field>
+            <Field label="Next Inspection Date" name="nextInspectionDate">
+              {(props) => <input {...props} aria-label="Next Inspection Date" type="date" value={nextInspectionDate} onChange={(event) => setNextInspectionDate(event.target.value)} />}
+            </Field>
+          </FormGrid>
+        </FormSection>
+        <FormSection title="Product and configuration">
+          <FormGrid>
+            <Field error={errors.productId} label="Product" name="productId" required>
+              {(props) => (
+                <select {...props} aria-label="Product" value={productId} onChange={(event) => { setProductId(event.target.value); clearError("productId"); }}>
+                  <option value="">Select product</option>
+                  {productOptions.map((product) => <option key={product.id} value={product.id}>{productLabel(product)}</option>)}
+                </select>
+              )}
+            </Field>
+            <Field label="Length (m)" name="lengthM">
+              {(props) => <input {...props} aria-label="Length (m)" min="0" step="0.001" type="number" value={lengthM} onChange={(event) => setLengthM(event.target.value)} />}
+            </Field>
+            <Field label="Material" name="materialId">
+              {(props) => (
+                <select {...props} aria-label="Material" value={materialId} onChange={(event) => setMaterialId(event.target.value)}>
+                  <option value="">Select material</option>
+                  {configurationOptions.materials.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+                </select>
+              )}
+            </Field>
+            <Field label="Nominal Bore" name="nominalBoreId">
+              {(props) => (
+                <select {...props} aria-label="Nominal Bore" value={nominalBoreId} onChange={(event) => setNominalBoreId(event.target.value)}>
+                  <option value="">Select nominal bore</option>
+                  {configurationOptions.nominalBores.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+                </select>
+              )}
+            </Field>
+          </FormGrid>
+        </FormSection>
+        <FormSection title="Ends">
+          <FormGrid>
+            <AssetEndEditor
+              attachMethods={configurationOptions.attachMethods}
+              couplingAddOns={configurationOptions.couplingAddOns}
+              couplings={configurationOptions.couplings}
+              label="A"
+              values={aEnd}
+              onChange={setAEnd}
+            />
+            <AssetEndEditor
+              attachMethods={configurationOptions.attachMethods}
+              couplingAddOns={configurationOptions.couplingAddOns}
+              couplings={configurationOptions.couplings}
+              label="B"
+              values={bEnd}
+              onChange={setBEnd}
+            />
+          </FormGrid>
+        </FormSection>
+      </FormShell>
     </div>
   );
 }
