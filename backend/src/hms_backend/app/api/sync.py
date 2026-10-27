@@ -326,9 +326,12 @@ async def sync_changes(
     ).all()
     scanned = fetched[:limit]
     native = _is_native(_negotiated_protocol(sync_protocol))
-    changes = await _visible_change_records(
-        session, principal, scanned, native=native
-    )
+    changes = [
+        record.model_copy(
+            update={"payload": _present_payload(record.entity, record.payload, native)}
+        )
+        for record in await _visible_change_records(session, principal, scanned)
+    ]
     # Advance only over what this response actually scanned. An empty page consumed
     # nothing, so it must not jump to a later snapshot's maximum: a change committed
     # after the SELECT above would be skipped and never delivered.
@@ -505,8 +508,6 @@ async def _visible_change_records(
     session: AsyncSession,
     principal: Principal,
     changes: Sequence[SyncChange],
-    *,
-    native: bool = False,
 ) -> list[SyncRecordRead]:
     records: list[SyncRecordRead] = []
     for change in changes:
@@ -524,13 +525,7 @@ async def _visible_change_records(
                 op="delete" if is_delete else "upsert",
                 version=change.version,
                 changed_at=change.changed_at,
-                payload=(
-                    None
-                    if is_delete
-                    else _present_payload(
-                        change.entity, _row_payload(cast(SyncableRow, row)), native
-                    )
-                ),
+                payload=None if is_delete else _row_payload(cast(SyncableRow, row)),
             )
         )
     return records
