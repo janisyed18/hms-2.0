@@ -9,6 +9,9 @@ import {
   MapPinned
 } from "lucide-react";
 
+import { notificationTarget } from "./notifications/target";
+import { NotificationCenterProvider } from "./notifications/NotificationCenterProvider";
+import { NotificationsPage } from "./notifications/NotificationsPage";
 import { AppShell, type AppModule, type GlobalSearchSuggestion, type NavItem } from "./components/AppShell";
 import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
@@ -21,7 +24,7 @@ import type { SystemModule } from "./components/SystemWorkspace";
 import { createHmsClient } from "./api/hmsClient";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import type { BrowserAuthClient } from "./auth/authClient";
-import type { AssetWorkflowAction, StaffPermission, StaffRole, StaffSession } from "./domain/types";
+import type { AssetWorkflowAction, NotificationRecord, StaffPermission, StaffRole, StaffSession } from "./domain/types";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import { PageMotion } from "./motion/MotionPrimitives";
 import { useHmsRoute } from "./routing/useHmsRoute";
@@ -207,16 +210,17 @@ const allModules: AppModule[] = [
   "sync",
   "audit",
   "users",
-  "devices"
+  "devices",
+  "notifications"
 ];
 
 const roleModules: Record<StaffRole, AppModule[]> = {
   SUPER_ADMIN: allModules,
   HMS_ADMIN: allModules.filter((module) => module !== "sync"),
-  INSPECTOR: ["dashboard", "customers", "assets", "scheduling", "inspections", "retest", "sync"],
-  ASSEMBLY: ["dashboard", "customers", "assets", "retest"],
-  REVIEWER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest"],
-  CUSTOMER_USER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest"]
+  INSPECTOR: ["dashboard", "customers", "assets", "scheduling", "inspections", "retest", "sync", "notifications"],
+  ASSEMBLY: ["dashboard", "customers", "assets", "retest", "notifications"],
+  REVIEWER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest", "notifications"],
+  CUSTOMER_USER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest", "notifications"]
 };
 
 const customerPortalModules: AppModule[] = [
@@ -425,6 +429,22 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
     }
   };
 
+  // A notification leads to the record it is about, by the ids it carries; anything this account has
+  // no workspace for lands on the notifications page instead.
+  function handleNotificationOpen(notification: NotificationRecord) {
+    const target = notificationTarget(notification, portalMode ? "portal" : "staff");
+    if (!target || !visibleModules.includes(target.module)) {
+      handleModuleChange("notifications");
+      return;
+    }
+    navigate((current) => ({
+      ...emptyRoute(target.module),
+      asset: target.assetId ?? null,
+      inspection: target.inspectionId ?? null,
+      customer: portalMode ? current.customer : (target.customerId ?? null)
+    }));
+  }
+
   function handleSearchRecordOpen(suggestion: GlobalSearchSuggestion) {
     if (!visibleModules.includes(suggestion.module)) {
       return;
@@ -444,16 +464,22 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
     navigate(emptyRoute("products"));
   }
 
+  // The notification provider is keyed by scope: a different organisation is a fresh feed, so the
+  // old one's items, count and timers are gone at once, not after the new one has loaded.
   return (
+    <NotificationCenterProvider
+      customerId={portalMode ? route.customer : undefined}
+      key={portalMode ? (route.customer ?? "no-customer") : "staff"}
+    >
     <AppShell
       activeModule={renderedActiveModule}
       canCreateAsset={canCreateAsset}
       description={activeCopy.description}
       hideGlobalSearch={portalMode}
       navGroups={portalMode ? customerPortalNavGroups : undefined}
-      notificationCustomerId={portalMode ? route.customer : undefined}
-      notificationModule={portalMode ? "notifications" : undefined}
+      notificationModule="notifications"
       onLogout={onLogout}
+      onNotificationOpen={handleNotificationOpen}
       onModuleChange={handleModuleChange}
       onSearchRecordOpen={handleSearchRecordOpen}
       session={session}
@@ -468,7 +494,13 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
             </WorkspaceState>
           }
         >
-          {renderedActiveModule === "audit" ? (
+          {renderedActiveModule === "notifications" ? (
+            <main className="record-page">
+              <div className="record-main">
+                <NotificationsPage onOpen={handleNotificationOpen} />
+              </div>
+            </main>
+          ) : renderedActiveModule === "audit" ? (
             <main className="record-page"><div className="record-main"><AuditWorkspace /></div></main>
           ) : portalMode ? (
             <main className="record-page customer-portal-page">
@@ -628,6 +660,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
         </Suspense>
       </PageMotion>
     </AppShell>
+    </NotificationCenterProvider>
   );
 }
 

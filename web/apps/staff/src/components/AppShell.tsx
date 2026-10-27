@@ -28,7 +28,6 @@ import {
 } from "lucide-react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -39,8 +38,9 @@ import {
 } from "react";
 import { createHmsClient } from "../api/hmsClient";
 import type { NotificationRecord, StaffSession } from "../domain/types";
+import { NotificationList } from "../notifications/NotificationList";
+import { BELL_ITEMS, useNotificationCenter } from "../notifications/NotificationCenterProvider";
 import { motionTokens } from "../motion/motionTokens";
-import { friendlyApiError } from "./interaction/friendlyApiError";
 
 export type AppModule =
   | "dashboard"
@@ -77,8 +77,10 @@ interface AppShellProps {
   description: string;
   hideGlobalSearch?: boolean;
   navGroups?: Array<{ label: string; items: NavItem[] }>;
-  notificationCustomerId?: string | null;
+  /** Where "View all notifications" goes. */
   notificationModule?: AppModule;
+  /** A notification was opened (and marked read): take the person to what it is about. */
+  onNotificationOpen?: (notification: NotificationRecord) => void;
   onLogout?: () => void;
   onModuleChange: (module: AppModule) => void;
   onSearchRecordOpen: (suggestion: GlobalSearchSuggestion) => void;
@@ -231,38 +233,6 @@ function roleSummary(roles: string[]): string {
   return labels.length > 0 ? labels.join(" · ") : "HMS User";
 }
 
-function notificationIcon(category: string): LucideIcon {
-  if (category.includes("CERTIFICATE")) {
-    return FileCheck2;
-  }
-  if (category.includes("INSPECTION")) {
-    return ClipboardCheck;
-  }
-  if (category.includes("RETEST")) {
-    return CalendarClock;
-  }
-  return Bell;
-}
-
-function notificationTimestamp(value: string): string {
-  const elapsedSeconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
-  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ["year", 31_536_000],
-    ["month", 2_592_000],
-    ["day", 86_400],
-    ["hour", 3_600],
-    ["minute", 60]
-  ];
-  const [unit, seconds] = units.find(([, size]) => Math.abs(elapsedSeconds) >= size) ?? [
-    "second",
-    1
-  ];
-  return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(
-    Math.round(elapsedSeconds / seconds),
-    unit
-  );
-}
-
 function initialsFor(name: string): string {
   const initials = name
     .split(/\s+/)
@@ -400,9 +370,9 @@ export function AppShell({
   description,
   hideGlobalSearch = false,
   navGroups: customNavGroups,
-  notificationCustomerId,
   notificationModule,
   onLogout,
+  onNotificationOpen,
   onModuleChange,
   onSearchRecordOpen,
   session,
@@ -412,13 +382,8 @@ export function AppShell({
   const [openMenu, setOpenMenu] = useState<TopbarMenu | null>(null);
   const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
   const [theme, setTheme] = useState<WorkspaceTheme>(initialWorkspaceTheme);
-  const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
-  const [notificationUnreadTotal, setNotificationUnreadTotal] = useState(0);
-  const [notificationStatus, setNotificationStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle");
-  const [notificationError, setNotificationError] = useState<string | null>(null);
-  const [markingNotificationId, setMarkingNotificationId] = useState<string | null>(null);
+  const notificationFeed = useNotificationCenter();
+  const notificationBellRef = useRef<HTMLButtonElement>(null);
   const [globalQuery, setGlobalQuery] = useState("");
   const [searchSuggestions, setSearchSuggestions] = useState<GlobalSearchSuggestion[]>([]);
   const [searchStatus, setSearchStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -455,35 +420,6 @@ export function AppShell({
       // Theme persistence is optional; rendering must also work in restricted webviews.
     }
   }, [theme]);
-
-  const loadNotifications = useCallback(async () => {
-    setNotificationStatus("loading");
-    setNotificationError(null);
-    if (notificationCustomerId === null) {
-      setNotifications([]);
-      setNotificationUnreadTotal(0);
-      setNotificationStatus("ready");
-      return;
-    }
-    try {
-      const feed = notificationCustomerId === undefined
-        ? await createHmsClient().listNotifications()
-        : await createHmsClient().listNotifications({
-            customerId: notificationCustomerId,
-            limit: 12
-          });
-      setNotifications(feed.items);
-      setNotificationUnreadTotal(feed.unreadTotal);
-      setNotificationStatus("ready");
-    } catch {
-      setNotificationStatus("error");
-      setNotificationError("Notifications could not be loaded. Try again.");
-    }
-  }, [notificationCustomerId]);
-
-  useEffect(() => {
-    void loadNotifications();
-  }, [loadNotifications, session.userId]);
 
   useEffect(() => {
     const query = globalQuery.trim();
@@ -653,37 +589,38 @@ export function AppShell({
   }
 
   async function handleNotificationOpen(notification: NotificationRecord) {
-    if (!notification.readAt) {
-      setMarkingNotificationId(notification.id);
-      setNotificationError(null);
-      try {
-        const updated = await createHmsClient().markNotificationRead(notification.id);
-        setNotifications((current) =>
-          current.map((item) => (item.id === updated.id ? updated : item))
-        );
-        setNotificationUnreadTotal((current) => Math.max(0, current - 1));
-      } catch (reason) {
-        // Still unread, and the user stays where they are: nothing was changed on the server.
-        setNotificationError(friendlyApiError(reason, { fallback: "This notification could not be marked as read. Try again." }).message);
-        return;
-      } finally {
-        setMarkingNotificationId(null);
-      }
-    }
-
-    setOpenMenu(null);
-    if (notificationModule) {
-      handleModuleChange(notificationModule);
-      return;
-    }
-    if (notification.category.includes("INSPECTION_BOOKING")) {
-      handleModuleChange("inspections");
-    } else if (notification.assetId) {
-      handleModuleChange("assets");
-    } else if (notification.customerId) {
-      handleModuleChange("customers");
-    }
+    // Read on the server first: if that fails the person stays where they are, still unread.
+    if (!(await notificationFeed.markRead(notification))) return;
+    closeMenu();
+    onNotificationOpen?.(notification);
   }
+
+  async function handleMarkAllRead() {
+    await notificationFeed.markAllRead();
+  }
+
+  function handleViewAllNotifications() {
+    closeMenu();
+    if (notificationModule) handleModuleChange(notificationModule);
+  }
+
+  // Closing a popover returns focus to the control that opened it.
+  function closeMenu() {
+    const wasNotifications = openMenu === "notifications";
+    setOpenMenu(null);
+    if (wasNotifications) notificationBellRef.current?.focus();
+  }
+
+  useEffect(() => {
+    if (!openMenu) return;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setOpenMenu(null);
+      if (openMenu === "notifications") notificationBellRef.current?.focus();
+    }
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [openMenu]);
 
   function handleGlobalSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -903,19 +840,26 @@ export function AppShell({
               {theme === "dark" ? <Sun aria-hidden="true" size={18} /> : <Moon aria-hidden="true" size={18} />}
             </button>
             <button
-              className={`icon-button${notificationUnreadTotal > 0 ? " has-count" : ""}`}
-              aria-label="Notifications"
+              aria-expanded={openMenu === "notifications"}
+              aria-haspopup="dialog"
+              className={`icon-button${notificationFeed.unreadTotal > 0 ? " has-count" : ""}`}
+              aria-label={
+                notificationFeed.unreadTotal > 0
+                  ? `Notifications, ${notificationFeed.unreadTotal} unread`
+                  : "Notifications"
+              }
               onClick={() => {
                 const isOpening = openMenu !== "notifications";
                 setOpenMenu(isOpening ? "notifications" : null);
                 if (isOpening) {
-                  void loadNotifications();
+                  void notificationFeed.refresh({ queueIfBusy: true });
                 }
               }}
+              ref={notificationBellRef}
               type="button"
             >
-              <Bell size={18} />
-              {notificationUnreadTotal > 0 ? <span>{notificationUnreadTotal}</span> : null}
+              <Bell aria-hidden="true" size={18} />
+              {notificationFeed.unreadTotal > 0 ? <span aria-hidden="true">{notificationFeed.unreadTotal}</span> : null}
             </button>
             <button
               className="icon-button"
@@ -952,78 +896,37 @@ export function AppShell({
                 <button
                   aria-label={popoverCloseLabel(openMenu)}
                   className="icon-button light popover-close"
-                  onClick={() => setOpenMenu(null)}
+                  onClick={closeMenu}
                   type="button"
                 >
                   <X aria-hidden="true" size={16} />
                 </button>
               </div>
               {openMenu === "notifications" ? (
-                <div className="notification-feed" aria-live="polite">
-                  {notificationStatus === "loading" && notifications.length === 0 ? (
-                    <p className="notification-feed-message">Loading notifications...</p>
-                  ) : null}
-                  {notificationStatus === "error" ? (
-                    <div className="notification-feed-message notification-feed-error" role="alert">
-                      <span>{notificationError}</span>
-                      <button onClick={() => void loadNotifications()} type="button">
-                        Retry
+                <>
+                  <NotificationList
+                    error={notificationFeed.error}
+                    items={notificationFeed.items.slice(0, BELL_ITEMS)}
+                    onOpen={(notification) => void handleNotificationOpen(notification)}
+                    onRetry={() => void notificationFeed.refresh()}
+                    pendingId={notificationFeed.pendingId}
+                    status={notificationFeed.status}
+                  />
+                  <div className="notification-actions">
+                    <button
+                      disabled={notificationFeed.markingAll || notificationFeed.unreadTotal === 0}
+                      onClick={() => void handleMarkAllRead()}
+                      type="button"
+                    >
+                      {notificationFeed.markingAll ? "Marking…" : "Mark all read"}
+                    </button>
+                    {notificationModule ? (
+                      <button onClick={handleViewAllNotifications} type="button">
+                        View all notifications
                       </button>
-                    </div>
-                  ) : null}
-                  {notificationStatus === "ready" && notificationError ? (
-                    <div className="notification-feed-message notification-feed-error" role="alert">
-                      <span>{notificationError}</span>
-                    </div>
-                  ) : null}
-                  {notificationStatus === "ready" && notifications.length === 0 ? (
-                    <p className="notification-feed-message">You are all caught up.</p>
-                  ) : null}
-                  {notifications.length > 0 ? (
-                    <div className="notification-list">
-                      {notifications.map((notification, index) => {
-                        const Icon = notificationIcon(notification.category);
-                        const isUnread = notification.readAt === null;
-                        const isMarking = markingNotificationId === notification.id;
-                        return (
-                          <m.button
-                            animate={{ opacity: 1, y: 0 }}
-                            aria-label={`Open ${isUnread ? "unread " : ""}notification ${
-                              notification.subject ?? "Update"
-                            }`}
-                            className={`notification-item${isUnread ? " is-unread" : ""}`}
-                            disabled={isMarking}
-                            initial={reducedMotion ? false : { opacity: 0, y: 6 }}
-                            key={notification.id}
-                            onClick={() => void handleNotificationOpen(notification)}
-                            transition={
-                              reducedMotion
-                                ? { duration: 0 }
-                                : {
-                                    duration: motionTokens.duration.fast,
-                                    delay: index * 0.03,
-                                    ease: motionTokens.ease.enter
-                                  }
-                            }
-                            type="button"
-                          >
-                            <span className="notification-icon" aria-hidden="true">
-                              <Icon size={16} />
-                            </span>
-                            <span className="notification-copy">
-                              <strong>{notification.subject ?? "HMS update"}</strong>
-                              <span>{notification.body}</span>
-                              <time dateTime={notification.createdAt}>
-                                {notificationTimestamp(notification.createdAt)}
-                              </time>
-                            </span>
-                            {isUnread ? <span aria-hidden="true" className="notification-unread" /> : null}
-                          </m.button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
+                    ) : null}
+                  </div>
+                </>
               ) : openMenu === "user" ? (
                 <div className="account-popover-content">
                   <div className="account-identity">

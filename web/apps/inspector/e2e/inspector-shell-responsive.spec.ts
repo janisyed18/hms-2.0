@@ -26,6 +26,16 @@ async function openWorkspace(page: Page) {
       await route.fulfill(json({ detail: "unexpected" }, 404));
     }
   });
+  await page.route("**/api/v1/notifications/me**", (route) =>
+    route.fulfill(json({
+      total: 2,
+      unread_total: 1,
+      items: [
+        { id: "n1", category: "INSPECTION_REJECTED", subject: "Inspection sent back", body: "Re-test the hold time.", customer_id: null, asset_id: "asset-0891", subject_type: "inspection", subject_id: "i1", created_at: new Date(Date.now() - 300_000).toISOString(), read_at: null },
+        { id: "n2", category: "SOMETHING_NEW", subject: null, body: "A category this app has not seen.", customer_id: null, asset_id: null, subject_type: null, subject_id: null, created_at: new Date(Date.now() - 86_400_000).toISOString(), read_at: new Date().toISOString() }
+      ]
+    }))
+  );
   await page.route("**/api/v1/sync/bootstrap**", (route) => route.fulfill(json(mockBootstrapResponse)));
   await page.route("**/api/v1/sync/changes**", (route) => route.fulfill(json({ cursor: mockBootstrapResponse.cursor, has_more: false, changes: [] })));
   await page.goto("/");
@@ -117,6 +127,31 @@ test.describe("Inspector responsive shell", () => {
       await expect(page.getByLabel("Sync status")).toContainText("1 queued");
       expect(await noSidewaysScroll(page)).toBe(true);
       expect(inViewport((await page.getByRole("button", { name: "Push Changes" }).boundingBox()) ?? { x: -9, y: -9, width: 0, height: 0 }, width, height)).toBe(true);
+    });
+  }
+
+  for (const [width, height] of WIDTHS) {
+    test(`${width}x${height}: the notification bell and panel fit, close with Escape, and say when offline`, async ({ page, context }) => {
+      await page.setViewportSize({ width, height });
+      await openWorkspace(page);
+      const bell = page.getByRole("button", { name: "Notifications, 1 unread" });
+      await expect(bell).toBeVisible();
+      expect(inViewport((await bell.boundingBox()) ?? { x: -9, y: -9, width: 0, height: 0 }, width, height)).toBe(true);
+      await bell.click();
+      const panel = page.getByRole("dialog", { name: "Notifications" });
+      await expect(panel.getByRole("button", { name: /^Open/ })).toHaveCount(2);
+      expect(inViewport((await panel.boundingBox()) ?? { x: -9, y: -9, width: 0, height: 0 }, width, height)).toBe(true);
+      expect(await noSidewaysScroll(page)).toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(panel).toHaveCount(0);
+      await expect(bell).toBeFocused();
+
+      await context.setOffline(true);
+      await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+      await bell.click();
+      await expect(panel.getByRole("status")).toContainText(/offline/i);
+      await expect(panel.getByRole("button", { name: "Mark all read" })).toBeDisabled();
+      await expect(panel.getByRole("button", { name: /^Open/ })).toHaveCount(2); // the last list stays
     });
   }
 

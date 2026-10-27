@@ -187,6 +187,26 @@ export interface OutboxOperation {
   lastError?: string;
 }
 
+export interface NotificationItem {
+  id: string;
+  category: string;
+  subject: string | null;
+  body: string;
+  assetId: string | null;
+  customerId: string | null;
+  /** What it is about, from the event: "inspection", "asset", ... */
+  subjectType: string | null;
+  subjectId: string | null;
+  createdAt: string;
+  readAt: string | null;
+}
+
+export interface NotificationFeed {
+  total: number;
+  unreadTotal: number;
+  items: NotificationItem[];
+}
+
 export interface OutboxState {
   operations: OutboxOperation[];
   warning?: string;

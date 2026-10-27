@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { NotificationCenterProvider } from "../notifications/NotificationCenterProvider";
 import { AppShell, type GlobalSearchSuggestion } from "../components/AppShell";
 import type { StaffSession } from "../domain/types";
 
@@ -38,19 +39,20 @@ function renderSearch(
   return {
     onSearchRecordOpen,
     ...render(
-      <AppShell
-        activeModule="dashboard"
-        canCreateAsset
-        description="Operational snapshot"
-        notificationCustomerId={notificationCustomerId}
-        onModuleChange={vi.fn()}
-        onSearchRecordOpen={onSearchRecordOpen}
-        session={session}
-        title="Dashboard"
-        visibleModules={["dashboard", "customers", "assets", "products", "inspections"]}
-      >
-        <main>Dashboard content</main>
-      </AppShell>
+      <NotificationCenterProvider customerId={notificationCustomerId}>
+        <AppShell
+          activeModule="dashboard"
+          canCreateAsset
+          description="Operational snapshot"
+          onModuleChange={vi.fn()}
+          onSearchRecordOpen={onSearchRecordOpen}
+          session={session}
+          title="Dashboard"
+          visibleModules={["dashboard", "customers", "assets", "products", "inspections"]}
+        >
+          <main>Dashboard content</main>
+        </AppShell>
+      </NotificationCenterProvider>
     )
   };
 }
@@ -100,7 +102,7 @@ describe("global search", () => {
     const user = userEvent.setup();
     const { onSearchRecordOpen } = renderSearch();
 
-    await waitFor(() => expect(listNotifications).toHaveBeenCalledWith());
+    await waitFor(() => expect(listNotifications).toHaveBeenCalledWith({ limit: 12 }));
 
     const input = screen.getByRole("combobox", { name: "Global search" });
     await user.type(input, "cust");

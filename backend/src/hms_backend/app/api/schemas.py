@@ -925,6 +925,16 @@ class NotificationRead(BaseModel):
     created_at: datetime
     sent_at: datetime | None
     read_at: datetime | None
+    # What the notification is about (the event's aggregate), for deep links. Set on the
+    # recipient's own feed only; the ids that decide where a click goes live here, not
+    # in the category name.
+    subject_type: str | None = None
+    subject_id: str | None = None
+
+
+class NotificationReadAllResponse(BaseModel):
+    updated: int
+    unread_total: int
 
 
 class NotificationListResponse(BaseModel):

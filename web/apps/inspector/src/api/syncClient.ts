@@ -10,6 +10,8 @@ import {
 import type { PressureRating, SavedInspectionForm } from "../domain/inspectionForm";
 import type {
   InspectionStatus,
+  NotificationFeed,
+  NotificationItem,
   OutboxOperation,
   SyncBootstrapResponse,
   SyncChangesResponse,
@@ -196,6 +198,40 @@ interface ApiRetestSchedulePayload {
   asset_id: string;
   due_at: string | null;
   status: "UPCOMING" | "DUE" | "OVERDUE" | "SUSPENDED";
+}
+
+interface ApiNotification {
+  id: string;
+  category: string;
+  subject: string | null;
+  body: string;
+  customer_id: string | null;
+  asset_id: string | null;
+  subject_type?: string | null;
+  subject_id?: string | null;
+  created_at: string;
+  read_at: string | null;
+}
+
+interface ApiNotificationList {
+  total: number;
+  unread_total: number;
+  items: ApiNotification[];
+}
+
+function toNotificationItem(notification: ApiNotification): NotificationItem {
+  return {
+    id: notification.id,
+    category: notification.category,
+    subject: notification.subject,
+    body: notification.body,
+    assetId: notification.asset_id,
+    customerId: notification.customer_id,
+    subjectType: notification.subject_type ?? null,
+    subjectId: notification.subject_id ?? null,
+    createdAt: notification.created_at,
+    readAt: notification.read_at
+  };
 }
 
 interface ApiInspectionPayload {
@@ -941,6 +977,34 @@ export function createSyncClient(options: Partial<SyncClientOptions> = {}) {
     },
 
     changes: changesPage,
+
+    /** The signed-in inspector's in-app notifications, newest first. */
+    async listNotifications(options: { limit?: number } = {}): Promise<NotificationFeed> {
+      const raw = await request<ApiNotificationList>(
+        `/api/v1/notifications/me?limit=${options.limit ?? 20}`
+      );
+      return {
+        total: raw.total,
+        unreadTotal: raw.unread_total,
+        items: raw.items.map(toNotificationItem)
+      };
+    },
+
+    async markNotificationRead(id: string): Promise<NotificationItem> {
+      return toNotificationItem(
+        await request<ApiNotification>(`/api/v1/notifications/${encodeURIComponent(id)}/read`, {
+          method: "POST"
+        })
+      );
+    },
+
+    async markAllNotificationsRead(): Promise<{ updated: number; unreadTotal: number }> {
+      const raw = await request<{ updated: number; unread_total: number }>(
+        "/api/v1/notifications/me/read-all",
+        { method: "POST" }
+      );
+      return { updated: raw.updated, unreadTotal: raw.unread_total };
+    },
 
     push(operations: OutboxOperation[]) {
       return request<SyncPushResponse>("/api/v1/sync/push", {
