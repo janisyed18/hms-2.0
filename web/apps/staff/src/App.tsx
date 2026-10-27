@@ -464,8 +464,13 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
     navigate(emptyRoute("products"));
   }
 
+  // The notification provider is keyed by scope: a different organisation is a fresh feed, so the
+  // old one's items, count and timers are gone at once, not after the new one has loaded.
   return (
-    <NotificationCenterProvider customerId={portalMode ? route.customer : undefined}>
+    <NotificationCenterProvider
+      customerId={portalMode ? route.customer : undefined}
+      key={portalMode ? (route.customer ?? "no-customer") : "staff"}
+    >
     <AppShell
       activeModule={renderedActiveModule}
       canCreateAsset={canCreateAsset}

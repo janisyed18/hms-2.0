@@ -372,6 +372,43 @@ describe("one shared notification state", () => {
   });
 });
 
+describe("switching organisation in the portal", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("drops the previous organisation's notifications at once, before the new ones arrive", async () => {
+    window.history.replaceState(null, "", "/portal/?view=notifications&customer=customer-a");
+    let releaseB: () => void = () => undefined;
+    const noteA = wire({ id: "a1", subject: "Organisation A news", customer_id: "customer-a" });
+    const noteB = wire({ id: "b1", subject: "Organisation B news", customer_id: "customer-b" });
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
+      const u = new URL(String(url), "http://test");
+      if (u.pathname === "/api/v1/notifications/me") {
+        if (u.searchParams.get("customer_id") === "customer-b") {
+          await new Promise<void>((resolve) => { releaseB = resolve; });
+          return json({ total: 1, unread_total: 1, limit: 12, offset: 0, items: [noteB] });
+        }
+        return json({ total: 1, unread_total: 1, limit: 12, offset: 0, items: [noteA] });
+      }
+      return json({ total: 0, limit: 50, offset: 0, items: [] });
+    }));
+    const customerSession: StaffSession = { ...adminSession, roles: ["CUSTOMER_USER"], customerIds: ["customer-a", "customer-b"] };
+    render(<HmsApp portalMode session={customerSession} />);
+    expect(await screen.findByRole("button", { name: "Open unread notification Organisation A news" })).toBeInTheDocument();
+
+    act(() => {
+      window.history.pushState(null, "", "/portal/?view=notifications&customer=customer-b");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    // B's request is still pending: nothing of A's may be on screen or clickable, and no A count.
+    await waitFor(() => expect(screen.queryByText("Organisation A news")).toBeNull());
+    expect(screen.queryByRole("button", { name: /Organisation A news/ })).toBeNull();
+    expect(document.querySelector('button[aria-haspopup="dialog"][aria-label^="Notifications"]')?.getAttribute("aria-label")).toBe("Notifications");
+
+    await act(async () => { releaseB(); });
+    expect(await screen.findByRole("button", { name: "Open unread notification Organisation B news" })).toBeInTheDocument();
+    expect(screen.queryByText("Organisation A news")).toBeNull();
+  });
+});
+
 function feedCalls(fetchMock: { mock: { calls: unknown[][] } }) {
   return fetchMock.mock.calls.filter(([u]) => /\/notifications\/me(\?|$)/.test(String(u))).length;
 }
