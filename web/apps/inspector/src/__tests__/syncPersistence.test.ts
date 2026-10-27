@@ -21,7 +21,7 @@ Object.assign(globalThis, { IDBKeyRange, IDBDatabase });
 const DEVICE = {
   device_id: "d",
   platform: "web",
-  app_version: "0.2.0",
+  app_version: "0.3.0",
   offline_window_days: 2,
   revoked: false
 };
@@ -60,7 +60,7 @@ function page(
     has_more: next !== null,
     records: ids.map((id) => rec(id)),
     work_contexts: ids.map(context),
-    protocol_version: 2,
+    protocol_version: 3,
     next_page_token: next,
     page_size: 2,
     scope_changed: false,
@@ -123,7 +123,7 @@ function clientFor(route: Route, userId = "user-a", deviceId = "dev-1", store = 
 const scope = (userId = "user-a", deviceId = "dev-1"): SyncScope => ({
   userId,
   deviceId,
-  protocol: 2
+  protocol: 3
 });
 
 /** Pages a, b, c (tokens t1, t2), then an empty change feed. */
@@ -382,7 +382,7 @@ describe("isolation", () => {
       scopeKey(scope()),
       scopeKey(scope("user-b")),
       scopeKey(scope("user-a", "dev-2")),
-      scopeKey({ ...scope(), protocol: 3 })
+      scopeKey({ ...scope(), protocol: 2 })
     ]);
     expect(keys.size).toBe(4);
   });
@@ -525,7 +525,7 @@ describe("workspace after a restart", () => {
         const path = String(url);
         return path.includes("/sync/changes")
           ? json(changes(8))
-          : json({ ...mockBootstrapResponse, protocol_version: 2, next_page_token: null });
+          : json({ ...mockBootstrapResponse, protocol_version: 3, next_page_token: null });
       }) as typeof fetch,
       getAccessToken: () => "token",
       userId: "user-a",

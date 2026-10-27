@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import { InspectionCapture } from "../components/InspectionCapture";
 import type { WorkItem } from "../domain/types";
-import { mockBootstrapResponse } from "../data/mockSync";
+import { bootstrapOnly } from "../test/syncFetch";
 import { resetDefaultSyncStore } from "../offline/syncStore";
 
 function createMemoryStorage(): Storage {
@@ -22,6 +22,8 @@ function createMemoryStorage(): Storage {
 
 type User = ReturnType<typeof userEvent.setup>;
 const fillDraftCore = async (user: User) => {
+  // The form is read-only until the inspection is started.
+  await user.click(screen.getByRole("button", { name: "Start inspection" }));
   await user.selectOptions(screen.getByLabelText("Test time minutes"), "5");
   await user.selectOptions(screen.getByLabelText("Pressure test result"), "PASS");
 };
@@ -44,9 +46,7 @@ describe("unsaved capture protection", () => {
     vi.unstubAllGlobals();
     resetDefaultSyncStore();
     vi.stubGlobal("localStorage", createMemoryStorage());
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
-      new Response(JSON.stringify(mockBootstrapResponse), { status: 200, headers: { "Content-Type": "application/json" } })
-    ));
+    vi.stubGlobal("fetch", bootstrapOnly());
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -107,12 +107,12 @@ describe("unsaved capture protection", () => {
     expect(screen.queryByText("Unsaved changes")).toBeNull();
   });
 
-  it("is clean after Save Draft, and the draft is what comes back", async () => {
+  it("is clean after Save progress, and the draft is what comes back", async () => {
     const user = userEvent.setup();
     render(<App initialAccessToken="test-access-token" />);
     await openAsset(user, "HOS-2024-0891");
     await fillDraftCore(user);
-    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    await user.click(screen.getByRole("button", { name: "Save progress" }));
     expect(screen.queryByText("Unsaved changes")).toBeNull();
     await user.click(nav("Queue"));
     expect(prompt()).toBeNull();
@@ -168,7 +168,7 @@ describe("unsaved capture protection", () => {
     render(<App initialAccessToken="test-access-token" />);
     await openAsset(user, "HOS-2024-0891");
     await fillDraftCore(user);
-    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    await user.click(screen.getByRole("button", { name: "Save progress" }));
     const header = screen.getByLabelText("Sync status");
     expect(header).toHaveTextContent("1 queued");
     await user.click(nav("Queue"));
@@ -181,7 +181,7 @@ describe("unsaved capture protection", () => {
     render(<App initialAccessToken="test-access-token" />);
     await openAsset(user, "HOS-2024-0891");
     await fillDraftCore(user);
-    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    await user.click(screen.getByRole("button", { name: "Save progress" }));
     await user.click(nav("Queue"));
     const waiting = await screen.findByRole("region", { name: "Waiting to send operations" });
     expect(within(waiting).getByText("HOS-2024-0891")).toBeInTheDocument();
@@ -191,12 +191,11 @@ describe("unsaved capture protection", () => {
   it("reloads everything when the same screen is pointed at another assignment", async () => {
     const item = (id: string, serial: string, tag: string) => ({
       id, assetId: id, assetNumber: `ASSET-${id}`, customerName: "Cust", productName: "Prod", locationName: null,
-      customerSerialNo: serial, tag, pressureRating: null, inspectionLocked: false, urgency: "draft", saved: null,
+      customerSerialNo: serial, tag, pressureRating: null, inspectionLocked: false, inspectionStatus: "IN_PROGRESS", urgency: "draft", saved: null,
       workContext: { assignment_id: `assignment-${id}` }
     }) as unknown as WorkItem;
     const props = {
-      draftFor: () => null, onBack: vi.fn(), onQueueAssetUpdate: vi.fn(), onQueuePressureTest: vi.fn(),
-      onSaveDraft: vi.fn(), onSubmit: vi.fn()
+      draftFor: () => null, onBack: vi.fn(), onQueueAssetUpdate: vi.fn(), onStart: vi.fn(), onBeginRework: vi.fn(), onSaveProgress: vi.fn(), onSubmit: vi.fn()
     };
     const user = userEvent.setup();
     const { rerender } = render(<InspectionCapture {...props} workItem={item("A", "SN-A", "TAG-A")} />);
@@ -211,7 +210,7 @@ describe("unsaved capture protection", () => {
   it("protects asset details typed on a submitted (locked) inspection", async () => {
     const locked = {
       id: "L", assetId: "L", assetNumber: "ASSET-L", customerName: "Cust", productName: "Prod", locationName: null,
-      customerSerialNo: "SN", tag: "T", pressureRating: null, inspectionLocked: true, urgency: "synced", saved: null,
+      customerSerialNo: "SN", tag: "T", pressureRating: null, inspectionLocked: true, inspectionStatus: "SUBMITTED", urgency: "synced", saved: null,
       workContext: { assignment_id: "assignment-L" }
     } as unknown as WorkItem;
     const onDirtyChange = vi.fn();
@@ -219,7 +218,7 @@ describe("unsaved capture protection", () => {
     render(
       <InspectionCapture
         draftFor={() => null} onBack={vi.fn()} onDirtyChange={onDirtyChange} onQueueAssetUpdate={vi.fn()}
-        onQueuePressureTest={vi.fn()} onSaveDraft={vi.fn()} onSubmit={vi.fn()} workItem={locked}
+        onStart={vi.fn()} onBeginRework={vi.fn()} onSaveProgress={vi.fn()} onSubmit={vi.fn()} workItem={locked}
       />
     );
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);

@@ -13,10 +13,13 @@ describe("syncClient", () => {
   });
 
   it("sends a bearer token and device headers to bootstrap without development identity headers", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => ({
       ok: true,
-      json: async () => mockBootstrapResponse
-    });
+      json: async () =>
+        url.includes("/sync/changes")
+          ? { cursor: mockBootstrapResponse.cursor, has_more: false, changes: [] }
+          : mockBootstrapResponse
+    }));
 
     const client = createSyncClient({
       fetchImpl: fetchMock,
@@ -32,8 +35,8 @@ describe("syncClient", () => {
           Authorization: "Bearer inspector-access-token",
           "X-HMS-Device-Id": "inspector-browser-test",
           "X-HMS-Device-Platform": "web",
-          "X-HMS-App-Version": "0.2.0",
-          "X-HMS-Sync-Protocol": "2"
+          "X-HMS-App-Version": "0.3.0",
+          "X-HMS-Sync-Protocol": "3"
         })
       })
     );
@@ -55,6 +58,10 @@ describe("syncClient", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => mockBootstrapResponse
+      })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ cursor: mockBootstrapResponse.cursor, has_more: false, changes: [] })
       });
     const refreshAccessToken = vi.fn().mockResolvedValue("renewed-access-token");
     const client = createSyncClient({

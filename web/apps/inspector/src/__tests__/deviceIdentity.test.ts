@@ -11,10 +11,14 @@ const SHARED_FALLBACK = "inspector-browser-unavailable";
 const SERVER_LIMIT = 80; // devices.device_id is String(80)
 
 async function deviceIdSentFor(userId: string | undefined): Promise<string> {
-  const fetchMock = vi.fn().mockResolvedValue({
+  // A paged bootstrap reads the change feed after its pages.
+  const fetchMock = vi.fn().mockImplementation(async (url: string) => ({
     ok: true,
-    json: async () => mockBootstrapResponse
-  });
+    json: async () =>
+      url.includes("/sync/changes")
+        ? { cursor: mockBootstrapResponse.cursor, has_more: false, changes: [] }
+        : mockBootstrapResponse
+  }));
   const client = createSyncClient({
     fetchImpl: fetchMock,
     getAccessToken: () => "token",
@@ -95,10 +99,13 @@ describe("sync device identity", () => {
   });
 
   it("lets an explicit device id win, for callers that manage their own", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => ({
       ok: true,
-      json: async () => mockBootstrapResponse
-    });
+      json: async () =>
+        url.includes("/sync/changes")
+          ? { cursor: mockBootstrapResponse.cursor, has_more: false, changes: [] }
+          : mockBootstrapResponse
+    }));
     await createSyncClient({
       fetchImpl: fetchMock,
       getAccessToken: () => "token",

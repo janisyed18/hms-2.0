@@ -27,7 +27,7 @@ function makeDraftOperation() {
     customerName: "North Sea Shipping Ltd",
     inspectionId: "local-inspection-1",
     baseVersion: 2,
-    status: "DRAFT",
+    lifecycleActions: [],
     result: "REPAIR",
     pressureTest: {
       appliedPressureKpa: 2250,
@@ -97,7 +97,6 @@ describe("outboxStore", () => {
     expect(operation.payload).toEqual({
       asset_id: "asset-1",
       inspection_type: "SERVICE",
-      status: "DRAFT",
       result: "REPAIR",
       pressure_test: {
         applied_pressure_kpa: 2250,
@@ -238,5 +237,81 @@ describe("outboxStore", () => {
     expect(loadOutbox(INSPECTOR_A).operations).toEqual([]);
     expect(localStorage.getItem("bat-hms-inspector-outbox")).toBeNull();
     expect(localStorage.getItem(outboxStorageKey(INSPECTOR_A))).toBeNull();
+  });
+});
+
+describe("lifecycle actions in the outbox", () => {
+  const context = { appointment_id: "ap", booking_id: "bk", revision_id: "rv", assignment_id: "as", asset_id: "asset-1" };
+  const pressureTest = {
+    appliedPressureKpa: 2250, holdTimeSeconds: 300, passed: true,
+    measurements: { schema_version: 1, test_duration_minutes: 5 }
+  };
+  const inspection = (
+    lifecycleActions: Array<"start" | "rework" | "submit">,
+    options: { baseVersion?: number | null; withForm?: boolean; result?: string } = {}
+  ) =>
+    createInspectionOperation({
+      workContext: context, assetId: "asset-1", assetNumber: "A-1", customerName: "C",
+      inspectionId: "local-1", baseVersion: options.baseVersion ?? null, lifecycleActions,
+      result: options.withForm === false ? null : (options.result ?? "PASS"),
+      pressureTest: options.withForm === false ? null : pressureTest
+    });
+  const queued = () => loadOutbox(INSPECTOR_A).operations;
+
+  it("a bare start carries no form data and no status", () => {
+    const start = inspection(["start"], { withForm: false });
+    expect(start.lifecycleActions).toEqual(["start"]);
+    expect(start.payload).toEqual({ asset_id: "asset-1", inspection_type: "SERVICE" });
+  });
+
+  it("start, then saving progress, then submit still reaches the server as start + submit", () => {
+    upsertOutboxOperation(INSPECTOR_A, inspection(["start"], { withForm: false }));
+    upsertOutboxOperation(INSPECTOR_A, inspection([], { result: "REPAIR" }));
+    expect(queued()).toHaveLength(1);
+    expect(queued()[0].lifecycleActions).toEqual(["start"]);
+    upsertOutboxOperation(INSPECTOR_A, inspection(["submit"]));
+    expect(queued()).toHaveLength(1);
+    expect(queued()[0].lifecycleActions).toEqual(["start", "submit"]);
+    expect(queued()[0].op).toBe("create");
+    expect(queued()[0].baseVersion).toBeNull();
+    expect(queued()[0].payload).toMatchObject({ result: "PASS" });
+  });
+
+  it("repeated saves of progress never drop the queued start", () => {
+    upsertOutboxOperation(INSPECTOR_A, inspection(["start"], { withForm: false }));
+    for (const result of ["PASS", "REPAIR", "PASS"]) {
+      upsertOutboxOperation(INSPECTOR_A, inspection([], { result }));
+    }
+    expect(queued()[0].lifecycleActions).toEqual(["start"]);
+    expect(queued()[0].payload.result).toBe("PASS");
+  });
+
+  it("rework then submit are kept in order on an update", () => {
+    upsertOutboxOperation(INSPECTOR_A, inspection(["rework"], { baseVersion: 4, withForm: false }));
+    upsertOutboxOperation(INSPECTOR_A, inspection([], { baseVersion: 4 }));
+    upsertOutboxOperation(INSPECTOR_A, inspection(["submit"], { baseVersion: 4 }));
+    expect(queued()[0].lifecycleActions).toEqual(["rework", "submit"]);
+    expect(queued()[0].op).toBe("update");
+    expect(queued()[0].baseVersion).toBe(4);
+  });
+
+  it("does not carry the actions of an operation the server already applied", () => {
+    upsertOutboxOperation(INSPECTOR_A, inspection(["start"], { withForm: false }));
+    markOperationApplied(INSPECTOR_A, queued()[0].opId, 1);
+    upsertOutboxOperation(INSPECTOR_A, inspection(["submit"], { baseVersion: 1 }));
+    expect(queued()[0].lifecycleActions).toEqual(["submit"]);
+  });
+
+  it("keeps an operation queued by app 0.2.0 as it was until a native one replaces it", () => {
+    const old = createInspectionOperation({
+      workContext: context, assetId: "asset-1", assetNumber: "A-1", customerName: "C",
+      inspectionId: "local-1", baseVersion: null, lifecycleActions: [], result: "PASS", pressureTest
+    });
+    const legacy = { ...old, lifecycleActions: undefined, payload: { ...old.payload, status: "SUBMITTED" } };
+    saveOutbox(INSPECTOR_A, [legacy]);
+    const [loaded] = queued();
+    expect(loaded.lifecycleActions).toBeUndefined();
+    expect(loaded.payload.status).toBe("SUBMITTED");
+    expect(loaded.status).toBe("pending");
   });
 });

@@ -1,5 +1,6 @@
 import type {
   AssetUpdateInput,
+  LifecycleAction,
   ConflictResolution,
   InspectionDraftInput,
   OutboxOperation,
@@ -115,16 +116,21 @@ export function createInspectionOperation(
     payload: {
       asset_id: input.assetId,
       inspection_type: input.inspectionType ?? "SERVICE",
-      status: input.status,
-      // The instruction (Pass or Repair), not the pressure test's own pass/fail.
-      result: input.result,
-      pressure_test: {
-        applied_pressure_kpa: input.pressureTest.appliedPressureKpa,
-        hold_time_seconds: input.pressureTest.holdTimeSeconds,
-        passed: input.pressureTest.passed,
-        measurements: input.pressureTest.measurements
-      }
+      // Form data only when there is some: a bare start or rework carries none.
+      ...(input.pressureTest
+        ? {
+            // The instruction (Pass or Repair), not the pressure test's own pass/fail.
+            result: input.result,
+            pressure_test: {
+              applied_pressure_kpa: input.pressureTest.appliedPressureKpa,
+              hold_time_seconds: input.pressureTest.holdTimeSeconds,
+              passed: input.pressureTest.passed,
+              measurements: input.pressureTest.measurements
+            }
+          }
+        : {})
     },
+    lifecycleActions: input.lifecycleActions,
     status: "pending",
     createdAt: timestamp,
     updatedAt: timestamp
@@ -202,8 +208,43 @@ export function upsertOutboxOperation(userId: string, operation: OutboxOperation
   }
 
   const next = [...state.operations];
-  next[existingIndex] = operation;
+  next[existingIndex] = mergeLifecycle(state.operations[existingIndex], operation);
   saveOutbox(userId, next);
+}
+
+/**
+ * Saving again replaces an unsynced inspection operation, but never loses what it was going to
+ * do: ``start`` then an edit then ``submit`` must still reach the server as start + submit, in
+ * that order, with the latest form data. An operation queued by app 0.2.0 has no lifecycle
+ * actions; its form data is kept, and it is replaced by a native one only by a new action.
+ */
+function mergeLifecycle(
+  existing: OutboxOperation,
+  incoming: OutboxOperation
+): OutboxOperation {
+  if (
+    incoming.entity !== "Inspection" ||
+    incoming.lifecycleActions === undefined ||
+    existing.status === "applied"
+  ) {
+    return incoming;
+  }
+  const carried = existing.lifecycleActions ?? [];
+  const actions: LifecycleAction[] = [...carried];
+  for (const action of incoming.lifecycleActions) {
+    if (actions[actions.length - 1] !== action) actions.push(action);
+  }
+  // Form data not restated by the new operation (a bare start, say) is kept.
+  const { status: _legacyStatus, ...earlier } = existing.payload;
+  void _legacyStatus;
+  return {
+    ...incoming,
+    op: existing.op === "create" && existing.baseVersion === null ? "create" : incoming.op,
+    baseVersion: existing.op === "create" && existing.baseVersion === null ? null : incoming.baseVersion,
+    payload: { ...earlier, ...incoming.payload },
+    lifecycleActions: actions,
+    createdAt: existing.createdAt
+  };
 }
 
 export function markOperationApplied(userId: string, opId: string, serverVersion: number) {

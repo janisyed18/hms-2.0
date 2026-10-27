@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BootstrapSupersededError,
+  SyncProtocolMismatchError,
   SyncUpgradeRequiredError,
   createSyncClient
 } from "../api/syncClient";
@@ -14,7 +15,7 @@ import type { SyncBootstrapResponse, SyncRecordRead } from "../domain/types";
 const DEVICE = {
   device_id: "d",
   platform: "web",
-  app_version: "0.2.0",
+  app_version: "0.3.0",
   offline_window_days: 7,
   revoked: false
 };
@@ -42,7 +43,7 @@ function page(
     has_more: next !== null,
     records,
     work_contexts: [],
-    protocol_version: 2,
+    protocol_version: 3,
     next_page_token: next,
     page_size: 2,
     scope_changed: false,
@@ -73,15 +74,18 @@ beforeEach(() => {
 
 function client(handler: Handler, userId = "inspector-a") {
   const calls: string[] = [];
-  const fetchImpl = vi.fn(async (url: RequestInfo | URL) => {
+  const headers: Array<Record<string, string>> = [];
+  const fetchImpl = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
     const path = String(url);
     calls.push(path);
+    headers.push((init?.headers ?? {}) as Record<string, string>);
     const result = await handler(path);
     if (result instanceof Error) throw result;
     return result;
   }) as unknown as typeof fetch;
   return {
     calls,
+    headers,
     fetchImpl,
     sync: createSyncClient({
       fetchImpl,
@@ -257,12 +261,31 @@ describe("paged bootstrap", () => {
     await expect(sync.bootstrap()).rejects.toBeInstanceOf(SyncUpgradeRequiredError);
   });
 
-  it("accepts a single unpaged answer from a server that predates paging", async () => {
+  it("fails closed on a single unpaged answer from a server that predates paging", async () => {
     const legacy = { ...page([record("a")], null), protocol_version: undefined };
     const { sync, calls } = client(() => json(legacy));
-    const result = await sync.bootstrap();
-    expect(result.records).toHaveLength(1);
+    await expect(sync.bootstrap()).rejects.toBeInstanceOf(SyncProtocolMismatchError);
     expect(calls).toHaveLength(1);
+  });
+
+  it("does not mistake a paged protocol-2 answer for a legacy full bootstrap", async () => {
+    // Paging without the native lifecycle would show in-progress work as a draft.
+    const paged = { ...page([record("a")], "more"), protocol_version: 2 };
+    const { sync, calls } = client(() => json(paged));
+    await expect(sync.bootstrap()).rejects.toMatchObject({
+      name: "SyncProtocolMismatchError",
+      serverProtocol: 2
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("asks for the native lifecycle in its protocol header", async () => {
+    const { sync, headers } = client((url) =>
+      url.includes("/sync/changes") ? json(emptyChanges()) : json(page([record("a")], null))
+    );
+    await sync.bootstrap();
+    expect(headers[0]["X-HMS-Sync-Protocol"]).toBe("3");
+    expect(headers[0]["X-HMS-App-Version"]).toBe("0.3.0");
   });
 
   it("does not let another user see or continue a partial bootstrap", async () => {

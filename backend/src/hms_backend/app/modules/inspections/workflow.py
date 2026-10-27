@@ -94,6 +94,26 @@ def require_transition(inspection: Inspection, action: str) -> InspectionStatus:
     return target
 
 
+def plan_actions(status: str, actions: list[str]) -> list[str]:
+    """The status after each of ``actions`` applied in order from ``status``.
+
+    Nothing is changed: the offline inspector's lifecycle sequence is checked in full
+    before any write, so a sequence that cannot finish leaves the record untouched.
+    InvalidTransitionError names the first step that is not allowed.
+    """
+    statuses: list[str] = []
+    current = status
+    for action in actions:
+        if action not in TRANSITIONS:
+            raise InvalidTransitionError(f"Unknown lifecycle action: {action}")
+        sources, target = TRANSITIONS[action]
+        if current not in {state.value for state in sources}:
+            raise InvalidTransitionError(_REFUSALS[action])
+        current = target.value
+        statuses.append(current)
+    return statuses
+
+
 def is_editable(inspection: Inspection) -> bool:
     """Form content can change only while work is in progress."""
     return inspection.status == InspectionStatus.IN_PROGRESS.value

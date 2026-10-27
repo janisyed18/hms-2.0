@@ -18,7 +18,7 @@ function matchesFilter(item: WorkItem, filter: WorkFilter) {
   }
 
   if (filter === "draft") {
-    return item.urgency === "draft" || item.inspectionStatus === "DRAFT";
+    return item.inspectionStatus === "IN_PROGRESS" || item.inspectionStatus === "REJECTED";
   }
 
   return item.urgency === filter;
@@ -56,7 +56,7 @@ export function WorkQueue({ workItems, outbox, onOpenWorkItem }: WorkQueueProps)
     { id: "all", label: "All" },
     { id: "overdue", label: "Overdue" },
     { id: "due-today", label: "Due today" },
-    { id: "draft", label: "Drafts" }
+    { id: "draft", label: "In progress" }
   ];
 
   return (

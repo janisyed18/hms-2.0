@@ -3,10 +3,11 @@ import type { SyncBootstrapResponse } from "../domain/types";
 const changedAt = "2026-07-04T00:00:00.000Z";
 
 export const mockBootstrapResponse: SyncBootstrapResponse = {
+  protocol_version: 3,
   device: {
     device_id: "inspector-browser-dev",
     platform: "web",
-    app_version: "0.2.0",
+    app_version: "0.3.0",
     offline_window_days: 7,
     revoked: false
   },
