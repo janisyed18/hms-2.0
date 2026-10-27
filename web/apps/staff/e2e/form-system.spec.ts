@@ -258,6 +258,8 @@ test.describe("shared Staff form system", () => {
       // Edit: find them by email, change name and role.
       await page.getByRole("searchbox", { name: "Search users" }).fill(email);
       await expect(page.getByRole("row", { name: new RegExp(email) })).toBeVisible();
+      // The search reaches the address after a short pause; capture it only once it has.
+      await expect(page).toHaveURL(/[?&]q=form\./);
       const listUrl = here(page);
       await page.getByRole("button", { name: `Manage ${email}` }).click();
       await page.getByRole("menuitem", { name: "Edit user" }).click();
