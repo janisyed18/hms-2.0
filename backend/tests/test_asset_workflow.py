@@ -240,6 +240,10 @@ MATRIX: list[tuple[WorkflowStatus, dict[str, object]]] = [
         {"inspections": [inspection("i1", InspectionStatus.DRAFT.value)]},
     ),
     (
+        WorkflowStatus.IN_PROGRESS,
+        {"inspections": [inspection("i1", InspectionStatus.IN_PROGRESS.value)]},
+    ),
+    (
         WorkflowStatus.AWAITING_REVIEW,
         {
             "inspections": [
@@ -296,7 +300,7 @@ MATRIX: list[tuple[WorkflowStatus, dict[str, object]]] = [
 
 def test_the_matrix_covers_every_canonical_status() -> None:
     assert {status for status, _ in MATRIX} == set(WorkflowStatus)
-    assert len(WorkflowStatus) == 20  # IN_PROGRESS is deliberately not one of them
+    assert len(WorkflowStatus) == 21
 
 
 @pytest.mark.parametrize(("expected", "case"), MATRIX, ids=[m[0] for m in MATRIX])
@@ -509,14 +513,70 @@ def test_an_older_bookings_later_inspection_cannot_beat_the_newest_booking() -> 
     assert result.status is WorkflowStatus.SCHEDULE_REQUESTED
 
 
-def test_a_rejected_inspection_explains_itself_but_offers_nothing_yet() -> None:
+def test_a_rejected_inspection_offers_rework_only_to_someone_who_may_do_it() -> None:
     rejected = inspection(
         "i1", InspectionStatus.REJECTED.value, rejected=T0, submitted=T0
     )
-    result = resolve(inspections=[rejected])
-    assert result.status is WorkflowStatus.CHANGES_REQUIRED
-    assert result.attention is True
-    assert result.next_action is None
+    allowed = resolve(inspections=[rejected])
+    assert allowed.status is WorkflowStatus.CHANGES_REQUIRED
+    assert allowed.attention is True
+    assert allowed.next_action is not None
+    assert allowed.next_action.code is ActionCode.REWORK_INSPECTION
+    assert allowed.next_action.target_type is TargetType.INSPECTION
+    assert allowed.next_action.target_id == "i1"
+    # The same record for someone who cannot do the rework: the status, no action.
+    reviewer_only = Capabilities(approve=True)
+    refused = resolve(inspections=[rejected], can=reviewer_only)
+    assert refused.status is WorkflowStatus.CHANGES_REQUIRED
+    assert refused.next_action is None
+
+
+def test_the_rework_round_walks_through_the_workflow_statuses() -> None:
+    started = datetime(2026, 6, 1, 9, tzinfo=UTC)
+    base = {"booking_id": None, "created": started}
+    steps = [
+        (InspectionStatus.DRAFT, WorkflowStatus.INSPECTION_DRAFT),
+        (InspectionStatus.IN_PROGRESS, WorkflowStatus.IN_PROGRESS),
+        (InspectionStatus.SUBMITTED, WorkflowStatus.AWAITING_REVIEW),
+        (InspectionStatus.REJECTED, WorkflowStatus.CHANGES_REQUIRED),
+        (InspectionStatus.IN_PROGRESS, WorkflowStatus.IN_PROGRESS),  # after rework
+        (InspectionStatus.SUBMITTED, WorkflowStatus.AWAITING_REVIEW),  # resubmitted
+    ]
+    for state, expected in steps:
+        result = resolve(inspections=[inspection("i1", state.value, **base)])  # type: ignore[arg-type]
+        assert result.status is expected, state
+    # Then approval joins the existing passed / failed / certificate outcomes.
+    assert (
+        resolve(inspections=[approved("i1")]).status
+        is WorkflowStatus.READY_FOR_CERTIFICATE
+    )
+
+
+def test_an_in_progress_inspection_is_explained_and_not_a_problem() -> None:
+    result = resolve(inspections=[inspection("i1", InspectionStatus.IN_PROGRESS.value)])
+    assert result.label == "Inspection in progress"
+    assert "not yet submitted" in result.detail
+    assert result.attention is False
+
+
+def test_an_old_in_progress_inspection_cannot_displace_a_newer_booking() -> None:
+    may = datetime(2026, 5, 1, 9, tzinfo=UTC)
+    june = datetime(2026, 6, 10, 9, tzinfo=UTC)
+    stale = inspection(
+        "i-old",
+        InspectionStatus.IN_PROGRESS.value,
+        booking_id="b-old",
+        created=may,
+        submitted=june + timedelta(days=1),
+    )
+    result = resolve(
+        bookings=[
+            booking("b-old", APPROVED_BOOKING, created=may),
+            booking("b-new", PENDING, created=june),
+        ],
+        inspections=[stale],
+    )
+    assert result.status is WorkflowStatus.SCHEDULE_REQUESTED
 
 
 def test_an_approved_failing_inspection_is_failed_not_ready_for_a_certificate() -> None:
@@ -678,6 +738,14 @@ def test_each_status_offers_the_expected_navigational_action() -> None:
             ActionCode.CONTINUE_INSPECTION,
             TargetType.INSPECTION,
         ),
+        WorkflowStatus.IN_PROGRESS: (
+            ActionCode.CONTINUE_INSPECTION,
+            TargetType.INSPECTION,
+        ),
+        WorkflowStatus.CHANGES_REQUIRED: (
+            ActionCode.REWORK_INSPECTION,
+            TargetType.INSPECTION,
+        ),
         WorkflowStatus.AWAITING_REVIEW: (
             ActionCode.REVIEW_INSPECTION,
             TargetType.INSPECTION,
@@ -701,6 +769,8 @@ def test_inspection_actions_point_at_the_exact_inspection() -> None:
     for status, case in MATRIX:
         if status in {
             WorkflowStatus.INSPECTION_DRAFT,
+            WorkflowStatus.IN_PROGRESS,
+            WorkflowStatus.CHANGES_REQUIRED,
             WorkflowStatus.AWAITING_REVIEW,
         }:
             got = action(case)
@@ -729,6 +799,8 @@ def test_scheduling_actions_carry_the_booking() -> None:
         (WorkflowStatus.RESCHEDULE_REQUESTED, "review_scheduling"),
         (WorkflowStatus.RESCHEDULE_AWAITING_CONFIRMATION, "confirm_reschedule"),
         (WorkflowStatus.INSPECTION_DRAFT, "write_inspection"),
+        (WorkflowStatus.IN_PROGRESS, "write_inspection"),
+        (WorkflowStatus.CHANGES_REQUIRED, "write_inspection"),
         (WorkflowStatus.AWAITING_REVIEW, "approve"),
         (WorkflowStatus.READY_FOR_CERTIFICATE, "approve"),
     ],

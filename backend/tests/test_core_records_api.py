@@ -3953,7 +3953,9 @@ async def test_completed_booking_appointment_cannot_be_cancelled(
         await session.commit()
     inspector = Principal(inspector_id, frozenset({Role.INSPECTOR}), frozenset())
     async with api_client(session_factory, inspector) as client:
+        started = await client.post(f"/api/v1/inspections/{inspection_id}/start")
         submitted = await client.post(f"/api/v1/inspections/{inspection_id}/submit")
+    assert started.status_code == 200
     assert submitted.status_code == 200
     reviewer = Principal("reviewer-1", frozenset({Role.REVIEWER}), frozenset())
     async with api_client(session_factory, reviewer) as client:
@@ -4202,7 +4204,7 @@ async def test_inspections_endpoint_filters_by_result_and_product(
 
 
 @pytest.mark.asyncio
-async def test_patch_draft_inspection_updates_result_and_pressure_test_with_audit(
+async def test_patch_in_progress_inspection_updates_result_and_pressure_test_with_audit(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
     inspector_assignment: str,
@@ -4212,7 +4214,7 @@ async def test_patch_draft_inspection_updates_result_and_pressure_test_with_audi
             asset_id=seeded_session["vopak_asset_id"],
             booking_id=inspector_assignment,
             inspection_type=InspectionType.SERVICE.value,
-            status=InspectionStatus.DRAFT.value,
+            status=InspectionStatus.IN_PROGRESS.value,
             result="REVIEW",
             inspector_user_id="inspector-1",
         )
@@ -4277,7 +4279,7 @@ async def test_patch_draft_inspection_updates_result_and_pressure_test_with_audi
 
 
 @pytest.mark.asyncio
-async def test_patch_inspection_rejects_non_draft_status(
+async def test_patch_inspection_rejects_a_status_other_than_in_progress(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
     inspector_assignment: str,
@@ -4308,7 +4310,7 @@ async def test_patch_inspection_rejects_non_draft_status(
         )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "Only draft inspections can be edited"
+    assert response.json()["detail"] == "Only inspections in progress can be edited"
 
 
 @pytest.mark.asyncio
@@ -4344,10 +4346,13 @@ async def test_submit_and_approve_inspection_transitions_with_audit(
         customer_ids=frozenset(),
     )
     async with api_client(session_factory, inspector) as client:
+        start_response = await client.post(f"/api/v1/inspections/{inspection_id}/start")
         submit_response = await client.post(
             f"/api/v1/inspections/{inspection_id}/submit"
         )
 
+    assert start_response.status_code == 200
+    assert start_response.json()["started_at"] is not None
     assert submit_response.status_code == 200
     assert submit_response.json()["status"] == InspectionStatus.SUBMITTED.value
     assert submit_response.json()["submitted_at"] is not None
@@ -4385,20 +4390,26 @@ async def test_submit_and_approve_inspection_transitions_with_audit(
         ).all()
 
         assert loaded_inspection is not None
-        assert loaded_inspection.version == 3
+        assert loaded_inspection.version == 4
         assert loaded_inspection.status == InspectionStatus.APPROVED.value
         assert loaded_inspection.reviewer_user_id == "reviewer-1"
-        assert [change.op for change in sync_changes] == ["update", "update"]
+        assert loaded_inspection.started_at is not None
+        assert [change.op for change in sync_changes] == ["update"] * 3
         assert [event.action for event in audit_events] == [
+            "inspection.started",
             "inspection.submitted",
             "inspection.approved",
         ]
         assert audit_events[0].before is not None
         assert audit_events[0].before["status"] == InspectionStatus.DRAFT.value
         assert audit_events[0].after is not None
-        assert audit_events[0].after["status"] == InspectionStatus.SUBMITTED.value
+        assert audit_events[0].after["status"] == InspectionStatus.IN_PROGRESS.value
+        assert audit_events[1].before is not None
+        assert audit_events[1].before["status"] == InspectionStatus.IN_PROGRESS.value
         assert audit_events[1].after is not None
-        assert audit_events[1].after["status"] == InspectionStatus.APPROVED.value
+        assert audit_events[1].after["status"] == InspectionStatus.SUBMITTED.value
+        assert audit_events[2].after is not None
+        assert audit_events[2].after["status"] == InspectionStatus.APPROVED.value
         assert await verify_audit_chain(session)
 
 

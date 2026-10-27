@@ -229,7 +229,7 @@ describe("Inspection approval", () => {
     const onApprove = vi.fn().mockReturnValueOnce(approve.promise);
     const onRefresh = vi.fn();
     const user = userEvent.setup();
-    render(<InspectionDetail canApprove canWrite={false} inspection={inspectionDraft} onApprove={onApprove} onClose={vi.fn()} onRefresh={onRefresh} onSaveDraft={vi.fn()} onSubmit={vi.fn()} />);
+    render(<InspectionDetail canApprove canWrite={false} inspection={inspectionDraft} onApprove={onApprove} onBeginRework={vi.fn()} onClose={vi.fn()} onRefresh={onRefresh} onReject={vi.fn()} onSaveDraft={vi.fn()} onStart={vi.fn()} onSubmit={vi.fn()} />);
     expect(screen.getByRole("heading", { name: "Inspection Main Pump Hose — HMS-001842" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Approve inspection" }));
     const busy = await screen.findByRole("button", { name: "Approving…" });

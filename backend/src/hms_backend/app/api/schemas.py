@@ -570,7 +570,16 @@ class InspectionUpdate(BaseModel):
 
 
 class InspectionRejectRequest(BaseModel):
-    reason: str | None = None
+    # Required: "changes required" is never shown without saying what to change.
+    reason: str
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
 
 
 class InspectionBookingCreate(BaseModel):
@@ -807,9 +816,11 @@ class InspectionRead(BaseModel):
     result: str | None
     inspector_user_id: str | None
     reviewer_user_id: str | None
+    started_at: datetime | None
     submitted_at: datetime | None
     approved_at: datetime | None
     rejected_at: datetime | None
+    rejection_reason: str | None
     asset: InspectionAssetSummary
     customer: CustomerSummary
     product: ProductSummary

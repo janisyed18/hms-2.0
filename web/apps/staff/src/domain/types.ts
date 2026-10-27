@@ -427,7 +427,7 @@ export interface AssetFormValues {
   bEnd: AssetEndValues;
 }
 
-export type InspectionStatus = "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
+export type InspectionStatus = "DRAFT" | "IN_PROGRESS" | "SUBMITTED" | "APPROVED" | "REJECTED";
 
 export type InspectionBookingStatus =
   | "PENDING_APPROVAL"
@@ -573,9 +573,13 @@ export interface InspectionRecord {
   result: string | null;
   inspectorUserId: string | null;
   reviewerUserId: string | null;
+  /** When work first began; null for inspections that predate the lifecycle. */
+  startedAt: string | null;
   submittedAt: string | null;
   approvedAt: string | null;
   rejectedAt: string | null;
+  /** Why the reviewer sent it back, while it is waiting for changes. */
+  rejectionReason: string | null;
   asset: InspectionAssetSummary;
   customer: RecordSummary;
   product: AssetProductSummary;

@@ -34,7 +34,7 @@ function renderForm() {
   return { onSubmit };
 }
 
-const save = () => screen.getByRole("button", { name: "Save inspection" });
+const create = () => screen.getByRole("button", { name: "Create inspection" });
 const field = (name: string) => screen.getByLabelText(name) as HTMLInputElement | HTMLSelectElement;
 
 async function fillEverything(user: ReturnType<typeof userEvent.setup>) {
@@ -51,24 +51,60 @@ async function fillEverything(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("new inspection (staff)", () => {
-  it("starts with no asset chosen, and saving says an asset is needed instead of doing nothing", async () => {
+  it("starts with no asset chosen, and creating says an asset is needed instead of doing nothing", async () => {
     const user = userEvent.setup();
     const props = renderForm();
     expect((field("Inspection asset") as HTMLSelectElement).value).toBe("");
     expect(screen.getByText("Select an asset")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Working pressure kPa")).not.toBeInTheDocument();
     expect(field("Inspection asset")).toBeRequired();
-    await user.click(save());
+    await user.click(create());
     expect(field("Inspection asset")).toHaveAccessibleDescription("Select the asset being inspected.");
     expect(field("Inspection asset")).toHaveFocus();
     expect(props.onSubmit).not.toHaveBeenCalled();
   });
 
-  it("prefills the pressures from the chosen asset's product rating and nothing else", async () => {
+  it("is pre-work only: no measurements, results or conditions can be entered before Start", async () => {
     const user = userEvent.setup();
     renderForm();
     await user.selectOptions(field("Inspection asset"), "asset-rated");
+    for (const label of [
+      "Instruction", "Working pressure kPa", "Test pressure kPa", "Test time minutes", "Pressure test result",
+      "Certificate result", "Ohms end A", "Ohms end B", "Ohms total", "Inspection notes", ...CONDITION_CHECKS.map((c) => c.label)
+    ]) {
+      expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole("button", { name: "Pass all" })).not.toBeInTheDocument();
+  });
 
+  it("creates with the asset and type only, carrying no result and no pressure test", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderForm();
+    await user.selectOptions(field("Inspection asset"), "asset-rated");
+    await user.selectOptions(field("Inspection type"), "NEW_ASSET");
+    await user.click(create());
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0]).toEqual({
+      assetId: "asset-rated", inspectionType: "NEW_ASSET", result: null, pressureTest: null
+    });
+  });
+
+  it("reports a create failure", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockRejectedValue(new HmsApiError(422, "validation", "Request validation failed", null));
+    render(<InspectionForm assetOptions={[rated]} onClose={vi.fn()} onSubmit={onSubmit} open />);
+    await user.selectOptions(field("Inspection asset"), "asset-rated");
+    await user.click(create());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Request validation failed");
+  });
+});
+
+describe("recording an inspection once it is started (staff)", () => {
+  const ratingFor = (assetId: string) => (assetId === "asset-rated" ? { workingPressureKpa: 1500, testPressureKpa: 2250 } : null);
+  const blank = (assetId = "asset-rated") =>
+    ({ ...savedInspection(completeState), assetId, result: null, pressureTest: null }) as unknown as InspectionRecord;
+
+  it("prefills the pressures from the asset's product rating and nothing else", () => {
+    renderDetail(blank(), { ratingFor });
     expect(field("Working pressure kPa")).toHaveValue("1500");
     expect(field("Test pressure kPa")).toHaveValue("2250");
     expect(screen.getByText(/Product rating: 1500 kPa working, 2250 kPa test/)).toBeVisible();
@@ -77,15 +113,10 @@ describe("new inspection (staff)", () => {
     }
     for (const { label } of CONDITION_CHECKS) expect(field(label)).toHaveValue("");
     expect(field("Ohms end A")).toHaveValue("");
-    await user.click(save());
-    expect(await screen.findByRole("alert")).toHaveTextContent(/still needed.*Test time/i);
-    expect(screen.getByRole("status")).toHaveTextContent("Test time");
   });
 
-  it("invents no pressure for a product without a rating", async () => {
-    const user = userEvent.setup();
-    renderForm();
-    await user.selectOptions(field("Inspection asset"), "asset-unrated");
+  it("invents no pressure for a product without a rating", () => {
+    renderDetail(blank("asset-unrated"), { ratingFor });
     expect(field("Working pressure kPa")).toHaveValue("");
     expect(field("Test pressure kPa")).toHaveValue("");
     expect(screen.getByText(/no rating for the hose's bore/)).toBeVisible();
@@ -93,25 +124,21 @@ describe("new inspection (staff)", () => {
 
   it("lets the pressures be overridden and says so", async () => {
     const user = userEvent.setup();
-    renderForm();
-    await user.selectOptions(field("Inspection asset"), "asset-rated");
+    renderDetail(blank(), { ratingFor });
     await user.clear(field("Test pressure kPa"));
     await user.type(field("Test pressure kPa"), "2400");
     expect(screen.getByText(/Overridden\. Product rating: 1500 kPa working, 2250 kPa test/)).toBeVisible();
   });
 
-  it("offers exactly 1, 5 and 10 minutes for the test time", async () => {
-    const user = userEvent.setup();
-    renderForm();
-    await user.selectOptions(field("Inspection asset"), "asset-rated");
+  it("offers exactly 1, 5 and 10 minutes for the test time", () => {
+    renderDetail(blank(), { ratingFor });
     const options = within(field("Test time minutes") as HTMLElement).getAllByRole("option").map((o) => o.textContent);
     expect(options).toEqual(["Select", "1 min", "5 min", "10 min"]);
   });
 
   it("answers all seven conditions only when asked to pass them all", async () => {
     const user = userEvent.setup();
-    renderForm();
-    await user.selectOptions(field("Inspection asset"), "asset-rated");
+    renderDetail(blank(), { ratingFor });
     expect(CONDITION_CHECKS).toHaveLength(7);
     await user.click(screen.getByRole("button", { name: "Pass all" }));
     for (const { label } of CONDITION_CHECKS) expect(field(label)).toHaveValue("PASS");
@@ -120,17 +147,14 @@ describe("new inspection (staff)", () => {
 
   it("saves every field the customer asked for, keeping the three results separate", async () => {
     const user = userEvent.setup();
-    const { onSubmit } = renderForm();
-    await user.selectOptions(field("Inspection asset"), "asset-rated");
+    const props = renderDetail(blank(), { ratingFor });
     await fillEverything(user);
-    expect(save()).toBeEnabled();
-    await user.click(save());
-
-    expect(onSubmit).toHaveBeenCalledTimes(1);
-    const values = onSubmit.mock.calls[0][0];
-    expect(values).toMatchObject({ assetId: "asset-rated", inspectionType: "SERVICE", result: "REPAIR" });
+    await user.click(screen.getByRole("button", { name: "Save progress" }));
+    expect(props.onSaveDraft).toHaveBeenCalledTimes(1);
+    const values = vi.mocked(props.onSaveDraft).mock.calls[0][0];
+    expect(values).toMatchObject({ result: "REPAIR" });
     expect(values.pressureTest).toMatchObject({ appliedPressureKpa: 2250, holdTimeSeconds: 300, passed: true });
-    const measurements = values.pressureTest.measurements;
+    const measurements = values.pressureTest!.measurements as Record<string, unknown> & { conditions: Record<string, string> };
     expect(measurements).toMatchObject({
       schema_version: 1,
       working_pressure_kpa: 1500,
@@ -146,32 +170,9 @@ describe("new inspection (staff)", () => {
     expect(measurements.conditions.kink_or_dent).toBe("FAIL");
     expect(measurements.conditions.chemical_attack).toBe("PASS");
   });
-
-  it("drops what was typed when another asset is chosen", async () => {
-    const user = userEvent.setup();
-    renderForm();
-    await user.selectOptions(field("Inspection asset"), "asset-rated");
-    await user.selectOptions(field("Instruction"), "PASS");
-    await user.clear(field("Test pressure kPa"));
-    await user.type(field("Test pressure kPa"), "2400");
-    await user.selectOptions(field("Inspection asset"), "asset-other");
-    expect(field("Working pressure kPa")).toHaveValue("1000");
-    expect(field("Test pressure kPa")).toHaveValue("1500");
-    expect(field("Instruction")).toHaveValue("");
-  });
-
-  it("reports a save failure", async () => {
-    const user = userEvent.setup();
-    const onSubmit = vi.fn().mockRejectedValue(new HmsApiError(422, "validation", "Request validation failed", null));
-    render(<InspectionForm assetOptions={[rated]} onClose={vi.fn()} onSubmit={onSubmit} open />);
-    await user.selectOptions(field("Inspection asset"), "asset-rated");
-    await fillEverything(user);
-    await user.click(save());
-    expect(await screen.findByRole("alert")).toHaveTextContent("Request validation failed");
-  });
 });
 
-function savedInspection(state: InspectionFormState, status = "DRAFT"): InspectionRecord {
+function savedInspection(state: InspectionFormState, status = "IN_PROGRESS"): InspectionRecord {
   const built = buildValues(state)!;
   return {
     id: "insp-1",
@@ -215,8 +216,11 @@ function renderDetail(inspection: InspectionRecord, extra: Partial<React.Compone
     canWrite: true,
     inspection,
     onApprove: vi.fn().mockResolvedValue(undefined),
+    onBeginRework: vi.fn().mockResolvedValue(undefined),
     onClose: vi.fn(),
+    onReject: vi.fn().mockResolvedValue(undefined),
     onSaveDraft: vi.fn().mockResolvedValue(undefined),
+    onStart: vi.fn().mockResolvedValue(undefined),
     onSubmit: vi.fn().mockResolvedValue(undefined),
     ...extra
   };
@@ -238,7 +242,7 @@ describe("saved inspection (staff)", () => {
     for (const { label } of CONDITION_CHECKS) expect(field(label)).toHaveValue("PASS");
   });
 
-  it("saves edits to a draft and submits only once the whole form is filled", async () => {
+  it("saves edits in progress and submits only once the whole form is filled", async () => {
     const user = userEvent.setup();
     const partial = { ...completeState, ohmsTotal: "", certificateResult: "" as const };
     const props = renderDetail(savedInspection(partial));
@@ -254,7 +258,7 @@ describe("saved inspection (staff)", () => {
     expect(gap).toHaveTextContent(/still needed.*Certificate result.*Ohms total|still needed.*Ohms total.*Certificate result/i);
     // Focus moves to the notice in a deferred step after it renders.
     await waitFor(() => expect(gap).toHaveFocus());
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Save progress" }));
     expect(props.onSaveDraft).toHaveBeenCalledTimes(1);
 
     await user.type(field("Ohms total"), "0.3");

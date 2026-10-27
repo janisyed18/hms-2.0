@@ -80,7 +80,13 @@ export function useInspectionsWorkspace(
   // inspection that is not in it is asked for by id: only if that read fails (missing, or not theirs) is
   // it "unavailable". What comes back is used only if the URL still asks for it.
   const fetching = useRef<string | null>(null);
+  const previousRoute = useRef(routeInspectionId);
   useEffect(() => {
+    // The list changing (an inspection was just created) is not the URL changing: only a URL that has
+    // moved to "nothing open" closes the detail, or a newly selected inspection would be closed before
+    // the address catches up with it, and the two would chase each other.
+    const routeChanged = previousRoute.current !== routeInspectionId;
+    previousRoute.current = routeInspectionId;
     if (isLoading) return;
     const open = live.current.selectedId;
     if (routeInspectionId && routeInspectionId !== open) {
@@ -103,7 +109,7 @@ export function useInspectionsWorkspace(
             if (fetching.current === routeInspectionId) fetching.current = null;
           });
       }
-    } else if (!routeInspectionId && open) {
+    } else if (!routeInspectionId && open && routeChanged) {
       setSelectedId(null);
     }
   }, [routeInspectionId, isLoading, inspections]);
@@ -229,6 +235,24 @@ export function useInspectionsWorkspace(
     replaceInspection(saved);
     notify({ kind: "success", title: "Draft saved", message: `Inspection for ${assetLabel(saved.asset)} saved successfully.` });
   }
+  async function startInspection() {
+    if (!selectedInspection) return;
+    const saved = await createHmsClient().startInspection(selectedInspection.id);
+    replaceInspection(saved);
+    notify({ kind: "success", title: "Inspection started", message: `Inspection for ${assetLabel(saved.asset)} is in progress.` });
+  }
+  async function beginInspectionRework() {
+    if (!selectedInspection) return;
+    const saved = await createHmsClient().beginInspectionRework(selectedInspection.id);
+    replaceInspection(saved);
+    notify({ kind: "success", title: "Rework started", message: `Inspection for ${assetLabel(saved.asset)} can be edited again.` });
+  }
+  async function rejectInspection(reason: string) {
+    if (!selectedInspection) return;
+    const saved = await createHmsClient().rejectInspection(selectedInspection.id, reason);
+    replaceInspection(saved);
+    notify({ kind: "success", title: "Changes requested", message: `Inspection for ${assetLabel(saved.asset)} was sent back to the inspector.` });
+  }
   async function submitInspection(values?: InspectionUpdateValues) {
     if (!selectedInspection) return;
     const client = createHmsClient();
@@ -245,5 +269,5 @@ export function useInspectionsWorkspace(
   }
   function clearInspectionFilters() { setTypeFilter("ALL"); setResultFilter("ALL"); }
   const activeFilterCount = [typeFilter !== "ALL", resultFilter !== "ALL"].filter(Boolean).length;
-  return { activeFilterCount, approveInspection, approveInspectionBooking, approveInspectionBookingReschedule, assetOptions: assets, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
+  return { activeFilterCount, approveInspection, beginInspectionRework, rejectInspection, startInspection, approveInspectionBooking, approveInspectionBookingReschedule, assetOptions: assets, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
 }

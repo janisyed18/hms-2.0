@@ -52,6 +52,7 @@ class WorkflowStatus(StrEnum):
     RESCHEDULE_REQUESTED = "RESCHEDULE_REQUESTED"
     RESCHEDULE_AWAITING_CONFIRMATION = "RESCHEDULE_AWAITING_CONFIRMATION"
     INSPECTION_DRAFT = "INSPECTION_DRAFT"
+    IN_PROGRESS = "IN_PROGRESS"
     AWAITING_REVIEW = "AWAITING_REVIEW"
     CHANGES_REQUIRED = "CHANGES_REQUIRED"
     FAILED = "FAILED"
@@ -70,6 +71,7 @@ class ActionCode(StrEnum):
     REVIEW_RESCHEDULE = "REVIEW_RESCHEDULE"
     CONFIRM_RESCHEDULE = "CONFIRM_RESCHEDULE"
     CONTINUE_INSPECTION = "CONTINUE_INSPECTION"
+    REWORK_INSPECTION = "REWORK_INSPECTION"
     REVIEW_INSPECTION = "REVIEW_INSPECTION"
     ISSUE_CERTIFICATE = "ISSUE_CERTIFICATE"
 
@@ -95,6 +97,7 @@ LABELS: dict[WorkflowStatus, str] = {
     S.RESCHEDULE_REQUESTED: "Reschedule requested",
     S.RESCHEDULE_AWAITING_CONFIRMATION: "Reschedule awaiting confirmation",
     S.INSPECTION_DRAFT: "Inspection draft",
+    S.IN_PROGRESS: "Inspection in progress",
     S.AWAITING_REVIEW: "Inspection submitted — awaiting approval",
     S.CHANGES_REQUIRED: "Inspection changes required",
     S.FAILED: "Inspection failed",
@@ -127,7 +130,8 @@ DETAILS: dict[WorkflowStatus, str] = {
     S.RESCHEDULE_AWAITING_CONFIRMATION: (
         "A new time has been proposed and is waiting for the customer to confirm."
     ),
-    S.INSPECTION_DRAFT: "An inspection has been started and not yet submitted.",
+    S.INSPECTION_DRAFT: "The inspection has been created and is waiting to be started.",
+    S.IN_PROGRESS: "The inspection has been started and is not yet submitted.",
     S.AWAITING_REVIEW: (
         "The inspection was submitted and is waiting for an authorised reviewer."
     ),
@@ -315,6 +319,8 @@ def _inspection_cycle(
     related = Related(booking_id=inspection.booking_id, inspection_id=inspection.id)
     if inspection.status == InspectionStatus.DRAFT.value:
         status = S.INSPECTION_DRAFT
+    elif inspection.status == InspectionStatus.IN_PROGRESS.value:
+        status = S.IN_PROGRESS
     elif inspection.status == InspectionStatus.SUBMITTED.value:
         status = S.AWAITING_REVIEW
     elif inspection.status == InspectionStatus.REJECTED.value:
@@ -452,7 +458,7 @@ def _next_action(
             TargetType.SCHEDULING,
             booking_id,
         )
-    if status == S.INSPECTION_DRAFT and can.write_inspection:
+    if status in {S.INSPECTION_DRAFT, S.IN_PROGRESS} and can.write_inspection:
         return NextAction(
             ActionCode.CONTINUE_INSPECTION,
             "Continue inspection",
@@ -466,9 +472,13 @@ def _next_action(
             TargetType.INSPECTION,
             inspection_id,
         )
-    # CHANGES_REQUIRED has no action yet: a rejected inspection cannot be edited, so
-    # offering to open it would lead nowhere. The lifecycle work that adds a rework
-    # step adds it.
+    if status == S.CHANGES_REQUIRED and can.write_inspection:
+        return NextAction(
+            ActionCode.REWORK_INSPECTION,
+            "Rework inspection",
+            TargetType.INSPECTION,
+            inspection_id,
+        )
     if status == S.READY_FOR_CERTIFICATE and can.approve:
         return NextAction(
             ActionCode.ISSUE_CERTIFICATE,

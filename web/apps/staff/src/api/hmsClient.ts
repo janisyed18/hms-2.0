@@ -376,9 +376,11 @@ interface ApiInspection {
   result: string | null;
   inspector_user_id: string | null;
   reviewer_user_id: string | null;
+  started_at: string | null;
   submitted_at: string | null;
   approved_at: string | null;
   rejected_at: string | null;
+  rejection_reason: string | null;
   asset: ApiInspectionAssetSummary;
   customer: ApiSummary;
   product: ApiProductSummary;
@@ -1144,9 +1146,11 @@ function toInspection(
       result: inspection.result,
       inspectorUserId: inspection.inspector_user_id,
       reviewerUserId: inspection.reviewer_user_id,
+      startedAt: inspection.started_at ?? null,
       submittedAt: inspection.submitted_at,
       approvedAt: inspection.approved_at,
       rejectedAt: inspection.rejected_at,
+      rejectionReason: inspection.rejection_reason ?? null,
       asset: {
         id: inspection.asset.id,
         assetNumber: inspection.asset.asset_number,
@@ -2114,6 +2118,32 @@ export function createHmsClient(options: HmsClientOptions = {}) {
             pressure_test: pressureTestPayload(values.pressureTest)
           })
         }
+      );
+      return toInspection(response.data, response.etag);
+    },
+
+    /** DRAFT to IN_PROGRESS. */
+    async startInspection(id: string): Promise<InspectionRecord> {
+      const response = await request<ApiInspection>(
+        `/api/v1/inspections/${encodeURIComponent(id)}/start`,
+        { method: "POST" }
+      );
+      return toInspection(response.data, response.etag);
+    },
+
+    /** REJECTED back to IN_PROGRESS: the explicit step that makes the form editable again. */
+    async beginInspectionRework(id: string): Promise<InspectionRecord> {
+      const response = await request<ApiInspection>(
+        `/api/v1/inspections/${encodeURIComponent(id)}/rework`,
+        { method: "POST" }
+      );
+      return toInspection(response.data, response.etag);
+    },
+
+    async rejectInspection(id: string, reason: string): Promise<InspectionRecord> {
+      const response = await request<ApiInspection>(
+        `/api/v1/inspections/${encodeURIComponent(id)}/reject`,
+        { method: "POST", body: JSON.stringify({ reason }) }
       );
       return toInspection(response.data, response.etag);
     },

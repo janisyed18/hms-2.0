@@ -429,6 +429,8 @@ async def test_booking_to_certificate_to_notification_flow(
 
     # 4. INSPECTION: edit, submit; the inspector cannot approve their own work.
     async with api_as(database, inspector) as client:
+        started = await client.post(f"/api/v1/inspections/{inspection_id}/start")
+        assert started.status_code == 200, started.text
         edited = await client.patch(
             f"/api/v1/inspections/{inspection_id}",
             json={
