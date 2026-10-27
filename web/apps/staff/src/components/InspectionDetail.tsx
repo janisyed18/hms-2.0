@@ -232,6 +232,13 @@ export function InspectionDetail({
           <p>{inspection.rejectionReason ?? "The reviewer did not leave a reason."}</p>
         </div>
       ) : null}
+      {/* The reviewer's instructions stay in view while the rework is done, until it is resubmitted. */}
+      {inspection.status === "IN_PROGRESS" && inspection.rejectionReason ? (
+        <div className="inspection-changes-required" role="status">
+          <strong>Rework requested</strong>
+          <p>{inspection.rejectionReason}</p>
+        </div>
+      ) : null}
 
       <form className="inspection-detail-form" onSubmit={handleSave}>
         <InspectionFormFields

@@ -122,9 +122,10 @@ async def begin_rework(
 ) -> None:
     """REJECTED -> IN_PROGRESS, explicitly.
 
-    The round's own timestamps and the reason are cleared so the next review starts
-    clean; the audit event keeps them (it records the row as it was), as does every
-    earlier event.
+    The round's timestamps and the previous reviewer are cleared, so the record does
+    not name someone who has not reviewed the next submission; the audit event keeps
+    them (it records the row as it was), as does every earlier event. The rejection
+    reason stays as the active rework guidance until the inspection is resubmitted.
     ``started_at`` is untouched.
     """
     target = require_transition(inspection, "rework")
@@ -132,12 +133,34 @@ async def begin_rework(
     inspection.status = target.value
     inspection.submitted_at = None
     inspection.rejected_at = None
-    inspection.rejection_reason = None
+    inspection.reviewer_user_id = None
     await record_update(
         session,
         inspection,
         actor_id=actor_id,
         action="inspection.rework_started",
+        before=before,
+    )
+
+
+async def mark_approved(
+    session: AsyncSession,
+    inspection: Inspection,
+    *,
+    actor_id: str,
+    reviewer_user_id: str | None,
+) -> None:
+    """SUBMITTED -> APPROVED, with the approving reviewer recorded."""
+    target = require_transition(inspection, "approve")
+    before = inspection.to_audit_dict()
+    inspection.status = target.value
+    inspection.reviewer_user_id = reviewer_user_id
+    inspection.approved_at = utc_now()
+    await record_update(
+        session,
+        inspection,
+        actor_id=actor_id,
+        action="inspection.approved",
         before=before,
     )
 
@@ -188,6 +211,8 @@ async def mark_submitted(
     before = inspection.to_audit_dict()
     inspection.status = target.value
     inspection.submitted_at = utc_now()
+    # The rework guidance has done its job; the audit trail keeps the reason.
+    inspection.rejection_reason = None
     await record_update(
         session,
         inspection,

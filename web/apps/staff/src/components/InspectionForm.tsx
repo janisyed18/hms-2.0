@@ -1,18 +1,11 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 
-import {
-  blankFormState,
-  buildValues,
-  draftGaps
-} from "../domain/inspectionForm";
-import type { InspectionFormState } from "../domain/inspectionForm";
 import type { AssetRecord, InspectionCreateValues, InspectionType } from "../domain/types";
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
 import { Field, RequiredNote } from "./interaction/FormPrimitives";
 import { friendlyApiError } from "./interaction/friendlyApiError";
-import { InspectionFormFields } from "./InspectionFormFields";
 import { assetLabel } from "../utils/identity";
 
 interface InspectionFormProps {
@@ -30,7 +23,6 @@ export function InspectionForm({
 }: InspectionFormProps) {
   const [assetId, setAssetId] = useState("");
   const [inspectionType, setInspectionType] = useState<InspectionType>("SERVICE");
-  const [form, setForm] = useState<InspectionFormState>(() => blankFormState(null));
   const [isSubmitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [assetError, setAssetError] = useState<string | null>(null);
@@ -39,10 +31,9 @@ export function InspectionForm({
 
   useEffect(() => {
     if (!open) return;
-    // A new inspection starts with no asset chosen; the pressures follow the asset.
+    // A new inspection starts with no asset chosen.
     setAssetId("");
     setInspectionType("SERVICE");
-    setForm(blankFormState(null));
     setError(null);
     setAssetError(null);
   }, [open]);
@@ -53,16 +44,9 @@ export function InspectionForm({
 
   function chooseAsset(nextAssetId: string) {
     setAssetId(nextAssetId);
-    const next = assetOptions.find((option) => option.id === nextAssetId);
-    // The rating belongs to the chosen asset's product and bore, so nothing typed for
-    // another asset carries over.
-    setForm(blankFormState(next?.pressureRating ?? null));
     setError(null);
     setAssetError(null);
   }
-
-  const gaps = draftGaps(form);
-  const built = buildValues(form);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -73,22 +57,19 @@ export function InspectionForm({
       formRef.current?.querySelector<HTMLElement>('[data-field="assetId"]')?.focus();
       return;
     }
-    if (!built) {
-      setError(`To save a draft, still needed: ${gaps.join(", ")}.`);
-      window.setTimeout(() => formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus(), 0);
-      return;
-    }
     lock.current = true;
     setSubmitting(true);
     try {
       await onSubmit({
         assetId,
         inspectionType,
-        result: built.result,
-        pressureTest: built.pressureTest
+        // Nothing is measured before the inspection is started, so a new one carries no
+        // result or pressure test; those are recorded in the inspection once it is in progress.
+        result: null,
+        pressureTest: null
       });
     } catch (reason: unknown) {
-      setError(friendlyApiError(reason, { fallback: "The inspection could not be saved. Try again." }).message);
+      setError(friendlyApiError(reason, { fallback: "The inspection could not be created. Try again." }).message);
       window.setTimeout(() => formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus(), 0);
     } finally {
       lock.current = false;
@@ -102,7 +83,7 @@ export function InspectionForm({
         <div className="drawer-header">
           <div>
             <h2>Add Inspection</h2>
-            <p>Start a draft inspection and capture the pressure test, measurements and condition checks.</p>
+            <p>Create a draft inspection. Open it and start it to record the pressure test, measurements and condition checks.</p>
           </div>
           <button
             aria-label="Close form"
@@ -113,7 +94,7 @@ export function InspectionForm({
             <X size={18} />
           </button>
         </div>
-        {error ? <ActionNotice kind="error" title="Inspection not saved">{error}</ActionNotice> : null}
+        {error ? <ActionNotice kind="error" title="Inspection not created">{error}</ActionNotice> : null}
         <RequiredNote />
         <Field error={assetError ?? undefined} label="Asset" name="assetId" required>
           {(props) => (
@@ -140,19 +121,9 @@ export function InspectionForm({
             <option value="NEW_ASSET">New asset</option>
           </select>
         </label>
-        {assetId ? (
-          <InspectionFormFields idPrefix="inspection-form" state={form} onChange={setForm} />
-        ) : (
-          <p className="field-hint">Choose an asset to enter the inspection.</p>
-        )}
-        {assetId && gaps.length > 0 ? (
-          <p className="field-hint" role="status">
-            To save a draft, still needed: {gaps.join(", ")}.
-          </p>
-        ) : null}
         <div className="drawer-actions">
           <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
-          <ActionButton pending={isSubmitting} pendingLabel="Saving…" type="submit" variant="primary">Save inspection</ActionButton>
+          <ActionButton pending={isSubmitting} pendingLabel="Creating…" type="submit" variant="primary">Create inspection</ActionButton>
         </div>
       </form>
     </div>

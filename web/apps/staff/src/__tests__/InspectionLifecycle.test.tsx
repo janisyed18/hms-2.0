@@ -94,6 +94,19 @@ describe("what each state offers", () => {
     expect(button("Begin rework")).toBeNull();
   });
 
+  it("keeps the reviewer's instructions in view while the work is redone, with no reviewer named", () => {
+    setup(inspection("IN_PROGRESS", { rejectionReason: "Re-test the hold time", reviewerUserId: null }));
+    expect(screen.getByText("Rework requested")).toBeInTheDocument();
+    expect(screen.getByText("Re-test the hold time")).toBeInTheDocument();
+    expect(screen.getByText("Not reviewed")).toBeInTheDocument();
+    expect(screen.queryByText("Changes required")).toBeNull();
+  });
+
+  it("shows no rework guidance on a first pass", () => {
+    setup(inspection("IN_PROGRESS", { rejectionReason: null }));
+    expect(screen.queryByText("Rework requested")).toBeNull();
+  });
+
   it("APPROVED is final: locked, nothing to do", () => {
     setup(inspection("APPROVED"), { canApprove: true });
     expect(formLocked()).toBe(true);

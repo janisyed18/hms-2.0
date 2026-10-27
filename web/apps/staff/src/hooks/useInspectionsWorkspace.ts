@@ -80,7 +80,13 @@ export function useInspectionsWorkspace(
   // inspection that is not in it is asked for by id: only if that read fails (missing, or not theirs) is
   // it "unavailable". What comes back is used only if the URL still asks for it.
   const fetching = useRef<string | null>(null);
+  const previousRoute = useRef(routeInspectionId);
   useEffect(() => {
+    // The list changing (an inspection was just created) is not the URL changing: only a URL that has
+    // moved to "nothing open" closes the detail, or a newly selected inspection would be closed before
+    // the address catches up with it, and the two would chase each other.
+    const routeChanged = previousRoute.current !== routeInspectionId;
+    previousRoute.current = routeInspectionId;
     if (isLoading) return;
     const open = live.current.selectedId;
     if (routeInspectionId && routeInspectionId !== open) {
@@ -103,7 +109,7 @@ export function useInspectionsWorkspace(
             if (fetching.current === routeInspectionId) fetching.current = null;
           });
       }
-    } else if (!routeInspectionId && open) {
+    } else if (!routeInspectionId && open && routeChanged) {
       setSelectedId(null);
     }
   }, [routeInspectionId, isLoading, inspections]);

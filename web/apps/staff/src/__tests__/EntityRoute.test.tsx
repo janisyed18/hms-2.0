@@ -12,6 +12,7 @@ const client = vi.hoisted(() => ({
   listAssets: vi.fn(),
   getAsset: vi.fn(),
   getInspection: vi.fn(),
+  createInspection: vi.fn(),
   getAssetWorkflow: vi.fn(),
   listCustomers: vi.fn(),
   listProducts: vi.fn(),
@@ -216,6 +217,24 @@ describe("the inspection detail follows the URL", () => {
     await act(async () => resolveFar({ ...inspection, id: "insp-far" }));
     expect(result.current.selectedInspection).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("opens a newly created inspection and stays open while the address catches up", async () => {
+    client.createInspection.mockResolvedValue({ ...inspection, id: "insp-new", status: "DRAFT" });
+    const { result } = renderHook(() => {
+      const [route, setRoute] = useState<string | null>(null);
+      return { route, workspace: useInspectionsWorkspace(false, route, setRoute) };
+    });
+    await waitFor(() => expect(result.current.workspace.isLoading).toBe(false));
+    await act(async () => {
+      await result.current.workspace.saveInspection({ assetId: "a", inspectionType: "SERVICE", result: null, pressureTest: null });
+    });
+    await waitFor(() => expect(result.current.route).toBe("insp-new"));
+    expect(result.current.workspace.selectedInspection?.id).toBe("insp-new");
+    // Settled, not flickering between open and closed.
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+    expect(result.current.workspace.selectedInspection?.id).toBe("insp-new");
+    expect(result.current.route).toBe("insp-new");
   });
 
   it("reports opening and closing to the URL and follows it back", async () => {

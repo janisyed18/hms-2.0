@@ -174,6 +174,7 @@ from hms_backend.app.modules.inspections.workflow import (
     begin_rework,
     is_editable,
     is_failed,
+    mark_approved,
     mark_rejected,
     mark_submitted,
     require_transition,
@@ -2845,21 +2846,14 @@ async def approve_inspection(
     )
     await _require_active_inspection_booking(session, inspection)
     try:
-        target = require_transition(inspection, "approve")
+        await mark_approved(
+            session,
+            inspection,
+            actor_id=principal.user_id,
+            reviewer_user_id=principal.persisted_user_id,
+        )
     except InvalidTransitionError as error:
         raise _conflict(error) from error
-
-    before = inspection.to_audit_dict()
-    inspection.status = target.value
-    inspection.reviewer_user_id = principal.persisted_user_id
-    inspection.approved_at = utc_now()
-    await record_update(
-        session,
-        inspection,
-        actor_id=principal.user_id,
-        action="inspection.approved",
-        before=before,
-    )
     payload = _inspection_event_payload(inspection)
     await emit_event(
         session,

@@ -226,7 +226,10 @@ async def test_rework_is_explicit_keeps_started_at_and_clears_the_round(
     body = reworked.json()
     assert body["status"] == "IN_PROGRESS"
     assert body["rejected_at"] is None and body["submitted_at"] is None
-    assert body["rejection_reason"] is None
+    # The previous reviewer has not reviewed this round, so none is named; the reason
+    # stays as the guidance for the rework.
+    assert body["reviewer_user_id"] is None
+    assert body["rejection_reason"] == "Re-test the hold time"
     assert edited.status_code == 200  # editable again, because rework began
     async with session_factory() as session:
         after = await session.get(Inspection, inspection_id)
@@ -245,6 +248,7 @@ async def test_rework_is_explicit_keeps_started_at_and_clears_the_round(
         assert event.before["status"] == "REJECTED"
         assert event.before["rejection_reason"] == "Re-test the hold time"
         assert event.before["rejected_at"] is not None
+        assert event.before["reviewer_user_id"] == "reviewer-1"
 
 
 @pytest.mark.asyncio
@@ -259,9 +263,14 @@ async def test_a_reworked_inspection_resubmits_and_is_approved_with_a_full_audit
         resubmitted = await client.post(url(inspection_id, "submit"))
     assert resubmitted.status_code == 200, resubmitted.text
     assert resubmitted.json()["status"] == "SUBMITTED"
-    async with api_client(session_factory, REVIEWER) as client:
+    # Waiting for the second review: nobody is named as its reviewer, and the guidance
+    # that was for the rework is gone.
+    assert resubmitted.json()["reviewer_user_id"] is None
+    assert resubmitted.json()["rejection_reason"] is None
+    async with api_client(session_factory, SUPER) as client:
         approved = await client.post(url(inspection_id, "approve"))
     assert approved.status_code == 200
+    assert approved.json()["reviewer_user_id"] not in (None, "reviewer-1")
     async with session_factory() as session:
         actions = [
             action

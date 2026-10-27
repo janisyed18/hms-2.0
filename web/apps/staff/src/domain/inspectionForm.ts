@@ -119,8 +119,9 @@ export function stateFromInspection(
       inspection.result === "PASS" || inspection.result === "REPAIR" ? inspection.result : "",
     certificateResult: passFail(measurements.certificate_result),
     pressureTestResult: test ? (test.passed ? "PASS" : "FAIL") : "",
-    workingPressureKpa: text(measurements.working_pressure_kpa),
-    testPressureKpa: test ? String(test.appliedPressureKpa) : "",
+    // Nothing recorded yet (an inspection just started): the pressures default to the product rating.
+    workingPressureKpa: test ? text(measurements.working_pressure_kpa) : rating ? String(rating.workingPressureKpa) : "",
+    testPressureKpa: test ? String(test.appliedPressureKpa) : rating ? String(rating.testPressureKpa) : "",
     testMinutes: (["1", "5", "10"] as const).find((option) => option === minutes) ?? "",
     ohmsEndA: text(measurements.ohms_end_a),
     ohmsEndB: text(measurements.ohms_end_b),

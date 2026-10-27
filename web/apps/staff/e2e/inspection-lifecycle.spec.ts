@@ -17,7 +17,6 @@ import {
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const ASSET = "00000000-0000-7000-8000-0000000000b1";
 const INSPECTION = "00000000-0000-7000-8000-0000000000b2";
-const PRESSURE_TEST = "00000000-0000-7000-8000-0000000000b3";
 
 function sql(command: string): void {
   execFileSync(
@@ -27,27 +26,15 @@ function sql(command: string): void {
   );
 }
 
-// An asset of its own with a not-yet-started inspection whose form is already complete, so the
-// journey exercises the lifecycle and not the form.
-const MEASUREMENTS = JSON.stringify({
-  schema_version: 1,
-  working_pressure_kpa: 21000,
-  test_duration_minutes: 1,
-  ohms_end_a: 0.2,
-  ohms_end_b: 0.2,
-  ohms_total: 0.4,
-  conditions: {
-    chemical_attack: "PASS",
-    rust_in_fittings: "PASS",
-    end_fitting_damage: "PASS",
-    kink_or_dent: "PASS",
-    fitting_seal_damage: "PASS",
-    wire_corrosion: "PASS",
-    bend_at_fitting: "PASS"
-  },
-  certificate_result: "PASS"
-});
+function sqlValue(command: string): string {
+  return execFileSync(
+    "docker",
+    ["compose", "exec", "-T", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "hms", "-d", "hms", "-At", "-c", command],
+    { cwd: repoRoot, encoding: "utf8" }
+  ).trim();
+}
 
+// An asset of its own, with no inspection: the journey creates one through the real Add Inspection flow.
 function prepare() {
   cleanup();
   sql(`
@@ -57,17 +44,22 @@ function prepare() {
       JOIN customer_locations l ON l.customer_id = c.id
       CROSS JOIN (SELECT id FROM products ORDER BY created_at LIMIT 1) p
       WHERE c.code = 'VOPA' LIMIT 1;
-    INSERT INTO inspections (id, version, created_at, updated_at, asset_id, inspection_type, status, result)
-      VALUES ('${INSPECTION}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${ASSET}', 'SERVICE', 'DRAFT', 'PASS');
-    INSERT INTO pressure_test_results (id, version, created_at, updated_at, inspection_id, applied_pressure_kpa, hold_time_seconds, passed, measurements)
-      VALUES ('${PRESSURE_TEST}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${INSPECTION}', 42000, 60, true, '${MEASUREMENTS}'::json);
+  `);
+}
+
+// For the layout checks only, which need a record in a given state without walking there.
+function seedInspection(status: "DRAFT" | "REJECTED", reason = "") {
+  sql(`
+    INSERT INTO inspections (id, version, created_at, updated_at, asset_id, inspection_type, status, rejection_reason, rejected_at)
+      VALUES ('${INSPECTION}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${ASSET}', 'SERVICE', '${status}',
+              ${reason ? `'${reason}'` : "NULL"}, ${status === "REJECTED" ? "CURRENT_TIMESTAMP" : "NULL"});
   `);
 }
 
 function cleanup() {
   sql(`
-    DELETE FROM pressure_test_results WHERE id = '${PRESSURE_TEST}';
-    DELETE FROM inspections WHERE id = '${INSPECTION}';
+    DELETE FROM pressure_test_results WHERE inspection_id IN (SELECT id FROM inspections WHERE asset_id = '${ASSET}');
+    DELETE FROM inspections WHERE asset_id = '${ASSET}';
     DELETE FROM assets WHERE id = '${ASSET}';
   `);
 }
@@ -80,6 +72,7 @@ const here = (page: Page) => {
   return url.pathname + url.search;
 };
 const detailOf = (page: Page) => page.getByRole("complementary", { name: "Inspection detail" });
+const reviewerOf = (page: Page) => detailOf(page).getByText("Reviewer", { exact: true }).locator("xpath=following-sibling::strong");
 const noSidewaysScroll = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
 
 test.describe("inspection lifecycle", () => {
@@ -104,21 +97,47 @@ test.describe("inspection lifecycle", () => {
     const page = session.page;
     page.setDefaultTimeout(20_000);
     try {
-      await page.goto(`/?view=inspections&inspection=${INSPECTION}`);
+      // The real creation flow captures no work: only the asset and the type.
+      await page.goto("/?view=inspections");
+      await page.getByRole("button", { name: "Add Inspection" }).click();
+      const drawer = page.getByRole("heading", { name: "Add Inspection" }).locator("xpath=ancestor::form");
+      await drawer.getByLabel("Inspection asset").selectOption(await drawer.locator("option", { hasText: "E2E-LIFECYCLE-1" }).getAttribute("value") ?? "");
+      for (const label of ["Instruction", "Working pressure kPa", "Ohms total", "Certificate result", "Inspection notes"]) {
+        await expect(drawer.getByLabel(label)).toHaveCount(0);
+      }
+      await drawer.getByRole("button", { name: "Create inspection" }).click();
+      await expect.poll(() => new URL(page.url()).searchParams.get("inspection"), SLOW).not.toBeNull();
+      const inspectionId = new URL(page.url()).searchParams.get("inspection")!;
       const detail = detailOf(page);
 
-      // Not started: read-only, with Start as the only way forward.
+      // Not started: read-only, with Start as the only way forward, and nothing started yet.
       await expect(detail.getByRole("button", { name: "Start inspection" })).toBeVisible(SLOW);
       await expect(detail.getByRole("button", { name: "Submit inspection" })).toHaveCount(0);
+      await expect(detail.getByLabel("Inspection notes")).toBeDisabled();
+      expect(sqlValue(`SELECT started_at IS NULL FROM inspections WHERE id = '${inspectionId}'`)).toBe("t");
 
       await detail.getByRole("button", { name: "Start inspection" }).click();
       await expect(detail.getByRole("button", { name: "Submit inspection" })).toBeVisible(SLOW);
       await expect(detail.getByRole("button", { name: "Save progress" })).toBeVisible();
       await expect(detail.getByRole("button", { name: "Start inspection" })).toHaveCount(0);
+      expect(sqlValue(`SELECT started_at IS NOT NULL FROM inspections WHERE id = '${inspectionId}'`)).toBe("t");
+
+      // The work is recorded only now that it is in progress.
+      await detail.getByLabel("Instruction").selectOption("PASS");
+      await detail.getByLabel("Working pressure kPa").fill("21000");
+      await detail.getByLabel("Test pressure kPa").fill("31500");
+      await detail.getByLabel("Test time minutes").selectOption("1");
+      await detail.getByLabel("Pressure test result").selectOption("PASS");
+      await detail.getByLabel("Ohms end A").fill("0.2");
+      await detail.getByLabel("Ohms end B").fill("0.2");
+      await detail.getByLabel("Ohms total").fill("0.4");
+      await detail.getByRole("button", { name: "Pass all" }).click();
+      await detail.getByLabel("Certificate result").selectOption("PASS");
 
       await detail.getByRole("button", { name: "Submit inspection" }).click();
       await expect(detail.getByRole("button", { name: "Request changes" })).toBeVisible(SLOW);
       await expect(detail.getByRole("button", { name: "Approve inspection" })).toBeVisible();
+      await expect(reviewerOf(page)).toHaveText("Not reviewed");
 
       // Send it back; a reason is required.
       await detail.getByRole("button", { name: "Request changes" }).click();
@@ -129,21 +148,33 @@ test.describe("inspection lifecycle", () => {
       await expect(detail.getByRole("status").filter({ hasText: "Changes required" })).toContainText("Hold time must be re-tested", SLOW);
       await expect(detail.getByRole("button", { name: "Begin rework" })).toBeVisible();
       await expect(detail.getByRole("button", { name: "Submit inspection" })).toHaveCount(0);
+      await expect(reviewerOf(page)).not.toHaveText("Not reviewed");
 
       // The asset's workflow now points at the rework, on the exact inspection.
       await page.goto(`/?view=assets&asset=${ASSET}`);
       const card = page.getByRole("complementary", { name: "Asset detail" }).getByRole("region", { name: "Workflow" });
       await expect(card).toContainText("Inspection changes required", SLOW);
       await card.getByRole("button", { name: "Rework inspection" }).click();
-      await expect.poll(() => here(page)).toBe(`/?view=inspections&inspection=${INSPECTION}`);
+      await expect.poll(() => here(page)).toBe(`/?view=inspections&inspection=${inspectionId}`);
 
       // Rework is explicit, then resubmit and approve.
       await detail.getByRole("button", { name: "Begin rework" }).click();
       await expect(detail.getByRole("button", { name: "Submit inspection" })).toBeVisible(SLOW);
-      await expect(detail.getByText("Hold time must be re-tested")).toHaveCount(0);
+      // The reviewer's instructions stay while the work is redone, even across a reload; the old reviewer does not.
+      await expect(detail.getByRole("status").filter({ hasText: "Rework requested" })).toContainText("Hold time must be re-tested");
+      await expect(reviewerOf(page)).toHaveText("Not reviewed");
+      await page.reload();
+      await expect(detail.getByRole("status").filter({ hasText: "Rework requested" })).toContainText("Hold time must be re-tested", SLOW);
+      await expect(reviewerOf(page)).toHaveText("Not reviewed");
+
+      // Resubmitting ends the guidance and still names no reviewer until someone reviews.
       await detail.getByRole("button", { name: "Submit inspection" }).click();
+      await expect(detail.getByRole("button", { name: "Approve inspection" })).toBeVisible(SLOW);
+      await expect(detail.getByText("Rework requested")).toHaveCount(0);
+      await expect(reviewerOf(page)).toHaveText("Not reviewed");
       await detail.getByRole("button", { name: "Approve inspection" }).click();
       await expect(detail.getByRole("button", { name: "Approve inspection" })).toHaveCount(0, SLOW);
+      await expect(reviewerOf(page)).not.toHaveText("Not reviewed");
       await expect(detail.getByText("Approved").first()).toBeVisible();
       for (const name of ["Start inspection", "Save progress", "Submit inspection", "Begin rework", "Request changes"]) {
         await expect(detail.getByRole("button", { name })).toHaveCount(0);
@@ -159,6 +190,7 @@ test.describe("inspection lifecycle", () => {
     const page = session.page;
     page.setDefaultTimeout(20_000);
     try {
+      seedInspection("DRAFT");
       for (const [width, height] of WIDTHS) {
         await page.setViewportSize({ width, height });
         await page.goto(`/?view=inspections&inspection=${INSPECTION}`);
@@ -169,8 +201,8 @@ test.describe("inspection lifecycle", () => {
         expect(await noSidewaysScroll(page), `first-time sideways scroll at ${width}px`).toBe(true);
       }
 
-      sql(`UPDATE inspections SET status = 'REJECTED', rejected_at = CURRENT_TIMESTAMP,
-             rejection_reason = 'Hold time must be re-tested, with a much longer explanation that has to wrap on a narrow screen without pushing the page sideways' WHERE id = '${INSPECTION}';`);
+      sql(`DELETE FROM inspections WHERE id = '${INSPECTION}'`);
+      seedInspection("REJECTED", "Hold time must be re-tested, with a much longer explanation that has to wrap on a narrow screen without pushing the page sideways");
       for (const [width, height] of WIDTHS) {
         await page.setViewportSize({ width, height });
         await page.goto(`/?view=inspections&inspection=${INSPECTION}`);
