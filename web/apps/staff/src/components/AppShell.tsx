@@ -44,6 +44,7 @@ import { motionTokens } from "../motion/motionTokens";
 
 export type AppModule =
   | "dashboard"
+  | "my-work"
   | "analytics"
   | "customers"
   | "locations"
@@ -105,6 +106,7 @@ const navGroups: Array<{ label: string; items: NavItem[] }> = [
     label: "Overview",
     items: [
       { label: "Dashboard", icon: LayoutDashboard, module: "dashboard" },
+      { label: "My Work", icon: ClipboardCheck, module: "my-work" },
       { label: "Analytics", icon: BarChart3, module: "analytics" }
     ]
   },

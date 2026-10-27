@@ -20,11 +20,12 @@ import { ActionNotice } from "./components/interaction/ActionNotice";
 import { CustomerTable } from "./components/CustomerTable";
 import type { OperationalModule } from "./components/OperationalWorkspace";
 import { WorkspaceState } from "./components/WorkspaceState";
+import { MyWorkWorkspace } from "./components/MyWorkWorkspace";
 import type { SystemModule } from "./components/SystemWorkspace";
 import { createHmsClient } from "./api/hmsClient";
 import { AuthProvider, useAuth } from "./auth/AuthProvider";
 import type { BrowserAuthClient } from "./auth/authClient";
-import type { AssetWorkflowAction, NotificationRecord, StaffPermission, StaffRole, StaffSession } from "./domain/types";
+import type { AssetWorkflowAction, MyWorkItem, NotificationRecord, StaffPermission, StaffRole, StaffSession } from "./domain/types";
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import { PageMotion } from "./motion/MotionPrimitives";
 import { useHmsRoute } from "./routing/useHmsRoute";
@@ -94,6 +95,10 @@ const moduleCopy: Record<AppModule, { title: string; description: string }> = {
   dashboard: {
     title: "Dashboard",
     description: "Operational snapshot across HMS records and staff workflow queues"
+  },
+  "my-work": {
+    title: "My Work",
+    description: "Your next permitted actions across current HMS workflows"
   },
   analytics: {
     title: "Analytics",
@@ -198,6 +203,7 @@ const rolePermissions: Record<StaffRole, StaffPermission[]> = {
 
 const allModules: AppModule[] = [
   "dashboard",
+  "my-work",
   "analytics",
   "customers",
   "assets",
@@ -217,10 +223,10 @@ const allModules: AppModule[] = [
 const roleModules: Record<StaffRole, AppModule[]> = {
   SUPER_ADMIN: allModules,
   HMS_ADMIN: allModules.filter((module) => module !== "sync"),
-  INSPECTOR: ["dashboard", "customers", "assets", "scheduling", "inspections", "retest", "sync", "notifications"],
-  ASSEMBLY: ["dashboard", "customers", "assets", "retest", "notifications"],
-  REVIEWER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest", "notifications"],
-  CUSTOMER_USER: ["dashboard", "customers", "assets", "inspections", "certificates", "retest", "notifications"]
+  INSPECTOR: ["dashboard", "my-work", "customers", "assets", "scheduling", "inspections", "retest", "sync", "notifications"],
+  ASSEMBLY: ["dashboard", "my-work", "customers", "assets", "retest", "notifications"],
+  REVIEWER: ["dashboard", "my-work", "customers", "assets", "inspections", "certificates", "retest", "notifications"],
+  CUSTOMER_USER: ["dashboard", "my-work", "customers", "assets", "inspections", "certificates", "retest", "notifications"]
 };
 
 const customerPortalModules: AppModule[] = [
@@ -420,6 +426,18 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
     if (action.targetType === "CERTIFICATES") return "certificates";
     return "assets";
   }
+
+  function handleWorkOpen(item: MyWorkItem) {
+    const action = item.nextAction;
+    const view = workflowTargetView(action as AssetWorkflowAction);
+    if (!visibleModules.includes(view)) return;
+    navigate((current) => ({
+      ...emptyRoute(view),
+      asset: view === "assets" ? item.assetId : null,
+      inspection: view === "inspections" ? action.targetId ?? action.inspectionId ?? item.inspectionId : null,
+      customer: portalMode ? current.customer : null
+    }));
+  }
   const workflowNavigation = {
     canOpen: (action: AssetWorkflowAction) =>
       visibleModules.includes(workflowTargetView(action)) && (action.targetType !== "INSPECTION" || Boolean(action.targetId)),
@@ -500,6 +518,8 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                 <NotificationsPage onOpen={handleNotificationOpen} />
               </div>
             </main>
+          ) : renderedActiveModule === "my-work" ? (
+            <main className="record-page"><div className="record-main"><MyWorkWorkspace onOpen={handleWorkOpen} /></div></main>
           ) : renderedActiveModule === "audit" ? (
             <main className="record-page"><div className="record-main"><AuditWorkspace /></div></main>
           ) : portalMode ? (

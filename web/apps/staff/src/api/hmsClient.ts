@@ -38,6 +38,7 @@ import type {
   InspectionStatus,
   InspectionType,
   InspectionUpdateValues,
+  MyWorkRecord,
   NotificationFeedResult,
   NotificationRecord,
   ProductFormValues,
@@ -300,6 +301,37 @@ interface ApiAssetWorkflow {
     target_id: string | null;
     inspection_id: string | null;
   } | null;
+}
+
+interface ApiMyWork {
+  summary: { total: number; urgent: number; due_soon: number; normal: number };
+  items: Array<{
+    id: string;
+    kind: string;
+    state: string;
+    priority: string;
+    title: string;
+    summary: string;
+    customer_id: string;
+    customer_name: string;
+    asset_id: string;
+    asset_number: string;
+    inspection_id: string | null;
+    booking_id: string | null;
+    certificate_id: string | null;
+    due_at: string | null;
+    updated_at: string;
+    next_action: {
+      code: string;
+      label: string;
+      target_type: string;
+      target_id: string | null;
+      inspection_id: string | null;
+    };
+  }>;
+  limit: number;
+  source_limit: number;
+  source_limited: boolean;
 }
 
 interface ApiAsset {
@@ -879,6 +911,44 @@ function toDashboard(dashboard: ApiDashboard): DashboardRecord {
       status: inspection.status,
       result: inspection.result
     }))
+  };
+}
+
+function toMyWork(work: ApiMyWork): MyWorkRecord {
+  return {
+    summary: {
+      total: work.summary.total,
+      urgent: work.summary.urgent,
+      dueSoon: work.summary.due_soon,
+      normal: work.summary.normal
+    },
+    items: work.items.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      state: item.state,
+      priority: item.priority,
+      title: item.title,
+      summary: item.summary,
+      customerId: item.customer_id,
+      customerName: item.customer_name,
+      assetId: item.asset_id,
+      assetNumber: item.asset_number,
+      inspectionId: item.inspection_id,
+      bookingId: item.booking_id,
+      certificateId: item.certificate_id,
+      dueAt: item.due_at,
+      updatedAt: item.updated_at,
+      nextAction: {
+        code: item.next_action.code,
+        label: item.next_action.label,
+        targetType: item.next_action.target_type,
+        targetId: item.next_action.target_id,
+        inspectionId: item.next_action.inspection_id
+      }
+    })),
+    limit: work.limit,
+    sourceLimit: work.source_limit,
+    sourceLimited: work.source_limited
   };
 }
 
@@ -1619,6 +1689,11 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         ...(reportingPeriod ? { start_at: reportingPeriod.startAt, end_at: reportingPeriod.endAt } : {})
       });
       return toDashboard(response.data);
+    },
+
+    async getMyWork(limit = 50): Promise<MyWorkRecord> {
+      const response = await request<ApiMyWork>("/api/v1/work/me", {}, { limit });
+      return toMyWork(response.data);
     },
 
     async getAnalyticsOverview(reportingPeriod?: ReportingPeriod): Promise<AnalyticsOverview> {

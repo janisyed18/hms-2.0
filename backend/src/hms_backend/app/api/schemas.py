@@ -765,6 +765,48 @@ class DashboardRead(BaseModel):
     awaiting_review: list[DashboardReviewRead]
 
 
+class MyWorkActionRead(BaseModel):
+    code: str
+    label: str
+    target_type: str
+    target_id: str | None = None
+    inspection_id: str | None = None
+
+
+class MyWorkItemRead(BaseModel):
+    id: str
+    kind: str
+    state: str
+    priority: str
+    title: str
+    summary: str
+    customer_id: str
+    customer_name: str
+    asset_id: str
+    asset_number: str
+    inspection_id: str | None = None
+    booking_id: str | None = None
+    certificate_id: str | None = None
+    due_at: datetime | None = None
+    updated_at: datetime
+    next_action: MyWorkActionRead
+
+
+class MyWorkSummaryRead(BaseModel):
+    total: int
+    urgent: int
+    due_soon: int
+    normal: int
+
+
+class MyWorkRead(BaseModel):
+    summary: MyWorkSummaryRead
+    items: list[MyWorkItemRead]
+    limit: int
+    source_limit: int
+    source_limited: bool
+
+
 class AnalyticsCertificateCoverageRead(BaseModel):
     covered_assets: int
     coverage_percent: int

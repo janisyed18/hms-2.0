@@ -3,6 +3,7 @@ export type RouteSurface = "staff" | "portal";
 
 export const STAFF_VIEWS = [
   "dashboard",
+  "my-work",
   "analytics",
   "customers",
   "assets",

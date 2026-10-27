@@ -2,6 +2,78 @@ body {
   color: var(--ink);
 }
 
+.my-work-page {
+  display: grid;
+  gap: 20px;
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.my-work-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.my-work-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.my-work-header h1,
+.my-work-header p { margin: 0; }
+.my-work-header h1 { margin-top: 5px; font-size: 28px; }
+.my-work-header p { margin-top: 6px; color: var(--soft); }
+
+.my-work-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.my-work-summary-card,
+.my-work-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.my-work-summary-card { display: grid; gap: 5px; padding: 15px; }
+.my-work-summary-card span { color: var(--soft); font-size: 12px; font-weight: 700; }
+.my-work-summary-card strong { font-size: 26px; font-variant-numeric: tabular-nums; }
+.summary-urgent strong { color: var(--danger); }
+.summary-due strong { color: var(--warning); }
+.summary-normal strong { color: var(--accent); }
+
+.my-work-list { display: grid; gap: 12px; padding: 0; margin: 0; list-style: none; }
+.my-work-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px; }
+.my-work-card-main { min-width: 0; }
+.my-work-card h2, .my-work-card p { margin: 0; }
+.my-work-card h2 { margin-top: 7px; font-size: 17px; }
+.my-work-card p { margin-top: 5px; color: var(--soft); }
+.my-work-card dl { display: flex; flex-wrap: wrap; gap: 7px 22px; margin: 14px 0 0; }
+.my-work-card dl div { display: flex; gap: 6px; font-size: 12px; }
+.my-work-card dt { color: var(--soft); }
+.my-work-card dd { margin: 0; font-weight: 700; }
+.my-work-priority { display: inline-flex; padding: 3px 7px; border-radius: 4px; font-size: 10px; font-weight: 800; letter-spacing: .04em; }
+.priority-urgent { color: var(--danger); background: var(--color-danger-soft); }
+.priority-due_soon { color: var(--warning); background: var(--color-warning-soft); }
+.priority-normal { color: var(--accent); background: rgb(57 133 255 / 14%); }
+.my-work-refresh-warning, .my-work-limit { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--warning); font-size: 13px; }
+
+@media (max-width: 768px) {
+  .my-work-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .my-work-card { align-items: stretch; flex-direction: column; }
+  .my-work-card .primary-button { width: 100%; min-height: 44px; }
+}
+
 button:hover:not(:disabled),
 button:active:not(:disabled) {
   transform: none;
