@@ -115,3 +115,38 @@
 }
 .confirm-dialog h2, .confirm-dialog p { margin: 0; overflow-wrap: anywhere; }
 .confirm-dialog__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+/* Shared Staff form system (components/forms). Layout only; colours and radii come from the tokens. */
+.form-section { display: grid; gap: 14px; min-width: 0; }
+.form-section + .form-section { padding-top: 16px; border-top: 1px solid var(--border); }
+.form-section__header h3 { margin: 0; font-size: 14px; }
+.form-section__header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.form-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.form-grid > .form-field--wide { grid-column: 1 / -1; }
+@media (min-width: 640px) {
+  .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.form-error-summary { display: grid; gap: 8px; }
+.form-error-summary__fields { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 13px; }
+.form-error-summary__fields ul { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 0; list-style: none; }
+.form-error-summary .link-button { padding: 0; border: 0; background: none; color: var(--danger); font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 12px 0 2px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.form-actions__status { color: var(--muted); font-size: 12px; font-weight: 700; }
+.form-actions__buttons { display: flex; gap: 10px; margin-left: auto; }
+.drawer-backdrop .asset-profile-form { width: min(720px, 100vw); }
+@media (max-width: 480px) {
+  .form-actions__buttons { flex: 1; }
+  .form-actions__buttons > * { flex: 1; }
+}

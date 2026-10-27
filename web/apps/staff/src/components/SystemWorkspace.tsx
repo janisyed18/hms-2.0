@@ -79,6 +79,10 @@ export function SystemWorkspace({
     mode: "create" | "edit";
     user?: AdminUserRecord;
   } | null>(null);
+  // Which opening of the dialog is current: a save that finishes after the dialog moved on must not close it.
+  const dialogSession = useRef(0);
+  const openUserDialog = (next: { mode: "create" | "edit"; user?: AdminUserRecord }) => { dialogSession.current += 1; setUserDialog(next); };
+  const closeUserDialog = () => { dialogSession.current += 1; setUserDialog(null); };
   const [credential, setCredential] = useState<OneTimeCredential | null>(null);
   const [managedUserId, setManagedUserId] = useState<string | null>(null);
   const { notice, notify, clear: dismissNotice } = useActionNotice();
@@ -109,6 +113,7 @@ export function SystemWorkspace({
   const roleRows = useMemo(() => roleSummary(directory.summary), [directory.summary]);
 
   async function saveUser(values: UserAdminValues) {
+    const session = dialogSession.current;
     // Errors are thrown to the dialog, which stays open with what was typed; success is announced here.
     const body = {
       email: values.email,
@@ -134,7 +139,7 @@ export function SystemWorkspace({
         note: "Give this password to the user securely. They must change it at first sign-in."
       });
     }
-    setUserDialog(null);
+    if (session === dialogSession.current) closeUserDialog();
   }
 
   function replaceUser(updated: AdminUserRecord) {
@@ -294,7 +299,7 @@ export function SystemWorkspace({
               <h2>User Directory</h2>
               <p>Persisted access records resolved by the HMS auth boundary.</p>
             </div>
-            <ActionButton onClick={() => setUserDialog({ mode: "create" })} variant="primary">
+            <ActionButton onClick={() => openUserDialog({ mode: "create" })} variant="primary">
               <Plus aria-hidden="true" size={15} />
               Add User
             </ActionButton>
@@ -312,7 +317,7 @@ export function SystemWorkspace({
             managedUserId={managedUserId}
             onEdit={(user) => {
               setManagedUserId(null);
-              setUserDialog({ mode: "edit", user });
+              openUserDialog({ mode: "edit", user });
             }}
             onManage={setManagedUserId}
             onUserAction={runUserAction}
@@ -351,7 +356,8 @@ export function SystemWorkspace({
         } : undefined}
         mode={userDialog?.mode ?? "create"}
         open={userDialog !== null}
-        onClose={() => setUserDialog(null)}
+        recordKey={userDialog?.user?.id}
+        onClose={closeUserDialog}
         onSubmit={saveUser}
       />
       <OneTimeCredentialDialog

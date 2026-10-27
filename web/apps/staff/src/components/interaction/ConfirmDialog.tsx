@@ -9,6 +9,7 @@ import { ActionNotice } from "./ActionNotice";
  * dialog open and says why, so nothing looks done when it is not.
  */
 export function ConfirmDialog({
+  cancelLabel = "Cancel",
   confirmLabel,
   error,
   message,
@@ -19,6 +20,7 @@ export function ConfirmDialog({
   pendingLabel,
   title
 }: {
+  cancelLabel?: string;
   confirmLabel: string;
   error?: string | null;
   message: ReactNode;
@@ -73,7 +75,7 @@ export function ConfirmDialog({
         {error ? <ActionNotice kind="error" title="Could not complete">{error}</ActionNotice> : null}
         <div className="confirm-dialog__actions">
           <button className="action-button action-button--ghost" disabled={pending} onClick={onCancel} ref={cancel} type="button">
-            Cancel
+            {cancelLabel}
           </button>
           <ActionButton onClick={onConfirm} pending={pending} pendingLabel={pendingLabel} variant="danger">
             {confirmLabel}
