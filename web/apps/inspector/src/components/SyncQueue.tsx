@@ -42,6 +42,20 @@ function statusLabel(status: OutboxOperation["status"]) {
   }
 }
 
+const GROUPS: Array<{ status: OutboxOperation["status"]; title: string }> = [
+  { status: "conflict", title: "Conflicts" },
+  { status: "rejected", title: "Rejected by the server" },
+  { status: "pushing", title: "Sending now" },
+  { status: "pending", title: "Waiting to send" },
+  { status: "applied", title: "Already applied" }
+];
+
+const SUBJECTS: Record<OutboxOperation["entity"], string> = {
+  Inspection: "Inspection",
+  PressureTestResult: "Pressure test result",
+  Asset: "Asset details"
+};
+
 export function SyncQueue({
   hasPreservedDrafts,
   outbox,
@@ -102,50 +116,66 @@ export function SyncQueue({
             <p>Saved inspections will appear here before sync.</p>
           </article>
         ) : (
-          visibleOperations.map((operation) => (
-            <article className="queue-card" key={operation.opId}>
-              <div className="work-card__top">
-                <div>
-                  <h2>{operation.assetNumber}</h2>
-                  <p>{operation.customerName}</p>
+          GROUPS.map((group) => {
+            const operations = visibleOperations.filter((operation) => operation.status === group.status);
+            if (operations.length === 0) return null;
+            return (
+              <section aria-label={`${group.title} operations`} className="queue-group" key={group.status}>
+                <h3 className="queue-group__title">
+                  {group.title} <span>{operations.length}</span>
+                </h3>
+                <div className="queue-grid">
+                  {operations.map((operation) => (
+                    <article className="queue-card" key={operation.opId}>
+                      <div className="work-card__top">
+                        <div>
+                          <h2>{operation.assetNumber}</h2>
+                          <p>{operation.customerName}</p>
+                        </div>
+                        <StatusPill tone={statusTone(operation.status)}>
+                          {statusLabel(operation.status)}
+                        </StatusPill>
+                      </div>
+                      <p className="queue-subject">{SUBJECTS[operation.entity]}</p>
+                      <p className="queue-meta">
+                        {operation.entity} · {operation.op} · {operation.entityId}
+                      </p>
+                      {operation.currentVersion ? (
+                        <p className="queue-meta">Server version {operation.currentVersion}</p>
+                      ) : null}
+                      {operation.lastError ? (
+                        <p className="error-text">{operation.lastError}</p>
+                      ) : null}
+                      {operation.status === "conflict" ? (
+                        <div className="queue-conflict">
+                          <p className="queue-meta">
+                            The server changed this record after your draft. Keep your draft to send it again over the
+                            server's version, or accept the server's state and drop your change.
+                          </p>
+                          <div className="action-row">
+                            <button
+                              className="secondary-action"
+                              onClick={() => onResolveConflict(operation.opId, "keep-local")}
+                              type="button"
+                            >
+                              Keep Local Draft
+                            </button>
+                            <button
+                              className="secondary-action"
+                              onClick={() => onResolveConflict(operation.opId, "accept-server")}
+                              type="button"
+                            >
+                              Accept Server State
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
                 </div>
-                <StatusPill tone={statusTone(operation.status)}>
-                  {statusLabel(operation.status)}
-                </StatusPill>
-              </div>
-              <p className="queue-meta">
-                {operation.entity} · {operation.op} · {operation.entityId}
-              </p>
-              {operation.currentVersion ? (
-                <p className="queue-meta">Server version {operation.currentVersion}</p>
-              ) : null}
-              {operation.lastError ? (
-                <p className="error-text">{operation.lastError}</p>
-              ) : null}
-              {operation.status === "conflict" ? (
-                <div className="action-row">
-                  <button
-                    className="secondary-action"
-                    onClick={() =>
-                      onResolveConflict(operation.opId, "keep-local")
-                    }
-                    type="button"
-                  >
-                    Keep Local Draft
-                  </button>
-                  <button
-                    className="secondary-action"
-                    onClick={() =>
-                      onResolveConflict(operation.opId, "accept-server")
-                    }
-                    type="button"
-                  >
-                    Accept Server State
-                  </button>
-                </div>
-              ) : null}
-            </article>
-          ))
+              </section>
+            );
+          })
         )}
       </div>
     </section>
