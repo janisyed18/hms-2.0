@@ -143,17 +143,6 @@ describe("CustomerPortalWorkspace", () => {
       id: `asset-${index + 1}`,
       asset_number: `ASSET-${index + 1}`
     }));
-    const notifications = Array.from({ length: 13 }, (_, index) => ({
-      id: `notification-${index + 1}`,
-      category: "CERTIFICATE_ISSUED",
-      tier: "IMPORTANT",
-      subject: `Notification ${index + 1}`,
-      body: `Notification body ${index + 1}`,
-      customer_id: "customer-a",
-      asset_id: null,
-      created_at: "2027-10-04T00:00:00Z",
-      read_at: null
-    }));
     vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
       const requestUrl = new URL(String(url), "http://test");
       requested.push(requestUrl.toString());
@@ -164,50 +153,15 @@ describe("CustomerPortalWorkspace", () => {
         const offset = Number(requestUrl.searchParams.get("offset") ?? "0");
         return response({ total: 150, limit: 100, offset, items: assets.slice(offset, offset + 100) });
       }
-      if (requestUrl.pathname === "/api/v1/notifications/me") return response({ total: 13, unread_total: 13, limit: 100, offset: 0, items: notifications });
       return response({ total: 0, limit: 100, offset: 0, items: [] });
     }));
 
-    const view = render(<WorkspaceHarness activeModule="dashboard" />);
+    render(<WorkspaceHarness activeModule="dashboard" />);
 
     await screen.findByRole("button", { name: "View assets" });
     expect(screen.getByText("Assets").closest("article")).toHaveTextContent("150");
     expect(screen.getByText("In service").closest("article")).toHaveTextContent("123");
     await waitFor(() => expect(requested.some((value) => value.includes("/api/v1/assets") && value.includes("offset=100"))).toBe(true));
-    expect(requested.some((value) => value.includes("/api/v1/notifications/me") && value.includes("limit=100"))).toBe(true);
-    view.rerender(<WorkspaceHarness activeModule="notifications" />);
-    expect(await screen.findByText("Notification 13")).toBeInTheDocument();
-  });
-
-  it("marks the organisation's notifications read with one call, then shows them read", async () => {
-    const calls: string[] = [];
-    let unread = true;
-    const feed = () => Array.from({ length: 3 }, (_, index) => ({
-      id: `n${index + 1}`, category: "CERTIFICATE_ISSUED", tier: "IMPORTANT", subject: `Notice ${index + 1}`,
-      body: "Body", customer_id: "customer-a", asset_id: null, created_at: "2027-10-04T00:00:00Z",
-      read_at: unread ? null : "2027-10-04T01:00:00Z"
-    }));
-    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      const requestUrl = new URL(String(url), "http://test");
-      if (requestUrl.pathname === "/api/v1/customers") {
-        return response({ total: 1, limit: 100, offset: 0, items: [customer("customer-a", "Customer A")] });
-      }
-      if (requestUrl.pathname === "/api/v1/notifications/me/read-all" && init?.method === "POST") {
-        calls.push(requestUrl.search);
-        unread = false;
-        return response({ updated: 3, unread_total: 0 });
-      }
-      if (requestUrl.pathname === "/api/v1/notifications/me") {
-        return response({ total: 3, unread_total: unread ? 3 : 0, limit: 100, offset: 0, items: feed() });
-      }
-      return response({ total: 0, limit: 100, offset: 0, items: [] });
-    }));
-    const user = userEvent.setup();
-    render(<WorkspaceHarness activeModule="notifications" />);
-    await user.click(await screen.findByRole("button", { name: "Mark all read" }));
-    await waitFor(() => expect(screen.getAllByText("Read")).toHaveLength(3));
-    expect(calls).toEqual(["?customer_id=customer-a"]); // one call, scoped to the organisation in view
-    expect(screen.getByRole("button", { name: "Mark all read" })).toBeDisabled();
   });
 
   it("keeps approved booking location and assets fixed and renders the recorded site-local appointment", async () => {
@@ -674,43 +628,5 @@ describe("asset identity and required fields", () => {
     }
     expect(screen.getByText("Required fields", { exact: false })).toHaveTextContent("* Required fields");
     expect(screen.getByLabelText("Notes (optional)")).not.toBeRequired();
-  });
-});
-
-describe("marking a notification read", () => {
-  const unread = {
-    id: "notification-1", category: "CERTIFICATE_ISSUED", tier: "IMPORTANT", subject: "Certificate issued", body: "A certificate was issued.",
-    customer_id: "customer-a", asset_id: null, created_at: "2027-10-04T00:00:00Z", read_at: null
-  };
-
-  it("shows a failure and leaves the notification unread, then marks it read only after the server answers", async () => {
-    let reads = 0;
-    let first = true;
-    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      const requestUrl = new URL(String(url), "http://test");
-      if (requestUrl.pathname === "/api/v1/customers") return response({ total: 1, limit: 100, offset: 0, items: [customer("customer-a", "Customer A")] });
-      if (requestUrl.pathname === "/api/v1/notifications/me") {
-        reads += 1;
-        return response({ total: 1, unread_total: reads > 1 ? 0 : 1, limit: 100, offset: 0, items: [reads > 1 ? { ...unread, read_at: "2027-10-04T01:00:00Z" } : unread] });
-      }
-      if (requestUrl.pathname === "/api/v1/notifications/notification-1/read" && init?.method === "POST") {
-        if (first) { first = false; return new Response(JSON.stringify({ error: { code: "internal", message: "Internal server error" } }), { status: 500 }); }
-        return response({ ...unread, read_at: "2027-10-04T01:00:00Z" });
-      }
-      return response({ total: 0, limit: 100, offset: 0, items: [] });
-    }));
-    const user = userEvent.setup();
-    render(<WorkspaceHarness activeModule="notifications" />);
-    await user.click(await screen.findByRole("button", { name: "Mark as read" }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/service is unavailable/i);
-    expect(alert.textContent).not.toMatch(/Internal server error/);
-    expect(screen.getByRole("button", { name: "Mark as read" })).toBeEnabled(); // still unread
-    expect(screen.queryByText("Read")).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: "Mark as read" }));
-    expect(await screen.findByText("Read")).toBeInTheDocument();
-    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

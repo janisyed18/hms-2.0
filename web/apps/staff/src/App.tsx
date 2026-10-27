@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { notificationTarget } from "./notifications/target";
+import { NotificationCenterProvider } from "./notifications/NotificationCenterProvider";
 import { NotificationsPage } from "./notifications/NotificationsPage";
 import { AppShell, type AppModule, type GlobalSearchSuggestion, type NavItem } from "./components/AppShell";
 import { AssetsWorkspace } from "./components/AssetsWorkspace";
@@ -464,13 +465,13 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
   }
 
   return (
+    <NotificationCenterProvider customerId={portalMode ? route.customer : undefined}>
     <AppShell
       activeModule={renderedActiveModule}
       canCreateAsset={canCreateAsset}
       description={activeCopy.description}
       hideGlobalSearch={portalMode}
       navGroups={portalMode ? customerPortalNavGroups : undefined}
-      notificationCustomerId={portalMode ? route.customer : undefined}
       notificationModule="notifications"
       onLogout={onLogout}
       onNotificationOpen={handleNotificationOpen}
@@ -488,7 +489,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
             </WorkspaceState>
           }
         >
-          {renderedActiveModule === "notifications" && !portalMode ? (
+          {renderedActiveModule === "notifications" ? (
             <main className="record-page">
               <div className="record-main">
                 <NotificationsPage onOpen={handleNotificationOpen} />
@@ -654,6 +655,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
         </Suspense>
       </PageMotion>
     </AppShell>
+    </NotificationCenterProvider>
   );
 }
 

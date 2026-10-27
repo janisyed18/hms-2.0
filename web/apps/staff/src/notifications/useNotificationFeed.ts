@@ -61,14 +61,21 @@ export function useNotificationFeed({
     hasItems.current = items.length > 0;
   });
 
-  const refresh = useCallback(async (options: { quiet?: boolean } = {}) => {
+  const rerun = useRef(false);
+  const refreshRef = useRef<(options?: { quiet?: boolean; queueIfBusy?: boolean }) => Promise<void>>(async () => undefined);
+  const refresh = useCallback(async (options: { quiet?: boolean; queueIfBusy?: boolean } = {}) => {
     if (customerId === null) {
       setItems([]);
       setUnreadTotal(0);
       setStatus("ready");
       return;
     }
-    if (inFlight.current) return;
+    if (inFlight.current) {
+      // A request for a different scope or size, or one asked for outright, is not dropped: it
+      // runs as soon as the one in flight is done. A timer tick that finds one running is.
+      if (options.queueIfBusy) rerun.current = true;
+      return;
+    }
     inFlight.current = true;
     if (!options.quiet && !hasItems.current) setStatus("loading");
     const asked = customerId;
@@ -93,12 +100,19 @@ export function useNotificationFeed({
       );
     } finally {
       inFlight.current = false;
+      if (rerun.current) {
+        rerun.current = false;
+        void refreshRef.current({ quiet: true });
+      }
     }
   }, [customerId, limit]);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
 
   useEffect(() => {
     if (!enabled) return;
-    void refresh({ quiet: true });
+    void refresh({ quiet: true, queueIfBusy: true });
     const tick = window.setInterval(() => {
       if (document.visibilityState === "visible") void refresh({ quiet: true });
     }, pollMs);

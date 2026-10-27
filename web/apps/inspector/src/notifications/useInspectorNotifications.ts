@@ -38,8 +38,14 @@ export function useInspectorNotifications({
     hasItems.current = items.length > 0;
   });
 
-  const refresh = useCallback(async (options: { quiet?: boolean } = {}) => {
-    if (inFlight.current) return;
+  const rerun = useRef(false);
+  const refreshRef = useRef<(options?: { quiet?: boolean; queueIfBusy?: boolean }) => Promise<void>>(async () => undefined);
+  const refresh = useCallback(async (options: { quiet?: boolean; queueIfBusy?: boolean } = {}) => {
+    if (inFlight.current) {
+      // Asked for outright (opening the panel, coming back online): run when this one is done.
+      if (options.queueIfBusy) rerun.current = true;
+      return;
+    }
     inFlight.current = true;
     if (!options.quiet && !hasItems.current) setStatus("loading");
     try {
@@ -58,12 +64,19 @@ export function useInspectorNotifications({
       );
     } finally {
       inFlight.current = false;
+      if (rerun.current) {
+        rerun.current = false;
+        void refreshRef.current({ quiet: true });
+      }
     }
   }, [limit, userId]);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
 
   useEffect(() => {
     if (!isOnline) return;
-    void refresh({ quiet: true });
+    void refresh({ quiet: true, queueIfBusy: true });
     const tick = window.setInterval(() => {
       if (document.visibilityState === "visible") void refresh({ quiet: true });
     }, pollMs);

@@ -158,3 +158,17 @@ async def test_read_all_never_touches_another_users_notifications(
     assert again.json() == {"updated": 0, "unread_total": 0}
     assert await unread_count(database, my_id) == 0
     assert await unread_count(database, theirs_id) == 4
+
+
+@pytest.mark.asyncio
+async def test_read_all_takes_every_notification_in_one_request_beyond_one_batch(
+    database: async_sessionmaker[AsyncSession],
+) -> None:
+    subject, user_id = await make_user(database, unread=1203)
+    async with client_for(database, subject) as client:
+        done = await client.post("/api/v1/notifications/me/read-all")
+        again = await client.post("/api/v1/notifications/me/read-all")
+    assert done.status_code == 200, done.text
+    assert done.json() == {"updated": 1203, "unread_total": 0}
+    assert again.json() == {"updated": 0, "unread_total": 0}
+    assert await unread_count(database, user_id) == 0

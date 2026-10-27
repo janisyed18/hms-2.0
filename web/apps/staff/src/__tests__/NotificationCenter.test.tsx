@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HmsApp } from "../App";
 import type { NotificationRecord, StaffSession } from "../domain/types";
+import { NotificationCenterProvider } from "../notifications/NotificationCenterProvider";
 import { NotificationsPage } from "../notifications/NotificationsPage";
 import { exactTime, presentCategory, relativeTime } from "../notifications/presentation";
 import { notificationTarget } from "../notifications/target";
@@ -288,14 +289,89 @@ describe("the full page", () => {
       return json({ total: 200, unread_total: limit, limit, offset: 0, items });
     }));
     const user = userEvent.setup();
-    render(<NotificationsPage onOpen={vi.fn()} />);
+    render(<NotificationCenterProvider><NotificationsPage onOpen={vi.fn()} /></NotificationCenterProvider>);
     await screen.findAllByRole("button", { name: /^Open/ });
-    await user.click(screen.getByRole("button", { name: "Show older notifications" }));
+    await user.click(await screen.findByRole("button", { name: "Show older notifications" }));
     await waitFor(() => expect(seen.some((s) => s.includes("limit=100"))).toBe(true));
   });
   it("shows an empty feed as caught up", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json({ total: 0, unread_total: 0, limit: 50, offset: 0, items: [] })));
-    render(<NotificationsPage onOpen={vi.fn()} />);
+    render(<NotificationCenterProvider><NotificationsPage onOpen={vi.fn()} /></NotificationCenterProvider>);
     expect(await screen.findByText("You are all caught up.")).toBeInTheDocument();
   });
 });
+
+describe("one shared notification state", () => {
+  beforeEach(() => window.history.replaceState(null, "", "/?view=notifications"));
+  afterEach(() => vi.unstubAllGlobals());
+  const bellName = (unread: number) => (unread === 0 ? "Notifications" : `Notifications, ${unread} unread`);
+
+  it("page: Mark all read clears the bell at once", async () => {
+    const { fetchMock, posts } = api([wire({ id: "n1" }), wire({ id: "n2" }), wire({ id: "n3" })]);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<HmsApp session={adminSession} />);
+    const page = await screen.findByRole("region", { name: "All notifications" });
+    expect(await screen.findByRole("button", { name: bellName(3) })).toBeInTheDocument();
+    await user.click(within(page).getByRole("button", { name: "Mark all read" }));
+    // No second request, no waiting for the next poll: the bell is the same state.
+    expect(await screen.findByRole("button", { name: bellName(0) })).toBeInTheDocument();
+    expect(posts).toEqual(["read-all"]);
+    expect(within(page).queryAllByRole("button", { name: /Open unread/ })).toHaveLength(0);
+  });
+
+  it("bell: Mark all read shows the page read at once", async () => {
+    const { fetchMock } = api([wire({ id: "n1" }), wire({ id: "n2" })]);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<HmsApp session={adminSession} />);
+    const page = await screen.findByRole("region", { name: "All notifications" });
+    expect(within(page).getAllByRole("button", { name: /Open unread/ })).toHaveLength(2);
+    await user.click(await screen.findByRole("button", { name: bellName(2) }));
+    await user.click(within(screen.getByRole("dialog", { name: "Notifications" })).getByRole("button", { name: "Mark all read" }));
+    await waitFor(() => expect(within(page).queryAllByRole("button", { name: /Open unread/ })).toHaveLength(0));
+    expect(within(page).getAllByRole("button", { name: /^Open notification/ })).toHaveLength(2);
+  });
+
+  it("reading one in the page updates the bell count", async () => {
+    const { fetchMock } = api([wire({ id: "n1", subject: "First" }), wire({ id: "n2", subject: "Second" })]);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<HmsApp session={adminSession} />);
+    const page = await screen.findByRole("region", { name: "All notifications" });
+    await user.click(within(page).getByRole("button", { name: "Open unread notification First" }));
+    expect(await screen.findByRole("button", { name: bellName(1) })).toBeInTheDocument();
+  });
+
+  it("runs one polling loop for the bell and the page together", async () => {
+    const { fetchMock } = api([wire({ id: "n1" })]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<HmsApp session={adminSession} />);
+    await screen.findByRole("region", { name: "All notifications" });
+    await waitFor(() => expect(feedCalls(fetchMock)).toBeGreaterThanOrEqual(1));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    // The first load, and one more for the larger page the page asked for; never a second hook's.
+    expect(feedCalls(fetchMock)).toBeLessThanOrEqual(2);
+  });
+
+  it("the portal page and the bell share the organisation's state, in one scoped call", async () => {
+    window.history.replaceState(null, "", "/portal/?view=notifications&customer=customer-a");
+    const { fetchMock } = api([wire({ id: "n1", customer_id: "customer-a" }), wire({ id: "n2", customer_id: "customer-a" })]);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const customerSession: StaffSession = { ...adminSession, roles: ["CUSTOMER_USER"], customerIds: ["customer-a"] };
+    render(<HmsApp portalMode session={customerSession} />);
+    const page = await screen.findByRole("region", { name: "All notifications" });
+    expect(await screen.findByRole("button", { name: bellName(2) })).toBeInTheDocument();
+    await user.click(within(page).getByRole("button", { name: "Mark all read" }));
+    // The portal also has a "Notifications" navigation item, so find the bell by what it does.
+    await waitFor(() => expect(document.querySelector('button[aria-haspopup="dialog"][aria-label^="Notifications"]')?.getAttribute("aria-label")).toBe("Notifications"));
+    const readAll = fetchMock.mock.calls.filter(([u]) => String(u).includes("/notifications/me/read-all"));
+    expect(readAll).toHaveLength(1);
+    expect(String(readAll[0][0])).toContain("customer_id=customer-a");
+  });
+});
+
+function feedCalls(fetchMock: { mock: { calls: unknown[][] } }) {
+  return fetchMock.mock.calls.filter(([u]) => /\/notifications\/me(\?|$)/.test(String(u))).length;
+}

@@ -345,10 +345,8 @@ async def my_notifications(
     )
 
 
-# At most this many are marked in one call; a feed is never that deep, and a bound
-# keeps the request short. Anything left is still unread, and a second call takes the
-# next batch.
-_READ_ALL_LIMIT = 500
+# Marked in locked batches of this size, inside the one request, until none are left.
+_READ_ALL_BATCH = 500
 
 
 @router.post(
@@ -377,19 +375,26 @@ async def mark_all_notifications_read(
         principal,
         customer_id,
     )
-    unread = (
-        await session.scalars(
-            scoped.where(Notification.read_at.is_(None))
-            .order_by(Notification.created_at.desc())
-            .limit(_READ_ALL_LIMIT)
-            # A second overlapping call waits for the first, then finds these read: each
-            # notification is counted as changed once.
-            .with_for_update(of=Notification)
-        )
-    ).all()
     now = datetime.now(UTC)
-    for notification in unread:
-        notification.read_at = now
+    updated = 0
+    while True:
+        batch = (
+            await session.scalars(
+                scoped.where(Notification.read_at.is_(None))
+                .order_by(Notification.created_at.desc())
+                .limit(_READ_ALL_BATCH)
+                # A second overlapping call waits for the first, then finds these read:
+                # each notification is counted as changed once.
+                .with_for_update(of=Notification)
+            )
+        ).all()
+        if not batch:
+            break
+        for notification in batch:
+            notification.read_at = now
+        # Written before the next batch is chosen, so it does not pick the same rows.
+        await session.flush()
+        updated += len(batch)
     await session.commit()
     remaining = (
         await session.scalar(
@@ -398,7 +403,7 @@ async def mark_all_notifications_read(
             )
         )
     ) or 0
-    return NotificationReadAllResponse(updated=len(unread), unread_total=remaining)
+    return NotificationReadAllResponse(updated=updated, unread_total=remaining)
 
 
 @router.post("/notifications/{notification_id}/read", response_model=NotificationRead)

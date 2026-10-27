@@ -39,7 +39,7 @@ import {
 import { createHmsClient } from "../api/hmsClient";
 import type { NotificationRecord, StaffSession } from "../domain/types";
 import { NotificationList } from "../notifications/NotificationList";
-import { useNotificationFeed } from "../notifications/useNotificationFeed";
+import { BELL_ITEMS, useNotificationCenter } from "../notifications/NotificationCenterProvider";
 import { motionTokens } from "../motion/motionTokens";
 
 export type AppModule =
@@ -77,7 +77,6 @@ interface AppShellProps {
   description: string;
   hideGlobalSearch?: boolean;
   navGroups?: Array<{ label: string; items: NavItem[] }>;
-  notificationCustomerId?: string | null;
   /** Where "View all notifications" goes. */
   notificationModule?: AppModule;
   /** A notification was opened (and marked read): take the person to what it is about. */
@@ -371,7 +370,6 @@ export function AppShell({
   description,
   hideGlobalSearch = false,
   navGroups: customNavGroups,
-  notificationCustomerId,
   notificationModule,
   onLogout,
   onNotificationOpen,
@@ -384,7 +382,7 @@ export function AppShell({
   const [openMenu, setOpenMenu] = useState<TopbarMenu | null>(null);
   const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
   const [theme, setTheme] = useState<WorkspaceTheme>(initialWorkspaceTheme);
-  const notificationFeed = useNotificationFeed({ customerId: notificationCustomerId });
+  const notificationFeed = useNotificationCenter();
   const notificationBellRef = useRef<HTMLButtonElement>(null);
   const [globalQuery, setGlobalQuery] = useState("");
   const [searchSuggestions, setSearchSuggestions] = useState<GlobalSearchSuggestion[]>([]);
@@ -854,7 +852,7 @@ export function AppShell({
                 const isOpening = openMenu !== "notifications";
                 setOpenMenu(isOpening ? "notifications" : null);
                 if (isOpening) {
-                  void notificationFeed.refresh();
+                  void notificationFeed.refresh({ queueIfBusy: true });
                 }
               }}
               ref={notificationBellRef}
@@ -908,7 +906,7 @@ export function AppShell({
                 <>
                   <NotificationList
                     error={notificationFeed.error}
-                    items={notificationFeed.items}
+                    items={notificationFeed.items.slice(0, BELL_ITEMS)}
                     onOpen={(notification) => void handleNotificationOpen(notification)}
                     onRetry={() => void notificationFeed.refresh()}
                     pendingId={notificationFeed.pendingId}

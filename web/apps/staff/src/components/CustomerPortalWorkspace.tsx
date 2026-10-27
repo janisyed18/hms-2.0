@@ -8,13 +8,11 @@ import type {
   CustomerRecord,
   InspectionBookingRecord,
   InspectionRecord,
-  NotificationRecord,
   RetestScheduleRecord,
   StaffSession
 } from "../domain/types";
 import type { AppModule } from "./AppShell";
 import { CustomerBookings } from "./CustomerBookings";
-import { friendlyApiError } from "./interaction/friendlyApiError";
 import { WorkspaceState } from "./WorkspaceState";
 
 interface CustomerPortalWorkspaceProps {
@@ -33,7 +31,6 @@ interface PortalData {
   bookings: InspectionBookingRecord[];
   certificates: CertificateRecord[];
   inspections: InspectionRecord[];
-  notifications: NotificationRecord[];
   retests: RetestScheduleRecord[];
 }
 
@@ -42,7 +39,6 @@ const emptyData: PortalData = {
   bookings: [],
   certificates: [],
   inspections: [],
-  notifications: [],
   retests: []
 };
 
@@ -51,14 +47,6 @@ function formatDate(value: string | null): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
     new Date(value)
   );
-}
-
-function formatDateTime(value: string, timeZone?: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-    ...(timeZone ? { timeZone } : {})
-  }).format(new Date(value));
 }
 
 function errorMessage(error: unknown): string {
@@ -74,23 +62,6 @@ async function loadAllPages<T>(
     Array.from(
       { length: Math.ceil(Math.max(0, first.total - first.items.length) / pageSize) },
       (_, index) => loadPage(first.items.length + index * pageSize)
-    )
-  );
-  return [...first.items, ...pages.flatMap((page) => page.items)];
-}
-
-async function loadAllNotifications(customerId: string): Promise<NotificationRecord[]> {
-  const client = createHmsClient();
-  const pageSize = 100;
-  const first = await client.listNotifications({ customerId, limit: pageSize });
-  const pages = await Promise.all(
-    Array.from(
-      { length: Math.ceil(Math.max(0, first.total - first.items.length) / pageSize) },
-      (_, index) => client.listNotifications({
-        customerId,
-        limit: pageSize,
-        offset: first.items.length + index * pageSize
-      })
     )
   );
   return [...first.items, ...pages.flatMap((page) => page.items)];
@@ -157,13 +128,12 @@ export function CustomerPortalWorkspace({
     setError(null);
     try {
       const client = createHmsClient();
-      const [assets, bookings, certificates, inspections, notifications, retests] =
+      const [assets, bookings, certificates, inspections, retests] =
         await Promise.all([
           loadAllPages((offset) => client.listAssets({ customerId: customer.id, limit: 100, offset, sort: "asset_number" })),
           loadAllPages((offset) => client.listInspectionBookings({ customerId: customer.id, limit: 100, offset })),
           loadAllPages((offset) => client.listCertificates({ customerId: customer.id, limit: 100, offset, sort: "-issued_at" })),
           loadAllPages((offset) => client.listInspections({ customerId: customer.id, limit: 100, offset, sort: "-submitted_at" })),
-          loadAllNotifications(customer.id),
           loadAllPages((offset) => client.listRetestSchedules({ customerId: customer.id, limit: 100, offset, sort: "due_at" }))
         ]);
       setData({
@@ -171,7 +141,6 @@ export function CustomerPortalWorkspace({
         bookings,
         certificates,
         inspections,
-        notifications,
         retests
       });
       loadedFor.current = customer.id;
@@ -257,9 +226,6 @@ export function CustomerPortalWorkspace({
       {activeModule === "inspections" ? <Inspections inspections={data.inspections} /> : null}
       {activeModule === "certificates" ? <Certificates certificates={data.certificates} /> : null}
       {activeModule === "retest" ? <Retests retests={data.retests} onModuleChange={onModuleChange} /> : null}
-      {activeModule === "notifications" ? (
-        <Notifications customerId={customerId} notifications={data.notifications} onChanged={loadCustomerData} />
-      ) : null}
       <p className="customer-portal-session">Signed in as {session.displayName}.</p>
     </section>
   );
@@ -328,46 +294,4 @@ function Retests({ retests, onModuleChange }: { retests: RetestScheduleRecord[];
   return <section className="portal-panel"><h2>Retest schedule</h2>{retests.length === 0 ? <p>No retests are scheduled.</p> : <ul className="portal-list">{retests.map((retest) => <li key={retest.id}><strong>{retest.asset.assetNumber}</strong><span>{retest.status} · Due {formatDate(retest.dueAt)}</span><span className="portal-actions"><button type="button" onClick={() => onModuleChange("assets")}>View asset</button><button type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
 }
 
-function Notifications({ customerId, notifications, onChanged }: { customerId: string | null; notifications: NotificationRecord[]; onChanged: () => Promise<void> }) {
-  const [pending, setPending] = useState<string | null>(null);
-  const [failure, setFailure] = useState<{ id: string; message: string } | null>(null);
-  // Marking read is routine, so success is shown by the item itself reading "Read": no banner per click.
-  async function markRead(notification: NotificationRecord) {
-    if (pending) return;
-    setPending(notification.id);
-    setFailure(null);
-    try {
-      await createHmsClient().markNotificationRead(notification.id);
-    } catch (reason) {
-      setFailure({ id: notification.id, message: friendlyApiError(reason, { fallback: "This notification could not be marked as read. Try again." }).message });
-      setPending(null);
-      return;
-    }
-    try {
-      await onChanged();
-    } finally {
-      setPending(null);
-    }
-  }
-  async function markAllRead() {
-    if (pending) return;
-    setPending("all");
-    setFailure(null);
-    try {
-      // One call for the organisation in view, not one per notification.
-      await createHmsClient().markAllNotificationsRead(customerId ? { customerId } : {});
-    } catch (reason) {
-      setFailure({ id: "all", message: friendlyApiError(reason, { fallback: "Notifications could not be marked as read. Try again." }).message });
-      setPending(null);
-      return;
-    }
-    try {
-      await onChanged();
-    } finally {
-      setPending(null);
-    }
-  }
-  const unread = notifications.filter((notification) => !notification.readAt).length;
-  return <section className="portal-panel"><h2>Notifications</h2>{notifications.length > 0 ? <p><button className="secondary-button" disabled={pending !== null || unread === 0} type="button" onClick={() => void markAllRead()}>{pending === "all" ? "Marking…" : "Mark all read"}</button>{failure?.id === "all" ? <span className="portal-error" role="alert">{failure.message}</span> : null}</p> : null}{notifications.length === 0 ? <p>No notifications for this organisation.</p> : <ul className="portal-list">{notifications.map((notification) => <li key={notification.id}><strong>{notification.subject ?? notification.category}</strong><span>{notification.body}</span><span>{formatDateTime(notification.createdAt)}</span>{notification.readAt ? <span>Read</span> : <button className="secondary-button" disabled={pending !== null} type="button" onClick={() => void markRead(notification)}>{pending === notification.id ? "Marking…" : "Mark as read"}</button>}{failure?.id === notification.id ? <span className="portal-error" role="alert">{failure.message}</span> : null}</li>)}</ul>}</section>;
-}
 

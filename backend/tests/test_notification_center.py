@@ -238,3 +238,18 @@ async def test_marking_one_read_twice_is_harmless(
     # SQLite drops the zone on the way back; the instant is what must not move.
     assert first.json()["read_at"].rstrip("Z") == second.json()["read_at"].rstrip("Z")
     assert feed["unread_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_mark_all_read_takes_more_than_one_batch_in_a_single_call(
+    session_factory: async_sessionmaker[AsyncSession],  # noqa: F811
+) -> None:
+    user = await seed_user(session_factory)
+    await add(
+        session_factory, *[notice(user.id, age_minutes=i % 60) for i in range(620)]
+    )
+    async with notifications_client(session_factory) as client:
+        done = await client.post("/api/v1/notifications/me/read-all")
+        feed = (await client.get("/api/v1/notifications/me")).json()
+    assert done.json() == {"updated": 620, "unread_total": 0}
+    assert feed["unread_total"] == 0

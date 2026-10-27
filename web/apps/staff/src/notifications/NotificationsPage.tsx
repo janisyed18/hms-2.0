@@ -1,25 +1,23 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { NotificationRecord } from "../domain/types";
 import { ActionButton } from "../components/interaction/ActionButton";
 import { NotificationList } from "./NotificationList";
-import { useNotificationFeed } from "./useNotificationFeed";
+import { useNotificationCenter } from "./NotificationCenterProvider";
 
 const PAGE = 50;
 
-/** Every notification, newest first, with the same open / mark-read behaviour as the bell. */
-export function NotificationsPage({
-  customerId,
-  onOpen
-}: {
-  customerId?: string | null;
-  onOpen: (notification: NotificationRecord) => void;
-}) {
-  const [limit, setLimit] = useState(PAGE);
+/**
+ * Every notification, newest first. It shows the same shared feed as the bell, so what is read
+ * here is read in the bell at once (and the other way round); only how many it asks for differs.
+ */
+export function NotificationsPage({ onOpen }: { onOpen: (notification: NotificationRecord) => void }) {
+  const feed = useNotificationCenter();
   const [unreadOnly, setUnreadOnly] = useState(false);
-  const feed = useNotificationFeed({ customerId, limit });
+  const { ensureLimit, limit } = feed;
+  useEffect(() => ensureLimit(PAGE), [ensureLimit]);
   const shown = unreadOnly ? feed.items.filter((item) => item.readAt === null) : feed.items;
-  // More are available when the feed filled the page it was asked for.
+  // More may exist when the feed filled the page it was asked for.
   const mayHaveMore = feed.items.length >= limit;
 
   async function open(notification: NotificationRecord) {
@@ -55,7 +53,7 @@ export function NotificationsPage({
       />
       {mayHaveMore ? (
         <div className="notification-page__more">
-          <button onClick={() => setLimit((current) => current + PAGE)} type="button">Show older notifications</button>
+          <button onClick={() => ensureLimit(limit + PAGE)} type="button">Show older notifications</button>
         </div>
       ) : null}
     </section>
