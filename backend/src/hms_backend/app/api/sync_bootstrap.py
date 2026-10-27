@@ -100,7 +100,14 @@ from hms_backend.app.modules.reference.models import (
 )
 from hms_backend.app.modules.scheduling.models import RetestSchedule
 
-PROTOCOL_VERSION = 2
+# Capabilities, not one number. Paging (2) is what page tokens are bound to; the native
+# inspection lifecycle (3) is a separate capability a client opts into with its header,
+# so adding it never invalidates a protocol-2 client's paging or its tokens.
+PAGING_PROTOCOL_VERSION = 2
+LIFECYCLE_PROTOCOL_VERSION = 3
+CURRENT_SYNC_PROTOCOL_VERSION = 3
+# The version a page token carries: the paging format, shared by protocols 2 and 3.
+PROTOCOL_VERSION = PAGING_PROTOCOL_VERSION
 DEFAULT_PAGE_SIZE = 200
 MAX_PAGE_SIZE = 500
 # Temporary: see the module docstring for the removal condition.

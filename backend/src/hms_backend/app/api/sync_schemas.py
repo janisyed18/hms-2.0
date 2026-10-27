@@ -68,6 +68,12 @@ class SyncOperationWrite(BaseModel):
     base_version: int | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     work_context: SyncWorkContext | None = None
+    # Protocol 3, Inspection only: the business transitions this operation performs, in
+    # order, around the form data in ``payload``. ``None`` is the earlier shape, where
+    # ``payload.status`` implied them; an operation queued by an older app still is.
+    lifecycle_actions: list[Literal["start", "rework", "submit"]] | None = Field(
+        default=None, max_length=3
+    )
 
 
 class SyncPushRequest(BaseModel):

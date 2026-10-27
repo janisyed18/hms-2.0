@@ -70,12 +70,17 @@ function InspectorWorkspace({ userId }: { userId: string }) {
         onBack={() => leave(() => workspace.setView("work"))}
         onDirtyChange={onDirtyChange}
         onQueueAssetUpdate={workspace.queueAssetUpdate}
-        onQueuePressureTest={workspace.queuePressureTest}
-        onSaveDraft={(values) =>
-          workspace.saveInspection({ ...values, status: "DRAFT" })
+        onStart={(workItem) =>
+          workspace.saveInspection({ workItem, lifecycleActions: ["start"], result: null, pressureTest: null })
+        }
+        onBeginRework={(workItem) =>
+          workspace.saveInspection({ workItem, lifecycleActions: ["rework"], result: null, pressureTest: null })
+        }
+        onSaveProgress={(values) =>
+          workspace.saveInspection({ ...values, lifecycleActions: [] })
         }
         onSubmit={(values) =>
-          workspace.saveInspection({ ...values, status: "SUBMITTED" })
+          workspace.saveInspection({ ...values, lifecycleActions: ["submit"] })
         }
         workItem={workspace.selectedWorkItem}
       />

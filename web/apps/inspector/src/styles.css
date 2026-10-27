@@ -1166,3 +1166,32 @@ button:disabled {
   font-size: 14px;
   line-height: 1.5;
 }
+
+/* Rework guidance */
+.rework-note {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid #f3c9c4;
+  border-radius: 10px;
+  background: #fff5f4;
+  color: #7a271a;
+}
+
+.rework-note strong,
+.rework-note p,
+.rework-note small {
+  margin: 0;
+}
+
+.rework-note p {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.rework-note small {
+  color: #93554b;
+  font-size: 12px;
+  font-weight: 700;
+}

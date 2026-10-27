@@ -20,13 +20,15 @@ import type {
   WorkUrgency
 } from "../domain/types";
 
-// App 0.2.0 is the first release that pages the bootstrap. The protocol header, not
-// the app version string, is what the server uses to tell it from an older client.
-export const SYNC_PROTOCOL_VERSION = 2;
+// Two capabilities, kept apart. Paging (2) is the resumable bootstrap, which app 0.2.0
+// introduced; the native inspection lifecycle (3) is what app 0.3.0 speaks. The protocol
+// header, not the app version string, is what the server uses to tell clients apart.
+export const PAGING_PROTOCOL_VERSION = 2;
+export const SYNC_PROTOCOL_VERSION = 3;
 
 const HMS_DEVICE_HEADERS = {
   "X-HMS-Device-Platform": "web",
-  "X-HMS-App-Version": "0.2.0",
+  "X-HMS-App-Version": "0.3.0",
   "X-HMS-Sync-Protocol": String(SYNC_PROTOCOL_VERSION)
 };
 
@@ -200,9 +202,10 @@ interface ApiInspectionPayload {
   id: string;
   asset_id: string;
   booking_id: string | null;
-  status: "DRAFT" | "SUBMITTED" | "APPROVED" | "REJECTED";
+  status: InspectionStatus | string;
   inspection_type: string;
   result: string | null;
+  rejection_reason?: string | null;
 }
 
 interface ApiPressureTestPayload {
@@ -455,8 +458,11 @@ function toApiOperation(operation: OutboxOperation) {
     entity_id: operation.entityId,
     op: operation.op,
     base_version: operation.baseVersion,
-    payload: operation.payload
-    , work_context: operation.workContext
+    payload: operation.payload,
+    work_context: operation.workContext,
+    ...(operation.lifecycleActions !== undefined
+      ? { lifecycle_actions: operation.lifecycleActions }
+      : {})
   };
 }
 
@@ -464,7 +470,11 @@ function urgencyFromSchedule(
   schedule: ApiRetestSchedulePayload | undefined,
   inspection: ApiInspectionPayload | undefined
 ): WorkUrgency {
-  if (inspection?.status === "DRAFT") {
+  if (
+    inspection?.status === "DRAFT" ||
+    inspection?.status === "IN_PROGRESS" ||
+    inspection?.status === "REJECTED"
+  ) {
     return "draft";
   }
 
@@ -479,12 +489,18 @@ function urgencyFromSchedule(
   return "synced";
 }
 
-function inspectionStatus(status: string | undefined): InspectionStatus | null {
-  if (status === "DRAFT" || status === "SUBMITTED") {
-    return status;
-  }
+const INSPECTION_STATUSES: readonly string[] = [
+  "DRAFT",
+  "IN_PROGRESS",
+  "SUBMITTED",
+  "APPROVED",
+  "REJECTED"
+];
 
-  return null;
+export function inspectionStatus(status: string | undefined): InspectionStatus | null {
+  return status !== undefined && INSPECTION_STATUSES.includes(status)
+    ? (status as InspectionStatus)
+    : null;
 }
 
 export function mapBootstrapToWorkItems(
@@ -604,7 +620,16 @@ export function mapBootstrapToWorkItems(
         serverVersion: inspection?.version ?? record.version,
         inspectionId: inspection?.payload.id ?? null,
         inspectionStatus: inspectionStatus(inspection?.payload.status),
-        inspectionLocked: inspection !== undefined && inspection.payload.status !== "DRAFT",
+        // Submitted, approved or rejected: not editable as it stands. A status this app
+        // does not know is locked too, never editable by accident.
+        inspectionLocked:
+          inspection !== undefined &&
+          inspection.payload.status !== "DRAFT" &&
+          inspection.payload.status !== "IN_PROGRESS",
+        rejectionReason:
+          typeof inspection?.payload.rejection_reason === "string"
+            ? inspection.payload.rejection_reason
+            : null,
         pressureTestId: pressureTest?.payload.id ?? null,
         pressureTestVersion: pressureTest?.version ?? null,
         pressureRating: asPressureRating(payload.pressure_rating),
@@ -672,6 +697,20 @@ export class BootstrapSupersededError extends Error {
   constructor() {
     super("Assignment refresh was superseded");
     this.name = "BootstrapSupersededError";
+  }
+}
+
+/**
+ * The server answered at a protocol this app cannot run on. The app needs the native
+ * lifecycle (3); a server that only speaks paging would project in-progress work as a
+ * draft, so the app stops rather than show something wrong.
+ */
+export class SyncProtocolMismatchError extends Error {
+  constructor(readonly serverProtocol: number) {
+    super(
+      "The server does not support this version of the app yet. Try again after it has been updated."
+    );
+    this.name = "SyncProtocolMismatchError";
   }
 }
 
@@ -814,8 +853,10 @@ export function createSyncClient(options: Partial<SyncClientOptions> = {}) {
             const page = await bootstrapPage(token);
             guard();
             if (page.protocol_version !== SYNC_PROTOCOL_VERSION) {
-              // A server that predates paging answered with everything at once.
-              return await promote(page, page.cursor, page.records, page.work_contexts ?? []);
+              // Fail closed. A paged protocol-2 answer is not a legacy full bootstrap, and a
+              // legacy one is older still: neither carries the real inspection lifecycle.
+              await persist(() => store.discardStaging(scope));
+              throw new SyncProtocolMismatchError(page.protocol_version ?? 1);
             }
             if (token !== undefined && page.cursor !== progress.snapshot) {
               throw new RestartBootstrap();

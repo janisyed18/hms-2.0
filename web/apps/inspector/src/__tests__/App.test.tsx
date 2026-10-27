@@ -4,7 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import type { BrowserAuthClient } from "../auth/browserAuthClient";
 import { mockBootstrapResponse } from "../data/mockSync";
-import { outboxStorageKey } from "../offline/outboxStore";
+import { bootstrapCalls, bootstrapOnly, bootstrapSequence, withChangeFeed } from "../test/syncFetch";
+import {
+  createInspectionOperation,
+  createPressureTestOperation,
+  outboxStorageKey,
+  saveOutbox
+} from "../offline/outboxStore";
 import { defaultSyncStore, resetDefaultSyncStore } from "../offline/syncStore";
 
 function createMemoryStorage(): Storage {
@@ -52,6 +58,9 @@ function createAuthClient(
 // The form starts unanswered: a draft needs the pressure test core, a submission needs
 // the whole customer form.
 async function fillDraftCore(user: ReturnType<typeof userEvent.setup>) {
+  // The form is read-only until the inspection is started.
+  const start = screen.queryByRole("button", { name: "Start inspection" });
+  if (start) await user.click(start);
   await user.selectOptions(screen.getByLabelText("Test time minutes"), "5");
   await user.selectOptions(screen.getByLabelText("Pressure test result"), "PASS");
 }
@@ -72,12 +81,7 @@ describe("Inspector app", () => {
     vi.restoreAllMocks();
     resetDefaultSyncStore();
     vi.stubGlobal("localStorage", createMemoryStorage());
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
-      new Response(JSON.stringify(mockBootstrapResponse), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      })
-    ));
+    vi.stubGlobal("fetch", bootstrapOnly());
   });
 
   it("requires secure inspector sign-in before showing field work", async () => {
@@ -101,17 +105,18 @@ describe("Inspector app", () => {
 
   it("hides reassigned work on reconnect without deleting its queued draft", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(mockBootstrapResponse), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ...mockBootstrapResponse, records: [], work_contexts: [] }), { status: 200 }));
+    const fetchMock = bootstrapSequence(
+      mockBootstrapResponse,
+      { ...mockBootstrapResponse, records: [], work_contexts: [] }
+    );
     vi.stubGlobal("fetch", fetchMock);
     render(<App initialAccessToken="test-access-token" />);
 
     await user.click(await screen.findByRole("button", { name: /open HOS-2024-0891/i }));
     await fillDraftCore(user);
-    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    await user.click(screen.getByRole("button", { name: "Save progress" }));
     fireEvent(window, new Event("online"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(bootstrapCalls(fetchMock)).toBe(2));
     await user.click(screen.getByRole("button", { name: "Queue" }));
     expect(await screen.findByText("No queued work")).toBeInTheDocument();
     expect(screen.getByText(/draft.*preserved.*cannot be submitted/i)).toBeInTheDocument();
@@ -127,22 +132,20 @@ describe("Inspector app", () => {
         ...context, revision_id: `new-${context.revision_id}`
       }))
     };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(mockBootstrapResponse), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(revised), { status: 200 }));
+    const fetchMock = bootstrapSequence(mockBootstrapResponse, revised);
     vi.stubGlobal("fetch", fetchMock);
     render(<App initialAccessToken="test-access-token" />);
     await user.click(await screen.findByRole("button", { name: /open HOS-2024-0891/i }));
     fireEvent(window, new Event("online"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole("button", { name: "Save Draft" })).not.toBeInTheDocument();
+    await waitFor(() => expect(bootstrapCalls(fetchMock)).toBe(2));
+    expect(screen.queryByRole("button", { name: "Save progress" })).not.toBeInTheDocument();
   });
 
   it("expires access after the server-provided offline window", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    vi.stubGlobal("fetch", bootstrapOnly({
       ...mockBootstrapResponse,
       device: { ...mockBootstrapResponse.device, offline_window_days: 0 }
-    }), { status: 200 })));
+    }));
     render(<App initialAccessToken="test-access-token" />);
 
     expect(await screen.findByText(/offline access expired/i)).toBeInTheDocument();
@@ -217,7 +220,7 @@ describe("Inspector app", () => {
       await screen.findByRole("button", { name: /open HOS-2024-0891/i })
     );
     await fillDraftCore(user);
-    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    await user.click(screen.getByRole("button", { name: "Save progress" }));
     await user.click(screen.getByRole("button", { name: "Queue" }));
 
     expect(screen.getByText("1 pending")).toBeInTheDocument();
@@ -258,13 +261,13 @@ describe("Inspector app", () => {
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     await user.click(await screen.findByRole("button", { name: /open HOS-2024-0891/i }));
     await fillDraftCore(user);
-    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    await user.click(screen.getByRole("button", { name: "Save progress" }));
     await user.click(screen.getByRole("button", { name: "Queue" }));
     const store = defaultSyncStore();
     const sent = vi.mocked(fetch).mock.calls[0][1] as { headers: Record<string, string> };
     const deviceId = sent.headers["X-HMS-Device-Id"];
     const savedFor = (userId: string) =>
-      store.loadActive({ userId, deviceId, protocol: 2 });
+      store.loadActive({ userId, deviceId, protocol: 3 });
     await waitFor(async () => expect(await savedFor("inspector-a")).not.toBeNull());
 
     // The session ends (the server refuses the token and the refresh), then B signs in.
@@ -277,7 +280,7 @@ describe("Inspector app", () => {
       display_name: "B",
       roles: ["INSPECTOR"]
     });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(mockBootstrapResponse), { status: 200 })));
+    vi.stubGlobal("fetch", bootstrapOnly());
     await user.type(screen.getByLabelText("Email"), "b@example.test");
     await user.type(screen.getByLabelText("Password"), "correct-password");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
@@ -327,12 +330,13 @@ describe("Inspector app", () => {
     await user.click(
       await screen.findByRole("button", { name: /open HOS-2024-0891/i })
     );
+    await user.click(screen.getByRole("button", { name: "Start inspection" }));
     await user.clear(screen.getByLabelText("Test pressure kPa"));
     await user.type(screen.getByLabelText("Test pressure kPa"), "2400");
     await user.selectOptions(screen.getByLabelText("Test time minutes"), "5");
     await user.selectOptions(screen.getByLabelText("Pressure test result"), "PASS");
     await fillDraftCore(user);
-    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    await user.click(screen.getByRole("button", { name: "Save progress" }));
     await user.click(screen.getByRole("button", { name: "Queue" }));
 
     expect(screen.getByText("1 pending")).toBeInTheDocument();
@@ -357,20 +361,68 @@ describe("Inspector app", () => {
     expect(screen.getByText("Asset · update · asset-0891")).toBeInTheDocument();
   });
 
-  it("keeps a pressure result queued with its unsynced inspection", async () => {
+  it("drains operations queued by app 0.2.0 after an upgrade, the inspection before its pressure test", async () => {
     const user = userEvent.setup();
+    const context = {
+      appointment_id: "appointment-asset-0891", booking_id: "booking-asset-0891",
+      revision_id: "revision-asset-0891", assignment_id: "assignment-asset-0891", asset_id: "asset-0891"
+    };
+    const measurements = { schema_version: 1, working_pressure_kpa: 1500, test_duration_minutes: 5 };
+    const inspection = createInspectionOperation({
+      workContext: context, assetId: "asset-0891", assetNumber: "HOS-2024-0891", customerName: "North Sea Shipping Ltd",
+      inspectionId: "local-old-1", baseVersion: null, lifecycleActions: [], result: "PASS",
+      pressureTest: { appliedPressureKpa: 2250, holdTimeSeconds: 300, passed: true, measurements }
+    });
+    // The shape app 0.2.0 stored: a status in the payload and no lifecycle actions.
+    const legacyInspection = { ...inspection, lifecycleActions: undefined, payload: { ...inspection.payload, status: "DRAFT" } };
+    const pressure = createPressureTestOperation({
+      workContext: context, assetId: "asset-0891", assetNumber: "HOS-2024-0891", customerName: "North Sea Shipping Ltd",
+      inspectionId: "local-old-1", pressureTestId: "local-old-pressure", baseVersion: null,
+      appliedPressureKpa: 2250, holdTimeSeconds: 300, passed: true, measurements
+    });
+    // Stored with the pressure test ahead of the inspection it refers to.
+    saveOutbox("test-inspector", [pressure, legacyInspection]);
+    const pushed: Array<{ entity: string; lifecycle_actions?: unknown; payload: Record<string, unknown> }> = [];
+    const fetchMock = vi.fn(withChangeFeed(async (url: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(url);
+      if (path.endsWith("/api/v1/sync/push")) {
+        const body = JSON.parse(String(init?.body)) as { operations: Array<{ op_id: string; idempotency_key: string; entity: string; entity_id: string; lifecycle_actions?: unknown; payload: Record<string, unknown> }> };
+        pushed.push(...body.operations);
+        return new Response(JSON.stringify({
+          cursor: 9,
+          results: body.operations.map((operation) => ({
+            op_id: operation.op_id, idempotency_key: operation.idempotency_key, entity: operation.entity,
+            entity_id: operation.entity_id, status: "applied", version: 1, current_version: 1, payload: null, error: null
+          }))
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify(mockBootstrapResponse), { status: 200 });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
     render(<App initialAccessToken="test-access-token" />);
-    await user.click(await screen.findByRole("button", { name: /open HOS-2024-0891/i }));
-    await fillDraftCore(user);
-    await user.click(screen.getByRole("button", { name: "Save Draft" }));
-    await user.click(screen.getByRole("button", { name: "Queue Test Result" }));
+    await screen.findByRole("button", { name: /open HOS-2024-0891/i });
     await user.click(screen.getByRole("button", { name: "Queue" }));
     expect(screen.getByText("2 pending")).toBeInTheDocument();
     expect(screen.queryByText(/draft.*preserved.*cannot be submitted/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Push Changes" }));
+    await waitFor(() => expect(pushed).toHaveLength(2));
+    // The inspection goes first, in the shape it was queued in: no lifecycle actions invented.
+    expect(pushed.map((operation) => operation.entity)).toEqual(["Inspection", "PressureTestResult"]);
+    expect(pushed[0]).not.toHaveProperty("lifecycle_actions");
+    expect(pushed[0].payload.status).toBe("DRAFT");
   });
 
   it("filters the field work queue by search text and urgency", async () => {
     const user = userEvent.setup();
+    const started = {
+      ...mockBootstrapResponse,
+      records: mockBootstrapResponse.records.map((record) =>
+        record.entity === "Inspection" && record.entity_id === "inspection-0156"
+          ? { ...record, payload: { ...record.payload, status: "IN_PROGRESS" } }
+          : record
+      )
+    };
+    vi.stubGlobal("fetch", bootstrapOnly(started));
     render(<App initialAccessToken="test-access-token" />);
 
     await screen.findByRole("heading", { name: "Inspector" });
@@ -381,7 +433,7 @@ describe("Inspector app", () => {
     expect(screen.queryByText("HOS-2024-0891")).not.toBeInTheDocument();
 
     await user.clear(screen.getByLabelText("Search work"));
-    await user.click(screen.getByRole("button", { name: "Drafts" }));
+    await user.click(screen.getByRole("button", { name: "In progress" }));
 
     expect(screen.getByText("HOS-2025-0156")).toBeInTheDocument();
     expect(screen.queryByText("HOS-2024-0891")).not.toBeInTheDocument();
@@ -390,7 +442,7 @@ describe("Inspector app", () => {
   it("lets rejected sync operations be pushed again", async () => {
     const user = userEvent.setup();
     let pushAttempts = 0;
-    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(withChangeFeed(async (url: RequestInfo | URL, init?: RequestInit) => {
       const path = String(url);
 
       if (path.endsWith("/api/v1/sync/bootstrap")) {
@@ -432,7 +484,7 @@ describe("Inspector app", () => {
       }
 
       return new Response("Not found", { status: 404 });
-    });
+    }));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App initialAccessToken="test-access-token" />);
@@ -455,7 +507,7 @@ describe("Inspector app", () => {
 
   it("shows server conflicts returned from sync push", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(withChangeFeed(async (url: RequestInfo | URL, init?: RequestInit) => {
       const path = String(url);
 
       if (path.endsWith("/api/v1/sync/bootstrap")) {
@@ -491,7 +543,7 @@ describe("Inspector app", () => {
       }
 
       return new Response("Not found", { status: 404 });
-    });
+    }));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App initialAccessToken="test-access-token" />);
@@ -515,7 +567,7 @@ describe("Inspector app", () => {
   it("pulls backend changes into the visible work queue", async () => {
     const user = userEvent.setup();
     let bootstraps = 0;
-    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+    const fetchMock = vi.fn(withChangeFeed(async (url: RequestInfo | URL) => {
       const path = String(url);
 
       if (path.endsWith("/api/v1/sync/bootstrap")) {
@@ -532,7 +584,7 @@ describe("Inspector app", () => {
       }
 
       return new Response("Not found", { status: 404 });
-    });
+    }));
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App initialAccessToken="test-access-token" />);

@@ -293,3 +293,56 @@ async def test_a_submit_racing_a_rework_never_leaves_an_inconsistent_record(
         assert actions.index("inspection.rework_started") < actions.index(
             "inspection.submitted"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_sync_submit_and_a_staff_submit_apply_once(
+    database: async_sessionmaker[AsyncSession],
+) -> None:
+    """The offline inspector's native submit takes the staff submit's row lock."""
+    inspection_id = await make_inspection(database, InspectionStatus.IN_PROGRESS.value)
+
+    async def sync_submit() -> str:
+        async with client_for(database, WORKER) as client:
+            response = await client.post(
+                "/api/v1/sync/push",
+                headers={
+                    "X-HMS-Device-Id": "race-device",
+                    "X-HMS-Device-Platform": "web",
+                    "X-HMS-App-Version": "0.3.0",
+                    "X-HMS-Sync-Protocol": "3",
+                },
+                json={
+                    "operations": [
+                        {
+                            "op_id": "race-submit",
+                            "idempotency_key": "race-submit",
+                            "entity": "Inspection",
+                            "entity_id": inspection_id,
+                            "op": "update",
+                            "base_version": 1,
+                            "payload": {},
+                            "lifecycle_actions": ["submit"],
+                        }
+                    ]
+                },
+            )
+            assert response.status_code == 200, response.text
+            return str(response.json()["results"][0]["status"])
+
+    async def staff_submit() -> str:
+        async with client_for(database, WORKER) as client:
+            response = await client.post(path(inspection_id, "submit"))
+            return str(response.status_code)
+
+    async with asyncio.TaskGroup() as group:
+        sync_task = group.create_task(sync_submit())
+        staff_task = group.create_task(staff_submit())
+    outcomes = sorted([sync_task.result(), staff_task.result()])
+    assert outcomes in (["200", "conflict"], ["200", "rejected"], ["409", "applied"]), (
+        outcomes
+    )
+    inspection, actions, events = await facts(database, inspection_id)
+    assert inspection.status == "SUBMITTED"
+    assert actions.count("inspection.submitted") == 1
+    assert events.count("INSPECTION_SUBMITTED") == 1

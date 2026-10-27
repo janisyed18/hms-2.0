@@ -6,6 +6,7 @@ import {
 import type { SavedInspectionForm } from "../domain/inspectionForm";
 import type {
   InspectionStatus,
+  LifecycleAction,
   PressureTestDraft,
   OutboxOperation,
   OutboxState,
@@ -17,7 +18,6 @@ import type {
 import {
   createAssetUpdateOperation,
   createInspectionOperation,
-  createPressureTestOperation,
   loadOutbox,
   markOperationApplied,
   markOperationConflict,
@@ -31,21 +31,18 @@ export type InspectorView = "work" | "capture" | "queue" | "scan";
 
 interface SaveInspectionInput {
   workItem: WorkItem;
-  status: InspectionStatus;
+  /** What this does to the lifecycle: start, rework or submit; none to save progress. */
+  lifecycleActions: LifecycleAction[];
   /** The instruction: PASS or REPAIR. */
   result: string | null;
-  pressureTest: PressureTestDraft;
+  /** Null for a bare transition, which carries no form data. */
+  pressureTest: PressureTestDraft | null;
 }
 
 interface QueueAssetUpdateInput {
   workItem: WorkItem;
   customerSerialNo: string;
   tag: string;
-}
-
-interface QueuePressureTestInput {
-  workItem: WorkItem;
-  pressureTest: PressureTestDraft;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -74,6 +71,12 @@ function savedFromOperation(operation: OutboxOperation): SavedInspectionForm | n
     measurements: isRecord(pressure.measurements) ? pressure.measurements : null
   };
 }
+
+const PUSH_RANK: Record<OutboxOperation["entity"], number> = {
+  Inspection: 0,
+  Asset: 1,
+  PressureTestResult: 2
+};
 
 function pendingOperations(operations: OutboxOperation[]) {
   return operations.filter(
@@ -130,37 +133,62 @@ function applyResultToOutbox(userId: string, result: SyncOperationResult) {
   markOperationRejected(userId, result.op_id, result.error ?? "Sync operation rejected.");
 }
 
-function localInspectionStatus(operation: OutboxOperation): InspectionStatus | null {
-  const status = operation.payload.status;
-  if (status === "DRAFT" || status === "SUBMITTED") {
-    return status;
-  }
+// The same transitions the server enforces, so a device that is offline shows the state its
+// queued work will reach, not the one the server last reported.
+const LIFECYCLE: Record<LifecycleAction, { from: InspectionStatus; to: InspectionStatus }> = {
+  start: { from: "DRAFT", to: "IN_PROGRESS" },
+  rework: { from: "REJECTED", to: "IN_PROGRESS" },
+  submit: { from: "IN_PROGRESS", to: "SUBMITTED" }
+};
 
-  return null;
+/** The status a queued inspection operation leads to from ``base``. */
+export function statusAfterOperation(
+  base: InspectionStatus | null,
+  operation: OutboxOperation
+): InspectionStatus | null {
+  if (operation.lifecycleActions !== undefined) {
+    let current: InspectionStatus = base ?? "DRAFT";
+    for (const action of operation.lifecycleActions) {
+      if (LIFECYCLE[action].from === current) current = LIFECYCLE[action].to;
+    }
+    return current;
+  }
+  // Queued by app 0.2.0: its payload names the state it wanted. A draft save never moves
+  // an inspection already past draft backwards.
+  const legacy = operation.payload.status;
+  if (legacy === "SUBMITTED") return "SUBMITTED";
+  return base ?? (legacy === "DRAFT" ? "DRAFT" : null);
 }
 
 function applyLocalOutboxState(
   workItems: WorkItem[],
   operations: OutboxOperation[]
 ) {
-  const localOperationsByAsset = new Map<string, OutboxOperation>();
+  const inspectionOperations = new Map<string, OutboxOperation>();
+  const touched = new Set<string>();
 
   for (const operation of operations) {
-    if (operation.status !== "applied") {
-      localOperationsByAsset.set(operation.workContext?.assignment_id ?? "", operation);
-    }
+    if (operation.status === "applied") continue;
+    const assignment = operation.workContext?.assignment_id ?? "";
+    touched.add(assignment);
+    if (operation.entity === "Inspection") inspectionOperations.set(assignment, operation);
   }
 
   return workItems.map((item) => {
-    const operation = localOperationsByAsset.get(item.workContext?.assignment_id ?? "");
-    if (!operation) {
-      return item;
-    }
+    const assignment = item.workContext?.assignment_id ?? "";
+    if (!touched.has(assignment)) return item;
 
+    const operation = inspectionOperations.get(assignment);
+    const status = operation
+      ? statusAfterOperation(item.inspectionStatus, operation)
+      : item.inspectionStatus;
     return {
       ...item,
       urgency: "draft" as const,
-      inspectionStatus: localInspectionStatus(operation) ?? item.inspectionStatus
+      inspectionStatus: status,
+      inspectionLocked: status === "SUBMITTED" || status === "APPROVED" || status === "REJECTED",
+      // The rework guidance has done its job once the resubmission is queued.
+      rejectionReason: status === "SUBMITTED" ? null : item.rejectionReason
     };
   });
 }
@@ -170,7 +198,7 @@ export function useInspectorWorkspace(userId: string) {
   const [syncRecords, setSyncRecords] = useState<SyncRecordRead[]>([]);
   const [workContexts, setWorkContexts] = useState<SyncWorkContext[]>([]);
   const [outbox, setOutbox] = useState<OutboxState>(() => loadOutbox(userId));
-  const [selectedWorkItem, setSelectedWorkItem] = useState<WorkItem | null>(
+  const [selectedItem, setSelectedWorkItem] = useState<WorkItem | null>(
     null
   );
   const [isOnline, setIsOnline] = useState(() =>
@@ -193,6 +221,17 @@ export function useInspectorWorkspace(userId: string) {
         visibleOutbox.operations
       ),
     [visibleOutbox.operations, syncRecords, workContexts]
+  );
+
+  // The open assignment as it is now: its status follows the work queued on this device (a
+  // start, a submit), not the copy that was current when it was opened. If the assignment is
+  // gone from the current work, nothing is open.
+  const selectedWorkItem = useMemo(
+    () =>
+      selectedItem
+        ? (workItems.find((item) => sameWorkContext(item.workContext, selectedItem.workContext)) ?? null)
+        : null,
+    [selectedItem, workItems]
   );
 
   const queuedCount = useMemo(
@@ -331,7 +370,7 @@ export function useInspectorWorkspace(userId: string) {
       baseVersion: input.workItem.inspectionId
         ? input.workItem.serverVersion
         : null,
-      status: input.status,
+      lifecycleActions: input.lifecycleActions,
       result: input.result,
       pressureTest: input.pressureTest,
       inspectionType: "SERVICE"
@@ -356,29 +395,6 @@ export function useInspectorWorkspace(userId: string) {
     refreshOutbox();
   }
 
-  function queuePressureTest(input: QueuePressureTestInput) {
-    const inspectionId = localInspectionId(input.workItem);
-    const pressureTestId =
-      input.workItem.pressureTestId ??
-      loadOutbox(userId).operations.find((operation) =>
-        operation.entity === "PressureTestResult" &&
-        sameWorkContext(operation.workContext, input.workItem.workContext)
-      )?.entityId ?? crypto.randomUUID();
-    const operation = createPressureTestOperation({
-      workContext: input.workItem.workContext,
-      assetId: input.workItem.assetId,
-      assetNumber: input.workItem.assetNumber,
-      customerName: input.workItem.customerName,
-      inspectionId,
-      pressureTestId,
-      baseVersion: input.workItem.pressureTestVersion,
-      ...input.pressureTest
-    });
-
-    upsertOutboxOperation(userId, operation);
-    refreshOutbox();
-  }
-
   async function pushQueuedOperations() {
     if (!isOnline) {
       return;
@@ -397,13 +413,19 @@ export function useInspectorWorkspace(userId: string) {
     const localOperations = loadOutbox(userId).operations;
     const queue = pendingOperations(localOperations).filter(
       (operation) =>
-        operationIsAssigned(operation, permitted.records, permitted.work_contexts ?? []) &&
+        // A pressure test made against an inspection that has not reached the server yet is
+        // still assigned: its inspection is queued here, and goes first.
+        operationIsAssigned(operation, permitted.records, permitted.work_contexts ?? [], localOperations) &&
         (operation.status === "pending" || operation.status === "rejected")
     );
 
     if (queue.length === 0) {
       return;
     }
+    // An inspection must exist before anything that refers to it, whatever order it was
+    // queued in: the inspection first, then asset details, then standalone pressure tests
+    // (left over from app 0.2.0). The sort is stable, so equal kinds keep their order.
+    queue.sort((left, right) => PUSH_RANK[left.entity] - PUSH_RANK[right.entity]);
 
     for (const operation of queue) {
       markOperationPushing(userId, operation.opId);
@@ -469,7 +491,6 @@ export function useInspectorWorkspace(userId: string) {
     draftFor,
     saveInspection,
     queueAssetUpdate,
-    queuePressureTest,
     pushQueuedOperations,
     pullChanges,
     resolveConflict

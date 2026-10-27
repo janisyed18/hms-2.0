@@ -1,7 +1,15 @@
 
 import type { PressureRating, SavedInspectionForm } from "./inspectionForm";
 
-export type InspectionStatus = "DRAFT" | "SUBMITTED";
+export type InspectionStatus =
+  | "DRAFT"
+  | "IN_PROGRESS"
+  | "SUBMITTED"
+  | "APPROVED"
+  | "REJECTED";
+
+/** The business transitions an inspection operation performs, in order (sync protocol 3). */
+export type LifecycleAction = "start" | "rework" | "submit";
 
 export type InspectionType = "SERVICE" | "NEW_ASSET";
 
@@ -34,10 +42,12 @@ export interface InspectionDraftInput {
   customerName: string;
   inspectionId: string;
   baseVersion: number | null;
-  status: InspectionStatus;
-  /** The instruction: PASS or REPAIR. */
+  /** What this operation does to the lifecycle; none for a plain save of progress. */
+  lifecycleActions: LifecycleAction[];
+  /** The instruction: PASS or REPAIR. Null along with the pressure test when no form data. */
   result: string | null;
-  pressureTest: PressureTestDraft;
+  /** Null for a bare transition (start, begin rework): no form data is sent. */
+  pressureTest: PressureTestDraft | null;
   inspectionType?: InspectionType;
 }
 
@@ -78,9 +88,12 @@ export interface WorkItem {
   assetVersion: number;
   serverVersion: number;
   inspectionId: string | null;
+  /** The inspection's status as this device sees it, including work queued here. */
   inspectionStatus: InspectionStatus | null;
-  /** True once the server holds the inspection as submitted, approved or rejected. */
+  /** True once the inspection is submitted, approved or rejected: not editable as it is. */
   inspectionLocked: boolean;
+  /** Why it was sent back; kept as rework guidance until it is resubmitted. */
+  rejectionReason: string | null;
   pressureTestId: string | null;
   pressureTestVersion: number | null;
   /** The product's rating for this hose's bore; null when it has none. */
@@ -163,6 +176,8 @@ export interface OutboxOperation {
   op: "create" | "update";
   baseVersion: number | null;
   payload: Record<string, unknown>;
+  /** Protocol 3 inspection operations only; absent on one queued by app 0.2.0. */
+  lifecycleActions?: LifecycleAction[];
   status: OutboxStatus;
   createdAt: string;
   updatedAt: string;

@@ -86,7 +86,7 @@ test.describe("Inspector responsive shell", () => {
 
       // Capture: context and form side by side on a desktop; the actions are always reachable.
       await page.getByRole("button", { name: /open HOS-2024-0891/i }).click();
-      await expect(page.getByRole("button", { name: "Save Draft" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Start inspection" })).toBeVisible();
       expect(await noSidewaysScroll(page)).toBe(true);
       const context = await box(page, ".capture-context");
       const main = await box(page, ".capture-main");
@@ -96,17 +96,22 @@ test.describe("Inspector responsive shell", () => {
       } else {
         expect(main.y).toBeGreaterThanOrEqual(context.y + context.height - 1);
       }
-      for (const name of ["Queue Test Result", "Save Draft", "Submit"]) {
+      // A draft offers Start; the working actions appear once the inspection is started.
+      expect(inViewport(await page.getByRole("button", { name: "Start inspection" }).boundingBox() ?? { x: -9, y: -9, width: 0, height: 0 }, width, height)).toBe(true);
+      await page.getByRole("button", { name: "Start inspection" }).click();
+      await expect(page.getByRole("button", { name: "Save progress" })).toBeVisible();
+      expect(await noSidewaysScroll(page)).toBe(true);
+      for (const name of ["Save progress", "Submit"]) {
         expect(inViewport(await page.getByRole("button", { name, exact: true }).boundingBox() ?? { x: -9, y: -9, width: 0, height: 0 }, width, height)).toBe(true);
       }
       // The action bar stays reachable at the foot of a long form.
       await page.locator(".capture-main").evaluate((el) => el.scrollIntoView({ block: "end" }));
-      expect(inViewport((await page.getByRole("button", { name: "Save Draft" }).boundingBox()) ?? { x: -9, y: -9, width: 0, height: 0 }, width, height)).toBe(true);
+      expect(inViewport((await page.getByRole("button", { name: "Save progress" }).boundingBox()) ?? { x: -9, y: -9, width: 0, height: 0 }, width, height)).toBe(true);
 
       // Save a draft, and the Queue shows it with its actions in reach.
       await page.getByLabel("Test time minutes").selectOption("5");
       await page.getByLabel("Pressure test result").selectOption("PASS");
-      await page.getByRole("button", { name: "Save Draft" }).click();
+      await page.getByRole("button", { name: "Save progress" }).click();
       await page.getByRole("navigation", { name: "Inspector navigation" }).getByRole("button", { name: "Queue" }).click();
       await expect(page.getByLabel("Sync queue")).toBeVisible();
       await expect(page.getByLabel("Sync status")).toContainText("1 queued");
@@ -139,11 +144,14 @@ test.describe("Inspector responsive shell", () => {
     await page.evaluate(() => window.dispatchEvent(new Event("offline")));
     await expect(page.getByLabel("Sync status")).toContainText("Offline");
     await page.getByRole("button", { name: /open HOS-2024-0891/i }).click();
+    await page.getByRole("button", { name: "Start inspection" }).click();
     await page.getByLabel("Test time minutes").selectOption("5");
     await page.getByLabel("Pressure test result").selectOption("PASS");
-    await page.getByRole("button", { name: "Save Draft" }).click();
+    await page.getByRole("button", { name: "Save progress" }).click();
+    // Started and saved while offline: one queued operation, and the form stays editable.
     await expect(page.getByLabel("Sync status")).toContainText("1 queued");
     await expect(page.getByLabel("Sync status")).toContainText("Offline");
+    await expect(page.getByLabel("Test time minutes")).toBeEnabled();
   });
 
   test("navigation shows a visible keyboard focus", async ({ page }) => {

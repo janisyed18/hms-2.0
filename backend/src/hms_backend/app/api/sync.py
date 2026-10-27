@@ -14,10 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.api.sync_bootstrap import (
+    CURRENT_SYNC_PROTOCOL_VERSION,
     DEFAULT_PAGE_SIZE,
     LEGACY_BOOTSTRAP_MAX_ROWS,
+    LIFECYCLE_PROTOCOL_VERSION,
     MAX_PAGE_SIZE,
-    PROTOCOL_VERSION,
+    PAGING_PROTOCOL_VERSION,
     SYNC_MODELS,
     UNSCOPED_ENTITIES,
     PageToken,
@@ -80,6 +82,10 @@ from hms_backend.app.modules.inspections.models import (
 )
 from hms_backend.app.modules.inspections.workflow import (
     InvalidTransitionError,
+    begin_rework,
+    mark_submitted,
+    plan_actions,
+    start,
     start_and_submit,
 )
 from hms_backend.app.modules.notifications.enums import NotificationCategory
@@ -130,7 +136,8 @@ async def sync_bootstrap(
         platform=platform,
         app_version=app_version,
     )
-    if _client_protocol(sync_protocol) < PROTOCOL_VERSION:
+    negotiated = _negotiated_protocol(sync_protocol)
+    if negotiated < PAGING_PROTOCOL_VERSION:
         response = await _legacy_bootstrap(session, principal, device)
         await session.commit()
         return response
@@ -188,15 +195,36 @@ async def sync_bootstrap(
         device=_device_read(device),
         cursor=snapshot,
         has_more=next_token is not None,
-        records=[_bootstrap_record(name, row) for name, row in page.rows],
+        records=[
+            _bootstrap_record(name, row, native=_is_native(negotiated))
+            for name, row in page.rows
+        ],
         work_contexts=_context_models(page.contexts),
-        protocol_version=PROTOCOL_VERSION,
+        protocol_version=negotiated,
         next_page_token=next_token,
         page_size=limit,
         scope_changed=scope_changed,
     )
     await session.commit()
     return response
+
+
+def _negotiated_protocol(header: str | None) -> int:
+    """The protocol this exchange runs at: what the client asked for, capped at ours.
+
+    Below paging (no header, or 1) is the legacy single response. A newer client than
+    this server is served at the newest version this server speaks, and the response
+    says which, so the client can refuse to run on less than it needs.
+    """
+    requested = _client_protocol(header)
+    if requested < PAGING_PROTOCOL_VERSION:
+        return 1
+    return min(requested, CURRENT_SYNC_PROTOCOL_VERSION)
+
+
+def _is_native(protocol: int) -> bool:
+    """Whether this exchange carries the real inspection lifecycle (protocol 3+)."""
+    return protocol >= LIFECYCLE_PROTOCOL_VERSION
 
 
 def _client_protocol(header: str | None) -> int:
@@ -233,9 +261,9 @@ async def _legacy_bootstrap(
                     "Your assigned work is too large for this version of the app. "
                     "Update the app to continue."
                 ),
-                "required_protocol": PROTOCOL_VERSION,
+                "required_protocol": PAGING_PROTOCOL_VERSION,
             },
-            headers={"Upgrade": f"hms-sync/{PROTOCOL_VERSION}"},
+            headers={"Upgrade": f"hms-sync/{PAGING_PROTOCOL_VERSION}"},
         )
     return SyncBootstrapResponse(
         device=_device_read(device),
@@ -245,14 +273,16 @@ async def _legacy_bootstrap(
     )
 
 
-def _bootstrap_record(entity_name: str, row: Any) -> SyncRecordRead:
+def _bootstrap_record(
+    entity_name: str, row: Any, *, native: bool = False
+) -> SyncRecordRead:
     sync_row = cast(SyncableRow, row)
     return SyncRecordRead(
         entity=entity_name,
         entity_id=sync_row.id,
         op="upsert",
         version=sync_row.version,
-        payload=_row_payload(sync_row),
+        payload=_present_payload(entity_name, _row_payload(sync_row), native),
     )
 
 
@@ -276,6 +306,7 @@ async def sync_changes(
     device_id: DeviceIdHeader = None,
     platform: DevicePlatformHeader = None,
     app_version: AppVersionHeader = None,
+    sync_protocol: SyncProtocolHeader = None,
 ) -> SyncChangesResponse:
     _require_sync_read(principal)
     await _upsert_sync_device(
@@ -294,7 +325,13 @@ async def sync_changes(
         )
     ).all()
     scanned = fetched[:limit]
-    changes = await _visible_change_records(session, principal, scanned)
+    native = _is_native(_negotiated_protocol(sync_protocol))
+    changes = [
+        record.model_copy(
+            update={"payload": _present_payload(record.entity, record.payload, native)}
+        )
+        for record in await _visible_change_records(session, principal, scanned)
+    ]
     # Advance only over what this response actually scanned. An empty page consumed
     # nothing, so it must not jump to a later snapshot's maximum: a change committed
     # after the SELECT above would be skipped and never delivered.
@@ -316,6 +353,7 @@ async def sync_push(
     device_id: DeviceIdHeader = None,
     platform: DevicePlatformHeader = None,
     app_version: AppVersionHeader = None,
+    sync_protocol: SyncProtocolHeader = None,
 ) -> SyncPushResponse:
     _require_sync_push(principal)
     device = await _upsert_sync_device(
@@ -327,10 +365,14 @@ async def sync_push(
     )
     await lock_assigned_bookings(session, principal)
     results: list[SyncOperationResult] = []
+    protocol = _negotiated_protocol(sync_protocol)
     for operation in payload.operations:
         results.append(
-            await _apply_idempotent_operation(
-                session, principal, operation, device.device_id
+            _present_result(
+                await _apply_idempotent_operation(
+                    session, principal, operation, device.device_id, protocol
+                ),
+                _is_native(protocol),
             )
         )
     await session.commit()
@@ -501,12 +543,6 @@ async def _get_sync_row(
 
 def _row_payload(row: SyncableRow) -> dict[str, Any]:
     payload = cast(dict[str, Any], normalise_for_json(row.to_audit_dict()))
-    if isinstance(row, Inspection) and payload.get("status") == (
-        InspectionStatus.IN_PROGRESS.value
-    ):
-        # Compatibility: the deployed offline inspector knows only DRAFT and SUBMITTED
-        # and locks anything else. In progress is, to it, the editable draft.
-        payload["status"] = InspectionStatus.DRAFT.value
     if isinstance(row, Asset):
         # The offline inspector prefills the pressure form from the product rating, but
         # the bore lives on the asset's ends, which are not synced. The server resolves
@@ -522,6 +558,34 @@ def _row_payload(row: SyncableRow) -> dict[str, Any]:
             }
         )
     return payload
+
+
+def _present_payload(
+    entity: str, payload: dict[str, Any] | None, native: bool
+) -> dict[str, Any] | None:
+    """What this client may see of a record.
+
+    Protocol 3 sees the real inspection status. Earlier clients know only DRAFT and
+    SUBMITTED and lock anything else, so an inspection in progress is, to them, the
+    editable draft. Every surface (bootstrap, changes, push results, replayed results)
+    goes through here, so the projection cannot be missed on one of them.
+    """
+    if (
+        not native
+        and entity == "Inspection"
+        and payload is not None
+        and payload.get("status") == InspectionStatus.IN_PROGRESS.value
+    ):
+        return {**payload, "status": InspectionStatus.DRAFT.value}
+    return payload
+
+
+def _present_result(result: SyncOperationResult, native: bool) -> SyncOperationResult:
+    if native or result.payload is None:
+        return result
+    return result.model_copy(
+        update={"payload": _present_payload(result.entity, result.payload, native)}
+    )
 
 
 async def _row_visible(
@@ -668,6 +732,7 @@ async def _apply_idempotent_operation(
     principal: Principal,
     operation: SyncOperationWrite,
     device_id: str,
+    protocol: int,
 ) -> SyncOperationResult:
     key = operation.idempotency_key
     fingerprint = ""
@@ -748,6 +813,11 @@ async def _apply_idempotent_operation(
                     "base_version": operation.base_version,
                     "work_context": context.model_dump(mode="json"),
                     "payload": operation.payload,
+                    **(
+                        {"lifecycle_actions": operation.lifecycle_actions}
+                        if operation.lifecycle_actions is not None
+                        else {}
+                    ),
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -802,7 +872,7 @@ async def _apply_idempotent_operation(
                 return _rejected(operation, "Record is not visible for sync push")
         return cached
 
-    result = await _apply_sync_operation(session, principal, operation)
+    result = await _apply_sync_operation(session, principal, operation, protocol)
     session.add(
         IdempotencyKey(
             key=key,
@@ -821,7 +891,19 @@ async def _apply_sync_operation(
     session: AsyncSession,
     principal: Principal,
     operation: SyncOperationWrite,
+    protocol: int,
 ) -> SyncOperationResult:
+    if operation.lifecycle_actions is not None:
+        if not _is_native(protocol):
+            return _rejected(
+                operation,
+                "Lifecycle actions need sync protocol 3",
+                "LIFECYCLE_PROTOCOL_REQUIRED",
+            )
+        if operation.entity != "Inspection" or operation.op == "delete":
+            return _rejected(
+                operation, "Lifecycle actions apply only to an Inspection"
+            )
     if operation.entity == "Asset":
         return await _update_asset_from_sync(session, principal, operation)
     if operation.entity == "PressureTestResult":
@@ -920,7 +1002,15 @@ async def _create_inspection_from_sync(
         )
         if existing_assigned_inspection is not None:
             return _rejected(operation, "The assignment already has an inspection")
-    invalid = _check_inspection_payload(operation, None)
+    plan: tuple[list[str], bool] | None = None
+    if operation.lifecycle_actions is not None:
+        planned = _native_plan(operation, InspectionStatus.DRAFT.value)
+        if isinstance(planned, str):
+            return _rejected(operation, planned)
+        plan = planned
+    invalid = _check_inspection_payload(
+        operation, None, native_submit=plan[1] if plan is not None else None
+    )
     if invalid is not None:
         return _rejected(operation, invalid)
     inspection = Inspection(
@@ -939,6 +1029,10 @@ async def _create_inspection_from_sync(
         actor_id=principal.user_id,
         action="inspection.created",
     )
+    if plan is not None:
+        # Native lifecycle, in the order the inspector performed it: the transitions
+        # that make the record editable, then the work, then the submit.
+        await _run_transitions(session, inspection, plan[0], principal.user_id)
     pressure_payload = operation.payload.get("pressure_test")
     if isinstance(pressure_payload, dict):
         await _create_pressure_test_from_sync(
@@ -947,7 +1041,10 @@ async def _create_inspection_from_sync(
             payload=pressure_payload,
             actor_id=principal.user_id,
         )
-    if operation.payload.get("status") == "SUBMITTED":
+    if plan is not None:
+        if plan[1]:
+            await mark_submitted(session, inspection, actor_id=principal.user_id)
+    elif operation.payload.get("status") == "SUBMITTED":
         refused = await _submit_from_sync(session, operation, inspection, principal)
         if refused is not None:
             return refused
@@ -1133,8 +1230,24 @@ async def _update_inspection_from_sync(
     )
     if inspection is None:
         return _rejected(operation, "Inspection is not visible for sync push")
+    if operation.lifecycle_actions is not None:
+        # Transitions race with the staff app's, which lock the row: take the same lock
+        # and read the row as it is now, so two submits (or a submit and a review)
+        # cannot both act on the state one of them has just changed.
+        inspection = await session.scalar(
+            select(Inspection)
+            .where(Inspection.id == inspection.id)
+            .with_for_update(of=Inspection)
+            .execution_options(populate_existing=True)
+        )
+        if inspection is None:
+            return _rejected(operation, "Inspection is not visible for sync push")
     if operation.base_version != inspection.version:
         return _conflict(operation, inspection)
+    if operation.lifecycle_actions is not None:
+        return await _update_inspection_native(
+            session, principal, operation, inspection
+        )
     if inspection.status not in _SYNC_EDITABLE:
         return _rejected(
             operation,
@@ -1167,6 +1280,50 @@ async def _update_inspection_from_sync(
         refused = await _submit_from_sync(session, operation, inspection, principal)
         if refused is not None:
             return refused
+    return _applied(operation, inspection)
+
+
+async def _update_inspection_native(
+    session: AsyncSession,
+    principal: Principal,
+    operation: SyncOperationWrite,
+    inspection: Inspection,
+) -> SyncOperationResult:
+    """A protocol-3 update: the version was checked, nothing has been written yet.
+
+    The whole sequence (legal transitions, editable at the time of writing, complete at
+    submit) is settled first; only then do the transitions, the form data and the
+    submit run, in that order, so a refusal never leaves half an operation behind.
+    """
+    planned = _native_plan(operation, inspection.status)
+    if isinstance(planned, str):
+        return _rejected(operation, planned)
+    before_data, submit = planned
+    invalid = _check_inspection_payload(operation, inspection, native_submit=submit)
+    if invalid is not None:
+        return _rejected(operation, invalid)
+
+    await _run_transitions(session, inspection, before_data, principal.user_id)
+    if "result" in operation.payload:
+        before = inspection.to_audit_dict()
+        inspection.result = _optional_string_payload(operation, "result")
+        await record_update(
+            session,
+            inspection,
+            actor_id=principal.user_id,
+            action="inspection.updated",
+            before=before,
+        )
+    pressure_payload = operation.payload.get("pressure_test")
+    if isinstance(pressure_payload, dict):
+        await _upsert_pressure_test_from_sync(
+            session,
+            inspection=inspection,
+            payload=pressure_payload,
+            actor_id=principal.user_id,
+        )
+    if submit:
+        await mark_submitted(session, inspection, actor_id=principal.user_id)
     return _applied(operation, inspection)
 
 
@@ -1388,14 +1545,71 @@ def _measurements_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     return normalize_measurements(raw)
 
 
+_NOT_EDITABLE_YET = {
+    InspectionStatus.DRAFT.value: "Start the inspection before recording work",
+    InspectionStatus.REJECTED.value: "Begin rework before changing this inspection",
+    InspectionStatus.SUBMITTED.value: "This inspection can no longer be edited",
+    InspectionStatus.APPROVED.value: "This inspection can no longer be edited",
+}
+
+
+def _native_plan(
+    operation: SyncOperationWrite, status: str
+) -> tuple[list[str], bool] | str:
+    """A protocol-3 operation's steps, checked in full before anything is written.
+
+    Returns the transitions to run before the form data and whether to submit after
+    it, or the reason the whole operation is refused. Form data may only be written
+    while the inspection is in progress once the leading transitions have run.
+    """
+    actions: list[str] = list(operation.lifecycle_actions or [])
+    if "status" in operation.payload:
+        return "status is not accepted with lifecycle actions"
+    if "submit" in actions[:-1]:
+        return "Submit must be the last lifecycle action"
+    try:
+        statuses = plan_actions(status, actions)
+    except InvalidTransitionError as error:
+        return str(error)
+    submit = bool(actions) and actions[-1] == "submit"
+    before_data = actions[:-1] if submit else actions
+    write_status = statuses[len(before_data) - 1] if before_data else status
+    has_content = "result" in operation.payload or isinstance(
+        operation.payload.get("pressure_test"), dict
+    )
+    if has_content and write_status != InspectionStatus.IN_PROGRESS.value:
+        return _NOT_EDITABLE_YET.get(write_status, "This inspection cannot be edited")
+    return before_data, submit
+
+
+async def _run_transitions(
+    session: AsyncSession, inspection: Inspection, actions: list[str], actor_id: str
+) -> None:
+    for action in actions:
+        if action == "start":
+            await start(session, inspection, actor_id=actor_id)
+        else:
+            await begin_rework(session, inspection, actor_id=actor_id)
+
+
 def _check_inspection_payload(
-    operation: SyncOperationWrite, existing: Inspection | None
+    operation: SyncOperationWrite,
+    existing: Inspection | None,
+    *,
+    native_submit: bool | None = None,
 ) -> str | None:
-    """Why an inspection operation cannot be applied, found before any write."""
+    """Why an inspection operation cannot be applied, found before any write.
+
+    ``native_submit`` is set for a protocol-3 operation, which says whether it submits
+    in its lifecycle actions; otherwise ``payload.status`` says (the earlier shape).
+    """
     payload = operation.payload
     requested = payload.get("status")
-    if requested not in (None, "DRAFT", "SUBMITTED"):
+    if native_submit is None and requested not in (None, "DRAFT", "SUBMITTED"):
         return "status can only be DRAFT or SUBMITTED"
+    submitting = (
+        native_submit if native_submit is not None else requested == "SUBMITTED"
+    )
     try:
         result = existing.result if existing is not None else None
         if "result" in payload:
@@ -1416,7 +1630,7 @@ def _check_inspection_payload(
                 raise MeasurementsError(
                     "test_duration_minutes must match hold_time_seconds"
                 )
-        if requested == "SUBMITTED":
+        if submitting:
             if stored is None and not isinstance(pressure, dict):
                 return "Inspection is incomplete: " + PRESSURE_TEST_MISSING
             gaps = missing_for_submission(

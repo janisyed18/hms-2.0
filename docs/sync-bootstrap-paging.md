@@ -59,7 +59,7 @@ has been live for one offline window (7 days, `Device.offline_window_days`).
 
 ## Inspector
 
-Always sends protocol 2; app version `0.2.0`. All of its assigned-work data lives in a
+Sent protocol 2 with app `0.2.0`; app `0.3.0` sends protocol 3 (see below), and its snapshot scope is keyed by that protocol so a snapshot taken under the older lifecycle projection is never reused. All of its assigned-work data lives in a
 persistent IndexedDB store (`web/apps/inspector/src/offline/syncStore.ts`), separate from
 the outbox, which is not touched by any of this.
 
@@ -143,3 +143,43 @@ Opening the app offline after a full browser restart still requires the sign-in 
 (`/auth/browser/refresh`, `/auth/browser/me`) to succeed, so the saved snapshot appears
 once the user is authenticated again. Persisting the identity for fully offline cold start
 is a separate decision.
+
+
+## Protocol 3: the native inspection lifecycle
+
+Protocols are capabilities, not one number. **Paging** is protocol 2 and page tokens stay
+bound to it (`PAGING_PROTOCOL_VERSION = 2`), so a token is valid for a protocol 2 or a
+protocol 3 client alike. The **native lifecycle** is protocol 3
+(`LIFECYCLE_PROTOCOL_VERSION`); `CURRENT_SYNC_PROTOCOL_VERSION` is 3.
+
+| Client header | Server answers |
+|---|---|
+| none / 1 | legacy single-response bootstrap (temporary, as before) |
+| 2 | paged bootstrap; `IN_PROGRESS` is shown as `DRAFT` |
+| 3 | paged bootstrap; the real status, `rejection_reason`, lifecycle actions accepted |
+| above 3 | served at 3, and the response says `protocol_version: 3` |
+
+The projection (in progress reads as a draft) is applied in one place for every surface
+- bootstrap, `/sync/changes`, push results and conflicts, and replayed results - so it
+cannot be missed on one of them. The v3 app refuses any bootstrap answered below 3 rather
+than read it as a legacy full bootstrap: that would show in-progress work as a draft.
+
+### Lifecycle actions
+
+An Inspection operation may carry `lifecycle_actions`, an ordered list of `start`,
+`rework` and `submit`; `op` stays `create` or `update` and `payload` carries only form
+data (no `status`). The whole sequence is checked before anything is written (legal
+transitions from the current status, `submit` last, work only written while in progress,
+complete at submit), then applied in a fixed order through the shared workflow functions:
+transitions that make it editable, the form data, then the submit. A stale `base_version`
+conflicts before any transition. The inspection row is locked for the sequence, like the
+staff app's transitions.
+
+An operation with no `lifecycle_actions` is the earlier shape and is applied as before,
+including the protocol 2 draft-to-submitted bridge (`start_and_submit`), so operations
+queued by app 0.2.0 still drain after the upgrade. `start_and_submit` stays until
+protocol 2 clients are retired.
+
+On the device, saving again replaces the unsynced inspection operation but keeps its
+actions, so start, edit, submit reaches the server as `["start", "submit"]` with the
+latest form data; the outbox pushes inspections before anything that refers to them.

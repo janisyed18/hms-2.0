@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
 import { mockBootstrapResponse } from "../data/mockSync";
+import { bootstrapOnly, withChangeFeed } from "../test/syncFetch";
 import { CONDITION_CHECKS } from "../domain/inspectionForm";
 import { outboxStorageKey } from "../offline/outboxStore";
 
@@ -44,6 +45,12 @@ async function open(user: ReturnType<typeof userEvent.setup>, assetNumber: strin
   await user.click(await screen.findByRole("button", { name: new RegExp(`open ${assetNumber}`, "i") }));
 }
 
+/** Opens an assignment and starts the inspection: the form is read-only until then. */
+async function openAndStart(user: ReturnType<typeof userEvent.setup>, assetNumber: string) {
+  await open(user, assetNumber);
+  await user.click(button("Start inspection"));
+}
+
 async function fillWholeForm(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(field("Instruction"), "REPAIR");
   await user.selectOptions(field("Test time minutes"), "10");
@@ -61,17 +68,14 @@ beforeEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.stubGlobal("localStorage", memoryStorage());
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => new Response(JSON.stringify(mockBootstrapResponse), { status: 200 }))
-  );
+  vi.stubGlobal("fetch", bootstrapOnly());
 });
 
 describe("inspection capture (inspector)", () => {
   it("prefills the pressures from the product rating and leaves everything else unanswered", async () => {
     const user = userEvent.setup();
     render(<App initialAccessToken="test-access-token" />);
-    await open(user, "HOS-2024-0891");
+    await openAndStart(user, "HOS-2024-0891");
 
     expect(field("Working pressure kPa")).toHaveValue("1500");
     expect(field("Test pressure kPa")).toHaveValue("2250");
@@ -81,7 +85,7 @@ describe("inspection capture (inspector)", () => {
     }
     for (const { label } of CONDITION_CHECKS) expect(field(label)).toHaveValue("");
     expect(field("Ohms end A")).toHaveValue("");
-    expect(button("Save Draft")).toBeDisabled();
+    expect(button("Save progress")).toBeDisabled();
     expect(button("Submit")).toBeDisabled();
   });
 
@@ -98,7 +102,7 @@ describe("inspection capture (inspector)", () => {
   it("offers 1, 5 and 10 minutes and marks an override of the rated pressure", async () => {
     const user = userEvent.setup();
     render(<App initialAccessToken="test-access-token" />);
-    await open(user, "HOS-2024-0891");
+    await openAndStart(user, "HOS-2024-0891");
 
     expect(within(field("Test time minutes")).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "Select",
@@ -114,12 +118,15 @@ describe("inspection capture (inspector)", () => {
   it("queues every field of the form under the documented schema", async () => {
     const user = userEvent.setup();
     render(<App initialAccessToken="test-access-token" />);
-    await open(user, "HOS-2024-0891");
+    await openAndStart(user, "HOS-2024-0891");
     await fillWholeForm(user);
-    await user.click(button("Save Draft"));
+    await user.click(button("Save progress"));
 
     const [operation] = queuedOperations().filter((op) => op.entity === "Inspection");
-    expect(operation.payload).toMatchObject({ status: "DRAFT", result: "REPAIR" });
+    expect(operation.payload).toMatchObject({ result: "REPAIR" });
+    // The native lifecycle is explicit: no inferred status, the start is a named action.
+    expect(operation.payload).not.toHaveProperty("status");
+    expect((operation as unknown as { lifecycleActions: string[] }).lifecycleActions).toEqual(["start"]);
     expect(operation.payload.pressure_test).toMatchObject({
       applied_pressure_kpa: 2250,
       hold_time_seconds: 600,
@@ -149,9 +156,9 @@ describe("inspection capture (inspector)", () => {
   it("reopens a saved draft exactly as it was left, from the local queue", async () => {
     const user = userEvent.setup();
     render(<App initialAccessToken="test-access-token" />);
-    await open(user, "HOS-2024-0891");
+    await openAndStart(user, "HOS-2024-0891");
     await fillWholeForm(user);
-    await user.click(button("Save Draft"));
+    await user.click(button("Save progress"));
     await user.click(button("Work queue"));
     await open(user, "HOS-2024-0891");
 
@@ -182,11 +189,11 @@ describe("inspection capture (inspector)", () => {
   it("only submits once the whole customer form is filled in", async () => {
     const user = userEvent.setup();
     render(<App initialAccessToken="test-access-token" />);
-    await open(user, "HOS-2024-0891");
+    await openAndStart(user, "HOS-2024-0891");
 
     await user.selectOptions(field("Test time minutes"), "5");
     await user.selectOptions(field("Pressure test result"), "PASS");
-    expect(button("Save Draft")).toBeEnabled();
+    expect(button("Save progress")).toBeEnabled();
     expect(button("Submit")).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent(/To submit, still needed:/);
 
@@ -195,7 +202,8 @@ describe("inspection capture (inspector)", () => {
     await user.click(button("Submit"));
 
     const submitted = queuedOperations().find((op) => op.entity === "Inspection");
-    expect(submitted?.payload.status).toBe("SUBMITTED");
+    expect((submitted as unknown as { lifecycleActions: string[] }).lifecycleActions).toEqual(["start", "submit"]);
+    expect(submitted?.payload).not.toHaveProperty("status");
     expect(submitted?.payload.pressure_test.measurements.certificate_result).toBe("PASS");
   });
 
@@ -209,7 +217,7 @@ describe("inspection capture (inspector)", () => {
           : record
       )
     };
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(submitted), { status: 200 })));
+    vi.stubGlobal("fetch", bootstrapOnly(submitted));
     render(<App initialAccessToken="test-access-token" />);
     await open(user, "HOS-2025-0156");
 
@@ -218,7 +226,7 @@ describe("inspection capture (inspector)", () => {
     expect(field("Instruction")).toBeDisabled();
     expect(field(CONDITION_CHECKS[3].label)).toBeDisabled();
     expect(field(CONDITION_CHECKS[3].label)).toHaveValue("FAIL");
-    expect(screen.queryByRole("button", { name: "Save Draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save progress" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Submit" })).not.toBeInTheDocument();
   });
 
@@ -227,7 +235,7 @@ describe("inspection capture (inspector)", () => {
     const pushed: unknown[] = [];
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      vi.fn(withChangeFeed(async (url: RequestInfo | URL, init?: RequestInit) => {
         const path = String(url);
         if (path.endsWith("/api/v1/sync/push")) {
           const body = JSON.parse(String(init?.body)) as { operations: Array<{ op_id: string; idempotency_key: string }> };
@@ -251,17 +259,18 @@ describe("inspection capture (inspector)", () => {
           );
         }
         return new Response(JSON.stringify(mockBootstrapResponse), { status: 200 });
-      })
+      }))
     );
     render(<App initialAccessToken="test-access-token" />);
-    await open(user, "HOS-2024-0891");
+    await openAndStart(user, "HOS-2024-0891");
     await fillWholeForm(user);
-    await user.click(button("Save Draft"));
+    await user.click(button("Save progress"));
     await user.click(button("Queue"));
     await user.click(button("Push Changes"));
 
     await waitFor(() => expect(pushed).toHaveLength(1));
     const operation = (pushed[0] as { operations: Array<{ payload: Payload }> }).operations[0];
+    expect((operation as unknown as { lifecycle_actions: string[] }).lifecycle_actions).toEqual(["start"]);
     expect(operation.payload.result).toBe("REPAIR");
     expect(operation.payload.pressure_test.measurements.ohms_total).toBe(0.3);
     expect(operation.payload.pressure_test.hold_time_seconds).toBe(600);

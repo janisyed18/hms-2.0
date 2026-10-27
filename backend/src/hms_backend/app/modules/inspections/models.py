@@ -370,8 +370,9 @@ class Inspection(SyncableMixin, Base):
         DateTime(timezone=True),
         nullable=True,
     )
-    # Why the reviewer sent it back, shown with "Changes required". Cleared when rework
-    # begins; the audit trail keeps every earlier reason.
+    # Why the reviewer sent it back, shown with "Changes required". It stays through
+    # rework as the active guidance and is cleared when the inspection is resubmitted;
+    # the audit trail keeps every earlier reason.
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     asset: Mapped[Asset] = relationship(back_populates="inspections", lazy="selectin")

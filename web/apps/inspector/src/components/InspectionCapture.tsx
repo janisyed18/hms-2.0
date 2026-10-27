@@ -25,8 +25,11 @@ interface InspectionCaptureProps {
     customerSerialNo: string;
     tag: string;
   }) => void;
-  onQueuePressureTest: (values: { workItem: WorkItem; pressureTest: PressureTestDraft }) => void;
-  onSaveDraft: (values: {
+  /** DRAFT -> IN_PROGRESS. Queues a bare start: no form data goes with it. */
+  onStart: (workItem: WorkItem) => void;
+  /** REJECTED -> IN_PROGRESS, explicitly. */
+  onBeginRework: (workItem: WorkItem) => void;
+  onSaveProgress: (values: {
     workItem: WorkItem;
     result: string | null;
     pressureTest: PressureTestDraft;
@@ -47,8 +50,9 @@ export function InspectionCapture({
   onBack,
   onDirtyChange,
   onQueueAssetUpdate,
-  onQueuePressureTest,
-  onSaveDraft,
+  onStart,
+  onBeginRework,
+  onSaveProgress,
   onSubmit
 }: InspectionCaptureProps) {
   const [form, setForm] = useState<InspectionFormState>(() => blankFormState(null));
@@ -59,10 +63,11 @@ export function InspectionCapture({
   const [savedForm, setSavedForm] = useState(() => formSnapshot(blankFormState(null)));
   const [savedAsset, setSavedAsset] = useState(() => assetSnapshot("", ""));
   const workItemKey = workItem?.workContext?.assignment_id ?? workItem?.id ?? null;
-  // A submitted inspection's form is read-only, but its asset details can still be edited and queued.
+  // Only work in progress has a form to edit; asset details can always be edited and queued.
+  const status = workItem?.inspectionStatus ?? "DRAFT";
   const dirty =
     Boolean(workItem) &&
-    ((!workItem?.inspectionLocked && formSnapshot(form) !== savedForm) ||
+    ((status === "IN_PROGRESS" && formSnapshot(form) !== savedForm) ||
       assetSnapshot(customerSerialNo, tag) !== savedAsset);
 
   useEffect(() => {
@@ -100,7 +105,9 @@ export function InspectionCapture({
   const draftMissing = draftGaps(form);
   const submitMissing = submitGaps(form);
 
-  const status = urgencyLabel(workItem);
+  const pill = urgencyLabel(workItem);
+  const editable = status === "IN_PROGRESS";
+  const hasActions = status === "DRAFT" || status === "IN_PROGRESS" || status === "REJECTED";
 
   return (
     <section className="capture-screen" aria-label="Inspection capture">
@@ -117,7 +124,7 @@ export function InspectionCapture({
             <span>{workItem.customerName}</span>
             <small>{workItem.productName}</small>
             {workItem.locationName ? <small>{workItem.locationName}</small> : null}
-            <StatusPill tone={status.tone}>{status.label}</StatusPill>
+            <StatusPill tone={pill.tone}>{pill.label}</StatusPill>
           </article>
 
           <article className="capture-panel">
@@ -166,14 +173,37 @@ export function InspectionCapture({
             </button>
           </div>
 
-          {workItem.inspectionLocked ? (
+          {status === "DRAFT" ? (
+            <p className="capture-hint" role="status">
+              Start the inspection to record the pressure test and measurements.
+            </p>
+          ) : null}
+          {status === "SUBMITTED" ? (
             <p className="capture-hint" role="status">
               This inspection has been submitted for review and can no longer be edited here.
             </p>
           ) : null}
-          <InspectionFields disabled={workItem.inspectionLocked} onChange={setForm} state={form} />
+          {status === "APPROVED" ? (
+            <p className="capture-hint" role="status">
+              This inspection is approved and can no longer be edited.
+            </p>
+          ) : null}
+          {status === "REJECTED" ? (
+            <div className="rework-note" role="status">
+              <strong>Changes required</strong>
+              <p>{workItem.rejectionReason ?? "The reviewer sent this inspection back."}</p>
+              <small>Begin rework to edit and resubmit it.</small>
+            </div>
+          ) : null}
+          {editable && workItem.rejectionReason ? (
+            <div className="rework-note" role="status">
+              <strong>Rework requested</strong>
+              <p>{workItem.rejectionReason}</p>
+            </div>
+          ) : null}
+          <InspectionFields disabled={!editable} onChange={setForm} state={form} />
 
-          {workItem.inspectionLocked ? null : draftMissing.length > 0 ? (
+          {!editable ? null : draftMissing.length > 0 ? (
             <p className="capture-hint" role="status">
               To save, still needed: {draftMissing.join(", ")}.
             </p>
@@ -185,40 +215,46 @@ export function InspectionCapture({
         </div>
       </div>
 
-      <div className="capture-actions action-row" hidden={workItem.inspectionLocked}>
+      <div className="capture-actions action-row" hidden={!hasActions}>
         <span aria-live="polite" className="capture-actions__status">{dirty ? "Unsaved changes" : ""}</span>
-        <button
-          className="secondary-action"
-          disabled={!built}
-          onClick={() => built && onQueuePressureTest({ workItem, pressureTest: built.pressureTest })}
-          type="button"
-        >
-          Queue Test Result
-        </button>
-        <button
-          className="secondary-action"
-          disabled={!built}
-          onClick={() => {
-            if (!built) return;
-            onSaveDraft({ workItem, result: built.result, pressureTest: built.pressureTest });
-            setSavedForm(formSnapshot(form));
-          }}
-          type="button"
-        >
-          Save Draft
-        </button>
-        <button
-          className="primary-action"
-          disabled={!built || submitMissing.length > 0}
-          onClick={() => {
-            if (!built) return;
-            onSubmit({ workItem, result: built.result, pressureTest: built.pressureTest });
-            setSavedForm(formSnapshot(form));
-          }}
-          type="button"
-        >
-          Submit
-        </button>
+        {status === "DRAFT" ? (
+          <button className="primary-action" onClick={() => onStart(workItem)} type="button">
+            Start inspection
+          </button>
+        ) : null}
+        {status === "REJECTED" ? (
+          <button className="primary-action" onClick={() => onBeginRework(workItem)} type="button">
+            Begin rework
+          </button>
+        ) : null}
+        {editable ? (
+          <>
+            <button
+              className="secondary-action"
+              disabled={!built}
+              onClick={() => {
+                if (!built) return;
+                onSaveProgress({ workItem, result: built.result, pressureTest: built.pressureTest });
+                setSavedForm(formSnapshot(form));
+              }}
+              type="button"
+            >
+              Save progress
+            </button>
+            <button
+              className="primary-action"
+              disabled={!built || submitMissing.length > 0}
+              onClick={() => {
+                if (!built) return;
+                onSubmit({ workItem, result: built.result, pressureTest: built.pressureTest });
+                setSavedForm(formSnapshot(form));
+              }}
+              type="button"
+            >
+              Submit
+            </button>
+          </>
+        ) : null}
       </div>
     </section>
   );
