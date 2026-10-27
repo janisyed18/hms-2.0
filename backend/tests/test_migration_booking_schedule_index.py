@@ -295,7 +295,7 @@ async def test_upgrade_downgrade_and_reupgrade_on_postgresql(
     assert alembic("upgrade", "head").returncode == 0
     assert await _index_state(engine) == (True, True)
     assert alembic("check").returncode == 0, "the model and the migration disagree"
-    assert alembic("downgrade", "-1").returncode == 0
+    assert alembic("downgrade", "20261022_0022").returncode == 0
     assert await _index_state(engine) == (False, None)
     assert alembic("upgrade", "head").returncode == 0
     assert await _index_state(engine) == (True, True)

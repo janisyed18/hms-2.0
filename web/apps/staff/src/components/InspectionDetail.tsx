@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { CheckCircle2, Save, Send, X } from "lucide-react";
+import { CheckCircle2, Play, RotateCcw, Save, Send, Undo2, X } from "lucide-react";
 
 import {
   blankFormState,
@@ -15,6 +15,8 @@ import { ActionNotice } from "./interaction/ActionNotice";
 import { friendlyApiError } from "./interaction/friendlyApiError";
 import { InspectionFormFields } from "./InspectionFormFields";
 import { assetLabel } from "../utils/identity";
+import { inspectionStatusLabel } from "../utils/inspectionStatus";
+import { Field } from "./interaction/FormPrimitives";
 
 interface InspectionDetailProps {
   canApprove: boolean;
@@ -23,15 +25,21 @@ interface InspectionDetailProps {
   /** The product rating for an asset, for inspections saved before ratings were recorded. */
   ratingFor?: (assetId: string) => PressureRating | null;
   onApprove: () => Promise<void>;
+  /** REJECTED back to IN_PROGRESS: the explicit step that makes the form editable again. */
+  onBeginRework: () => Promise<void>;
   onClose: () => void;
   /** Reload the inspection lists after a conflict showed the screen was out of date. */
   onRefresh?: () => void;
+  /** Send a submitted inspection back, with the reason the inspector will see. */
+  onReject: (reason: string) => Promise<void>;
   onSaveDraft: (values: InspectionUpdateValues) => Promise<void>;
+  /** DRAFT to IN_PROGRESS. */
+  onStart: () => Promise<void>;
   onSubmit: (values: InspectionUpdateValues) => Promise<void>;
 }
 
 function statusClass(status: string) {
-  if (status === "DRAFT") {
+  if (status === "DRAFT" || status === "IN_PROGRESS") {
     return "mini-status due-soon";
   }
   if (status === "SUBMITTED") {
@@ -49,15 +57,24 @@ export function InspectionDetail({
   inspection,
   ratingFor,
   onApprove,
+  onBeginRework,
   onClose,
   onRefresh,
+  onReject,
   onSaveDraft,
+  onStart,
   onSubmit
 }: InspectionDetailProps) {
   const [form, setForm] = useState<InspectionFormState>(() => blankFormState(null));
   const [isSaving, setSaving] = useState(false);
   const [isSubmitting, setSubmitting] = useState(false);
   const [isApproving, setApproving] = useState(false);
+  const [isStarting, setStarting] = useState(false);
+  const [isReworking, setReworking] = useState(false);
+  const [isRejecting, setRejecting] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState("");
+  const [reasonError, setReasonError] = useState<string | null>(null);
   const lock = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,6 +85,9 @@ export function InspectionDetail({
     // Shows exactly what was saved, so a reload or a reviewer sees the same form.
     setForm(stateFromInspection(inspection, ratingFor?.(inspection.assetId) ?? null));
     setError(null);
+    setAsking(false);
+    setReason("");
+    setReasonError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inspection]);
 
@@ -82,7 +102,9 @@ export function InspectionDetail({
     );
   }
 
-  const editable = canWrite && inspection.status === "DRAFT";
+  // The form can change only while work is in progress; every other state is read-only.
+  const editable = canWrite && inspection.status === "IN_PROGRESS";
+  const busy = isSaving || isSubmitting || isApproving || isStarting || isReworking || isRejecting;
   const built = buildValues(form);
   const draftMissing = draftGaps(form);
   const submitMissing = submitGaps(form);
@@ -140,6 +162,24 @@ export function InspectionDetail({
     await guarded(onApprove, setApproving, "The inspection could not be approved. Try again.");
   }
 
+  async function handleStart() {
+    await guarded(onStart, setStarting, "The inspection could not be started. Try again.");
+  }
+
+  async function handleRework() {
+    await guarded(onBeginRework, setReworking, "Rework could not be started. Try again.");
+  }
+
+  async function handleReject() {
+    if (!reason.trim()) {
+      setReasonError("Say what needs to change, so the inspector knows what to fix.");
+      window.setTimeout(() => document.getElementById(`inspection-${inspection!.id}-reject-reason`)?.focus(), 0);
+      return;
+    }
+    setReasonError(null);
+    await guarded(() => onReject(reason.trim()), setRejecting, "The inspection could not be sent back. Try again.");
+  }
+
   return (
     <aside className="inspection-detail-panel" aria-label="Inspection detail">
       <div className="inspection-detail-header">
@@ -158,7 +198,7 @@ export function InspectionDetail({
       </div>
 
       <div className="inspection-detail-strip">
-        <span className={statusClass(inspection.status)}>{inspection.status}</span>
+        <span className={statusClass(inspection.status)}>{inspectionStatusLabel(inspection.status)}</span>
         <span>{inspection.inspectionType.replace("_", " ")}</span>
         <span>Result {inspection.result ?? "Pending"}</span>
       </div>
@@ -173,6 +213,10 @@ export function InspectionDetail({
           <strong>{inspection.reviewerUserId ?? "Not reviewed"}</strong>
         </div>
         <div>
+          <span>Started</span>
+          <strong>{inspection.startedAt ?? "Not started"}</strong>
+        </div>
+        <div>
           <span>Submitted</span>
           <strong>{inspection.submittedAt ?? "Not submitted"}</strong>
         </div>
@@ -181,6 +225,13 @@ export function InspectionDetail({
           <strong>{inspection.approvedAt ?? "Not approved"}</strong>
         </div>
       </div>
+
+      {inspection.status === "REJECTED" ? (
+        <div className="inspection-changes-required" role="status">
+          <strong>Changes required</strong>
+          <p>{inspection.rejectionReason ?? "The reviewer did not leave a reason."}</p>
+        </div>
+      ) : null}
 
       <form className="inspection-detail-form" onSubmit={handleSave}>
         <InspectionFormFields
@@ -203,24 +254,60 @@ export function InspectionDetail({
 
         <div className="inspection-action-row">
           {canWrite && inspection.status === "DRAFT" ? (
+            <ActionButton disabled={busy} onClick={handleStart} pending={isStarting} pendingLabel="Starting…" variant="primary">
+              <Play aria-hidden="true" size={16} />
+              Start inspection
+            </ActionButton>
+          ) : null}
+          {editable ? (
             <>
-              <ActionButton disabled={isSubmitting || isApproving} pending={isSaving} pendingLabel="Saving…" type="submit" variant="secondary">
+              <ActionButton disabled={busy && !isSaving} pending={isSaving} pendingLabel="Saving…" type="submit" variant="secondary">
                 <Save aria-hidden="true" size={16} />
-                Save draft
+                Save progress
               </ActionButton>
-              <ActionButton disabled={isSaving || isApproving} onClick={handleSubmitInspection} pending={isSubmitting} pendingLabel="Submitting…" variant="primary">
+              <ActionButton disabled={busy && !isSubmitting} onClick={handleSubmitInspection} pending={isSubmitting} pendingLabel="Submitting…" variant="primary">
                 <Send aria-hidden="true" size={16} />
                 Submit inspection
               </ActionButton>
             </>
           ) : null}
-          {canApprove && inspection.status === "SUBMITTED" ? (
-            <ActionButton onClick={handleApprove} pending={isApproving} pendingLabel="Approving…" variant="primary">
-              <CheckCircle2 aria-hidden="true" size={16} />
-              Approve inspection
+          {canWrite && inspection.status === "REJECTED" ? (
+            <ActionButton disabled={busy} onClick={handleRework} pending={isReworking} pendingLabel="Starting rework…" variant="primary">
+              <RotateCcw aria-hidden="true" size={16} />
+              Begin rework
             </ActionButton>
           ) : null}
+          {canApprove && inspection.status === "SUBMITTED" ? (
+            <>
+              <ActionButton disabled={busy && !isApproving} onClick={handleApprove} pending={isApproving} pendingLabel="Approving…" variant="primary">
+                <CheckCircle2 aria-hidden="true" size={16} />
+                Approve inspection
+              </ActionButton>
+              <ActionButton disabled={busy} onClick={() => setAsking((open) => !open)} variant="secondary">
+                <Undo2 aria-hidden="true" size={16} />
+                Request changes
+              </ActionButton>
+            </>
+          ) : null}
         </div>
+        {canApprove && inspection.status === "SUBMITTED" && asking ? (
+          <div className="inspection-reject">
+            <Field error={reasonError ?? undefined} label="What needs to change" name={`inspection-${inspection.id}-reject-reason`} required>
+              {(props) => (
+                <textarea
+                  {...props}
+                  aria-label="What needs to change"
+                  onChange={(event) => { setReason(event.target.value); setReasonError(null); }}
+                  rows={3}
+                  value={reason}
+                />
+              )}
+            </Field>
+            <ActionButton disabled={busy && !isRejecting} onClick={handleReject} pending={isRejecting} pendingLabel="Sending back…" variant="danger">
+              Send back for changes
+            </ActionButton>
+          </div>
+        ) : null}
       </form>
     </aside>
   );

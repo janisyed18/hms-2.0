@@ -21,17 +21,19 @@ import {
 import type { InspectionRecord } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { assetLabel } from "../utils/identity";
+import { inspectionStatusLabel } from "../utils/inspectionStatus";
 
 const statusFilters: Array<{ label: string; value: InspectionStatusFilter }> = [
   { label: "All", value: "ALL" },
   { label: "Submitted", value: "SUBMITTED" },
   { label: "Approved", value: "APPROVED" },
-  { label: "Rejected", value: "REJECTED" },
+  { label: "Changes required", value: "REJECTED" },
+  { label: "In progress", value: "IN_PROGRESS" },
   { label: "Draft", value: "DRAFT" }
 ];
 
 function statusClass(status: string) {
-  if (status === "DRAFT") {
+  if (status === "DRAFT" || status === "IN_PROGRESS") {
     return "mini-status due-soon";
   }
   if (status === "SUBMITTED" || status === "PENDING_APPROVAL") {
@@ -82,11 +84,12 @@ export function InspectionsWorkspace({
   const workspace = useInspectionsWorkspace(canApproveBookings, routeInspectionId, onInspectionRouteChange);
   const [inspectorByBooking, setInspectorByBooking] = useState<Record<string, string>>({});
   const [missingInspector, setMissingInspector] = useState<string | null>(null);
-  const draftCount = countByStatus(workspace.inspections, "DRAFT");
+  const draftCount =
+    countByStatus(workspace.inspections, "DRAFT") + countByStatus(workspace.inspections, "IN_PROGRESS");
   const submittedCount = countByStatus(workspace.inspections, "SUBMITTED");
   const approvedCount = countByStatus(workspace.inspections, "APPROVED");
   const attentionCount = workspace.inspections.filter((inspection) =>
-    ["DRAFT", "REJECTED"].includes(inspection.status)
+    ["DRAFT", "IN_PROGRESS", "REJECTED"].includes(inspection.status)
   ).length;
 
   const columns: ModuleColumn<InspectionRecord>[] = [
@@ -114,7 +117,7 @@ export function InspectionsWorkspace({
       header: "Status",
       render: (inspection) => (
         <span className={statusClass(inspection.status)}>
-          {inspection.status}
+          {inspectionStatusLabel(inspection.status)}
         </span>
       )
     },
@@ -330,7 +333,10 @@ export function InspectionsWorkspace({
             ratingFor={(assetId) =>
               workspace.assetOptions.find((asset) => asset.id === assetId)?.pressureRating ?? null}
             onApprove={workspace.approveInspection}
+            onBeginRework={workspace.beginInspectionRework}
             onClose={workspace.closeDetail}
+            onReject={workspace.rejectInspection}
+            onStart={workspace.startInspection}
             onRefresh={workspace.refreshBookingsAndInspections}
             onSaveDraft={workspace.saveInspectionUpdate}
             onSubmit={workspace.submitInspection}

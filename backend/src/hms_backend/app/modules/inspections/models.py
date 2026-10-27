@@ -34,6 +34,7 @@ class InspectionType(StrEnum):
 
 class InspectionStatus(StrEnum):
     DRAFT = "DRAFT"
+    IN_PROGRESS = "IN_PROGRESS"
     SUBMITTED = "SUBMITTED"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
@@ -351,6 +352,12 @@ class Inspection(SyncableMixin, Base):
     result: Mapped[str | None] = mapped_column(String(40), nullable=True)
     inspector_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     reviewer_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # When work first began: set once by Start (or the offline submit bridge) and kept
+    # through rework. NULL on inspections that predate the lifecycle.
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     submitted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
@@ -363,6 +370,9 @@ class Inspection(SyncableMixin, Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    # Why the reviewer sent it back, shown with "Changes required". Cleared when rework
+    # begins; the audit trail keeps every earlier reason.
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     asset: Mapped[Asset] = relationship(back_populates="inspections", lazy="selectin")
     booking: Mapped[InspectionBooking | None] = relationship(

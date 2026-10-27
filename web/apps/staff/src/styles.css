@@ -3840,3 +3840,42 @@ tbody tr.is-selected {
 @media (prefers-reduced-motion: reduce) {
   .asset-workflow-skeleton i { animation: none; }
 }
+
+/* Inspection detail: why changes were requested, and the reviewer's reason form. */
+.inspection-changes-required {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 8px;
+  background: var(--panel-subtle);
+}
+
+.inspection-changes-required strong {
+  color: var(--warning, #b45309);
+  font-size: 13px;
+}
+
+.inspection-changes-required p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.inspection-reject {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.inspection-reject textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.inspection-reject button {
+  justify-self: start;
+}

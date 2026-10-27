@@ -78,12 +78,21 @@ from hms_backend.app.modules.inspections.models import (
     InspectionStatus,
     PressureTestResult,
 )
-from hms_backend.app.modules.inspections.workflow import mark_submitted
+from hms_backend.app.modules.inspections.workflow import (
+    InvalidTransitionError,
+    start_and_submit,
+)
 from hms_backend.app.modules.notifications.enums import NotificationCategory
 from hms_backend.app.modules.notifications.outbox import emit_event
 from hms_backend.app.modules.scheduling.models import RetestSchedule
 
 router = APIRouter()
+
+# What the offline inspector may still edit: its draft, or the same record once the
+# staff app has started it (the inspector knows only "draft").
+_SYNC_EDITABLE = frozenset(
+    {InspectionStatus.DRAFT.value, InspectionStatus.IN_PROGRESS.value}
+)
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 PrincipalDep = Annotated[Principal, Depends(get_current_principal)]
@@ -492,6 +501,12 @@ async def _get_sync_row(
 
 def _row_payload(row: SyncableRow) -> dict[str, Any]:
     payload = cast(dict[str, Any], normalise_for_json(row.to_audit_dict()))
+    if isinstance(row, Inspection) and payload.get("status") == (
+        InspectionStatus.IN_PROGRESS.value
+    ):
+        # Compatibility: the deployed offline inspector knows only DRAFT and SUBMITTED
+        # and locks anything else. In progress is, to it, the editable draft.
+        payload["status"] = InspectionStatus.DRAFT.value
     if isinstance(row, Asset):
         # The offline inspector prefills the pressure form from the product rating, but
         # the bore lives on the asset's ends, which are not synced. The server resolves
@@ -933,8 +948,29 @@ async def _create_inspection_from_sync(
             actor_id=principal.user_id,
         )
     if operation.payload.get("status") == "SUBMITTED":
-        await mark_submitted(session, inspection, actor_id=principal.user_id)
+        refused = await _submit_from_sync(session, operation, inspection, principal)
+        if refused is not None:
+            return refused
     return _applied(operation, inspection)
+
+
+async def _submit_from_sync(
+    session: AsyncSession,
+    operation: SyncOperationWrite,
+    inspection: Inspection,
+    principal: Principal,
+) -> SyncOperationResult | None:
+    """The offline inspector's submit: a start and a submit in one step.
+
+    Compatibility bridge: the deployed inspector has no "start", so a draft it submits
+    is started here first (``started_at`` and both audit events are real). The
+    completeness check is the same as online and has already run on the payload.
+    """
+    try:
+        await start_and_submit(session, inspection, actor_id=principal.user_id)
+    except InvalidTransitionError as error:
+        return _rejected(operation, str(error))
+    return None
 
 
 async def _apply_pressure_test_from_sync(
@@ -982,7 +1018,7 @@ async def _create_pressure_test_entity_from_sync(
     )
     if inspection is None:
         return _rejected(operation, "Inspection is not visible for sync push")
-    if inspection.status != InspectionStatus.DRAFT.value:
+    if inspection.status not in _SYNC_EDITABLE:
         return _rejected(
             operation,
             "Only draft inspection pressure tests can be updated by sync push",
@@ -1035,7 +1071,7 @@ async def _update_pressure_test_entity_from_sync(
         )
     if operation.base_version != pressure_test.version:
         return _conflict(operation, pressure_test)
-    if pressure_test.inspection.status != InspectionStatus.DRAFT.value:
+    if pressure_test.inspection.status not in _SYNC_EDITABLE:
         return _rejected(
             operation,
             "Only draft inspection pressure tests can be updated by sync push",
@@ -1099,7 +1135,7 @@ async def _update_inspection_from_sync(
         return _rejected(operation, "Inspection is not visible for sync push")
     if operation.base_version != inspection.version:
         return _conflict(operation, inspection)
-    if inspection.status != InspectionStatus.DRAFT.value:
+    if inspection.status not in _SYNC_EDITABLE:
         return _rejected(
             operation,
             "Only draft inspections can be updated by sync push",
@@ -1128,7 +1164,9 @@ async def _update_inspection_from_sync(
             actor_id=principal.user_id,
         )
     if operation.payload.get("status") == "SUBMITTED":
-        await mark_submitted(session, inspection, actor_id=principal.user_id)
+        refused = await _submit_from_sync(session, operation, inspection, principal)
+        if refused is not None:
+            return refused
     return _applied(operation, inspection)
 
 

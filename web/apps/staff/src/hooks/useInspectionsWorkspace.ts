@@ -229,6 +229,24 @@ export function useInspectionsWorkspace(
     replaceInspection(saved);
     notify({ kind: "success", title: "Draft saved", message: `Inspection for ${assetLabel(saved.asset)} saved successfully.` });
   }
+  async function startInspection() {
+    if (!selectedInspection) return;
+    const saved = await createHmsClient().startInspection(selectedInspection.id);
+    replaceInspection(saved);
+    notify({ kind: "success", title: "Inspection started", message: `Inspection for ${assetLabel(saved.asset)} is in progress.` });
+  }
+  async function beginInspectionRework() {
+    if (!selectedInspection) return;
+    const saved = await createHmsClient().beginInspectionRework(selectedInspection.id);
+    replaceInspection(saved);
+    notify({ kind: "success", title: "Rework started", message: `Inspection for ${assetLabel(saved.asset)} can be edited again.` });
+  }
+  async function rejectInspection(reason: string) {
+    if (!selectedInspection) return;
+    const saved = await createHmsClient().rejectInspection(selectedInspection.id, reason);
+    replaceInspection(saved);
+    notify({ kind: "success", title: "Changes requested", message: `Inspection for ${assetLabel(saved.asset)} was sent back to the inspector.` });
+  }
   async function submitInspection(values?: InspectionUpdateValues) {
     if (!selectedInspection) return;
     const client = createHmsClient();
@@ -245,5 +263,5 @@ export function useInspectionsWorkspace(
   }
   function clearInspectionFilters() { setTypeFilter("ALL"); setResultFilter("ALL"); }
   const activeFilterCount = [typeFilter !== "ALL", resultFilter !== "ALL"].filter(Boolean).length;
-  return { activeFilterCount, approveInspection, approveInspectionBooking, approveInspectionBookingReschedule, assetOptions: assets, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
+  return { activeFilterCount, approveInspection, beginInspectionRework, rejectInspection, startInspection, approveInspectionBooking, approveInspectionBookingReschedule, assetOptions: assets, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
 }

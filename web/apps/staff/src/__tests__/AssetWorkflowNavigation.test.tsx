@@ -70,6 +70,28 @@ describe("the asset workflow card inside the asset detail", () => {
     expect(await screen.findByText("Inspection open: insp-9", undefined, SLOW)).toBeInTheDocument();
   });
 
+  it("a rework action lands on the exact canonical inspection link", async () => {
+    client.overrides.getAssetWorkflow = async () =>
+      wf({
+        status: "CHANGES_REQUIRED",
+        label: "Inspection changes required",
+        attention: true,
+        nextAction: { code: "REWORK_INSPECTION", label: "Rework inspection", targetType: "INSPECTION", targetId: "insp-9", inspectionId: null }
+      });
+    render(<App initialSession={session(["REVIEWER"])} />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Rework inspection" }, SLOW));
+    await waitFor(() => expect(window.location.pathname + window.location.search).toBe("/?view=inspections&inspection=insp-9"));
+    expect(await screen.findByText("Inspection open: insp-9", undefined, SLOW)).toBeInTheDocument();
+  });
+
+  it("changes required with no action offered (server withheld it) shows the status and no button", async () => {
+    client.overrides.getAssetWorkflow = async () =>
+      wf({ status: "CHANGES_REQUIRED", label: "Inspection changes required", attention: true, nextAction: null });
+    render(<App initialSession={session(["REVIEWER"])} />);
+    await screen.findByText("Inspection changes required", undefined, SLOW);
+    expect(screen.queryByRole("button", { name: "Rework inspection" })).toBeNull();
+  });
+
   it("a certificate action goes to Certificates", async () => {
     client.overrides.getAssetWorkflow = async () =>
       wf({

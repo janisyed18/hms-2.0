@@ -57,6 +57,12 @@ def complete(**overrides: Any) -> dict[str, Any]:
     return measurements
 
 
+async def start_it(client: Any, inspection_id: str) -> None:
+    """Work on an inspection begins with an explicit start (DRAFT -> IN_PROGRESS)."""
+    started = await client.post(f"/api/v1/inspections/{inspection_id}/start")
+    assert started.status_code == 200, started.text
+
+
 def pressure_test(measurements: dict[str, Any], **overrides: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
         "applied_pressure_kpa": 2250,
@@ -195,8 +201,9 @@ async def test_submission_needs_a_complete_form_then_review_and_approval_follow(
             test=pressure_test(partial),
         )
         inspection_id = created.json()["id"]
+        await start_it(client, inspection_id)
         refused = await client.post(f"/api/v1/inspections/{inspection_id}/submit")
-        # Fill the gaps on the same draft, as the form does.
+        # Fill the gaps on the same inspection, as the form does.
         patched = await client.patch(
             f"/api/v1/inspections/{inspection_id}",
             json={"pressure_test": pressure_test(complete())},
@@ -244,6 +251,7 @@ async def test_a_legacy_inspection_still_submits_without_the_new_fields(
             result="REVIEW",
             test=pressure_test({"leak": "none"}),
         )
+        await start_it(client, created.json()["id"])
         submitted = await client.post(
             f"/api/v1/inspections/{created.json()['id']}/submit"
         )
@@ -652,6 +660,7 @@ async def _approve_and_events(
             client, asset_id, result=result, test=pressure_test(measurements)
         )
         inspection_id = created.json()["id"]
+        await start_it(client, inspection_id)
         submitted = await client.post(f"/api/v1/inspections/{inspection_id}/submit")
         assert submitted.status_code == 200, submitted.text
     async with api_client(session_factory, REVIEWER) as client:
@@ -731,12 +740,14 @@ async def test_a_draft_with_no_pressure_test_cannot_be_submitted(
             client, seeded_sync_session["vopak_asset_id"], result="PASS", test=None
         )
         inspection_id = created.json()["id"]
+        await start_it(client, inspection_id)
         refused = await client.post(f"/api/v1/inspections/{inspection_id}/submit")
         reloaded = await client.get(f"/api/v1/inspections/{inspection_id}")
 
     assert refused.status_code == 422, refused.text
     assert "Pressure test" in refused.json()["detail"]
-    assert reloaded.json()["status"] == "DRAFT"
+    # A refused submit changes nothing.
+    assert reloaded.json()["status"] == "IN_PROGRESS"
     assert reloaded.json()["submitted_at"] is None
     async with session_factory() as session:
         events = (

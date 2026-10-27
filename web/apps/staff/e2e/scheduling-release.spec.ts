@@ -65,7 +65,7 @@ test.describe("scheduling release workflow", () => {
     try {
       await createAndApproveBooking(customer.page, admin.page);
       await openInspections(inspector.page);
-      await expect(inspector.page.getByRole("table", { name: "Inspection records" })).toContainText("DRAFT");
+      await expect(inspector.page.getByRole("table", { name: "Inspection records" })).toContainText("Draft");
 
       await refreshInspectionsWorkspace(customer.page);
       await expect(customer.page.locator(".inspection-booking-list time")).toContainText("8:00");

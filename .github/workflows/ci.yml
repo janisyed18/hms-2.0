@@ -55,7 +55,8 @@ jobs:
           tests/test_inspection_schedule.py
           tests/test_migration_booking_schedule_index.py
           tests/test_migration_transaction_per_migration.py
-          tests/test_admin_user_keyset_postgres.py -v
+          tests/test_admin_user_keyset_postgres.py
+          tests/test_inspection_lifecycle_postgres.py -v
         env:
           POSTGRES_TEST_DATABASE_URL: postgresql+asyncpg://hms:hms@127.0.0.1:5432/hms_inspector_test
 

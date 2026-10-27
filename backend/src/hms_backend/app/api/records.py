@@ -170,8 +170,14 @@ from hms_backend.app.modules.inspections.models import (
     PressureTestResult,
 )
 from hms_backend.app.modules.inspections.workflow import (
+    InvalidTransitionError,
+    begin_rework,
+    is_editable,
     is_failed,
+    mark_rejected,
     mark_submitted,
+    require_transition,
+    start,
     submission_gaps,
 )
 from hms_backend.app.modules.notifications.enums import NotificationCategory
@@ -330,6 +336,7 @@ def _inspection_in_reporting_window(
     window: tuple[datetime, datetime],
 ) -> bool:
     timestamp = {
+        InspectionStatus.IN_PROGRESS.value: inspection.started_at,
         InspectionStatus.SUBMITTED.value: inspection.submitted_at,
         InspectionStatus.APPROVED.value: inspection.approved_at,
         InspectionStatus.REJECTED.value: inspection.rejected_at,
@@ -2720,12 +2727,14 @@ async def update_inspection(
 ) -> InspectionRead:
     _require_inspection_write(principal)
     await lock_assigned_bookings(session, principal)
-    inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    inspection = await _get_inspection_or_404(
+        session, inspection_id, principal, lock=True
+    )
     await _require_active_inspection_booking(session, inspection)
-    if inspection.status != InspectionStatus.DRAFT.value:
+    if not is_editable(inspection):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Only draft inspections can be edited",
+            detail="Only inspections in progress can be edited",
         )
 
     updates = payload.model_dump(exclude_unset=True)
@@ -2752,6 +2761,50 @@ async def update_inspection(
     return _inspection_read(loaded)
 
 
+def _conflict(error: InvalidTransitionError) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+
+
+@router.post("/inspections/{inspection_id}/start", response_model=InspectionRead)
+async def start_inspection(
+    inspection_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionRead:
+    _require_inspection_write(principal)
+    await lock_assigned_bookings(session, principal)
+    inspection = await _get_inspection_or_404(
+        session, inspection_id, principal, lock=True
+    )
+    await _require_active_inspection_booking(session, inspection)
+    try:
+        await start(session, inspection, actor_id=principal.user_id)
+    except InvalidTransitionError as error:
+        raise _conflict(error) from error
+    await session.commit()
+    return _inspection_read(inspection)
+
+
+@router.post("/inspections/{inspection_id}/rework", response_model=InspectionRead)
+async def begin_inspection_rework(
+    inspection_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionRead:
+    _require_inspection_write(principal)
+    await lock_assigned_bookings(session, principal)
+    inspection = await _get_inspection_or_404(
+        session, inspection_id, principal, lock=True
+    )
+    await _require_active_inspection_booking(session, inspection)
+    try:
+        await begin_rework(session, inspection, actor_id=principal.user_id)
+    except InvalidTransitionError as error:
+        raise _conflict(error) from error
+    await session.commit()
+    return _inspection_read(inspection)
+
+
 @router.post("/inspections/{inspection_id}/submit", response_model=InspectionRead)
 async def submit_inspection(
     inspection_id: str,
@@ -2760,13 +2813,14 @@ async def submit_inspection(
 ) -> InspectionRead:
     _require_inspection_write(principal)
     await lock_assigned_bookings(session, principal)
-    inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    inspection = await _get_inspection_or_404(
+        session, inspection_id, principal, lock=True
+    )
     await _require_active_inspection_booking(session, inspection)
-    if inspection.status != InspectionStatus.DRAFT.value:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Inspection must be in draft status before submission",
-        )
+    try:
+        require_transition(inspection, "submit")
+    except InvalidTransitionError as error:
+        raise _conflict(error) from error
 
     gaps = submission_gaps(inspection)
     if gaps:
@@ -2786,16 +2840,17 @@ async def approve_inspection(
     principal: PrincipalDep,
 ) -> InspectionRead:
     _require_certificate_approve(principal)
-    inspection = await _get_inspection_or_404(session, inspection_id, principal)
+    inspection = await _get_inspection_or_404(
+        session, inspection_id, principal, lock=True
+    )
     await _require_active_inspection_booking(session, inspection)
-    if inspection.status != InspectionStatus.SUBMITTED.value:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Inspection must be submitted before approval",
-        )
+    try:
+        target = require_transition(inspection, "approve")
+    except InvalidTransitionError as error:
+        raise _conflict(error) from error
 
     before = inspection.to_audit_dict()
-    inspection.status = InspectionStatus.APPROVED.value
+    inspection.status = target.value
     inspection.reviewer_user_id = principal.persisted_user_id
     inspection.approved_at = utc_now()
     await record_update(
@@ -2838,27 +2893,22 @@ async def reject_inspection(
     principal: PrincipalDep,
 ) -> InspectionRead:
     _require_certificate_approve(principal)
-    inspection = await _get_inspection_or_404(session, inspection_id, principal)
-    await _require_active_inspection_booking(session, inspection)
-    if inspection.status != InspectionStatus.SUBMITTED.value:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Inspection must be submitted before rejection",
-        )
-
-    before = inspection.to_audit_dict()
-    inspection.status = InspectionStatus.REJECTED.value
-    inspection.reviewer_user_id = principal.persisted_user_id
-    inspection.rejected_at = utc_now()
-    await record_update(
-        session,
-        inspection,
-        actor_id=principal.user_id,
-        action="inspection.rejected",
-        before=before,
+    inspection = await _get_inspection_or_404(
+        session, inspection_id, principal, lock=True
     )
+    await _require_active_inspection_booking(session, inspection)
+    try:
+        await mark_rejected(
+            session,
+            inspection,
+            actor_id=principal.user_id,
+            reviewer_user_id=principal.persisted_user_id,
+            reason=payload.reason,
+        )
+    except InvalidTransitionError as error:
+        raise _conflict(error) from error
     event_payload = _inspection_event_payload(inspection)
-    event_payload["reason"] = (payload.reason or "").strip()
+    event_payload["reason"] = payload.reason
     await emit_event(
         session,
         category=NotificationCategory.INSPECTION_REJECTED,
@@ -4299,9 +4349,19 @@ async def _get_inspection_or_404(
     session: AsyncSession,
     inspection_id: str,
     principal: Principal,
+    *,
+    lock: bool = False,
 ) -> Inspection:
+    """The inspection as this principal may see it.
+
+    ``lock`` takes a row lock on the inspection (only it, not the joined asset or
+    customer), so two transitions of the same inspection run one after the other and
+    the second sees the first's result instead of both acting on the state they read.
+    """
     statement = _inspection_statement().where(Inspection.id == inspection_id)
     statement = _apply_asset_scope(statement, principal)
+    if lock:
+        statement = statement.with_for_update(of=Inspection)
     if is_inspector_scoped(principal):
         statement = statement.where(
             Inspection.booking_id.in_(assigned_bookings(principal)),
@@ -4608,9 +4668,11 @@ def _inspection_read(inspection: Inspection) -> InspectionRead:
         result=inspection.result,
         inspector_user_id=inspection.inspector_user_id,
         reviewer_user_id=inspection.reviewer_user_id,
+        started_at=inspection.started_at,
         submitted_at=inspection.submitted_at,
         approved_at=inspection.approved_at,
         rejected_at=inspection.rejected_at,
+        rejection_reason=inspection.rejection_reason,
         asset=InspectionAssetSummary(
             id=inspection.asset.id,
             asset_number=inspection.asset.asset_number,
@@ -5158,7 +5220,9 @@ async def _reassign_draft_booking_inspections(
         await session.scalars(
             select(Inspection).where(
                 Inspection.booking_id == booking.id,
-                Inspection.status == InspectionStatus.DRAFT.value,
+                Inspection.status.in_(
+                    [InspectionStatus.DRAFT.value, InspectionStatus.IN_PROGRESS.value]
+                ),
                 Inspection.deleted_at.is_(None),
             )
         )

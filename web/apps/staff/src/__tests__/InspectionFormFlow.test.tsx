@@ -171,7 +171,7 @@ describe("new inspection (staff)", () => {
   });
 });
 
-function savedInspection(state: InspectionFormState, status = "DRAFT"): InspectionRecord {
+function savedInspection(state: InspectionFormState, status = "IN_PROGRESS"): InspectionRecord {
   const built = buildValues(state)!;
   return {
     id: "insp-1",
@@ -215,8 +215,11 @@ function renderDetail(inspection: InspectionRecord, extra: Partial<React.Compone
     canWrite: true,
     inspection,
     onApprove: vi.fn().mockResolvedValue(undefined),
+    onBeginRework: vi.fn().mockResolvedValue(undefined),
     onClose: vi.fn(),
+    onReject: vi.fn().mockResolvedValue(undefined),
     onSaveDraft: vi.fn().mockResolvedValue(undefined),
+    onStart: vi.fn().mockResolvedValue(undefined),
     onSubmit: vi.fn().mockResolvedValue(undefined),
     ...extra
   };
@@ -238,7 +241,7 @@ describe("saved inspection (staff)", () => {
     for (const { label } of CONDITION_CHECKS) expect(field(label)).toHaveValue("PASS");
   });
 
-  it("saves edits to a draft and submits only once the whole form is filled", async () => {
+  it("saves edits in progress and submits only once the whole form is filled", async () => {
     const user = userEvent.setup();
     const partial = { ...completeState, ohmsTotal: "", certificateResult: "" as const };
     const props = renderDetail(savedInspection(partial));
@@ -254,7 +257,7 @@ describe("saved inspection (staff)", () => {
     expect(gap).toHaveTextContent(/still needed.*Certificate result.*Ohms total|still needed.*Ohms total.*Certificate result/i);
     // Focus moves to the notice in a deferred step after it renders.
     await waitFor(() => expect(gap).toHaveFocus());
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Save progress" }));
     expect(props.onSaveDraft).toHaveBeenCalledTimes(1);
 
     await user.type(field("Ohms total"), "0.3");
