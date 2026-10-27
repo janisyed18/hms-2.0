@@ -22,12 +22,12 @@ afterEach(() => {
 
 describe("role navigation", () => {
   it.each([
-    ["SUPER_ADMIN", ["dashboard", "analytics", "customers", "assets", "products", "reference", "scheduling", "inspections", "certificates", "retest", "sync", "audit", "users", "devices"]],
-    ["HMS_ADMIN", ["dashboard", "analytics", "customers", "assets", "products", "reference", "scheduling", "inspections", "certificates", "retest", "audit", "users", "devices"]],
-    ["INSPECTOR", ["dashboard", "customers", "assets", "scheduling", "inspections", "retest", "sync"]],
-    ["ASSEMBLY", ["dashboard", "customers", "assets", "retest"]],
-    ["REVIEWER", ["dashboard", "customers", "assets", "inspections", "certificates", "retest"]],
-    ["CUSTOMER_USER", ["dashboard", "customers", "assets", "inspections", "certificates", "retest"]]
+    ["SUPER_ADMIN", ["dashboard", "analytics", "customers", "assets", "products", "reference", "scheduling", "inspections", "certificates", "retest", "sync", "audit", "users", "devices", "notifications"]],
+    ["HMS_ADMIN", ["dashboard", "analytics", "customers", "assets", "products", "reference", "scheduling", "inspections", "certificates", "retest", "audit", "users", "devices", "notifications"]],
+    ["INSPECTOR", ["dashboard", "customers", "assets", "scheduling", "inspections", "retest", "sync", "notifications"]],
+    ["ASSEMBLY", ["dashboard", "customers", "assets", "retest", "notifications"]],
+    ["REVIEWER", ["dashboard", "customers", "assets", "inspections", "certificates", "retest", "notifications"]],
+    ["CUSTOMER_USER", ["dashboard", "customers", "assets", "inspections", "certificates", "retest", "notifications"]]
   ] as const)("shows the approved %s workspace", (role, expected) => {
     expect(modulesForSession(session(role))).toEqual(expected);
   });
@@ -45,7 +45,8 @@ describe("role navigation", () => {
       "inspections",
       "certificates",
       "retest",
-      "sync"
+      "sync",
+      "notifications"
     ]);
   });
 

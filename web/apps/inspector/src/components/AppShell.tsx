@@ -14,6 +14,8 @@ interface AppShellProps {
   queuedCount: number;
   sourceLabel: string;
   children: ReactNode;
+  /** Controls placed at the end of the status area (the notification bell). */
+  headerActions?: ReactNode;
   onNavigate: (view: InspectorView) => void;
 }
 
@@ -34,6 +36,7 @@ export function AppShell({
   queuedCount,
   sourceLabel,
   children,
+  headerActions,
   onNavigate
 }: AppShellProps) {
   return (
@@ -64,6 +67,7 @@ export function AppShell({
             <RefreshCw aria-hidden="true" size={14} />
             {queuedCount} queued
           </span>
+          {headerActions}
         </div>
       </header>
 

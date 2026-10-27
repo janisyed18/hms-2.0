@@ -100,7 +100,7 @@ describe("global search", () => {
     const user = userEvent.setup();
     const { onSearchRecordOpen } = renderSearch();
 
-    await waitFor(() => expect(listNotifications).toHaveBeenCalledWith());
+    await waitFor(() => expect(listNotifications).toHaveBeenCalledWith({ limit: 12 }));
 
     const input = screen.getByRole("combobox", { name: "Global search" });
     await user.type(input, "cust");

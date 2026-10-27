@@ -90,6 +90,9 @@ export interface NotificationRecord {
   body: string;
   customerId: string | null;
   assetId: string | null;
+  /** What it is about, from the event: "inspection", "asset", "inspection_booking", ... */
+  subjectType: string | null;
+  subjectId: string | null;
   createdAt: string;
   readAt: string | null;
 }

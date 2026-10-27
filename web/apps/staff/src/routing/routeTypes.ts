@@ -15,7 +15,8 @@ export const STAFF_VIEWS = [
   "sync",
   "audit",
   "users",
-  "devices"
+  "devices",
+  "notifications"
 ] as const;
 
 export const PORTAL_VIEWS = [

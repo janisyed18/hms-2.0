@@ -179,6 +179,37 @@ describe("CustomerPortalWorkspace", () => {
     expect(await screen.findByText("Notification 13")).toBeInTheDocument();
   });
 
+  it("marks the organisation's notifications read with one call, then shows them read", async () => {
+    const calls: string[] = [];
+    let unread = true;
+    const feed = () => Array.from({ length: 3 }, (_, index) => ({
+      id: `n${index + 1}`, category: "CERTIFICATE_ISSUED", tier: "IMPORTANT", subject: `Notice ${index + 1}`,
+      body: "Body", customer_id: "customer-a", asset_id: null, created_at: "2027-10-04T00:00:00Z",
+      read_at: unread ? null : "2027-10-04T01:00:00Z"
+    }));
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = new URL(String(url), "http://test");
+      if (requestUrl.pathname === "/api/v1/customers") {
+        return response({ total: 1, limit: 100, offset: 0, items: [customer("customer-a", "Customer A")] });
+      }
+      if (requestUrl.pathname === "/api/v1/notifications/me/read-all" && init?.method === "POST") {
+        calls.push(requestUrl.search);
+        unread = false;
+        return response({ updated: 3, unread_total: 0 });
+      }
+      if (requestUrl.pathname === "/api/v1/notifications/me") {
+        return response({ total: 3, unread_total: unread ? 3 : 0, limit: 100, offset: 0, items: feed() });
+      }
+      return response({ total: 0, limit: 100, offset: 0, items: [] });
+    }));
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="notifications" />);
+    await user.click(await screen.findByRole("button", { name: "Mark all read" }));
+    await waitFor(() => expect(screen.getAllByText("Read")).toHaveLength(3));
+    expect(calls).toEqual(["?customer_id=customer-a"]); // one call, scoped to the organisation in view
+    expect(screen.getByRole("button", { name: "Mark all read" })).toBeDisabled();
+  });
+
   it("keeps approved booking location and assets fixed and renders the recorded site-local appointment", async () => {
     const booking = {
       id: "booking-1",

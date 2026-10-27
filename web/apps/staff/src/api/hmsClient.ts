@@ -193,6 +193,8 @@ interface ApiNotification {
   body: string;
   customer_id: string | null;
   asset_id: string | null;
+  subject_type?: string | null;
+  subject_id?: string | null;
   created_at: string;
   read_at: string | null;
 }
@@ -926,6 +928,8 @@ function toNotification(notification: ApiNotification): NotificationRecord {
     body: notification.body,
     customerId: notification.customer_id,
     assetId: notification.asset_id,
+    subjectType: notification.subject_type ?? null,
+    subjectId: notification.subject_id ?? null,
     createdAt: notification.created_at,
     readAt: notification.read_at
   };
@@ -1645,6 +1649,18 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         unreadTotal: response.data.unread_total,
         items: response.data.items.map(toNotification)
       };
+    },
+
+    /** Marks every unread in-app notification in scope read, in one call. */
+    async markAllNotificationsRead(
+      readOptions: { customerId?: string } = {}
+    ): Promise<{ updated: number; unreadTotal: number }> {
+      const response = await request<{ updated: number; unread_total: number }>(
+        "/api/v1/notifications/me/read-all",
+        { method: "POST" },
+        { customer_id: readOptions.customerId }
+      );
+      return { updated: response.data.updated, unreadTotal: response.data.unread_total };
     },
 
     async markNotificationRead(id: string): Promise<NotificationRecord> {

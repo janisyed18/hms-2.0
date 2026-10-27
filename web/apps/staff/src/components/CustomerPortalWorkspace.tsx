@@ -258,7 +258,7 @@ export function CustomerPortalWorkspace({
       {activeModule === "certificates" ? <Certificates certificates={data.certificates} /> : null}
       {activeModule === "retest" ? <Retests retests={data.retests} onModuleChange={onModuleChange} /> : null}
       {activeModule === "notifications" ? (
-        <Notifications notifications={data.notifications} onChanged={loadCustomerData} />
+        <Notifications customerId={customerId} notifications={data.notifications} onChanged={loadCustomerData} />
       ) : null}
       <p className="customer-portal-session">Signed in as {session.displayName}.</p>
     </section>
@@ -328,7 +328,7 @@ function Retests({ retests, onModuleChange }: { retests: RetestScheduleRecord[];
   return <section className="portal-panel"><h2>Retest schedule</h2>{retests.length === 0 ? <p>No retests are scheduled.</p> : <ul className="portal-list">{retests.map((retest) => <li key={retest.id}><strong>{retest.asset.assetNumber}</strong><span>{retest.status} · Due {formatDate(retest.dueAt)}</span><span className="portal-actions"><button type="button" onClick={() => onModuleChange("assets")}>View asset</button><button type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
 }
 
-function Notifications({ notifications, onChanged }: { notifications: NotificationRecord[]; onChanged: () => Promise<void> }) {
+function Notifications({ customerId, notifications, onChanged }: { customerId: string | null; notifications: NotificationRecord[]; onChanged: () => Promise<void> }) {
   const [pending, setPending] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ id: string; message: string } | null>(null);
   // Marking read is routine, so success is shown by the item itself reading "Read": no banner per click.
@@ -349,6 +349,25 @@ function Notifications({ notifications, onChanged }: { notifications: Notificati
       setPending(null);
     }
   }
-  return <section className="portal-panel"><h2>Notifications</h2>{notifications.length === 0 ? <p>No notifications for this organisation.</p> : <ul className="portal-list">{notifications.map((notification) => <li key={notification.id}><strong>{notification.subject ?? notification.category}</strong><span>{notification.body}</span><span>{formatDateTime(notification.createdAt)}</span>{notification.readAt ? <span>Read</span> : <button className="secondary-button" disabled={pending !== null} type="button" onClick={() => void markRead(notification)}>{pending === notification.id ? "Marking…" : "Mark as read"}</button>}{failure?.id === notification.id ? <span className="portal-error" role="alert">{failure.message}</span> : null}</li>)}</ul>}</section>;
+  async function markAllRead() {
+    if (pending) return;
+    setPending("all");
+    setFailure(null);
+    try {
+      // One call for the organisation in view, not one per notification.
+      await createHmsClient().markAllNotificationsRead(customerId ? { customerId } : {});
+    } catch (reason) {
+      setFailure({ id: "all", message: friendlyApiError(reason, { fallback: "Notifications could not be marked as read. Try again." }).message });
+      setPending(null);
+      return;
+    }
+    try {
+      await onChanged();
+    } finally {
+      setPending(null);
+    }
+  }
+  const unread = notifications.filter((notification) => !notification.readAt).length;
+  return <section className="portal-panel"><h2>Notifications</h2>{notifications.length > 0 ? <p><button className="secondary-button" disabled={pending !== null || unread === 0} type="button" onClick={() => void markAllRead()}>{pending === "all" ? "Marking…" : "Mark all read"}</button>{failure?.id === "all" ? <span className="portal-error" role="alert">{failure.message}</span> : null}</p> : null}{notifications.length === 0 ? <p>No notifications for this organisation.</p> : <ul className="portal-list">{notifications.map((notification) => <li key={notification.id}><strong>{notification.subject ?? notification.category}</strong><span>{notification.body}</span><span>{formatDateTime(notification.createdAt)}</span>{notification.readAt ? <span>Read</span> : <button className="secondary-button" disabled={pending !== null} type="button" onClick={() => void markRead(notification)}>{pending === notification.id ? "Marking…" : "Mark as read"}</button>}{failure?.id === notification.id ? <span className="portal-error" role="alert">{failure.message}</span> : null}</li>)}</ul>}</section>;
 }
 

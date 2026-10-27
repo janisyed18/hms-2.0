@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "./components/AppShell";
+import { NotificationBell } from "./components/NotificationBell";
 import { InspectionCapture } from "./components/InspectionCapture";
 import { ScanUnavailable } from "./components/ScanUnavailable";
 import { SyncQueue } from "./components/SyncQueue";
 import { UnsavedChangesDialog } from "./components/UnsavedChangesDialog";
 import { WorkQueue } from "./components/WorkQueue";
 import { useInspectorWorkspace, type InspectorView } from "./hooks/useInspectorWorkspace";
+import { useInspectorNotifications } from "./notifications/useInspectorNotifications";
+import type { NotificationItem } from "./domain/types";
 import {
   InspectorAuthGate,
   type BrowserAuthClient
@@ -27,6 +30,7 @@ export default function App({ authClient, initialAccessToken }: AppProps = {}) {
 
 function InspectorWorkspace({ userId }: { userId: string }) {
   const workspace = useInspectorWorkspace(userId);
+  const notifications = useInspectorNotifications({ isOnline: workspace.isOnline, userId });
   const sourceLabel = workspace.lastSyncLabel;
 
   // A capture holding edits that never reached the outbox is protected: leaving it (another view, the
@@ -59,6 +63,20 @@ function InspectorWorkspace({ userId }: { userId: string }) {
 
   const captureKey =
     workspace.selectedWorkItem?.workContext?.assignment_id ?? workspace.selectedWorkItem?.id ?? "none";
+
+  // A notification opens the assignment it is about if this device holds it; otherwise it lands in
+  // Work, and refreshes the assignments when it can. No other deep link is invented.
+  const openNotification = (notification: NotificationItem) =>
+    leave(() => {
+      const assetId = notification.subjectType === "asset" ? notification.subjectId : notification.assetId;
+      const match = assetId ? workspace.workItems.find((item) => item.assetId === assetId) : undefined;
+      if (match) {
+        workspace.openWorkItem(match);
+        return;
+      }
+      workspace.setView("work");
+      if (workspace.isOnline) void workspace.pullChanges();
+    });
 
   let content;
 
@@ -110,6 +128,9 @@ function InspectorWorkspace({ userId }: { userId: string }) {
 
   return (
     <AppShell
+      headerActions={
+        <NotificationBell feed={notifications} isOnline={workspace.isOnline} onOpen={openNotification} />
+      }
       isOnline={workspace.isOnline}
       onNavigate={navigate}
       queuedCount={workspace.queuedCount}

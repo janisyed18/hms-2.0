@@ -25,6 +25,7 @@ from hms_backend.app.api.schemas import (
     NotificationPreferenceListResponse,
     NotificationPreferenceUpdate,
     NotificationRead,
+    NotificationReadAllResponse,
     PhoneVerificationConfirm,
     PhoneVerificationRequest,
 )
@@ -44,6 +45,7 @@ from hms_backend.app.modules.notifications.enums import (
 from hms_backend.app.modules.notifications.models import (
     Notification,
     NotificationPreference,
+    OutboxEvent,
     PhoneVerification,
 )
 from hms_backend.app.modules.notifications.outbox import defer_receipt
@@ -338,7 +340,65 @@ async def my_notifications(
             )
         )
     ) or 0
-    return await _paginate(session, base, limit, offset, unread_total=unread_total)
+    return await _paginate(
+        session, base, limit, offset, unread_total=unread_total, with_subjects=True
+    )
+
+
+# At most this many are marked in one call; a feed is never that deep, and a bound
+# keeps the request short. Anything left is still unread, and a second call takes the
+# next batch.
+_READ_ALL_LIMIT = 500
+
+
+@router.post(
+    "/notifications/me/read-all", response_model=NotificationReadAllResponse
+)
+async def mark_all_notifications_read(
+    session: SessionDep,
+    principal: PrincipalDep,
+    customer_id: str | None = None,
+) -> NotificationReadAllResponse:
+    """Mark the caller's own unread in-app notifications read, in their visible scope.
+
+    Idempotent: a second call finds nothing unread and changes nothing. Another
+    person's notification, another channel, and (for a customer user) another
+    customer's, are never in the selection, so they cannot be touched however the
+    request is shaped.
+    """
+    user = await _current_user(session, principal)
+    scoped = _scope_customer_notifications(
+        select(Notification).where(
+            Notification.recipient_type == _USER,
+            Notification.recipient_id == user.id,
+            Notification.channel == NotificationChannel.IN_APP.value,
+            Notification.deleted_at.is_(None),
+        ),
+        principal,
+        customer_id,
+    )
+    unread = (
+        await session.scalars(
+            scoped.where(Notification.read_at.is_(None))
+            .order_by(Notification.created_at.desc())
+            .limit(_READ_ALL_LIMIT)
+            # A second overlapping call waits for the first, then finds these read: each
+            # notification is counted as changed once.
+            .with_for_update(of=Notification)
+        )
+    ).all()
+    now = datetime.now(UTC)
+    for notification in unread:
+        notification.read_at = now
+    await session.commit()
+    remaining = (
+        await session.scalar(
+            select(func.count()).select_from(
+                scoped.where(Notification.read_at.is_(None)).subquery()
+            )
+        )
+    ) or 0
+    return NotificationReadAllResponse(updated=len(unread), unread_total=remaining)
 
 
 @router.post("/notifications/{notification_id}/read", response_model=NotificationRead)
@@ -409,6 +469,7 @@ async def _paginate(
     offset: int,
     *,
     unread_total: int = 0,
+    with_subjects: bool = False,
 ) -> NotificationListResponse:
     total = (
         await session.scalar(
@@ -420,12 +481,20 @@ async def _paginate(
             base.order_by(Notification.created_at.desc()).offset(offset).limit(limit)
         )
     ).all()
+    subjects: dict[str, tuple[str, str]] = {}
+    if with_subjects and rows:
+        events = await session.execute(
+            select(
+                OutboxEvent.id, OutboxEvent.aggregate_type, OutboxEvent.aggregate_id
+            ).where(OutboxEvent.id.in_({n.event_ref for n in rows}))
+        )
+        subjects = {row.id: (row.aggregate_type, row.aggregate_id) for row in events}
     return NotificationListResponse(
         total=total,
         unread_total=unread_total,
         limit=limit,
         offset=offset,
-        items=[_read(n) for n in rows],
+        items=[_read(n, subjects.get(n.event_ref)) for n in rows],
     )
 
 
@@ -527,7 +596,9 @@ async def delivery_webhook(
     return {"updated": updated, "deferred": deferred}
 
 
-def _read(n: Notification) -> NotificationRead:
+def _read(
+    n: Notification, subject: tuple[str, str] | None = None
+) -> NotificationRead:
     return NotificationRead(
         id=n.id,
         event_ref=n.event_ref,
@@ -548,4 +619,6 @@ def _read(n: Notification) -> NotificationRead:
         created_at=n.created_at,
         sent_at=n.sent_at,
         read_at=n.read_at,
+        subject_type=subject[0] if subject else None,
+        subject_id=subject[1] if subject else None,
     )
