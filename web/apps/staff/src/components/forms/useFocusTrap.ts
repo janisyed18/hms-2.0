@@ -6,10 +6,10 @@ const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:
  * Keeps Tab inside an open form, moves focus into it when it opens (unless something inside already
  * has it), and returns focus to whatever opened it when it closes.
  */
-export function useFocusTrap(container: RefObject<HTMLElement | null>) {
+export function useFocusTrap(container: RefObject<HTMLElement | null>, active = true) {
   useEffect(() => {
     const root = container.current;
-    if (!root) return;
+    if (!active || !root) return;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (!root.contains(document.activeElement)) {
       (root.querySelector<HTMLElement>("[data-field]") ?? root.querySelector<HTMLElement>(FOCUSABLE))?.focus();
@@ -33,5 +33,5 @@ export function useFocusTrap(container: RefObject<HTMLElement | null>) {
       root.removeEventListener("keydown", onKeyDown);
       if (opener && document.contains(opener)) opener.focus();
     };
-  }, [container]);
+  }, [container, active]);
 }

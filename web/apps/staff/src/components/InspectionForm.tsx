@@ -1,11 +1,13 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { useRef, useState, type FormEvent } from "react";
 
 import type { AssetRecord, InspectionCreateValues, InspectionType } from "../domain/types";
-import { ActionButton } from "./interaction/ActionButton";
-import { ActionNotice } from "./interaction/ActionNotice";
-import { Field, RequiredNote } from "./interaction/FormPrimitives";
-import { friendlyApiError } from "./interaction/friendlyApiError";
+import { FormSection } from "./forms/FormLayout";
+import { FormShell } from "./forms/FormShell";
+import { useDirtyTracker } from "./forms/useDirtyTracker";
+import { useFormSeed } from "./forms/useFormSeed";
+import { useFormSubmit } from "./forms/useFormSubmit";
+import { Field } from "./interaction/FormPrimitives";
+import type { FieldErrors } from "./interaction/useFormErrors";
 import { assetLabel } from "../utils/identity";
 
 interface InspectionFormProps {
@@ -15,6 +17,8 @@ interface InspectionFormProps {
   onSubmit: (values: InspectionCreateValues) => Promise<void>;
 }
 
+const ORDER = ["assetId"];
+
 export function InspectionForm({
   assetOptions,
   open,
@@ -23,109 +27,100 @@ export function InspectionForm({
 }: InspectionFormProps) {
   const [assetId, setAssetId] = useState("");
   const [inspectionType, setInspectionType] = useState<InspectionType>("SERVICE");
-  const [isSubmitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [assetError, setAssetError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
-  const lock = useRef(false);
-
-  useEffect(() => {
-    if (!open) return;
-    // A new inspection starts with no asset chosen.
-    setAssetId("");
-    setInspectionType("SERVICE");
-    setError(null);
-    setAssetError(null);
-  }, [open]);
+  const { dirty, markClean, touch } = useDirtyTracker(JSON.stringify([assetId, inspectionType]));
+  const seed = useFormSeed({
+    dirty,
+    sourceKey: open ? "new" : null,
+    sourceSignature: "",
+    seed: () => {
+      // A new inspection starts with no asset chosen.
+      setAssetId("");
+      setInspectionType("SERVICE");
+      submission.reset();
+      markClean();
+    }
+  });
+  const submission = useFormSubmit({
+    fallback: "The inspection could not be created. Try again.",
+    formRef,
+    isCurrent: seed.isCurrent,
+    order: ORDER,
+    session: seed.current
+  });
+  const { clearError, errors } = submission;
 
   if (!open) {
     return null;
   }
 
-  function chooseAsset(nextAssetId: string) {
-    setAssetId(nextAssetId);
-    setError(null);
-    setAssetError(null);
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (lock.current) return;
-    setError(null);
-    if (!assetId) {
-      setAssetError("Select the asset being inspected.");
-      formRef.current?.querySelector<HTMLElement>('[data-field="assetId"]')?.focus();
-      return;
-    }
-    lock.current = true;
-    setSubmitting(true);
-    try {
-      await onSubmit({
+    const found: FieldErrors = {};
+    if (!assetId) found.assetId = "Select the asset being inspected.";
+    if (!submission.validate(found)) return;
+    await submission.run(
+      () => onSubmit({
         assetId,
         inspectionType,
         // Nothing is measured before the inspection is started, so a new one carries no
         // result or pressure test; those are recorded in the inspection once it is in progress.
         result: null,
         pressureTest: null
-      });
-    } catch (reason: unknown) {
-      setError(friendlyApiError(reason, { fallback: "The inspection could not be created. Try again." }).message);
-      window.setTimeout(() => formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus(), 0);
-    } finally {
-      lock.current = false;
-      setSubmitting(false);
-    }
+      }),
+      markClean
+    );
   }
 
   return (
     <div className="drawer-backdrop">
-      <form className="customer-drawer" noValidate onSubmit={handleSubmit} ref={formRef}>
-        <div className="drawer-header">
-          <div>
-            <h2>Add Inspection</h2>
-            <p>Create a draft inspection. Open it and start it to record the pressure test, measurements and condition checks.</p>
-          </div>
-          <button
-            aria-label="Close form"
-            className="icon-button light"
-            onClick={onClose}
-            type="button"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        {error ? <ActionNotice kind="error" title="Inspection not created">{error}</ActionNotice> : null}
-        <RequiredNote />
-        <Field error={assetError ?? undefined} label="Asset" name="assetId" required>
-          {(props) => (
-            <select {...props} aria-label="Inspection asset" value={assetId} onChange={(event) => chooseAsset(event.target.value)}>
-              <option value="">Select an asset</option>
-              {assetOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {assetLabel(option)} - {option.customer.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </Field>
-        <label>
-          <span>Inspection type</span>
-          <select
-            aria-label="Inspection type"
-            value={inspectionType}
-            onChange={(event) =>
-              setInspectionType(event.target.value as InspectionType)
-            }
-          >
-            <option value="SERVICE">Service</option>
-            <option value="NEW_ASSET">New asset</option>
-          </select>
-        </label>
-        <div className="drawer-actions">
-          <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
-          <ActionButton pending={isSubmitting} pendingLabel="Creating…" type="submit" variant="primary">Create inspection</ActionButton>
-        </div>
-      </form>
+      <FormShell
+        description="Create a draft inspection. Open it and start it to record the pressure test, measurements and condition checks."
+        dirty={dirty}
+        errorSummaryTitle="Inspection not created"
+        errors={errors}
+        fieldLabels={{ assetId: "Asset" }}
+        fieldOrder={ORDER}
+        formClassName="customer-drawer"
+        formRef={formRef}
+        headerClassName="drawer-header"
+        isSubmitting={submission.isSubmitting}
+        onClose={onClose}
+        onEdit={touch}
+        onSubmit={handleSubmit}
+        pendingLabel="Creating…"
+        submitError={submission.submitError}
+        submitLabel="Create inspection"
+        title="Add Inspection"
+      >
+        <FormSection>
+          <Field error={errors.assetId} label="Asset" name="assetId" required>
+            {(props) => (
+              <select {...props} aria-label="Inspection asset" value={assetId} onChange={(event) => { setAssetId(event.target.value); clearError("assetId"); }}>
+                <option value="">Select an asset</option>
+                {assetOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {assetLabel(option)} - {option.customer.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <Field label="Inspection type" name="inspectionType">
+            {(props) => (
+              <select
+                {...props}
+                aria-label="Inspection type"
+                value={inspectionType}
+                onChange={(event) => setInspectionType(event.target.value as InspectionType)}
+              >
+                <option value="SERVICE">Service</option>
+                <option value="NEW_ASSET">New asset</option>
+              </select>
+            )}
+          </Field>
+        </FormSection>
+      </FormShell>
     </div>
   );
 }

@@ -1,11 +1,12 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { useRef, useState, type FormEvent } from "react";
 
-import { ActionButton } from "./interaction/ActionButton";
-import { ActionNotice } from "./interaction/ActionNotice";
-import { Field, RequiredNote } from "./interaction/FormPrimitives";
-import { friendlyApiError } from "./interaction/friendlyApiError";
-import { focusFirstInvalid, isBlank, useFormErrors, type FieldErrors } from "./interaction/useFormErrors";
+import { FormSection } from "./forms/FormLayout";
+import { FormShell } from "./forms/FormShell";
+import { useDirtyTracker } from "./forms/useDirtyTracker";
+import { useFormSeed } from "./forms/useFormSeed";
+import { useFormSubmit } from "./forms/useFormSubmit";
+import { Field } from "./interaction/FormPrimitives";
+import { isBlank, type FieldErrors } from "./interaction/useFormErrors";
 import type {
   ReferenceCatalogFormValues,
   ReferenceCatalogRecord
@@ -19,6 +20,9 @@ interface ReferenceFormProps {
   entityLabel?: string;
 }
 
+const ORDER = ["code", "name"];
+const FIELD_MAP = { code: "code", name: "name" };
+
 export function ReferenceForm({
   open,
   standard,
@@ -28,83 +32,72 @@ export function ReferenceForm({
 }: ReferenceFormProps) {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
-  const [isSubmitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const { errors, setErrors, clearError, clearAll } = useFormErrors();
   const formRef = useRef<HTMLFormElement>(null);
-  const submitLock = useRef(false);
-
-  useEffect(() => {
-    if (!open) {
-      return;
+  const { dirty, markClean, touch } = useDirtyTracker(JSON.stringify([code, name]));
+  const seed = useFormSeed({
+    dirty,
+    sourceKey: open ? (standard?.id ?? "new") : null,
+    sourceSignature: JSON.stringify(standard ?? null),
+    seed: () => {
+      setCode(standard?.code ?? "");
+      setName(standard?.name ?? "");
+      submission.reset();
+      markClean();
     }
-    setCode(standard?.code ?? "");
-    setName(standard?.name ?? "");
-    setSubmitError(null);
-    clearAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, standard]);
+  });
+  const submission = useFormSubmit({
+    fallback: `The ${entityLabel.toLowerCase()} could not be saved. Try again.`,
+    fieldMap: FIELD_MAP,
+    formRef,
+    isCurrent: seed.isCurrent,
+    order: ORDER,
+    session: seed.current
+  });
+  const { clearError, errors } = submission;
 
   if (!open) {
     return null;
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (submitLock.current) return;
-    setSubmitError(null);
     const found: FieldErrors = {};
     if (isBlank(code)) found.code = `Enter a ${entityLabel.toLowerCase()} code.`;
     if (isBlank(name)) found.name = `Enter a ${entityLabel.toLowerCase()} name.`;
-    setErrors(found);
-    if (Object.keys(found).length > 0) {
-      focusFirstInvalid(formRef.current, ["code", "name"], found);
-      return;
-    }
-    submitLock.current = true;
-    setSubmitting(true);
-    try {
-      await onSubmit({ code: code.trim(), name: name.trim() });
-    } catch (reason) {
-      const friendly = friendlyApiError(reason, { fallback: `The ${entityLabel.toLowerCase()} could not be saved. Try again.`, fieldMap: { code: "code", name: "name" } });
-      setErrors(friendly.fieldErrors);
-      setSubmitError(friendly.message);
-      window.setTimeout(() => {
-        if (!focusFirstInvalid(formRef.current, ["code", "name"], friendly.fieldErrors)) {
-          formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus();
-        }
-      }, 0);
-    } finally {
-      submitLock.current = false;
-      setSubmitting(false);
-    }
+    if (!submission.validate(found)) return;
+    await submission.run(() => onSubmit({ code: code.trim(), name: name.trim() }), markClean);
   }
 
   return (
     <div className="drawer-backdrop">
-      <form className="customer-drawer" noValidate onSubmit={handleSubmit} ref={formRef}>
-        <div className="drawer-header">
-          <div>
-            <h2>{standard ? `Edit ${entityLabel}` : `Add ${entityLabel}`}</h2>
-            <p>Controlled catalog data is available immediately to asset configuration.</p>
-          </div>
-          <button className="icon-button light" type="button" aria-label="Close form" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-        {submitError ? <ActionNotice kind="error" title={`${entityLabel} could not be saved`}>{submitError}</ActionNotice> : null}
-        <RequiredNote />
-        <Field error={errors.code} label={`${entityLabel} code`} name="code" required>
-          {(props) => <input {...props} aria-label={`${entityLabel} code`} value={code} onChange={(event) => { setCode(event.target.value.toUpperCase()); clearError("code"); }} />}
-        </Field>
-        <Field error={errors.name} label={`${entityLabel} name`} name="name" required>
-          {(props) => <input {...props} aria-label={`${entityLabel} name`} value={name} onChange={(event) => { setName(event.target.value); clearError("name"); }} />}
-        </Field>
-        <div className="drawer-actions">
-          <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
-          <ActionButton pending={isSubmitting} pendingLabel="Saving…" type="submit" variant="primary">{`Save ${entityLabel.toLowerCase()}`}</ActionButton>
-        </div>
-      </form>
+      <FormShell
+        description="Controlled catalog data is available immediately to asset configuration."
+        dirty={dirty}
+        errorSummaryTitle={`${entityLabel} could not be saved`}
+        errors={errors}
+        fieldLabels={{ code: `${entityLabel} code`, name: `${entityLabel} name` }}
+        fieldOrder={ORDER}
+        formClassName="customer-drawer"
+        formRef={formRef}
+        headerClassName="drawer-header"
+        isSubmitting={submission.isSubmitting}
+        onClose={onClose}
+        onEdit={touch}
+        onSubmit={handleSubmit}
+        pendingLabel="Saving…"
+        submitError={submission.submitError}
+        submitLabel={`Save ${entityLabel.toLowerCase()}`}
+        title={standard ? `Edit ${entityLabel}` : `Add ${entityLabel}`}
+      >
+        <FormSection>
+          <Field error={errors.code} label={`${entityLabel} code`} name="code" required>
+            {(props) => <input {...props} aria-label={`${entityLabel} code`} value={code} onChange={(event) => { setCode(event.target.value.toUpperCase()); clearError("code"); }} />}
+          </Field>
+          <Field error={errors.name} label={`${entityLabel} name`} name="name" required>
+            {(props) => <input {...props} aria-label={`${entityLabel} name`} value={name} onChange={(event) => { setName(event.target.value); clearError("name"); }} />}
+          </Field>
+        </FormSection>
+      </FormShell>
     </div>
   );
 }

@@ -1,5 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
 import type {
@@ -10,10 +9,14 @@ import type {
   InspectionBookingRecord
 } from "../domain/types";
 import { assetLabel } from "../utils/identity";
-import { ActionButton } from "./interaction/ActionButton";
-import { ActionNotice } from "./interaction/ActionNotice";
-import { RequiredMark, RequiredNote } from "./interaction/FormPrimitives";
-import { friendlyApiError } from "./interaction/friendlyApiError";
+import { FormSection } from "./forms/FormLayout";
+import { FormShell } from "./forms/FormShell";
+import { useDirtyTracker } from "./forms/useDirtyTracker";
+import { useFormSeed } from "./forms/useFormSeed";
+import { useFormSubmit } from "./forms/useFormSubmit";
+import { Field, RequiredMark } from "./interaction/FormPrimitives";
+
+const ERROR_OPTIONS = { conflictNeedsRefresh: true };
 
 interface InspectionBookingFormProps {
   assetOptions: AssetRecord[];
@@ -81,10 +84,7 @@ export function InspectionBookingForm({
   const [isLoadingAvailability, setLoadingAvailability] = useState(false);
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [additionalInformation, setAdditionalInformation] = useState("");
-  const [isSubmitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
-  const submitLock = useRef(false);
   const availableAssets = useMemo(
     () => assetOptions.filter((asset) => asset.location?.id === locationId),
     [assetOptions, locationId]
@@ -104,22 +104,37 @@ export function InspectionBookingForm({
   // Reset only when the form opens or its subject changes. Depending on the option
   // lists would wipe the user's choices whenever the workspace refreshes them.
   const rescheduleKey = rescheduleBooking?.id ?? null;
-  useEffect(() => {
-    if (!open) return;
-    // A new booking starts blank: the user must choose the location and the assets.
-    // A reschedule keeps the booking's own location and assets.
-    setLocationId(rescheduleBooking ? rescheduleBooking.location.id : "");
-    setAssetIds(rescheduleBooking ? rescheduleBooking.assets.map((asset) => asset.id) : []);
-    setBookingDate(rescheduleBooking ? "" : initialDate);
-    setAvailability({ key: "", slots: [] });
-    setChosenQuoteId("");
-    setInspectorUserId("");
-    setLoadingAvailability(false);
-    setAvailabilityError(null);
-    setAdditionalInformation("");
-    setSubmitError(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, rescheduleKey]);
+  const { dirty, markClean, touch } = useDirtyTracker(
+    JSON.stringify([locationId, assetIds, bookingDate, availabilityQuoteId, inspectorUserId, additionalInformation])
+  );
+  const seed = useFormSeed({
+    dirty,
+    sourceKey: open ? (rescheduleKey ?? "new") : null,
+    sourceSignature: "",
+    seed: () => {
+      // A new booking starts blank: the user must choose the location and the assets.
+      // A reschedule keeps the booking's own location and assets.
+      setLocationId(rescheduleBooking ? rescheduleBooking.location.id : "");
+      setAssetIds(rescheduleBooking ? rescheduleBooking.assets.map((asset) => asset.id) : []);
+      setBookingDate(rescheduleBooking ? "" : initialDate);
+      setAvailability({ key: "", slots: [] });
+      setChosenQuoteId("");
+      setInspectorUserId("");
+      setLoadingAvailability(false);
+      setAvailabilityError(null);
+      setAdditionalInformation("");
+      submission.reset();
+      markClean();
+    }
+  });
+  const submission = useFormSubmit({
+    errorOptions: ERROR_OPTIONS,
+    fallback: rescheduleBooking ? "The reschedule could not be requested. Try again." : "The booking could not be created. Try again.",
+    formRef,
+    isCurrent: seed.isCurrent,
+    order: [],
+    session: seed.current
+  });
 
   useEffect(() => {
     if (!open || !bookingDate || !customerId || !locationId) return;
@@ -177,184 +192,169 @@ export function InspectionBookingForm({
     );
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    // The submit button is not available until the choices are complete; a form submitted by the
+    // keyboard before then does nothing.
     if (!customerId || !locationId || assetIds.length === 0 || !availabilityQuoteId) return;
-    if (submitLock.current) return;
-    submitLock.current = true;
-    setSubmitting(true);
-    setSubmitError(null);
-    try {
-      if (rescheduleBooking && onReschedule) {
-        await onReschedule(rescheduleBooking.id, {
-          availabilityQuoteId,
-          reason: additionalInformation.trim() || null,
-          inspectorUserId: requiresInspector ? inspectorUserId : null
-        });
-      } else {
-        await onSubmit({
-          customerId,
-          locationId,
-          assetIds,
-          availabilityQuoteId,
-          additionalInformation: additionalInformation.trim() || null,
-        });
-      }
-    } catch (reason) {
+    await submission.run(
+      async () => {
+        if (rescheduleBooking && onReschedule) {
+          await onReschedule(rescheduleBooking.id, {
+            availabilityQuoteId,
+            reason: additionalInformation.trim() || null,
+            inspectorUserId: requiresInspector ? inspectorUserId : null
+          });
+        } else {
+          await onSubmit({
+            customerId,
+            locationId,
+            assetIds,
+            availabilityQuoteId,
+            additionalInformation: additionalInformation.trim() || null,
+          });
+        }
+      },
+      markClean,
       // Keep the chosen site, assets and date; a gone or taken time must be chosen again.
-      const friendly = friendlyApiError(reason, {
-        fallback: rescheduleBooking ? "The reschedule could not be requested. Try again." : "The booking could not be created. Try again.",
-        conflictNeedsRefresh: true
-      });
-      if (friendly.kind === "validation" || friendly.kind === "conflict" || friendly.kind === "missing") setChosenQuoteId("");
-      setSubmitError(friendly.message);
-      window.setTimeout(() => formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus(), 0);
-    } finally {
-      submitLock.current = false;
-      setSubmitting(false);
-    }
+      (failure) => {
+        if (failure.kind === "validation" || failure.kind === "conflict" || failure.kind === "missing") setChosenQuoteId("");
+      }
+    );
   }
 
+  const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: schedulingTimezone });
   return (
     <div className="drawer-backdrop">
-      <form className="customer-drawer inspection-booking-form" onSubmit={handleSubmit} ref={formRef}>
-        <div className="drawer-header">
-          <div>
-            <h2>{rescheduleBooking ? "Request reschedule" : "Book inspection"}</h2>
-            <p>{rescheduleBooking ? "Choose a new available time for this confirmed visit." : "Choose one location and the assets that need the same visit."}</p>
-          </div>
-          <button
-            aria-label="Close booking form"
-            className="icon-button light"
-            onClick={onClose}
-            type="button"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        {submitError ? <ActionNotice kind="error" title={rescheduleBooking ? "Reschedule not requested" : "Booking not created"}>{submitError}</ActionNotice> : null}
-        <RequiredNote />
-        <label>
-          <span>Location<RequiredMark /></span>
-          <select
-            aria-label="Booking location"
-            aria-required="true"
-            required
-            disabled={Boolean(rescheduleBooking)}
-            value={locationId}
-            onChange={(event) => updateLocation(event.target.value)}
-          >
-            {rescheduleBooking ? null : <option value="">Choose the location</option>}
-            {locations.map((location) => (
-              <option key={location.id} value={location.id}>
-                {location.label}
-              </option>
+      <FormShell
+        closeLabel="Close booking form"
+        description={rescheduleBooking ? "Choose a new available time for this confirmed visit." : "Choose one location and the assets that need the same visit."}
+        dirty={dirty}
+        errorSummaryTitle={rescheduleBooking ? "Reschedule not requested" : "Booking not created"}
+        errors={submission.errors}
+        fieldLabels={{}}
+        fieldOrder={[]}
+        formClassName="customer-drawer inspection-booking-form"
+        formRef={formRef}
+        headerClassName="drawer-header"
+        isSubmitting={submission.isSubmitting}
+        onClose={onClose}
+        onEdit={touch}
+        onSubmit={handleSubmit}
+        pendingLabel="Saving…"
+        submitDisabled={!locationId || assetIds.length === 0 || !availabilityQuoteId || (rescheduleBooking !== null && requiresInspector && !inspectorUserId)}
+        submitError={submission.submitError}
+        submitLabel={rescheduleBooking ? "Request reschedule" : "Create booking"}
+        title={rescheduleBooking ? "Request reschedule" : "Book inspection"}
+      >
+        <FormSection title="Where">
+          <Field label="Location" name="locationId" required>
+            {(props) => (
+              <select
+                {...props}
+                aria-label="Booking location"
+                disabled={Boolean(rescheduleBooking)}
+                value={locationId}
+                onChange={(event) => updateLocation(event.target.value)}
+              >
+                {rescheduleBooking ? null : <option value="">Choose the location</option>}
+                {locations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <fieldset className="booking-asset-list" disabled={Boolean(rescheduleBooking)}>
+            <legend>Assets<RequiredMark /></legend>
+            {!locationId ? <p className="field-hint">Choose a location to see its assets.</p> : null}
+            {locationId && assetChoices.length === 0 ? (
+              <p className="field-hint">No assets are assigned to this location.</p>
+            ) : null}
+            {assetChoices.map((asset) => (
+              <label key={asset.id} className="checkbox-field">
+                <input
+                  checked={assetIds.includes(asset.id)}
+                  onChange={() => toggleAsset(asset.id)}
+                  type="checkbox"
+                />
+                <span>{assetLabel(asset)}</span>
+              </label>
             ))}
-          </select>
-        </label>
-        <fieldset className="booking-asset-list" disabled={Boolean(rescheduleBooking)}>
-          <legend>Assets<RequiredMark /></legend>
-          {!locationId ? <p className="field-hint">Choose a location to see its assets.</p> : null}
-          {locationId && assetChoices.length === 0 ? (
-            <p className="field-hint">No assets are assigned to this location.</p>
-          ) : null}
-          {assetChoices.map((asset) => (
-            <label key={asset.id} className="checkbox-field">
+          </fieldset>
+        </FormSection>
+        <FormSection title="When">
+          <Field label="Preferred inspection date" name="bookingDate" required>
+            {(props) => (
               <input
-                checked={assetIds.includes(asset.id)}
-                onChange={() => toggleAsset(asset.id)}
-                type="checkbox"
+                {...props}
+                aria-label="Preferred inspection date"
+                disabled={!locationId}
+                type="date"
+                value={bookingDate}
+                onChange={(event) => setBookingDate(event.target.value)}
               />
-              <span>{assetLabel(asset)}</span>
-            </label>
-          ))}
-        </fieldset>
-        <label>
-          <span>Preferred inspection date<RequiredMark /></span>
-          <input
-            aria-label="Preferred inspection date"
-            aria-required="true"
-            disabled={!locationId}
-            required
-            type="date"
-            value={bookingDate}
-            onChange={(event) => setBookingDate(event.target.value)}
-          />
-        </label>
-        {bookingDate ? (
-          <label>
-            <span>Available time ({schedulingTimezone})<RequiredMark /></span>
-            <select
-              aria-label="Available inspection time"
-              aria-required="true"
-              disabled={isLoadingAvailability || availableSlots.length === 0}
-              required
-              value={availabilityQuoteId}
-              onChange={(event) => setChosenQuoteId(event.target.value)}
-            >
-              <option value="">
-                {isLoadingAvailability
-                  ? "Checking availability..."
-                  : availableSlots.length
-                    ? "Select a time"
-                    : "No times available"}
-              </option>
-              {availableSlots.map((slot) => (
-                <option key={slot.quoteId} value={slot.quoteId}>
-                  {new Intl.DateTimeFormat(undefined, {
-                    hour: "numeric",
-                    minute: "2-digit",
-                    timeZone: schedulingTimezone
-                  }).format(new Date(slot.startsAt))} - {new Intl.DateTimeFormat(undefined, {
-                    hour: "numeric",
-                    minute: "2-digit",
-                    timeZone: schedulingTimezone
-                  }).format(new Date(slot.endsAt))}
-                </option>
-              ))}
-            </select>
-            {availabilityError ? <small className="form-error">{availabilityError}</small> : null}
-          </label>
-        ) : null}
-        {rescheduleBooking && requiresInspector ? (
-          <label>
-            <span>Inspector<RequiredMark /></span>
-            <select
-              aria-label="Inspector for rescheduled inspection"
-              aria-required="true"
-              required
-              value={inspectorUserId}
-              onChange={(event) => setInspectorUserId(event.target.value)}
-            >
-              <option value="">Assign inspector</option>
-              {inspectors.map((inspector) => (
-                <option key={inspector.id} value={inspector.id}>{inspector.displayName}</option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-        <label>
-          <span>{rescheduleBooking ? "Reason for rescheduling" : "Additional information"}</span>
-          <textarea
-            aria-label="Additional inspection information"
-            rows={3}
-            value={additionalInformation}
-            onChange={(event) => setAdditionalInformation(event.target.value)}
-          />
-        </label>
-        <div className="drawer-actions">
-          <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
-          <ActionButton
-            disabled={!locationId || assetIds.length === 0 || !availabilityQuoteId || (rescheduleBooking !== null && requiresInspector && !inspectorUserId)}
-            pending={isSubmitting}
-            pendingLabel="Saving…"
-            type="submit"
-            variant="primary"
-          >
-            {rescheduleBooking ? "Request reschedule" : "Create booking"}
-          </ActionButton>
-        </div>
-      </form>
+            )}
+          </Field>
+          {bookingDate ? (
+            <Field error={availabilityError ?? undefined} label={`Available time (${schedulingTimezone})`} name="availabilityQuoteId" required>
+              {(props) => (
+                <select
+                  {...props}
+                  aria-label="Available inspection time"
+                  disabled={isLoadingAvailability || availableSlots.length === 0}
+                  value={availabilityQuoteId}
+                  onChange={(event) => setChosenQuoteId(event.target.value)}
+                >
+                  <option value="">
+                    {isLoadingAvailability
+                      ? "Checking availability..."
+                      : availableSlots.length
+                        ? "Select a time"
+                        : "No times available"}
+                  </option>
+                  {availableSlots.map((slot) => (
+                    <option key={slot.quoteId} value={slot.quoteId}>
+                      {timeFormat.format(new Date(slot.startsAt))} - {timeFormat.format(new Date(slot.endsAt))}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+          ) : null}
+        </FormSection>
+        <FormSection title="Details">
+          {rescheduleBooking && requiresInspector ? (
+            <Field label="Inspector" name="inspectorUserId" required>
+              {(props) => (
+                <select
+                  {...props}
+                  aria-label="Inspector for rescheduled inspection"
+                  value={inspectorUserId}
+                  onChange={(event) => setInspectorUserId(event.target.value)}
+                >
+                  <option value="">Assign inspector</option>
+                  {inspectors.map((inspector) => (
+                    <option key={inspector.id} value={inspector.id}>{inspector.displayName}</option>
+                  ))}
+                </select>
+              )}
+            </Field>
+          ) : null}
+          <Field label={rescheduleBooking ? "Reason for rescheduling" : "Additional information"} name="additionalInformation">
+            {(props) => (
+              <textarea
+                {...props}
+                aria-label="Additional inspection information"
+                rows={3}
+                value={additionalInformation}
+                onChange={(event) => setAdditionalInformation(event.target.value)}
+              />
+            )}
+          </Field>
+        </FormSection>
+      </FormShell>
     </div>
   );
 }
