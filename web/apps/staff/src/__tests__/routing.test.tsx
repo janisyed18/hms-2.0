@@ -11,6 +11,11 @@ const staff = (search: string) => parseRoute(search, "staff");
 const canonical = (search: string, surface: "staff" | "portal" = "staff") => serializeRoute(parseRoute(search, surface), surface);
 
 describe("parsing", () => {
+  it("restores the addressable My Work staff module", () => {
+    expect(staff("?view=my-work").view).toBe("my-work");
+    expect(canonical("?view=my-work")).toBe("?view=my-work");
+  });
+
   it("opens the dashboard for no query, an unknown view, or junk", () => {
     expect(staff("").view).toBe("dashboard");
     expect(staff("?view=nope").view).toBe("dashboard");

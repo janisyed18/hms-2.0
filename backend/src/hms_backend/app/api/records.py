@@ -78,6 +78,10 @@ from hms_backend.app.api.schemas import (
     LocationSummary,
     LookupListResponse,
     LookupRead,
+    MyWorkActionRead,
+    MyWorkItemRead,
+    MyWorkRead,
+    MyWorkSummaryRead,
     PpeRequirement,
     PressureTestRead,
     PressureTestWrite,
@@ -199,6 +203,7 @@ from hms_backend.app.modules.scheduling.models import (
     RetestSchedule,
     RetestScheduleStatus,
 )
+from hms_backend.app.modules.work.service import get_my_work
 
 router = APIRouter()
 
@@ -1457,6 +1462,55 @@ async def get_dashboard(
             )
             for inspection in review_items
         ],
+    )
+
+
+@router.get("/work/me", response_model=MyWorkRead)
+async def get_my_work_for_principal(
+    session: SessionDep,
+    principal: PrincipalDep,
+    limit: int = Query(default=50, ge=1, le=100),
+) -> MyWorkRead:
+    """The authenticated person's actionable work, resolved by existing workflows."""
+    _require_asset_read(principal)
+    result = await get_my_work(session, principal, limit=limit)
+    return MyWorkRead(
+        summary=MyWorkSummaryRead(
+            total=result.total,
+            urgent=result.urgent,
+            due_soon=result.due_soon,
+            normal=result.normal,
+        ),
+        items=[
+            MyWorkItemRead(
+                id=item.id,
+                kind=item.kind,
+                state=item.state,
+                priority=item.priority,
+                title=item.title,
+                summary=item.summary,
+                customer_id=item.customer_id,
+                customer_name=item.customer_name,
+                asset_id=item.asset_id,
+                asset_number=item.asset_number,
+                inspection_id=item.inspection_id,
+                booking_id=item.booking_id,
+                certificate_id=item.certificate_id,
+                due_at=item.due_at,
+                updated_at=item.updated_at,
+                next_action=MyWorkActionRead(
+                    code=item.next_action.code,
+                    label=item.next_action.label,
+                    target_type=item.next_action.target_type,
+                    target_id=item.next_action.target_id,
+                    inspection_id=item.next_action.inspection_id,
+                ),
+            )
+            for item in result.items
+        ],
+        limit=limit,
+        source_limit=result.source_limit,
+        source_limited=result.source_limited,
     )
 
 

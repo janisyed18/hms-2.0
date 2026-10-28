@@ -39,6 +39,41 @@ export interface DashboardRecord {
   awaitingReview: DashboardReviewRecord[];
 }
 
+export interface MyWorkAction {
+  code: string;
+  label: string;
+  targetType: "ASSET" | "SCHEDULING" | "INSPECTION" | "CERTIFICATES" | string;
+  targetId: string | null;
+  inspectionId: string | null;
+}
+
+export interface MyWorkItem {
+  id: string;
+  kind: string;
+  state: string;
+  priority: "URGENT" | "DUE_SOON" | "NORMAL" | string;
+  title: string;
+  summary: string;
+  customerId: string;
+  customerName: string;
+  assetId: string;
+  assetNumber: string;
+  inspectionId: string | null;
+  bookingId: string | null;
+  certificateId: string | null;
+  dueAt: string | null;
+  updatedAt: string;
+  nextAction: MyWorkAction;
+}
+
+export interface MyWorkRecord {
+  summary: { total: number; urgent: number; dueSoon: number; normal: number };
+  items: MyWorkItem[];
+  limit: number;
+  sourceLimit: number;
+  sourceLimited: boolean;
+}
+
 export interface AnalyticsCertificateCoverage {
   coveredAssets: number;
   coveragePercent: number;

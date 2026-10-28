@@ -22,12 +22,12 @@ afterEach(() => {
 
 describe("role navigation", () => {
   it.each([
-    ["SUPER_ADMIN", ["dashboard", "analytics", "customers", "assets", "products", "reference", "scheduling", "inspections", "certificates", "retest", "sync", "audit", "users", "devices", "notifications"]],
-    ["HMS_ADMIN", ["dashboard", "analytics", "customers", "assets", "products", "reference", "scheduling", "inspections", "certificates", "retest", "audit", "users", "devices", "notifications"]],
-    ["INSPECTOR", ["dashboard", "customers", "assets", "scheduling", "inspections", "retest", "sync", "notifications"]],
-    ["ASSEMBLY", ["dashboard", "customers", "assets", "retest", "notifications"]],
-    ["REVIEWER", ["dashboard", "customers", "assets", "inspections", "certificates", "retest", "notifications"]],
-    ["CUSTOMER_USER", ["dashboard", "customers", "assets", "inspections", "certificates", "retest", "notifications"]]
+    ["SUPER_ADMIN", ["dashboard", "my-work", "analytics", "customers", "assets", "products", "reference", "scheduling", "inspections", "certificates", "retest", "sync", "audit", "users", "devices", "notifications"]],
+    ["HMS_ADMIN", ["dashboard", "my-work", "analytics", "customers", "assets", "products", "reference", "scheduling", "inspections", "certificates", "retest", "audit", "users", "devices", "notifications"]],
+    ["INSPECTOR", ["dashboard", "my-work", "customers", "assets", "scheduling", "inspections", "retest", "sync", "notifications"]],
+    ["ASSEMBLY", ["dashboard", "my-work", "customers", "assets", "retest", "notifications"]],
+    ["REVIEWER", ["dashboard", "my-work", "customers", "assets", "inspections", "certificates", "retest", "notifications"]],
+    ["CUSTOMER_USER", ["dashboard", "my-work", "customers", "assets", "inspections", "certificates", "retest", "notifications"]]
   ] as const)("shows the approved %s workspace", (role, expected) => {
     expect(modulesForSession(session(role))).toEqual(expected);
   });
@@ -39,6 +39,7 @@ describe("role navigation", () => {
     };
     expect(modulesForSession(combined)).toEqual([
       "dashboard",
+      "my-work",
       "customers",
       "assets",
       "scheduling",
