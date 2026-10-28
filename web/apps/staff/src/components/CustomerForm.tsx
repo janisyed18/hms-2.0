@@ -1,11 +1,13 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
-import { Plus, X } from "lucide-react";
+import { useRef, useState, type FormEvent } from "react";
+import { Plus } from "lucide-react";
 
-import { ActionButton } from "./interaction/ActionButton";
-import { ActionNotice } from "./interaction/ActionNotice";
-import { Field, RequiredNote } from "./interaction/FormPrimitives";
-import { friendlyApiError } from "./interaction/friendlyApiError";
-import { focusFirstInvalid, isBlank, useFormErrors, type FieldErrors } from "./interaction/useFormErrors";
+import { FormSection } from "./forms/FormLayout";
+import { FormShell } from "./forms/FormShell";
+import { useDirtyTracker } from "./forms/useDirtyTracker";
+import { useFormSeed } from "./forms/useFormSeed";
+import { useFormSubmit } from "./forms/useFormSubmit";
+import { Field } from "./interaction/FormPrimitives";
+import { isBlank, type FieldErrors } from "./interaction/useFormErrors";
 import type { CustomerFormValues, CustomerRecord } from "../domain/types";
 
 const ppeRequirements = [
@@ -74,22 +76,40 @@ function valuesFor(customer: CustomerRecord | null): CustomerFormValues {
   };
 }
 
+const FIELD_MAP = { name: "name" };
+
+/** Field keys, in form order: "name", then per location "loc0.name", "loc0.contactName"... */
+function fieldOrder(locationCount: number): string[] {
+  const order = ["name"];
+  for (let index = 0; index < locationCount; index += 1) {
+    order.push(`loc${index}.name`, `loc${index}.contactName`, `loc${index}.contactMobile`, `loc${index}.contactEmail`);
+  }
+  return order;
+}
+
 export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerFormProps) {
   const [values, setValues] = useState<CustomerFormValues>(emptyValues);
-  const [isSubmitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const { errors, setErrors, clearError, clearAll } = useFormErrors();
   const formRef = useRef<HTMLFormElement>(null);
-  const submitLock = useRef(false);
-
-  useEffect(() => {
-    if (open) {
+  const { dirty, markClean, touch } = useDirtyTracker(JSON.stringify(values));
+  const seed = useFormSeed({
+    dirty,
+    sourceKey: open ? (customer?.id ?? "new") : null,
+    sourceSignature: JSON.stringify(customer ?? null),
+    seed: () => {
       setValues(valuesFor(customer));
-      setSubmitError(null);
-      clearAll();
+      submission.reset();
+      markClean();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customer, open]);
+  });
+  const submission = useFormSubmit({
+    fallback: "The customer could not be saved. Check the entered details and try again.",
+    fieldMap: FIELD_MAP,
+    formRef,
+    isCurrent: seed.isCurrent,
+    order: () => fieldOrder(values.locations.length),
+    session: seed.current
+  });
+  const { clearError, errors } = submission;
 
   if (!open) {
     return null;
@@ -115,36 +135,24 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
     }));
   }
 
-  /** Field keys, in form order: "name", then per location "loc0.name", "loc0.contactName"... */
-  function validate(): { found: FieldErrors; order: string[] } {
+  function validate(): FieldErrors {
     const found: FieldErrors = {};
-    const order = ["name"];
     if (isBlank(values.name)) found.name = "Enter the customer's name.";
     values.locations.forEach((location, index) => {
-      order.push(`loc${index}.name`, `loc${index}.contactName`, `loc${index}.contactMobile`, `loc${index}.contactEmail`);
       if (isBlank(location.name)) found[`loc${index}.name`] = "Enter the location name.";
       if (isBlank(location.siteContactName)) found[`loc${index}.contactName`] = "Enter the site contact's name.";
       if (isBlank(location.siteContactMobile)) found[`loc${index}.contactMobile`] = "Enter the site contact's mobile number.";
       if (isBlank(location.siteContactEmail)) found[`loc${index}.contactEmail`] = "Enter the site contact's email address.";
       else if (!/^\S+@\S+\.\S+$/.test(location.siteContactEmail?.trim() ?? "")) found[`loc${index}.contactEmail`] = "Enter a valid email address.";
     });
-    return { found, order };
+    return found;
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (submitLock.current) return;
-    setSubmitError(null);
-    const { found, order } = validate();
-    setErrors(found);
-    if (Object.keys(found).length > 0) {
-      focusFirstInvalid(formRef.current, order, found);
-      return;
-    }
-    submitLock.current = true;
-    setSubmitting(true);
-    try {
-      await onSubmit({
+    if (!submission.validate(validate())) return;
+    await submission.run(
+      () => onSubmit({
         ...values,
         name: values.name.trim(),
         notes: values.notes.trim(),
@@ -162,143 +170,149 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
           schedulingWeekdays: location.schedulingWeekdays,
           schedulingBlackoutDates: location.schedulingBlackoutDates
         }))
-      });
-    } catch (reason) {
-      const friendly = friendlyApiError(reason, { fallback: "The customer could not be saved. Check the entered details and try again.", fieldMap: { name: "name" } });
-      setErrors(friendly.fieldErrors);
-      setSubmitError(friendly.message);
-      window.setTimeout(() => {
-        if (!focusFirstInvalid(formRef.current, ["name"], friendly.fieldErrors)) {
-          formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus();
-        }
-      }, 0);
-    } finally {
-      submitLock.current = false;
-      setSubmitting(false);
-    }
+      }),
+      markClean
+    );
   }
+
+  const fieldLabels: Record<string, string> = { name: "Name" };
+  values.locations.forEach((_, index) => {
+    const label = index === 0 ? "Location" : `Location ${index + 1}`;
+    fieldLabels[`loc${index}.name`] = `${label} name`;
+    fieldLabels[`loc${index}.contactName`] = `${label} site contact name`;
+    fieldLabels[`loc${index}.contactMobile`] = `${label} site contact mobile`;
+    fieldLabels[`loc${index}.contactEmail`] = `${label} site contact email`;
+  });
 
   return (
     <div className="drawer-backdrop" role="presentation">
-      <form className="customer-drawer customer-profile-form" noValidate onSubmit={handleSubmit} ref={formRef}>
-        <div className="drawer-header">
-          <div>
-            <h2>{customer ? "Edit Customer" : "Add Customer"}</h2>
-            <p>Customer details, locations, and site access requirements.</p>
-          </div>
-          <button className="icon-button light" type="button" aria-label="Close form" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-
-        {submitError ? <ActionNotice kind="error" title="Customer could not be saved">{submitError}</ActionNotice> : null}
-        <RequiredNote />
-        <Field error={errors.name} label="Name" name="name" required>
-          {(props) => (
-            <input
-              {...props}
-              aria-label="Name"
-              value={values.name}
-              onChange={(event) => { setValues((current) => ({ ...current, name: event.target.value })); clearError("name"); }}
-            />
-          )}
-        </Field>
-
-        <div className="customer-location-fields">
-          {values.locations.map((location, index) => {
-            const label = index === 0 ? "Location" : `Location ${index + 1}`;
-            const updateLocation = (field: "name" | "siteContactName" | "siteContactMobile" | "siteContactEmail", value: string) => {
-              clearError({ name: `loc${index}.name`, siteContactName: `loc${index}.contactName`, siteContactMobile: `loc${index}.contactMobile`, siteContactEmail: `loc${index}.contactEmail` }[field]);
-              setValues((current) => ({
-                ...current,
-                locations: current.locations.map((item, itemIndex) => itemIndex === index
-                  ? { ...item, [field]: value }
-                  : item)
-              }));
-            };
-            return (
-              <fieldset className="customer-location-entry" key={location.id ?? `location-${index}`}>
-                <legend>{label}</legend>
-                <Field error={errors[`loc${index}.name`]} label="Location name" name={`loc${index}.name`} required>
-                  {(props) => <input {...props} aria-label={label} value={location.name} onChange={(event) => updateLocation("name", event.target.value)} />}
-                </Field>
-                <div className="site-contact-fields">
-                  <Field error={errors[`loc${index}.contactName`]} label="Site contact name" name={`loc${index}.contactName`} required>
-                    {(props) => <input {...props} aria-label="Site contact name" value={location.siteContactName ?? ""} onChange={(event) => updateLocation("siteContactName", event.target.value)} />}
-                  </Field>
-                  <Field error={errors[`loc${index}.contactMobile`]} label="Site contact mobile" name={`loc${index}.contactMobile`} required>
-                    {(props) => <input {...props} aria-label="Site contact mobile" inputMode="tel" type="tel" value={location.siteContactMobile ?? ""} onChange={(event) => updateLocation("siteContactMobile", event.target.value)} />}
-                  </Field>
-                  <Field error={errors[`loc${index}.contactEmail`]} label="Site contact email" name={`loc${index}.contactEmail`} required>
-                    {(props) => <input {...props} aria-label="Site contact email" type="email" value={location.siteContactEmail ?? ""} onChange={(event) => updateLocation("siteContactEmail", event.target.value)} />}
-                  </Field>
-                </div>
-                <div className="location-requirements-grid">
-                  <fieldset className="requirements-fieldset">
-                    <legend>PPE requirements</legend>
-                    {ppeRequirements.map((requirement) => (
-                      <label className="checkbox-field" key={requirement}>
-                        <input
-                          checked={location.ppeRequirements.includes(requirement)}
-                          type="checkbox"
-                          onChange={() => toggleLocationRequirement(index, "ppeRequirements", requirement)}
-                        />
-                        <span>{requirement}</span>
-                      </label>
-                    ))}
+      <FormShell
+        description="Customer details, locations, and site access requirements."
+        dirty={dirty}
+        errorSummaryTitle="Customer could not be saved"
+        errors={errors}
+        fieldLabels={fieldLabels}
+        fieldOrder={fieldOrder(values.locations.length)}
+        formClassName="customer-drawer customer-profile-form"
+        formRef={formRef}
+        headerClassName="drawer-header"
+        isSubmitting={submission.isSubmitting}
+        onClose={onClose}
+        onEdit={touch}
+        onSubmit={handleSubmit}
+        pendingLabel="Saving…"
+        submitError={submission.submitError}
+        submitLabel="Save customer"
+        title={customer ? "Edit Customer" : "Add Customer"}
+      >
+        <FormSection title="Customer">
+          <Field error={errors.name} label="Name" name="name" required>
+            {(props) => (
+              <input
+                {...props}
+                aria-label="Name"
+                value={values.name}
+                onChange={(event) => { setValues((current) => ({ ...current, name: event.target.value })); clearError("name"); }}
+              />
+            )}
+          </Field>
+        </FormSection>
+        <FormSection description="Where work happens, who to contact there, and what the site requires." title="Locations">
+            <div className="customer-location-fields">
+              {values.locations.map((location, index) => {
+                const label = index === 0 ? "Location" : `Location ${index + 1}`;
+                const updateLocation = (field: "name" | "siteContactName" | "siteContactMobile" | "siteContactEmail", value: string) => {
+                  clearError({ name: `loc${index}.name`, siteContactName: `loc${index}.contactName`, siteContactMobile: `loc${index}.contactMobile`, siteContactEmail: `loc${index}.contactEmail` }[field]);
+                  setValues((current) => ({
+                    ...current,
+                    locations: current.locations.map((item, itemIndex) => itemIndex === index
+                      ? { ...item, [field]: value }
+                      : item)
+                  }));
+                };
+                return (
+                  <fieldset className="customer-location-entry" key={location.id ?? `location-${index}`}>
+                    <legend>{label}</legend>
+                    <Field error={errors[`loc${index}.name`]} label="Location name" name={`loc${index}.name`} required>
+                      {(props) => <input {...props} aria-label={label} value={location.name} onChange={(event) => updateLocation("name", event.target.value)} />}
+                    </Field>
+                    <div className="site-contact-fields">
+                      <Field error={errors[`loc${index}.contactName`]} label="Site contact name" name={`loc${index}.contactName`} required>
+                        {(props) => <input {...props} aria-label="Site contact name" value={location.siteContactName ?? ""} onChange={(event) => updateLocation("siteContactName", event.target.value)} />}
+                      </Field>
+                      <Field error={errors[`loc${index}.contactMobile`]} label="Site contact mobile" name={`loc${index}.contactMobile`} required>
+                        {(props) => <input {...props} aria-label="Site contact mobile" inputMode="tel" type="tel" value={location.siteContactMobile ?? ""} onChange={(event) => updateLocation("siteContactMobile", event.target.value)} />}
+                      </Field>
+                      <Field error={errors[`loc${index}.contactEmail`]} label="Site contact email" name={`loc${index}.contactEmail`} required>
+                        {(props) => <input {...props} aria-label="Site contact email" type="email" value={location.siteContactEmail ?? ""} onChange={(event) => updateLocation("siteContactEmail", event.target.value)} />}
+                      </Field>
+                    </div>
+                    <div className="location-requirements-grid">
+                      <fieldset className="requirements-fieldset">
+                        <legend>PPE requirements</legend>
+                        {ppeRequirements.map((requirement) => (
+                          <label className="checkbox-field" key={requirement}>
+                            <input
+                              checked={location.ppeRequirements.includes(requirement)}
+                              type="checkbox"
+                              onChange={() => toggleLocationRequirement(index, "ppeRequirements", requirement)}
+                            />
+                            <span>{requirement}</span>
+                          </label>
+                        ))}
+                      </fieldset>
+                      <fieldset className="requirements-fieldset">
+                        <legend>Additional requirements</legend>
+                        {additionalRequirements.map((requirement) => (
+                          <label className="checkbox-field" key={requirement}>
+                            <input
+                              checked={location.additionalRequirements.includes(requirement)}
+                              type="checkbox"
+                              onChange={() => toggleLocationRequirement(index, "additionalRequirements", requirement)}
+                            />
+                            <span>{requirement}</span>
+                          </label>
+                        ))}
+                      </fieldset>
+                    </div>
                   </fieldset>
-                  <fieldset className="requirements-fieldset">
-                    <legend>Additional requirements</legend>
-                    {additionalRequirements.map((requirement) => (
-                      <label className="checkbox-field" key={requirement}>
-                        <input
-                          checked={location.additionalRequirements.includes(requirement)}
-                          type="checkbox"
-                          onChange={() => toggleLocationRequirement(index, "additionalRequirements", requirement)}
-                        />
-                        <span>{requirement}</span>
-                      </label>
-                    ))}
-                  </fieldset>
-                </div>
-              </fieldset>
-            );
-          })}
-          <button
-            className="customer-add-location"
-            type="button"
-            onClick={() => setValues((current) => ({
-              ...current,
-              locations: [...current.locations, {
-                name: "",
-                siteContactName: "",
-                siteContactMobile: "",
-                siteContactEmail: "",
-                ppeRequirements: [],
-                additionalRequirements: []
-              }]
-            }))}
-          >
-            <Plus aria-hidden="true" size={16} />
-            Add location
-          </button>
-        </div>
+                );
+              })}
+              <button
+                className="customer-add-location"
+                type="button"
+                onClick={() => setValues((current) => ({
+                  ...current,
+                  locations: [...current.locations, {
+                    name: "",
+                    siteContactName: "",
+                    siteContactMobile: "",
+                    siteContactEmail: "",
+                    ppeRequirements: [],
+                    additionalRequirements: []
+                  }]
+                }))}
+              >
+                <Plus aria-hidden="true" size={16} />
+                Add location
+              </button>
+            </div>
 
-        <label>
-          <span>Notes</span>
-          <textarea
-            aria-label="Notes"
-            rows={3}
-            value={values.notes}
-            onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))}
-          />
-        </label>
-
-        <div className="drawer-actions">
-          <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
-          <ActionButton pending={isSubmitting} pendingLabel="Saving…" type="submit" variant="primary">Save customer</ActionButton>
-        </div>
-      </form>
+        </FormSection>
+        <FormSection title="Customer notes">
+          <Field label="Notes" name="notes">
+            {(props) => (
+              <textarea
+                {...props}
+                aria-label="Notes"
+                rows={3}
+                value={values.notes}
+                onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))}
+              />
+            )}
+          </Field>
+        </FormSection>
+      </FormShell>
     </div>
   );
 }

@@ -284,6 +284,9 @@ test.describe("scheduling release workflow", () => {
       const springOptions = await springTimeSelect.locator("option").allTextContents();
       expect(springOptions).toEqual(["Select a time", "3:00 AM - 4:00 AM"]);
 
+      // The form holds a chosen location and date, so leaving it asks first; this test means to discard.
+      await customer.page.getByRole("button", { name: "Cancel" }).click();
+      await customer.page.getByRole("alertdialog", { name: "Discard unsaved changes?" }).getByRole("button", { name: "Discard changes" }).click();
       prepareSchedulingFixture({ closeTime: "03:00", openTime: "00:00", timezone: "America/New_York", weekdays: [6] });
       await refreshInspectionsWorkspace(customer.page);
       await customer.page.getByRole("button", { name: "Book inspection" }).click();

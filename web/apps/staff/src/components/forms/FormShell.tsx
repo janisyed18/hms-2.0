@@ -21,6 +21,7 @@ import { useUnsavedChangesGuard } from "./useUnsavedChangesGuard";
 export function FormShell({
   children,
   closeLabel = "Close form",
+  description,
   dirty,
   errorSummaryTitle,
   errors,
@@ -32,16 +33,20 @@ export function FormShell({
   formRef,
   headerClassName,
   isSubmitting,
+  layout = "dialog",
   onClose,
   onEdit,
   onSubmit,
   pendingLabel,
+  submitDisabled = false,
   submitError,
   submitLabel,
   title
 }: {
   children: ReactNode;
   closeLabel?: string;
+  /** A line under the title saying what the form is for. */
+  description?: ReactNode;
   dirty: boolean;
   errorSummaryTitle: string;
   errors: FieldErrors;
@@ -54,18 +59,28 @@ export function FormShell({
   formRef: RefObject<HTMLFormElement | null>;
   headerClassName: string;
   isSubmitting: boolean;
+  /**
+   * "dialog" (default): a drawer or modal that owns the screen: focus is trapped, Escape and Close ask
+   * first. "inline": an edit form that lives inside a record's own panel, which has its own header and
+   * close: no trap, no Escape, no title or Close; unsaved edits can be discarded in place, and moving to
+   * another record or workspace still asks (callers route that through `guardNavigation`).
+   */
+  layout?: "dialog" | "inline";
   /** Closes the form for good. Called directly when clean, and after the person confirms discarding. */
   onClose: () => void;
   /** A real user edit happened (the form's change event). */
   onEdit: () => void;
   onSubmit: (event: FormEvent) => void;
   pendingLabel: string;
+  /** The submit action is not available yet (nothing to choose, a required choice missing). */
+  submitDisabled?: boolean;
   submitError: string | null;
   submitLabel: string;
   title: string;
 }) {
   const guard = useUnsavedChangesGuard({ dirty, onDiscard: onClose });
-  useFocusTrap(formRef);
+  const inline = layout === "inline";
+  useFocusTrap(formRef, !inline);
   const Form = formComponent ?? "form";
   return (
     <>
@@ -76,7 +91,7 @@ export function FormShell({
         noValidate
         onChange={onEdit}
         onKeyDown={(event: KeyboardEvent) => {
-          if (event.key === "Escape" && !event.defaultPrevented) {
+          if (!inline && event.key === "Escape" && !event.defaultPrevented) {
             event.preventDefault();
             event.stopPropagation();
             if (!isSubmitting) guard.requestClose();
@@ -85,12 +100,21 @@ export function FormShell({
         onSubmit={onSubmit}
         ref={formRef}
       >
-        <div className={headerClassName}>
-          <h2>{title}</h2>
-          <button aria-label={closeLabel} className="icon-button light" disabled={isSubmitting} onClick={guard.requestClose} type="button">
-            <X size={18} />
-          </button>
-        </div>
+        {inline ? null : (
+          <div className={headerClassName}>
+            {description ? (
+              <div>
+                <h2>{title}</h2>
+                <p>{description}</p>
+              </div>
+            ) : (
+              <h2>{title}</h2>
+            )}
+            <button aria-label={closeLabel} className="icon-button light" disabled={isSubmitting} onClick={guard.requestClose} type="button">
+              <X size={18} />
+            </button>
+          </div>
+        )}
         <FormErrorSummary
           errors={errors}
           focusRoot={() => formRef.current}
@@ -102,8 +126,12 @@ export function FormShell({
         <RequiredNote />
         {children}
         <StickyFormActions dirty={dirty}>
-          <ActionButton disabled={isSubmitting} onClick={guard.requestClose} variant="ghost">Cancel</ActionButton>
-          <ActionButton pending={isSubmitting} pendingLabel={pendingLabel} type="submit" variant="primary">{submitLabel}</ActionButton>
+          {inline ? (
+            dirty ? <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Discard changes</ActionButton> : null
+          ) : (
+            <ActionButton disabled={isSubmitting} onClick={guard.requestClose} variant="ghost">Cancel</ActionButton>
+          )}
+          <ActionButton disabled={submitDisabled} pending={isSubmitting} pendingLabel={pendingLabel} type="submit" variant="primary">{submitLabel}</ActionButton>
         </StickyFormActions>
       </Form>
       <ConfirmDialog

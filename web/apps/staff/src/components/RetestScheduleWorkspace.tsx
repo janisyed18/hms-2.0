@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { guardNavigation } from "../routing/navigationGuard";
 import { ActionNotice } from "./interaction/ActionNotice";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
 import { RetestScheduleDetail } from "./RetestScheduleDetail";
@@ -106,6 +107,11 @@ function calendarDates(month: Date) {
 
 export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
   const workspace = useRetestScheduleWorkspace();
+  // Opening another schedule while the open one has unsaved edits asks first (the open form holds the guard).
+  const openSchedule = (schedule: RetestScheduleRecord) => {
+    if (schedule.id === workspace.selectedSchedule?.id) return;
+    guardNavigation(() => workspace.openDetail(schedule));
+  };
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
@@ -174,7 +180,7 @@ export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
           <button
             aria-label={`Open schedule ${assetLabel(schedule.asset)}`}
             className="icon-button light"
-            onClick={() => workspace.openDetail(schedule)}
+            onClick={() => openSchedule(schedule)}
             type="button"
           >
             <Ellipsis aria-hidden="true" size={18} />
@@ -300,11 +306,11 @@ export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
             onAction={() => {
               const firstSchedule = workspace.visibleSchedules[0];
               if (firstSchedule) {
-                workspace.openDetail(firstSchedule);
+                openSchedule(firstSchedule);
               }
             }}
             onQueryChange={workspace.setQuery}
-            onRowSelect={workspace.openDetail}
+            onRowSelect={openSchedule}
             query={workspace.query}
             searchLabel="Search retest schedules"
             searchPlaceholder="Search schedules, assets, customers..."
@@ -404,7 +410,7 @@ export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
             {prioritySchedules.length ? (
               <div className="retest-priority-list">
                 {prioritySchedules.map((schedule) => (
-                  <button key={schedule.id} onClick={() => workspace.openDetail(schedule)} type="button">
+                  <button key={schedule.id} onClick={() => openSchedule(schedule)} type="button">
                     <span className={`retest-priority-marker ${schedule.status.toLowerCase()}`} aria-hidden="true" />
                     <span>
                       <strong>{assetLabel(schedule.asset)}</strong>

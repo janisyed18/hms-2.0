@@ -1,11 +1,13 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 
-import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
-import { Field, RequiredNote } from "./interaction/FormPrimitives";
-import { friendlyApiError } from "./interaction/friendlyApiError";
-import { focusFirstInvalid, isBlank, useFormErrors, type FieldErrors } from "./interaction/useFormErrors";
+import { FormSection } from "./forms/FormLayout";
+import { FormShell } from "./forms/FormShell";
+import { useDirtyTracker } from "./forms/useDirtyTracker";
+import { useFormSeed } from "./forms/useFormSeed";
+import { useFormSubmit } from "./forms/useFormSubmit";
+import { Field } from "./interaction/FormPrimitives";
+import { isBlank, type FieldErrors } from "./interaction/useFormErrors";
 import type { CertificateIssueValues, InspectionRecord } from "../domain/types";
 import { assetLabel } from "../utils/identity";
 
@@ -15,6 +17,9 @@ interface CertificateFormProps {
   onClose: () => void;
   onSubmit: (values: CertificateIssueValues) => Promise<void>;
 }
+
+const ORDER = ["inspectionId", "number"];
+const FIELD_LABELS = { inspectionId: "Approved inspection", number: "Certificate number" };
 
 function defaultCertificateNumber(inspection: InspectionRecord | undefined) {
   if (!inspection) {
@@ -38,116 +43,102 @@ export function CertificateForm({
   const [inspectionId, setInspectionId] = useState("");
   const [number, setNumber] = useState("");
   const [validUntil, setValidUntil] = useState(defaultValidUntil);
-  const [isSubmitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const { errors, setErrors, clearError, clearAll } = useFormErrors();
   const formRef = useRef<HTMLFormElement>(null);
-  const submitLock = useRef(false);
-
-  const selectedInspection = useMemo(
-    () => inspectionOptions.find((inspection) => inspection.id === inspectionId),
-    [inspectionId, inspectionOptions]
-  );
-
-  useEffect(() => {
-    if (!open) {
-      return;
+  const { dirty, markClean, touch } = useDirtyTracker(JSON.stringify([inspectionId, number, validUntil]));
+  const optionIds = useMemo(() => inspectionOptions.map((inspection) => inspection.id), [inspectionOptions]);
+  const seed = useFormSeed({
+    dirty,
+    sourceKey: open ? "issue" : null,
+    // A refreshed list of approved inspections re-seeds a form nobody has touched, never one being filled in.
+    sourceSignature: JSON.stringify(optionIds),
+    seed: () => {
+      const firstInspection = inspectionOptions[0];
+      setInspectionId(firstInspection?.id ?? "");
+      setNumber(defaultCertificateNumber(firstInspection));
+      setValidUntil(defaultValidUntil());
+      submission.reset();
+      markClean();
     }
-    const firstInspection = inspectionOptions[0];
-    setInspectionId(firstInspection?.id ?? "");
-    setNumber(defaultCertificateNumber(firstInspection));
-    setValidUntil(defaultValidUntil());
-    setSubmitError(null);
-    clearAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inspectionOptions, open]);
-
-  useEffect(() => {
-    if (!selectedInspection) {
-      return;
-    }
-    setNumber(defaultCertificateNumber(selectedInspection));
-  }, [selectedInspection]);
+  });
+  const submission = useFormSubmit({
+    fallback: "The certificate could not be issued. Nothing was issued; try again.",
+    formRef,
+    isCurrent: seed.isCurrent,
+    order: ORDER,
+    session: seed.current
+  });
+  const { clearError, errors } = submission;
 
   if (!open) {
     return null;
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  function chooseInspection(nextId: string) {
+    setInspectionId(nextId);
+    // Choosing another inspection offers its own certificate number.
+    setNumber(defaultCertificateNumber(inspectionOptions.find((inspection) => inspection.id === nextId)));
+    clearError("inspectionId");
+  }
+
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (submitLock.current) return;
-    setSubmitError(null);
     const found: FieldErrors = {};
     if (!inspectionId) found.inspectionId = "Choose the approved inspection to certify.";
     if (isBlank(number)) found.number = "Enter a certificate number.";
-    setErrors(found);
-    if (Object.keys(found).length > 0) {
-      focusFirstInvalid(formRef.current, ["inspectionId", "number"], found);
-      return;
-    }
-    submitLock.current = true;
-    setSubmitting(true);
-    try {
-      await onSubmit({
-        inspectionId,
-        number: number.trim(),
-        validUntil: validUntil || null
-      });
-    } catch (reason) {
-      // Nothing was issued, so the drawer stays open with what was chosen and offers a retry.
-      const friendly = friendlyApiError(reason, { fallback: "The certificate could not be issued. Nothing was issued; try again." });
-      setSubmitError(friendly.message);
-      window.setTimeout(() => formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus(), 0);
-    } finally {
-      submitLock.current = false;
-      setSubmitting(false);
-    }
+    if (!submission.validate(found)) return;
+    await submission.run(
+      () => onSubmit({ inspectionId, number: number.trim(), validUntil: validUntil || null }),
+      markClean
+    );
   }
 
+  const nothingToCertify = inspectionOptions.length === 0;
   return (
     <div className="drawer-backdrop">
-      <form className="customer-drawer" noValidate onSubmit={handleSubmit} ref={formRef}>
-        <div className="drawer-header">
-          <div>
-            <h2>Issue Certificate</h2>
-            <p>Create a versioned certificate from an approved inspection.</p>
-          </div>
-          <button
-            aria-label="Close certificate form"
-            className="icon-button light"
-            onClick={onClose}
-            type="button"
-          >
-            <X size={18} />
-          </button>
-        </div>
-        {submitError ? <ActionNotice kind="error" title="Certificate could not be issued">{submitError}</ActionNotice> : null}
-        {inspectionOptions.length === 0 ? (
+      <FormShell
+        closeLabel="Close certificate form"
+        description="Create a versioned certificate from an approved inspection."
+        dirty={dirty}
+        errorSummaryTitle="Certificate could not be issued"
+        errors={errors}
+        fieldLabels={FIELD_LABELS}
+        fieldOrder={ORDER}
+        formClassName="customer-drawer"
+        formRef={formRef}
+        headerClassName="drawer-header"
+        isSubmitting={submission.isSubmitting}
+        onClose={onClose}
+        onEdit={touch}
+        onSubmit={handleSubmit}
+        pendingLabel="Issuing…"
+        submitDisabled={nothingToCertify}
+        submitError={submission.submitError}
+        submitLabel="Issue certificate"
+        title="Issue Certificate"
+      >
+        {nothingToCertify ? (
           <ActionNotice kind="info" title="Nothing to certify">There are no approved inspections waiting for a certificate.</ActionNotice>
         ) : null}
-        <RequiredNote />
-        <Field error={errors.inspectionId} label="Approved inspection" name="inspectionId" required>
-          {(props) => (
-            <select {...props} aria-label="Approved inspection" disabled={inspectionOptions.length === 0} value={inspectionId} onChange={(event) => { setInspectionId(event.target.value); clearError("inspectionId"); }}>
-              {inspectionOptions.map((inspection) => (
-                <option key={inspection.id} value={inspection.id}>
-                  {assetLabel(inspection.asset)} - {inspection.customer.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </Field>
-        <Field error={errors.number} label="Certificate number" name="number" required>
-          {(props) => <input {...props} aria-label="Certificate number" disabled={inspectionOptions.length === 0} value={number} onChange={(event) => { setNumber(event.target.value); clearError("number"); }} />}
-        </Field>
-        <Field label="Valid until" name="validUntil">
-          {(props) => <input {...props} aria-label="Valid until" disabled={inspectionOptions.length === 0} type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} />}
-        </Field>
-        <div className="drawer-actions">
-          <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Cancel</ActionButton>
-          <ActionButton disabled={inspectionOptions.length === 0} pending={isSubmitting} pendingLabel="Issuing…" type="submit" variant="primary">Issue certificate</ActionButton>
-        </div>
-      </form>
+        <FormSection>
+          <Field error={errors.inspectionId} label="Approved inspection" name="inspectionId" required>
+            {(props) => (
+              <select {...props} aria-label="Approved inspection" disabled={nothingToCertify} value={inspectionId} onChange={(event) => chooseInspection(event.target.value)}>
+                {inspectionOptions.map((inspection) => (
+                  <option key={inspection.id} value={inspection.id}>
+                    {assetLabel(inspection.asset)} - {inspection.customer.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <Field error={errors.number} label="Certificate number" name="number" required>
+            {(props) => <input {...props} aria-label="Certificate number" disabled={nothingToCertify} value={number} onChange={(event) => { setNumber(event.target.value); clearError("number"); }} />}
+          </Field>
+          <Field label="Valid until" name="validUntil">
+            {(props) => <input {...props} aria-label="Valid until" disabled={nothingToCertify} type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} />}
+          </Field>
+        </FormSection>
+      </FormShell>
     </div>
   );
 }
