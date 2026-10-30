@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { expect, type Browser, type Page } from "@playwright/test";
 
 import { clearRateLimits } from "./global-setup";
+import { chooseOption } from "./choose";
 
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
@@ -192,11 +193,10 @@ export async function refreshInspectionsWorkspace(page: Page) {
 // assets. (A reschedule keeps the booking's own location and assets.)
 export async function chooseBookingLocationAndAsset(page: Page) {
   const location = page.getByLabel("Booking location");
-  await expect(location).toHaveValue("");
-  await expect(location.locator("option:checked")).toHaveText("Choose the location");
+  await expect(location).toHaveText("Choose the location");
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(page.locator("form.inspection-booking-form").getByRole("button", { name: "Create booking" })).toBeDisabled();
-  await location.selectOption({ label: "Vopak - Port Botany" });
+  await chooseOption(location, { label: "Vopak - Port Botany" });
   const asset = page.getByRole("checkbox", { name: "980636" });
   await expect(asset).not.toBeChecked();
   await asset.check();
@@ -209,7 +209,7 @@ export async function selectFirstAvailableTime(page: Page, localDate = schedulin
   await expect(page.getByText(/Available time \(/)).toBeVisible();
   const timeSelect = page.getByLabel("Available inspection time");
   await expect(timeSelect).toBeEnabled();
-  await timeSelect.selectOption({ index: 1 });
+  await chooseOption(timeSelect, { first: true });
 }
 
 export async function submitBookingForm(

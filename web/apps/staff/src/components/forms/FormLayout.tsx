@@ -4,21 +4,34 @@ import { ActionNotice } from "../interaction/ActionNotice";
 import type { FieldErrors } from "../interaction/useFormErrors";
 
 /** A titled group of related fields. Sections stack; fields inside flow through a FormGrid. */
-export function FormSection({ children, description, title }: { children: ReactNode; description?: string; title?: string }) {
+export function FormSection({ children, description, step, title }: { children: ReactNode; description?: string; step?: number; title?: string }) {
   return (
     <section aria-label={title} className="form-section">
-      {title ? <FormSectionHeader description={description} title={title} /> : null}
+      {title ? <FormSectionHeader description={description} step={step} title={title} /> : null}
       {children}
     </section>
   );
 }
 
-export function FormSectionHeader({ description, title }: { description?: string; title: string }) {
+export function FormSectionHeader({ description, step, title }: { description?: string; step?: number; title: string }) {
   return (
-    <header className="form-section__header">
-      <h3>{title}</h3>
-      {description ? <p>{description}</p> : null}
+    <header className={`form-section__header${step ? " has-step" : ""}`}>
+      {step ? <span aria-hidden="true" className="form-section__step">{step}</span> : null}
+      <div>
+        <h3>{title}</h3>
+        {description ? <p>{description}</p> : null}
+      </div>
     </header>
+  );
+}
+
+/** A quiet explanatory note under a field or section: an icon and a sentence, not an alert. */
+export function FormNote({ children, icon }: { children: ReactNode; icon: ReactNode }) {
+  return (
+    <div className="form-note">
+      <span aria-hidden="true" className="form-note__icon">{icon}</span>
+      <p>{children}</p>
+    </div>
   );
 }
 

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 
+import { useOptionalToast } from "./Toast";
+
 export type NoticeKind = "success" | "error" | "info" | "warning";
 
 export interface NoticeState {
@@ -54,6 +56,7 @@ export function ActionNotice({
 
 /** Workspace-level notice state: successes clear themselves, errors stay until dismissed. */
 export function useActionNotice(successMs = 8000) {
+  const toast = useOptionalToast();
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const timer = useRef<number | null>(null);
   const clear = useCallback(() => {
@@ -64,11 +67,18 @@ export function useActionNotice(successMs = 8000) {
   const notify = useCallback((next: NoticeState) => {
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = null;
+    // Where the shell provides toasts, a success is confirmed there: it outlives this workspace's
+    // re-renders and the form that closed. Errors always stay here, beside what needs fixing.
+    if (next.kind === "success" && toast) {
+      toast.success({ message: next.message || next.title || "Done.", title: next.title });
+      setNotice(null);
+      return;
+    }
     setNotice(next);
     if (next.kind === "success" && successMs > 0) {
       timer.current = window.setTimeout(() => setNotice(null), successMs);
     }
-  }, [successMs]);
+  }, [successMs, toast]);
   useEffect(() => () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
   }, []);

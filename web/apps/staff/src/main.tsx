@@ -10,6 +10,7 @@ import "./styles/command-centre.css";
 import "./styles/interaction.css";
 import "./styles/scheduling.css";
 import "./styles/responsive.css";
+import "./styles/controls.css";
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>

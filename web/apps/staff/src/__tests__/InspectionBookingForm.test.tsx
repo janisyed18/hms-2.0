@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +8,7 @@ import type {
   InspectionAvailabilitySlot,
   InspectionBookingRecord
 } from "../domain/types";
+import { choose } from "../test/choose";
 
 const listInspectionAvailability = vi.hoisted(() => vi.fn());
 
@@ -62,10 +63,8 @@ describe("new booking", () => {
   it("starts with no location, no assets and nothing submittable", () => {
     renderForm();
 
-    const location = screen.getByLabelText("Booking location") as HTMLSelectElement;
-    expect(location.value).toBe("");
-    expect(within(location).getByRole("option", { name: "Choose the location" })).toBeInTheDocument();
-    expect((location.selectedOptions[0] as HTMLOptionElement).textContent).toBe("Choose the location");
+    const location = screen.getByLabelText("Booking location");
+    expect(location).toHaveTextContent("Choose the location");
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     expect(screen.getByText("Choose a location to see its assets.")).toBeVisible();
     expect(submitButton()).toBeDisabled();
@@ -76,7 +75,7 @@ describe("new booking", () => {
     const user = userEvent.setup();
     renderForm();
 
-    await user.selectOptions(screen.getByLabelText("Booking location"), "loc-a");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-a");
 
     expect(screen.getAllByRole("checkbox").map((box) => (box as HTMLInputElement).labels?.[0]?.textContent))
       .toEqual(["ASSET-A1", "ASSET-A2"]);
@@ -88,7 +87,7 @@ describe("new booking", () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
 
-    await user.selectOptions(screen.getByLabelText("Booking location"), "loc-a");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-a");
     await user.click(screen.getByRole("checkbox", { name: "ASSET-A2" }));
     expect(submitButton()).toBeDisabled();
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
@@ -100,7 +99,7 @@ describe("new booking", () => {
       durationMinutes: 60
     });
     expect(submitButton()).toBeDisabled();
-    await user.selectOptions(screen.getByLabelText("Available inspection time"), "loc-a-quote-1");
+    await choose(user, screen.getByLabelText("Available inspection time"), "loc-a-quote-1");
     expect(submitButton()).toBeEnabled();
     await user.click(submitButton());
 
@@ -117,14 +116,14 @@ describe("new booking", () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
 
-    await user.selectOptions(screen.getByLabelText("Booking location"), "loc-a");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-a");
     await user.click(screen.getByRole("checkbox", { name: "ASSET-A1" }));
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
     await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
-    await user.selectOptions(screen.getByLabelText("Available inspection time"), "loc-a-quote-1");
+    await choose(user, screen.getByLabelText("Available inspection time"), "loc-a-quote-1");
     expect(submitButton()).toBeEnabled();
 
-    await user.selectOptions(screen.getByLabelText("Booking location"), "loc-b");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-b");
 
     expect(screen.getAllByRole("checkbox").map((box) => (box as HTMLInputElement).labels?.[0]?.textContent)).toEqual(["ASSET-B1"]);
     expect(screen.getByRole("checkbox", { name: "ASSET-B1" })).not.toBeChecked();
@@ -143,10 +142,10 @@ describe("new booking", () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
 
-    await user.selectOptions(screen.getByLabelText("Booking location"), "loc-a");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-a");
     await user.click(screen.getByRole("checkbox", { name: "ASSET-A1" }));
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
-    await user.selectOptions(screen.getByLabelText("Booking location"), "loc-b");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-b");
     await user.click(screen.getByRole("checkbox", { name: "ASSET-B1" }));
     await act(async () => resolveSlow(slots("loc-a-stale")));
 
@@ -160,12 +159,12 @@ describe("new booking", () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
 
-    await user.selectOptions(screen.getByLabelText("Booking location"), "loc-a");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-a");
     await user.click(screen.getByRole("checkbox", { name: "ASSET-A1" }));
     const date = screen.getByLabelText("Preferred inspection date");
     await user.type(date, "2030-01-07");
     await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
-    await user.selectOptions(screen.getByLabelText("Available inspection time"), "loc-a-quote-1");
+    await choose(user, screen.getByLabelText("Available inspection time"), "loc-a-quote-1");
     expect(submitButton()).toBeEnabled();
 
     await user.clear(date);
@@ -178,11 +177,11 @@ describe("new booking", () => {
     const user = userEvent.setup();
     const { rerender, props } = renderForm();
 
-    await user.selectOptions(screen.getByLabelText("Booking location"), "loc-a");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-a");
     await user.click(screen.getByRole("checkbox", { name: "ASSET-A2" }));
     rerender(<InspectionBookingForm {...props} assetOptions={[...assets]} />);
 
-    expect((screen.getByLabelText("Booking location") as HTMLSelectElement).value).toBe("loc-a");
+    expect(screen.getByLabelText("Booking location")).toHaveTextContent("Harris Park");
     expect(screen.getByRole("checkbox", { name: "ASSET-A2" })).toBeChecked();
   });
 });
@@ -202,8 +201,8 @@ describe("reschedule", () => {
     const user = userEvent.setup();
     const { onReschedule } = renderForm({ rescheduleBooking: booking });
 
-    const location = screen.getByLabelText("Booking location") as HTMLSelectElement;
-    expect(location.value).toBe("loc-a");
+    const location = screen.getByLabelText("Booking location");
+    expect(location).toHaveTextContent("Harris Park");
     expect(location).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: "ASSET-A1" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "ASSET-A1" })).toBeDisabled();
@@ -212,7 +211,7 @@ describe("reschedule", () => {
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-08");
     await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
     expect(listInspectionAvailability).toHaveBeenCalledWith(expect.objectContaining({ customerId: "cust-1", locationId: "loc-a" }));
-    await user.selectOptions(screen.getByLabelText("Available inspection time"), "loc-a-quote-1");
+    await choose(user, screen.getByLabelText("Available inspection time"), "loc-a-quote-1");
     await user.click(submitButton());
     expect(onReschedule).toHaveBeenCalledWith("booking-1", { availabilityQuoteId: "loc-a-quote-1", reason: null, inspectorUserId: null });
   });

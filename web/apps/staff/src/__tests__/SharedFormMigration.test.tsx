@@ -13,8 +13,11 @@ import { RetestScheduleDetail } from "../components/RetestScheduleDetail";
 import { HmsApiError } from "../api/hmsClient";
 import type { AssetRecord, CustomerRecord, InspectionRecord, ProductRecord, ReferenceCatalogRecord, RetestScheduleRecord } from "../domain/types";
 import { guardNavigation } from "../routing/navigationGuard";
+import { choose } from "../test/choose";
 
 type User = ReturnType<typeof userEvent.setup>;
+/** What a person reads in a control: the text of a Select, the value of anything typed into. */
+const shown = (control: HTMLElement) => (control.tagName === "BUTTON" ? (control.textContent ?? "") : (control as HTMLInputElement).value);
 const unsaved = () => screen.queryByText("Unsaved changes");
 const dialog = () => screen.queryByRole("alertdialog", { name: "Discard unsaved changes?" });
 
@@ -93,9 +96,9 @@ const cases: Case[] = [
   {
     name: "Inspection (create)",
     ui: ({ onClose, onSubmit }) => <InspectionForm assetOptions={[asset("1"), asset("2")]} onClose={onClose} onSubmit={onSubmit} open />,
-    edit: async (user) => { await user.selectOptions(screen.getByLabelText("Inspection type"), "NEW_ASSET"); },
-    field: "Inspection type", fieldValue: "NEW_ASSET", save: "Create inspection",
-    complete: async (user) => { await user.selectOptions(screen.getByLabelText("Inspection asset"), "1"); },
+    edit: async (user) => { await choose(user, screen.getByLabelText("Inspection type"), "NEW_ASSET"); },
+    field: "Inspection type", fieldValue: "New asset", save: "Create inspection",
+    complete: async (user) => { await choose(user, screen.getByLabelText("Inspection asset"), "1"); },
     firstInvalid: "Inspection asset", hasEditMode: false
   }
 ];
@@ -127,7 +130,7 @@ describe.each(cases)("$name form on the shared form system", (c) => {
     expect(dialog()).not.toBeNull();
     expect(onClose).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Keep editing" }));
-    expect((screen.getByLabelText(c.field) as HTMLInputElement).value).toBe(c.fieldValue);
+    expect(shown(screen.getByLabelText(c.field))).toBe(c.fieldValue);
     await user.keyboard("{Escape}");
     expect(dialog()).not.toBeNull();
     await user.click(screen.getByRole("button", { name: "Keep editing" }));
@@ -155,7 +158,7 @@ describe.each(cases)("$name form on the shared form system", (c) => {
     const { rerender, onClose, onSubmit } = mount(c.hasEditMode);
     await c.edit(user);
     rerender(c.ui({ onClose, onSubmit, record: c.hasEditMode }));
-    expect((screen.getByLabelText(c.field) as HTMLInputElement).value).toBe(c.fieldValue);
+    expect(shown(screen.getByLabelText(c.field))).toBe(c.fieldValue);
     expect(unsaved()).not.toBeNull();
   });
 
@@ -182,8 +185,9 @@ describe.each(cases)("$name form on the shared form system", (c) => {
     await c.complete?.(user);
     await c.edit(user);
     await user.click(screen.getByRole("button", { name: c.save }));
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect((screen.getByLabelText(c.field) as HTMLInputElement).value).toContain(c.fieldValue.split(" ")[0]);
+    // The refusal is announced and holds focus the moment it is visible: no timer decides that.
+    expect(await screen.findByRole("alert")).toHaveFocus();
+    expect(shown(screen.getByLabelText(c.field))).toContain(c.fieldValue.split(" ")[0]);
     expect(unsaved()).not.toBeNull();
     expect(dialog()).toBeNull();
     await user.click(screen.getByRole("button", { name: c.save }));
@@ -328,7 +332,7 @@ describe("Booking form", () => {
     const withLocation = { ...asset("1"), location: { id: "l1", name: "Dock", schedulingTimezone: "UTC" } } as unknown as AssetRecord;
     render(<InspectionBookingForm assetOptions={[withLocation]} initialDate="2026-10-30" onClose={onClose} onSubmit={vi.fn()} open />);
     expect(unsaved()).toBeNull();
-    await user.selectOptions(screen.getByLabelText("Booking location"), "l1");
+    await choose(user, screen.getByLabelText("Booking location"), "l1");
     expect(unsaved()).not.toBeNull();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(dialog()).not.toBeNull();

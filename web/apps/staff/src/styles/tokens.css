@@ -60,6 +60,14 @@
   --control-height: 42px;
   --control-height-mobile: 44px;
   --icon-control-size: 40px;
+  --control-radius: 8px;
+  --card-radius: 10px;
+  --border-hover: var(--color-neutral-500);
+  --surface-raised: var(--panel);
+  --surface-muted: var(--panel-subtle);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 14%);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
 
   color: var(--ink);
   font-family:
@@ -100,6 +108,8 @@
   --border: #e5e7eb;
   --nav: #202328;
   --nav-2: #30343b;
+  --border-hover: var(--color-neutral-500);
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 8%);
   --shadow-soft: 0 6px 18px rgb(15 23 42 / 6%);
   --shadow: 0 16px 38px rgb(15 23 42 / 12%);
   --focus: 0 0 0 3px rgb(47 111 218 / 22%);

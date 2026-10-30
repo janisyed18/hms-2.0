@@ -9,6 +9,7 @@ import {
   signedInPage,
   waitForApiHealth
 } from "./schedulingSupport";
+import { chooseOption } from "./choose";
 
 async function openUsers(page: Page) {
   const link = page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Users & Roles", exact: true });
@@ -64,7 +65,7 @@ test.describe("User discovery and real-name identity", () => {
       await dialog.getByRole("button", { name: "Create user" }).click();
       await expect(dialog.getByLabel("Last name")).toBeFocused();
       await dialog.getByLabel("Last name").fill(last);
-      await dialog.getByLabel("Role").selectOption("REVIEWER");
+      await chooseOption(dialog.getByLabel("Role"), "REVIEWER");
       await dialog.getByRole("button", { name: "Create user" }).click();
       await page.getByRole("button", { name: "Done" }).click();
 

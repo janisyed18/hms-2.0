@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
+import { Mail, ShieldCheck, Info, User, UserPlus } from "lucide-react";
 
 import type { StaffRole } from "../domain/types";
-import { FormGrid } from "./forms/FormLayout";
+import { FormGrid, FormNote, FormSection } from "./forms/FormLayout";
 import { FormShell } from "./forms/FormShell";
 import { useDirtyTracker } from "./forms/useDirtyTracker";
 import { Field } from "./interaction/FormPrimitives";
+import { Select } from "./interaction/Select";
 import { friendlyApiError } from "./interaction/friendlyApiError";
 import { focusFirstInvalid, isBlank, useFormErrors, type FieldErrors } from "./interaction/useFormErrors";
 import { ROLE_LABELS, manageableRoles, requiresCustomer } from "./roleAdmin";
+import { useFocusAfterRender } from "./forms/useFocusAfterRender";
 
 export interface UserAdminValues {
   email: string;
@@ -62,6 +65,7 @@ export function UserAdminDialog({
   const { errors, setErrors, clearError, clearAll } = useFormErrors();
   const formRef = useRef<HTMLFormElement>(null);
   const submitLock = useRef(false);
+  const focusAfterRender = useFocusAfterRender();
   const reducedMotion = useReducedMotion();
 
   const { dirty, markClean, touch } = useDirtyTracker(JSON.stringify([email, firstName, lastName, role, customerIds]));
@@ -144,11 +148,11 @@ export function UserAdminDialog({
       if (friendly.kind === "conflict" && /email/i.test(friendly.message)) fieldErrors.email = friendly.message;
       setErrors(fieldErrors);
       setSubmitError(friendly.message);
-      window.setTimeout(() => {
+      focusAfterRender(() => {
         if (!focusFirstInvalid(formRef.current, FOCUS_ORDER, fieldErrors)) {
           formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus();
         }
-      }, 0);
+      });
     } finally {
       if (startedIn === session.current) {
         submitLock.current = false;
@@ -179,6 +183,7 @@ export function UserAdminDialog({
             errors={errors}
             fieldLabels={FIELD_LABELS}
             fieldOrder={FOCUS_ORDER}
+            description={mode === "create" ? "Create a new user account and assign their workspace access." : "Update this person's details and workspace access."}
             formClassName="modal-card"
             formComponent={m.form}
             formProps={{
@@ -189,56 +194,66 @@ export function UserAdminDialog({
             }}
             formRef={formRef}
             headerClassName="modal-header"
+            headerIcon={<UserPlus size={22} />}
             isSubmitting={isSubmitting}
             onClose={onClose}
             onEdit={touch}
             onSubmit={submit}
             pendingLabel={mode === "create" ? "Creating…" : "Saving…"}
             submitError={submitError}
+            submitIcon={mode === "create" ? <UserPlus size={16} /> : undefined}
             submitLabel={mode === "create" ? "Create user" : "Save changes"}
             title={title}
           >
-            <Field className="auth-field" error={errors.email} label="Email" name="email" required>
-              {(props) => <input {...props} aria-label="Email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); clearError("email"); }} />}
-            </Field>
-            <FormGrid>
-              <Field className="auth-field" error={errors.firstName} label="First name" name="firstName" required={nameRequired(initial?.firstName)}>
-                {(props) => <input {...props} aria-label="First name" value={firstName} onChange={(event) => { setFirstName(event.target.value); clearError("firstName"); }} />}
+            <FormSection description="Who this person is. The email is their sign-in." step={1} title="Identity">
+              <Field error={errors.email} icon={<Mail size={16} />} label="Email" name="email" required>
+                {(props) => <input {...props} aria-label="Email" placeholder="name@company.com" type="email" value={email} onChange={(event) => { setEmail(event.target.value); clearError("email"); }} />}
               </Field>
-              <Field className="auth-field" error={errors.lastName} label="Last name" name="lastName" required={nameRequired(initial?.lastName)}>
-                {(props) => <input {...props} aria-label="Last name" value={lastName} onChange={(event) => { setLastName(event.target.value); clearError("lastName"); }} />}
-              </Field>
-            </FormGrid>
-            <Field className="auth-field" label="Role" name="role" required>
-              {(props) => (
-                <select {...props} aria-label="Role" value={role} onChange={(event) => setRole(event.target.value as StaffRole)}>
-                  {roleOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {ROLE_LABELS[option]}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </Field>
-            {needsCustomer ? (
-              <Field className="auth-field" error={errors.customers} label="Customers" name="customers" required>
+              <FormGrid>
+                <Field error={errors.firstName} icon={<User size={16} />} label="First name" name="firstName" required={nameRequired(initial?.firstName)}>
+                  {(props) => <input {...props} aria-label="First name" placeholder="First name" value={firstName} onChange={(event) => { setFirstName(event.target.value); clearError("firstName"); }} />}
+                </Field>
+                <Field error={errors.lastName} icon={<User size={16} />} label="Last name" name="lastName" required={nameRequired(initial?.lastName)}>
+                  {(props) => <input {...props} aria-label="Last name" placeholder="Last name" value={lastName} onChange={(event) => { setLastName(event.target.value); clearError("lastName"); }} />}
+                </Field>
+              </FormGrid>
+            </FormSection>
+            <FormSection description="What they can see and do." step={2} title="Access">
+              <Field label="Role" name="role" required>
                 {(props) => (
-                  <select
+                  <Select
                     {...props}
-                    aria-label="Customers"
-                    multiple
-                    value={customerIds}
-                    onChange={(event) => { setCustomerIds(Array.from(event.currentTarget.selectedOptions, (option) => option.value)); clearError("customers"); }}
-                  >
-                    {customers.map((customer) => (
-                      <option key={customer.id} value={customer.id}>
-                        {customer.name}
-                      </option>
-                    ))}
-                  </select>
+                    aria-label="Role"
+                    icon={<ShieldCheck size={16} />}
+                    onChange={(next) => { setRole(next as StaffRole); touch(); }}
+                    options={roleOptions.map((option) => ({ value: option, label: ROLE_LABELS[option] }))}
+                    value={role}
+                  />
                 )}
               </Field>
-            ) : null}
+              <FormNote icon={<Info size={16} />}>
+                Roles control workspace access, permissions and available features. You can change this later.
+              </FormNote>
+              {needsCustomer ? (
+                <Field error={errors.customers} label="Customers" name="customers" required>
+                  {(props) => (
+                    <select
+                      {...props}
+                      aria-label="Customers"
+                      multiple
+                      value={customerIds}
+                      onChange={(event) => { setCustomerIds(Array.from(event.currentTarget.selectedOptions, (option) => option.value)); clearError("customers"); }}
+                    >
+                      {customers.map((customer) => (
+                        <option key={customer.id} value={customer.id}>
+                          {customer.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </Field>
+              ) : null}
+            </FormSection>
           </FormShell>
         </m.div>
       ) : null}

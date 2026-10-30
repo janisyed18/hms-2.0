@@ -13,6 +13,7 @@ import {
   signedInPage,
   waitForApiHealth
 } from "./schedulingSupport";
+import { chooseOption } from "./choose";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const ASSET = "00000000-0000-7000-8000-0000000000b1";
@@ -101,7 +102,7 @@ test.describe("inspection lifecycle", () => {
       await page.goto("/?view=inspections");
       await page.getByRole("button", { name: "Add Inspection" }).click();
       const drawer = page.getByRole("heading", { name: "Add Inspection" }).locator("xpath=ancestor::form");
-      await drawer.getByLabel("Inspection asset").selectOption(await drawer.locator("option", { hasText: "E2E-LIFECYCLE-1" }).getAttribute("value") ?? "");
+      await chooseOption(drawer.getByLabel("Inspection asset"), { label: "E2E-LIFECYCLE-1" });
       for (const label of ["Instruction", "Working pressure kPa", "Ohms total", "Certificate result", "Inspection notes"]) {
         await expect(drawer.getByLabel(label)).toHaveCount(0);
       }

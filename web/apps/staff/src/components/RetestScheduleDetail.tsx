@@ -15,6 +15,7 @@ import type {
   RetestScheduleUpdateValues
 } from "../domain/types";
 import { assetLabel } from "../utils/identity";
+import { Select } from "./interaction/Select";
 
 interface RetestScheduleDetailProps {
   canWrite: boolean;
@@ -119,9 +120,14 @@ export function RetestScheduleDetail({
       </Field>
       <Field label="Retest status" name="status" required>
         {(props) => (
-          <select {...props} aria-label="Retest status" disabled={!canWrite} value={status} onChange={(event) => setStatus(event.target.value as RetestScheduleStatus)}>
-            {scheduleStatuses.map((scheduleStatus) => <option key={scheduleStatus} value={scheduleStatus}>{scheduleStatus}</option>)}
-          </select>
+          <Select
+            {...props}
+            aria-label="Retest status"
+            disabled={!canWrite}
+            onChange={(next) => { setStatus(next as RetestScheduleStatus); touch(); }}
+            options={scheduleStatuses.map((scheduleStatus) => ({ value: scheduleStatus, label: scheduleStatus }))}
+            value={status}
+          />
         )}
       </Field>
       <Field error={errors.reminder} label="Reminder interval days" name="reminder" required>

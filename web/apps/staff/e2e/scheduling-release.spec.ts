@@ -23,6 +23,7 @@ import {
   bookingApiContext,
   availabilityFromApi
 } from "./schedulingSupport";
+import { chooseOption, optionTexts } from "./choose";
 
 test.describe("scheduling release workflow", () => {
   test.describe.configure({ mode: "serial" });
@@ -82,7 +83,7 @@ test.describe("scheduling release workflow", () => {
 
       await admin.page.getByRole("button", { name: "Request reschedule" }).click();
       await selectFirstAvailableTime(admin.page);
-      await admin.page.getByLabel("Inspector for rescheduled inspection").selectOption({ label: "inspector@example.test" });
+      await chooseOption(admin.page.getByLabel("Inspector for rescheduled inspection"), { label: "inspector@example.test" });
       await submitBookingForm(admin.page, "Request reschedule", "/change-requests");
       await expect(admin.page.locator(".inspection-booking-list")).toContainText("Awaiting customer confirmation", { timeout: 90_000 });
 
@@ -281,8 +282,8 @@ test.describe("scheduling release workflow", () => {
       await customer.page.getByLabel("Preferred inspection date").fill("2027-03-14");
       const springTimeSelect = customer.page.getByLabel("Available inspection time");
       await expect(springTimeSelect).toBeEnabled({ timeout: 30_000 });
-      const springOptions = await springTimeSelect.locator("option").allTextContents();
-      expect(springOptions).toEqual(["Select a time", "3:00 AM - 4:00 AM"]);
+      const springOptions = await optionTexts(springTimeSelect);
+      expect(springOptions).toEqual(["3:00 AM - 4:00 AM"]);
 
       // The form holds a chosen location and date, so leaving it asks first; this test means to discard.
       await customer.page.getByRole("button", { name: "Cancel" }).click();
@@ -294,8 +295,8 @@ test.describe("scheduling release workflow", () => {
       await customer.page.getByLabel("Preferred inspection date").fill("2027-11-07");
       const fallTimeSelect = customer.page.getByLabel("Available inspection time");
       await expect(fallTimeSelect).toBeEnabled({ timeout: 30_000 });
-      const fallOptions = await fallTimeSelect.locator("option").allTextContents();
-      expect(fallOptions).toEqual(["Select a time", "2:00 AM - 3:00 AM"]);
+      const fallOptions = await optionTexts(fallTimeSelect);
+      expect(fallOptions).toEqual(["2:00 AM - 3:00 AM"]);
 
       const availability = await availabilityFromApi(customer.page, "2027-11-07");
       expect(availability.status).toBe(200);
@@ -317,7 +318,7 @@ test.describe("scheduling release workflow", () => {
       await expect(create).toBeEnabled();
 
       // Going back to "Choose the location" clears the assets, the date, the times and the quote.
-      await customer.page.getByLabel("Booking location").selectOption("");
+      await chooseOption(customer.page.getByLabel("Booking location"), "");
       await expect(customer.page.getByRole("checkbox")).toHaveCount(0);
       await expect(customer.page.getByLabel("Preferred inspection date")).toHaveValue("");
       await expect(customer.page.getByLabel("Preferred inspection date")).toBeDisabled();
@@ -325,7 +326,7 @@ test.describe("scheduling release workflow", () => {
       await expect(create).toBeDisabled();
 
       // Choosing the location again does not bring the old asset back.
-      await customer.page.getByLabel("Booking location").selectOption({ label: "Vopak - Port Botany" });
+      await chooseOption(customer.page.getByLabel("Booking location"), { label: "Vopak - Port Botany" });
       await expect(customer.page.getByRole("checkbox", { name: "980636" })).not.toBeChecked();
       await expect(create).toBeDisabled();
     } finally {

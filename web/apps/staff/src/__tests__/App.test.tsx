@@ -6,6 +6,7 @@ import App from "../App";
 import { ModuleTable } from "../components/ModuleTable";
 import { WorkspaceState } from "../components/WorkspaceState";
 import type { StaffSession } from "../domain/types";
+import { choose, openList } from "../test/choose";
 
 const apiCustomer = {
   id: "cust-api-1",
@@ -1026,7 +1027,7 @@ describe("App", () => {
     expect(await screen.findByText("Page 1 of 5")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Page 2" }));
-    await user.selectOptions(screen.getByLabelText("Rows per page"), "10");
+    await choose(user, screen.getByLabelText("Rows per page"), "10");
 
     await waitFor(() => {
       expect(within(screen.getByRole("table", { name: "Overdue retests" })).getByText("HOS-2024-0891")).toBeVisible();
@@ -1206,16 +1207,11 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: "Assets" }));
     await user.click(screen.getByRole("button", { name: "Add Asset" }));
 
-    expect(
-      within(screen.getByLabelText("Agent")).getByRole("option", {
-        name: "E2E API Customer — E2EAPI"
-      })
-    ).toBeVisible();
-    expect(
-      within(screen.getByLabelText("Product")).getByRole("option", {
-        name: "API Spare Hose — API-2000"
-      })
-    ).toBeVisible();
+    const agents = await openList(user, screen.getByLabelText("Agent"));
+    expect(within(agents).getByRole("option", { name: /E2E API Customer.*E2EAPI/ })).toBeVisible();
+    await user.keyboard("{Escape}");
+    const products = await openList(user, screen.getByLabelText("Product"));
+    expect(within(products).getByRole("option", { name: /API Spare Hose.*API-2000/ })).toBeVisible();
   });
 
   it("preserves typed asset form values when option lists finish loading", async () => {
@@ -1261,16 +1257,16 @@ describe("App", () => {
       })
     );
 
-    expect(
-      await within(screen.getByLabelText("Agent")).findByRole("option", {
-        name: "E2E API Customer — E2EAPI"
-      })
-    ).toBeVisible();
-    expect(
-      await within(screen.getByLabelText("Product")).findByRole("option", {
-        name: "API Spare Hose — API-2000"
-      })
-    ).toBeVisible();
+    await waitFor(async () => {
+      const agents = await openList(user, screen.getByLabelText("Agent"));
+      expect(within(agents).getByRole("option", { name: /E2E API Customer.*E2EAPI/ })).toBeVisible();
+    });
+    await user.keyboard("{Escape}");
+    await waitFor(async () => {
+      const products = await openList(user, screen.getByLabelText("Product"));
+      expect(within(products).getByRole("option", { name: /API Spare Hose.*API-2000/ })).toBeVisible();
+    });
+    await user.keyboard("{Escape}");
     expect(screen.getByLabelText("Asset Name")).toHaveValue("Async transfer hose");
     expect(screen.getByLabelText("Serial Number")).toHaveValue("SERIAL-ASYNC");
   });
@@ -1365,7 +1361,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Open schedule API-777" }));
     await user.clear(screen.getByLabelText("Retest due date"));
     await user.type(screen.getByLabelText("Retest due date"), "2026-09-15");
-    await user.selectOptions(screen.getByLabelText("Retest status"), "UPCOMING");
+    await choose(user, screen.getByLabelText("Retest status"), "UPCOMING");
     await user.clear(screen.getByLabelText("Reminder interval days"));
     await user.type(screen.getByLabelText("Reminder interval days"), "45");
     await user.click(screen.getByRole("button", { name: "Save schedule" }));
@@ -1451,7 +1447,7 @@ describe("App", () => {
     await user.type(screen.getByLabelText("Email"), "reviewer2@example.com");
     await user.type(screen.getByLabelText("First name"), "Riley");
     await user.type(screen.getByLabelText("Last name"), "Reviewer");
-    await user.selectOptions(within(screen.getByRole("dialog")).getByLabelText("Role"), "REVIEWER");
+    await choose(user, within(screen.getByRole("dialog")).getByLabelText("Role"), "REVIEWER");
     await user.click(screen.getByRole("button", { name: "Create user" }));
 
     expect(await screen.findByTestId("credential-value")).toHaveTextContent(
@@ -1511,7 +1507,17 @@ describe("App", () => {
   });
 
   it("opens remaining topbar menus and applies global search navigation", async () => {
-    vi.stubGlobal("fetch", routeFetch());
+    // The search suggestions answer "nothing found", so Run always falls back to the workspace the words
+    // name. Without that, whether Run opened a suggestion or the workspace depended on how soon the
+    // suggestions arrived, which is the machine's speed and not what this test is about.
+    const routed = routeFetch();
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const requestUrl = new URL(String(url), "http://test");
+      if (requestUrl.pathname.startsWith("/api/v1/") && requestUrl.searchParams.has("search")) {
+        return okJson({ total: 0, limit: 3, offset: 0, items: [] });
+      }
+      return routed(url, init);
+    }));
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);

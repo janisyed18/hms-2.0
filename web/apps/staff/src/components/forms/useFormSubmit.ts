@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState, type RefObject } from "react";
 
 import { friendlyApiError, type FriendlyError, type FriendlyErrorOptions } from "../interaction/friendlyApiError";
+import { useFocusAfterRender } from "./useFocusAfterRender";
 import { focusFirstInvalid, useFormErrors, type FieldErrors } from "../interaction/useFormErrors";
 
 /**
@@ -33,6 +34,7 @@ export function useFormSubmit({
   const [isSubmitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const lock = useRef(false);
+  const focusAfterRender = useFocusAfterRender();
 
   const orderFor = useCallback(
     (found: FieldErrors) => (typeof order === "function" ? order(found) : order),
@@ -71,11 +73,11 @@ export function useFormSubmit({
         onFailed?.(friendly);
         setErrors(friendly.fieldErrors);
         setSubmitError(friendly.message);
-        window.setTimeout(() => {
+        focusAfterRender(() => {
           if (!focusFirstInvalid(formRef.current, orderFor(friendly.fieldErrors), friendly.fieldErrors)) {
             formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus();
           }
-        }, 0);
+        });
       } finally {
         if (isCurrent(startedIn)) {
           lock.current = false;
@@ -83,7 +85,7 @@ export function useFormSubmit({
         }
       }
     },
-    [errorOptions, fallback, fieldMap, formRef, isCurrent, orderFor, session, setErrors]
+    [errorOptions, fallback, fieldMap, focusAfterRender, formRef, isCurrent, orderFor, session, setErrors]
   );
 
   /** A new session (the form was reseeded): nothing from the last one is still pending here. */

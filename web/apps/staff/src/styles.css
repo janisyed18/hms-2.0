@@ -90,37 +90,7 @@ button:disabled {
   font-size: 12px;
 }
 
-.primary-button,
-.secondary-button,
-.detail-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 34px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.secondary-button,
-.detail-link {
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: #243044;
-}
-
-.primary-button {
-  border: 1px solid #065ac2;
-  background: linear-gradient(180deg, #0c76f2, #075fcf);
-  color: #fff;
-  padding: 0 14px;
-  box-shadow: 0 8px 16px rgba(11, 101, 216, 0.18);
-}
-
-.secondary-button {
-  padding: 0 12px;
-}
+/* Buttons are defined once, in styles/controls.css. */
 
 .toolbar .secondary-button {
   min-width: 92px;
@@ -1506,21 +1476,6 @@ tr.is-selected .row-check {
 .field:focus-within {
   border-color: rgba(37, 99, 235, 0.5);
   box-shadow: var(--focus);
-}
-
-.primary-button {
-  min-height: 38px;
-  border: 1px solid rgba(37, 99, 235, 0.18);
-  border-radius: 10px;
-  background: linear-gradient(180deg, var(--accent-2), var(--accent));
-  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.2);
-}
-
-.secondary-button,
-.detail-link {
-  min-height: 38px;
-  border-radius: 10px;
-  background: #ffffff;
 }
 
 .table-panel,

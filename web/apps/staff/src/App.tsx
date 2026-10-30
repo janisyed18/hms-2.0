@@ -17,6 +17,7 @@ import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
 import { CustomerForm } from "./components/CustomerForm";
 import { ActionNotice } from "./components/interaction/ActionNotice";
+import { ToastProvider } from "./components/interaction/Toast";
 import { CustomerTable } from "./components/CustomerTable";
 import type { OperationalModule } from "./components/OperationalWorkspace";
 import { WorkspaceState } from "./components/WorkspaceState";
@@ -486,202 +487,204 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
   // The notification provider is keyed by scope: a different organisation is a fresh feed, so the
   // old one's items, count and timers are gone at once, not after the new one has loaded.
   return (
-    <NotificationCenterProvider
-      customerId={portalMode ? route.customer : undefined}
-      key={portalMode ? (route.customer ?? "no-customer") : "staff"}
-    >
-    <AppShell
-      activeModule={renderedActiveModule}
-      canCreateAsset={canCreateAsset}
-      description={activeCopy.description}
-      hideGlobalSearch={portalMode}
-      navGroups={portalMode ? customerPortalNavGroups : undefined}
-      notificationModule="notifications"
-      onLogout={onLogout}
-      onNotificationOpen={handleNotificationOpen}
-      onModuleChange={handleModuleChange}
-      onSearchRecordOpen={handleSearchRecordOpen}
-      session={session}
-      title={activeCopy.title}
-      visibleModules={visibleModules}
-    >
-      <PageMotion key={renderedActiveModule} motionKey={renderedActiveModule}>
-        <Suspense
-          fallback={
-            <WorkspaceState title="Loading workspace" tone="loading">
-              Preparing the selected HMS workspace.
-            </WorkspaceState>
-          }
-        >
-          {renderedActiveModule === "notifications" ? (
-            <main className="record-page">
-              <div className="record-main">
-                <NotificationsPage onOpen={handleNotificationOpen} />
-              </div>
-            </main>
-          ) : renderedActiveModule === "my-work" ? (
-            <main className="record-page"><div className="record-main"><MyWorkWorkspace onOpen={handleWorkOpen} /></div></main>
-          ) : renderedActiveModule === "audit" ? (
-            <main className="record-page"><div className="record-main"><AuditWorkspace /></div></main>
-          ) : portalMode ? (
-            <main className="record-page customer-portal-page">
-              <div className="record-main">
-                <CustomerPortalWorkspace
-                  activeModule={renderedActiveModule}
-                  assetId={route.asset}
-                  customerId={route.customer}
-                  key={route.customer ?? "customer"}
-                  onAssetChange={onAssetRouteChange}
-                  onCustomerChange={onPortalCustomerChange}
-                  onModuleChange={handleModuleChange}
-                  session={session}
-                />
-              </div>
-            </main>
-          ) : isOperationalModule(renderedActiveModule) ? (
-            <main className="record-page">
-              <div className="record-main">
-                <OperationalWorkspace
-                  canEscalate={hasPermission(session, "asset:write")}
-                  module={renderedActiveModule}
-                  onAssetOpen={handleAssetOpen}
-                  onModuleChange={handleModuleChange}
-                  userName={greetingName(session)}
-                />
-              </div>
-            </main>
-          ) : renderedActiveModule === "customers" ? (
-            <>
-              <main className="customer-page">
-                <div className="customer-main">
-                  {workspace.isLoading ? (
-                    <WorkspaceState title="Loading customers" tone="loading">
-                      Retrieving the customer register.
-                    </WorkspaceState>
-                  ) : workspace.error ? (
-                    <WorkspaceState title="Customer data unavailable" tone="error">
-                      {workspace.error}
-                    </WorkspaceState>
-                  ) : (
-                    <>
-                      {customerUnavailable ? (
-                        <ActionNotice kind="error" onDismiss={() => setCustomerUnavailable(false)} title="Customer unavailable">
-                          That customer could not be found, or you do not have access to it.
-                        </ActionNotice>
-                      ) : null}
-                      {workspace.notice ? (
-                        <ActionNotice kind={workspace.notice.kind} onDismiss={workspace.dismissNotice} title={workspace.notice.title}>
-                          {workspace.notice.message}
-                        </ActionNotice>
-                      ) : null}
-                      <CustomerTable
-                        canWrite={hasPermission(session, "customer:write")}
-                        allCustomers={workspace.customers}
-                        customers={workspace.visibleCustomers}
-                        totalCount={workspace.totalCount}
-                        selectedId={workspace.selectedCustomer?.id ?? null}
-                        query={workspace.query}
-                        riskFilter={workspace.riskFilter}
-                        statusFilter={workspace.statusFilter}
-                        onQueryChange={workspace.setQuery}
-                        onRiskFilterChange={workspace.setRiskFilter}
-                        onStatusFilterChange={workspace.setStatusFilter}
-                        onSelectCustomer={workspace.selectCustomer}
-                        onAddCustomer={workspace.openCreateCustomer}
-                      />
-                    </>
-                  )}
+    <ToastProvider>
+      <NotificationCenterProvider
+        customerId={portalMode ? route.customer : undefined}
+        key={portalMode ? (route.customer ?? "no-customer") : "staff"}
+      >
+      <AppShell
+        activeModule={renderedActiveModule}
+        canCreateAsset={canCreateAsset}
+        description={activeCopy.description}
+        hideGlobalSearch={portalMode}
+        navGroups={portalMode ? customerPortalNavGroups : undefined}
+        notificationModule="notifications"
+        onLogout={onLogout}
+        onNotificationOpen={handleNotificationOpen}
+        onModuleChange={handleModuleChange}
+        onSearchRecordOpen={handleSearchRecordOpen}
+        session={session}
+        title={activeCopy.title}
+        visibleModules={visibleModules}
+      >
+        <PageMotion key={renderedActiveModule} motionKey={renderedActiveModule}>
+          <Suspense
+            fallback={
+              <WorkspaceState title="Loading workspace" tone="loading">
+                Preparing the selected HMS workspace.
+              </WorkspaceState>
+            }
+          >
+            {renderedActiveModule === "notifications" ? (
+              <main className="record-page">
+                <div className="record-main">
+                  <NotificationsPage onOpen={handleNotificationOpen} />
                 </div>
               </main>
-              <CustomerDetail
-                customer={workspace.selectedCustomer}
-                activeTab={workspace.activeTab}
-                canWrite={hasPermission(session, "customer:write")}
-                onAssetOpen={handleAssetOpen}
-                onClose={workspace.closeDetail}
-                onEdit={() => {
-                  if (!workspace.selectedCustomer) return;
-                  const customer = workspace.selectedCustomer;
-                  workspace.closeDetail();
-                  workspace.openEditCustomer(customer);
-                }}
-                onTabChange={workspace.setActiveTab}
-              />
-              <CustomerForm
-                open={workspace.isFormOpen}
-                customer={workspace.editingCustomer}
-                onClose={workspace.closeCustomerForm}
-                onSubmit={workspace.saveCustomer}
-              />
-            </>
-          ) : (
-            <main className="record-page">
-              <div className="record-main">
-                {renderedActiveModule === "assets" ? (
-                  <AssetsWorkspace
-                    canWrite={hasPermission(session, "asset:write")}
-                    onAssetRouteChange={onAssetRouteChange}
-                    routeAssetId={route.asset}
-                    workflowNavigation={workflowNavigation}
+            ) : renderedActiveModule === "my-work" ? (
+              <main className="record-page"><div className="record-main"><MyWorkWorkspace onOpen={handleWorkOpen} /></div></main>
+            ) : renderedActiveModule === "audit" ? (
+              <main className="record-page"><div className="record-main"><AuditWorkspace /></div></main>
+            ) : portalMode ? (
+              <main className="record-page customer-portal-page">
+                <div className="record-main">
+                  <CustomerPortalWorkspace
+                    activeModule={renderedActiveModule}
+                    assetId={route.asset}
+                    customerId={route.customer}
+                    key={route.customer ?? "customer"}
+                    onAssetChange={onAssetRouteChange}
+                    onCustomerChange={onPortalCustomerChange}
+                    onModuleChange={handleModuleChange}
+                    session={session}
                   />
-                ) : null}
-                {renderedActiveModule === "analytics" ? (
-                  <AnalyticsWorkspace onModuleChange={handleModuleChange} />
-                ) : null}
-                {renderedActiveModule === "products" ? (
-                  <ProductsWorkspace canManage={hasPermission(session, "reference:admin")} />
-                ) : null}
-                {renderedActiveModule === "reference" ? (
-                  <ReferenceWorkspace canManage={hasPermission(session, "reference:admin")} />
-                ) : null}
-                {renderedActiveModule === "scheduling" ? (
-                  <SchedulingWorkspace
-                    canBook={hasPermission(session, "inspection:book")}
-                    canApproveBookings={session.roles.some((role) =>
-                      role === "SUPER_ADMIN" || role === "HMS_ADMIN"
-                    )}
-                  />
-                ) : null}
-                {renderedActiveModule === "inspections" ? (
-                  <InspectionsWorkspace
-                    canBook={hasPermission(session, "inspection:book")}
-                    canApprove={hasPermission(session, "certificate:approve")}
-                    canApproveBookings={session.roles.some((role) =>
-                      role === "SUPER_ADMIN" || role === "HMS_ADMIN"
-                    )}
-                    canWrite={hasPermission(session, "inspection:write")}
-                    onInspectionRouteChange={onInspectionRouteChange}
-                    routeInspectionId={route.inspection}
-                  />
-                ) : null}
-                {renderedActiveModule === "certificates" ? (
-                  <CertificatesWorkspace
-                    canManage={hasPermission(session, "certificate:approve")}
-                  />
-                ) : null}
-                {renderedActiveModule === "retest" ? (
-                  <RetestScheduleWorkspace
-                    canWrite={hasPermission(session, "asset:write")}
-                  />
-                ) : null}
-                {isSystemModule(renderedActiveModule) ? (
-                  <SystemWorkspace
-                    actorRoles={session.roles}
-                    customerOptions={workspace.customers.map((customer) => ({
-                      id: customer.id,
-                      name: customer.name
-                    }))}
+                </div>
+              </main>
+            ) : isOperationalModule(renderedActiveModule) ? (
+              <main className="record-page">
+                <div className="record-main">
+                  <OperationalWorkspace
+                    canEscalate={hasPermission(session, "asset:write")}
                     module={renderedActiveModule}
-                    usersRoute={usersRoute}
+                    onAssetOpen={handleAssetOpen}
+                    onModuleChange={handleModuleChange}
+                    userName={greetingName(session)}
                   />
-                ) : null}
-              </div>
-            </main>
-          )}
-        </Suspense>
-      </PageMotion>
-    </AppShell>
-    </NotificationCenterProvider>
+                </div>
+              </main>
+            ) : renderedActiveModule === "customers" ? (
+              <>
+                <main className="customer-page">
+                  <div className="customer-main">
+                    {workspace.isLoading ? (
+                      <WorkspaceState title="Loading customers" tone="loading">
+                        Retrieving the customer register.
+                      </WorkspaceState>
+                    ) : workspace.error ? (
+                      <WorkspaceState title="Customer data unavailable" tone="error">
+                        {workspace.error}
+                      </WorkspaceState>
+                    ) : (
+                      <>
+                        {customerUnavailable ? (
+                          <ActionNotice kind="error" onDismiss={() => setCustomerUnavailable(false)} title="Customer unavailable">
+                            That customer could not be found, or you do not have access to it.
+                          </ActionNotice>
+                        ) : null}
+                        {workspace.notice ? (
+                          <ActionNotice kind={workspace.notice.kind} onDismiss={workspace.dismissNotice} title={workspace.notice.title}>
+                            {workspace.notice.message}
+                          </ActionNotice>
+                        ) : null}
+                        <CustomerTable
+                          canWrite={hasPermission(session, "customer:write")}
+                          allCustomers={workspace.customers}
+                          customers={workspace.visibleCustomers}
+                          totalCount={workspace.totalCount}
+                          selectedId={workspace.selectedCustomer?.id ?? null}
+                          query={workspace.query}
+                          riskFilter={workspace.riskFilter}
+                          statusFilter={workspace.statusFilter}
+                          onQueryChange={workspace.setQuery}
+                          onRiskFilterChange={workspace.setRiskFilter}
+                          onStatusFilterChange={workspace.setStatusFilter}
+                          onSelectCustomer={workspace.selectCustomer}
+                          onAddCustomer={workspace.openCreateCustomer}
+                        />
+                      </>
+                    )}
+                  </div>
+                </main>
+                <CustomerDetail
+                  customer={workspace.selectedCustomer}
+                  activeTab={workspace.activeTab}
+                  canWrite={hasPermission(session, "customer:write")}
+                  onAssetOpen={handleAssetOpen}
+                  onClose={workspace.closeDetail}
+                  onEdit={() => {
+                    if (!workspace.selectedCustomer) return;
+                    const customer = workspace.selectedCustomer;
+                    workspace.closeDetail();
+                    workspace.openEditCustomer(customer);
+                  }}
+                  onTabChange={workspace.setActiveTab}
+                />
+                <CustomerForm
+                  open={workspace.isFormOpen}
+                  customer={workspace.editingCustomer}
+                  onClose={workspace.closeCustomerForm}
+                  onSubmit={workspace.saveCustomer}
+                />
+              </>
+            ) : (
+              <main className="record-page">
+                <div className="record-main">
+                  {renderedActiveModule === "assets" ? (
+                    <AssetsWorkspace
+                      canWrite={hasPermission(session, "asset:write")}
+                      onAssetRouteChange={onAssetRouteChange}
+                      routeAssetId={route.asset}
+                      workflowNavigation={workflowNavigation}
+                    />
+                  ) : null}
+                  {renderedActiveModule === "analytics" ? (
+                    <AnalyticsWorkspace onModuleChange={handleModuleChange} />
+                  ) : null}
+                  {renderedActiveModule === "products" ? (
+                    <ProductsWorkspace canManage={hasPermission(session, "reference:admin")} />
+                  ) : null}
+                  {renderedActiveModule === "reference" ? (
+                    <ReferenceWorkspace canManage={hasPermission(session, "reference:admin")} />
+                  ) : null}
+                  {renderedActiveModule === "scheduling" ? (
+                    <SchedulingWorkspace
+                      canBook={hasPermission(session, "inspection:book")}
+                      canApproveBookings={session.roles.some((role) =>
+                        role === "SUPER_ADMIN" || role === "HMS_ADMIN"
+                      )}
+                    />
+                  ) : null}
+                  {renderedActiveModule === "inspections" ? (
+                    <InspectionsWorkspace
+                      canBook={hasPermission(session, "inspection:book")}
+                      canApprove={hasPermission(session, "certificate:approve")}
+                      canApproveBookings={session.roles.some((role) =>
+                        role === "SUPER_ADMIN" || role === "HMS_ADMIN"
+                      )}
+                      canWrite={hasPermission(session, "inspection:write")}
+                      onInspectionRouteChange={onInspectionRouteChange}
+                      routeInspectionId={route.inspection}
+                    />
+                  ) : null}
+                  {renderedActiveModule === "certificates" ? (
+                    <CertificatesWorkspace
+                      canManage={hasPermission(session, "certificate:approve")}
+                    />
+                  ) : null}
+                  {renderedActiveModule === "retest" ? (
+                    <RetestScheduleWorkspace
+                      canWrite={hasPermission(session, "asset:write")}
+                    />
+                  ) : null}
+                  {isSystemModule(renderedActiveModule) ? (
+                    <SystemWorkspace
+                      actorRoles={session.roles}
+                      customerOptions={workspace.customers.map((customer) => ({
+                        id: customer.id,
+                        name: customer.name
+                      }))}
+                      module={renderedActiveModule}
+                      usersRoute={usersRoute}
+                    />
+                  ) : null}
+                </div>
+              </main>
+            )}
+          </Suspense>
+        </PageMotion>
+      </AppShell>
+      </NotificationCenterProvider>
+    </ToastProvider>
   );
 }
 

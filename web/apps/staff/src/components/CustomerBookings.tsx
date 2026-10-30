@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { HmsApiError, createHmsClient } from "../api/hmsClient";
 import type {
@@ -8,7 +8,10 @@ import type {
   InspectionBookingChangeRequest,
   InspectionBookingRecord
 } from "../domain/types";
-import { assetLabel } from "../utils/identity";
+import { assetDisplayName, assetHasDistinctName, assetLabel } from "../utils/identity";
+import { useFocusAfterRender } from "./forms/useFocusAfterRender";
+import { Combobox } from "./interaction/Combobox";
+import { Select } from "./interaction/Select";
 
 /** The site's own time zone, never the browser's: customers choose a time at the site. */
 function siteZone(zone: string | null | undefined): string {
@@ -134,6 +137,7 @@ export function CustomerBookings({
   const [busy, setBusy] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState<string | null>(null);
   const lock = useRef(false);
+  const focusAfterRender = useFocusAfterRender();
   const request = useRef(0);
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const formHeading = useRef<HTMLHeadingElement>(null);
@@ -153,7 +157,8 @@ export function CustomerBookings({
   const chosen = slots.find((slot) => slot.quoteId === quoteId) ?? null;
   const canSearch = Boolean(locationId && localDate && (reschedule || assetId));
 
-  useEffect(() => {
+  // A layout effect: whoever can see the notice already finds focus on it.
+  useLayoutEffect(() => {
     if (notice) noticeRef.current?.focus();
   }, [notice]);
 
@@ -266,7 +271,7 @@ export function CustomerBookings({
     setNotes("");
     setNotice(null);
     clearQuote();
-    window.setTimeout(() => formHeading.current?.focus(), 0);
+    focusAfterRender(() => formHeading.current?.focus());
   }
 
   function cancelBooking(booking: InspectionBookingRecord) {
@@ -329,38 +334,36 @@ export function CustomerBookings({
             <div className="portal-form-grid">
               <label>
                 <span>Location <span aria-hidden="true" className="portal-required">*</span></span>
-                <select
+                <Select
                   aria-label="Booking location"
                   aria-required="true"
                   disabled={Boolean(reschedule)}
-                  required
-                  value={locationId}
-                  onChange={(event) => {
-                    setLocationId(event.target.value);
+                  onChange={(next) => {
+                    setLocationId(next);
                     setAssetId("");
                     clearQuote();
                   }}
-                >
-                  <option value="">Select a location</option>
-                  {customer.locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select>
+                  emptyLabel="Select a location"
+                  options={customer.locations.map((item) => ({ value: item.id, label: item.name }))}
+                  placeholder="Select a location"
+                  value={locationId}
+                />
               </label>
               <label>
                 <span>Asset <span aria-hidden="true" className="portal-required">*</span></span>
-                <select
+                <Combobox
                   aria-label="Booking asset"
                   aria-required="true"
                   disabled={Boolean(reschedule) || !locationId}
-                  required
-                  value={assetId}
-                  onChange={(event) => {
-                    setAssetId(event.target.value);
+                  emptyText="No assets match"
+                  onChange={(next) => {
+                    setAssetId(next);
                     clearQuote();
                   }}
-                >
-                  <option value="">Select an asset</option>
-                  {locationAssets.map((asset) => <option key={asset.id} value={asset.id}>{assetLabel(asset)}</option>)}
-                </select>
+                  options={locationAssets.map((asset) => ({ value: asset.id, label: assetDisplayName(asset), description: assetHasDistinctName(asset) ? `Asset #${asset.assetNumber}` : undefined, searchText: assetLabel(asset) }))}
+                  placeholder="Search assets"
+                  value={assetId}
+                />
               </label>
               <label>
                 <span>Preferred date <span aria-hidden="true" className="portal-required">*</span></span>

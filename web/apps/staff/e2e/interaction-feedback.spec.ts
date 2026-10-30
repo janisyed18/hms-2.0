@@ -9,6 +9,7 @@ import {
   signedInPage,
   waitForApiHealth
 } from "./schedulingSupport";
+import { chooseOption } from "./choose";
 
 const conflict = {
   error: { code: "conflict", message: "Serial number is already assigned to another asset.", details: null }
@@ -55,8 +56,8 @@ test.describe("Staff interaction feedback", () => {
       // Required fields are marked, and an empty save explains itself and focuses the first gap.
       await expect(page.getByText("* Required fields")).toBeVisible();
       // Choose an agent that has a site, so the first gap is the asset name.
-      await page.getByLabel("Agent").selectOption({ label: "Vopak — VOPA" });
-      await expect(page.getByLabel("Location")).not.toHaveValue("");
+      await chooseOption(page.getByLabel("Agent"), { label: "Vopak" });
+      await expect(page.getByLabel("Location")).not.toHaveText("Select location");
       await page.getByRole("button", { name: "Save asset" }).click();
       await expect(page.getByLabel("Asset Name")).toBeFocused();
       await expect(page.getByLabel("Asset Name")).toHaveAttribute("aria-invalid", "true");
