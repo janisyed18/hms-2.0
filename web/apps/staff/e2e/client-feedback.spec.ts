@@ -154,14 +154,17 @@ test.describe("client feedback: customer counts and asset identity", () => {
       await expect(header.locator(".customer-avatar")).toHaveAttribute("aria-hidden", "true");
 
       // An asset for whichever organisation this account opens on (the seed differs between runs).
-      sql(`
-        INSERT INTO assets (id, version, created_at, updated_at, customer_id, location_id, product_id, asset_number, asset_name, customer_serial_no, lifecycle_status)
-          SELECT '${PORTAL_ASSET_ID}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, c.id, l.id, p.id, '${PORTAL_ASSET_NUMBER}', '${ASSET_NAME}', NULL, 'IN_SERVICE'
-          FROM customers c
-          JOIN customer_locations l ON l.customer_id = c.id
-          CROSS JOIN (SELECT id FROM products ORDER BY created_at LIMIT 1) p
-          WHERE c.name = '${company.replace(/'/g, "''")}' LIMIT 1;
+      const inserted = sql(`
+        WITH created AS (
+          INSERT INTO assets (id, version, created_at, updated_at, customer_id, location_id, product_id, asset_number, asset_name, customer_serial_no, lifecycle_status)
+            SELECT '${PORTAL_ASSET_ID}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, c.id,
+              (SELECT l.id FROM customer_locations l WHERE l.customer_id = c.id ORDER BY l.created_at LIMIT 1),
+              (SELECT id FROM products ORDER BY created_at LIMIT 1), '${PORTAL_ASSET_NUMBER}', '${ASSET_NAME}', NULL, 'IN_SERVICE'
+            FROM customers c WHERE c.name = '${company.replace(/'/g, "''")}' LIMIT 1
+          RETURNING 1
+        ) SELECT count(*) FROM created;
       `);
+      expect(inserted.split("\n").pop()).toBe("1");
       await page.reload();
       await expect(header).toBeVisible();
 
