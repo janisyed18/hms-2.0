@@ -1434,6 +1434,7 @@ async def get_dashboard(
             DashboardRetestRead(
                 asset_id=schedule.asset.id,
                 asset_number=schedule.asset.asset_number,
+                asset_name=schedule.asset.asset_name,
                 customer_name=schedule.asset.customer.name,
                 product_name=schedule.asset.product.name,
                 due_at=schedule.due_at,
@@ -1446,6 +1447,7 @@ async def get_dashboard(
             DashboardDueRead(
                 asset_id=schedule.asset.id,
                 asset_number=schedule.asset.asset_number,
+                asset_name=schedule.asset.asset_name,
                 customer_name=schedule.asset.customer.name,
                 due_at=schedule.due_at,
             )
@@ -1456,6 +1458,7 @@ async def get_dashboard(
                 inspection_id=inspection.id,
                 asset_id=inspection.asset.id,
                 asset_number=inspection.asset.asset_number,
+                asset_name=inspection.asset.asset_name,
                 inspection_type=inspection.inspection_type,
                 status=inspection.status,
                 result=inspection.result,
@@ -1493,6 +1496,7 @@ async def get_my_work_for_principal(
                 customer_name=item.customer_name,
                 asset_id=item.asset_id,
                 asset_number=item.asset_number,
+                asset_name=item.asset_name,
                 inspection_id=item.inspection_id,
                 booking_id=item.booking_id,
                 certificate_id=item.certificate_id,
@@ -1753,6 +1757,7 @@ async def list_retest_schedules(
         statement = statement.where(
             or_(
                 func.lower(Asset.asset_number).like(search_pattern),
+                func.lower(Asset.asset_name).like(search_pattern),
                 func.lower(Asset.tag).like(search_pattern),
                 func.lower(Customer.code).like(search_pattern),
                 func.lower(Customer.name).like(search_pattern),
@@ -1813,6 +1818,7 @@ async def escalate_overdue_retests(
                 "customer_id": schedule.customer_id,
                 "asset_id": asset.id,
                 "asset_number": asset.asset_number,
+                "asset_name": asset.asset_name,
                 "due_date": schedule.due_at.isoformat(),
                 "days_overdue": (today - schedule.due_at).days,
                 "escalation_level": 1,
@@ -1942,6 +1948,7 @@ async def list_inspections(
         statement = statement.where(
             or_(
                 func.lower(Asset.asset_number).like(search_pattern),
+                func.lower(Asset.asset_name).like(search_pattern),
                 func.lower(Asset.tag).like(search_pattern),
                 func.lower(Customer.code).like(search_pattern),
                 func.lower(Customer.name).like(search_pattern),
@@ -2974,6 +2981,7 @@ def _inspection_event_payload(inspection: Inspection) -> dict[str, object]:
         "inspection_id": inspection.id,
         "asset_id": asset.id if asset else None,
         "asset_number": asset.asset_number if asset else None,
+        "asset_name": asset.asset_name if asset else None,
         "customer_id": asset.customer_id if asset else None,
         "inspector_user_id": inspection.inspector_user_id,
         "reviewer_user_id": inspection.reviewer_user_id,
@@ -3153,6 +3161,7 @@ async def list_certificates(
                 func.lower(Certificate.public_token).like(search_pattern),
                 func.lower(Certificate.issued_by_user_id).like(search_pattern),
                 func.lower(Asset.asset_number).like(search_pattern),
+                func.lower(Asset.asset_name).like(search_pattern),
                 func.lower(Asset.tag).like(search_pattern),
                 func.lower(Customer.code).like(search_pattern),
                 func.lower(Customer.name).like(search_pattern),
@@ -3220,6 +3229,7 @@ async def revoke_certificate(
             "customer_id": certificate.asset.customer_id,
             "asset_id": certificate.asset_id,
             "asset_number": certificate.asset.asset_number,
+            "asset_name": certificate.asset.asset_name,
             "certificate_number": certificate.number,
             "link": settings.public_base_url.rstrip("/"),
         },
@@ -3404,6 +3414,7 @@ async def list_assets(
         statement = statement.where(
             or_(
                 func.lower(Asset.asset_number).like(search_pattern),
+                func.lower(Asset.asset_name).like(search_pattern),
                 func.lower(Asset.customer_serial_no).like(search_pattern),
                 func.lower(Asset.tag).like(search_pattern),
                 func.lower(Customer.code).like(search_pattern),
@@ -3526,6 +3537,7 @@ async def update_asset(
                 "customer_id": asset.customer_id,
                 "asset_id": asset.id,
                 "asset_number": asset.asset_number,
+                "asset_name": asset.asset_name,
                 "link": settings.public_base_url.rstrip("/"),
             },
         )

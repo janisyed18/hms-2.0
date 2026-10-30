@@ -7,7 +7,8 @@ import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
 import { ModuleTable, type ModuleColumn } from "./ModuleTable";
-import { assetLabel } from "../utils/identity";
+import { assetDisplayName, assetLabel } from "../utils/identity";
+import { AssetIdentity } from "./AssetIdentity";
 import { useAssetsWorkspace } from "../hooks/useAssetsWorkspace";
 import type { AssetRecord, AssetWorkflowAction } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
@@ -126,7 +127,7 @@ export function AssetsWorkspace({
       header: "Asset",
       render: (asset) => (
         <span className="asset-id-cell">
-          <strong>{asset.assetName || asset.assetNumber}</strong>
+          <AssetIdentity asset={asset} />
           {asset.customerSerialNo ? <small>{asset.customerSerialNo}</small> : null}
         </span>
       )
@@ -250,7 +251,7 @@ export function AssetsWorkspace({
         countLabel={workspace.isLoading ? "Loading assets" : `${workspace.assets.length} assets`}
         emptyLabel="No assets match the current filters."
         exportRows={(asset) => [
-          asset.assetName || asset.assetNumber,
+          assetDisplayName(asset),
           asset.customer.name,
           asset.product.name,
           boreLabel(asset),

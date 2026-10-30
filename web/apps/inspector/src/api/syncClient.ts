@@ -180,6 +180,7 @@ interface ApiLocationSummary {
 interface ApiAssetPayload {
   id: string;
   asset_number: string;
+  asset_name: string | null;
   customer_serial_no: string | null;
   tag: string | null;
   lifecycle_status: string;
@@ -332,6 +333,7 @@ function asAssetPayload(value: unknown): ApiAssetPayload | null {
   return {
     id: value.id,
     asset_number: value.asset_number,
+    asset_name: nullableString(value.asset_name),
     customer_serial_no: nullableString(value.customer_serial_no),
     tag: nullableString(value.tag),
     lifecycle_status: optionalString(value.lifecycle_status) ?? "UNKNOWN",
@@ -643,6 +645,7 @@ export function mapBootstrapToWorkItems(
         workContext: context,
         assetId: payload.id,
         assetNumber: payload.asset_number,
+        assetName: payload.asset_name,
         customerSerialNo: payload.customer_serial_no,
         tag: payload.tag,
         customerName: customer?.name ?? "Unknown customer",

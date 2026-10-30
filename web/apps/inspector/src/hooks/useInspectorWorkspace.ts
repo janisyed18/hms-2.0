@@ -365,6 +365,7 @@ export function useInspectorWorkspace(userId: string) {
       workContext: input.workItem.workContext,
       assetId: input.workItem.assetId,
       assetNumber: input.workItem.assetNumber,
+      assetName: input.workItem.assetName,
       customerName: input.workItem.customerName,
       inspectionId: localInspectionId(input.workItem),
       baseVersion: input.workItem.inspectionId
@@ -385,6 +386,7 @@ export function useInspectorWorkspace(userId: string) {
       workContext: input.workItem.workContext,
       assetId: input.workItem.assetId,
       assetNumber: input.workItem.assetNumber,
+      assetName: input.workItem.assetName,
       customerName: input.workItem.customerName,
       baseVersion: input.workItem.assetVersion,
       customerSerialNo: input.customerSerialNo,

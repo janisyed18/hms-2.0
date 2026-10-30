@@ -1,6 +1,7 @@
 import { CloudUpload, RefreshCw } from "lucide-react";
 import type { OutboxOperation } from "../domain/types";
 import { StatusPill } from "./StatusPill";
+import { assetDisplayName, assetSecondaryNumber } from "../domain/assetIdentity";
 
 interface SyncQueueProps {
   hasPreservedDrafts: boolean;
@@ -129,7 +130,8 @@ export function SyncQueue({
                     <article className="queue-card" key={operation.opId}>
                       <div className="work-card__top">
                         <div>
-                          <h2>{operation.assetNumber}</h2>
+                          <h2>{assetDisplayName(operation)}</h2>
+                          {assetSecondaryNumber(operation) ? <small className="asset-number">Asset #{operation.assetNumber}</small> : null}
                           <p>{operation.customerName}</p>
                         </div>
                         <StatusPill tone={statusTone(operation.status)}>

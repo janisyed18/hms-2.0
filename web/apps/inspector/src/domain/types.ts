@@ -39,6 +39,8 @@ export interface InspectionDraftInput {
   workContext?: SyncWorkContext;
   assetId: string;
   assetNumber: string;
+  /** The name people know the asset by; absent on work saved before it was carried. */
+  assetName?: string | null;
   customerName: string;
   inspectionId: string;
   baseVersion: number | null;
@@ -55,6 +57,8 @@ export interface AssetUpdateInput {
   workContext?: SyncWorkContext;
   assetId: string;
   assetNumber: string;
+  /** The name people know the asset by; absent on work saved before it was carried. */
+  assetName?: string | null;
   customerName: string;
   baseVersion: number;
   customerSerialNo: string;
@@ -65,6 +69,8 @@ export interface PressureTestOperationInput extends PressureTestDraft {
   workContext?: SyncWorkContext;
   assetId: string;
   assetNumber: string;
+  /** The name people know the asset by; absent on work saved before it was carried. */
+  assetName?: string | null;
   customerName: string;
   inspectionId: string;
   pressureTestId: string;
@@ -76,6 +82,8 @@ export interface WorkItem {
   id: string;
   assetId: string;
   assetNumber: string;
+  /** The name people know the asset by; absent on work saved before it was carried. */
+  assetName?: string | null;
   customerSerialNo: string | null;
   tag: string | null;
   customerName: string;
@@ -172,6 +180,8 @@ export interface OutboxOperation {
   entityId: string;
   assetId: string;
   assetNumber: string;
+  /** The name people know the asset by; absent on work saved before it was carried. */
+  assetName?: string | null;
   customerName: string;
   op: "create" | "update";
   baseVersion: number | null;

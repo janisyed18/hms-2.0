@@ -109,6 +109,7 @@ interface ApiCustomerList {
 interface ApiDashboardRetest {
   asset_id: string;
   asset_number: string;
+  asset_name?: string | null;
   customer_name: string;
   product_name: string;
   due_at: string;
@@ -119,6 +120,7 @@ interface ApiDashboardRetest {
 interface ApiDashboardDue {
   asset_id: string;
   asset_number: string;
+  asset_name?: string | null;
   customer_name: string;
   due_at: string;
 }
@@ -127,6 +129,7 @@ interface ApiDashboardReview {
   inspection_id: string;
   asset_id: string;
   asset_number: string;
+  asset_name?: string | null;
   inspection_type: string;
   status: string;
   result: string | null;
@@ -316,6 +319,7 @@ interface ApiMyWork {
     customer_name: string;
     asset_id: string;
     asset_number: string;
+    asset_name?: string | null;
     inspection_id: string | null;
     booking_id: string | null;
     certificate_id: string | null;
@@ -891,6 +895,7 @@ function toDashboard(dashboard: ApiDashboard): DashboardRecord {
     overdueRetests: dashboard.overdue_retests.map((retest) => ({
       assetId: retest.asset_id,
       assetNumber: retest.asset_number,
+      assetName: retest.asset_name ?? null,
       customerName: retest.customer_name,
       productName: retest.product_name,
       dueAt: retest.due_at,
@@ -900,6 +905,7 @@ function toDashboard(dashboard: ApiDashboard): DashboardRecord {
     dueThisWeek: dashboard.due_this_week.map((item) => ({
       assetId: item.asset_id,
       assetNumber: item.asset_number,
+      assetName: item.asset_name ?? null,
       customerName: item.customer_name,
       dueAt: item.due_at
     })),
@@ -907,6 +913,7 @@ function toDashboard(dashboard: ApiDashboard): DashboardRecord {
       inspectionId: inspection.inspection_id,
       assetId: inspection.asset_id,
       assetNumber: inspection.asset_number,
+      assetName: inspection.asset_name ?? null,
       inspectionType: inspection.inspection_type,
       status: inspection.status,
       result: inspection.result
@@ -933,6 +940,7 @@ function toMyWork(work: ApiMyWork): MyWorkRecord {
       customerName: item.customer_name,
       assetId: item.asset_id,
       assetNumber: item.asset_number,
+      assetName: item.asset_name ?? null,
       inspectionId: item.inspection_id,
       bookingId: item.booking_id,
       certificateId: item.certificate_id,

@@ -275,6 +275,7 @@ async def generate_and_store_certificate(
                 "customer_id": inspection.asset.customer_id,
                 "asset_id": inspection.asset.id,
                 "asset_number": inspection.asset.asset_number,
+                "asset_name": inspection.asset.asset_name,
                 "certificate_number": number,
                 "public_token": public_token,
                 "link": verify_url,

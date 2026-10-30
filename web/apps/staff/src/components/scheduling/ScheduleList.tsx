@@ -26,7 +26,7 @@ export function ScheduleList({
         entry.locationName,
         entry.inspectorName,
         STATUS_META[entry.status].label,
-        ...entry.booking.assets.map((asset) => asset.assetNumber)
+        ...entry.booking.assets.flatMap((asset) => [asset.assetNumber, asset.assetName ?? ""])
       ].some((value) => value.toLowerCase().includes(needle))
     );
   }, [entries, query]);

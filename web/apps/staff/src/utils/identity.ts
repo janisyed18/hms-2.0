@@ -55,3 +55,35 @@ export function greetingName(session: { displayName: string; email?: string }): 
 export function personName(user: { firstName?: string | null; lastName?: string | null }): string | null {
   return [user.firstName, user.lastName].map((part) => part?.trim()).filter(Boolean).join(" ") || null;
 }
+
+/**
+ * What an asset is called on screen: its name, or its number when it has no usable name. Never blank.
+ * The number stays on screen as the secondary identifier (see `AssetIdentity`).
+ */
+export function assetDisplayName(asset: { assetNumber: string; assetName?: string | null }): string {
+  return asset.assetName?.trim() || asset.assetNumber.trim();
+}
+
+/** True when the asset's name is a real name, not just its number again. */
+export function assetHasDistinctName(asset: { assetNumber: string; assetName?: string | null }): boolean {
+  const name = asset.assetName?.trim();
+  return Boolean(name) && name !== asset.assetNumber.trim();
+}
+
+/**
+ * Up to two letters for an avatar: the first character of the first two words of a name.
+ * "Xero Stock Private Limited" is XS, "Momentum" is M. Blank names give an empty string; callers choose their own fallback.
+ */
+export function initialsOf(name: string | null | undefined): string {
+  return (name ?? "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => Array.from(word)[0]?.toUpperCase() ?? "")
+    .join("");
+}
+
+/** "Main Transfer Hose, HMS-001842" for an accessible name, or the number alone when there is no distinct name. */
+export function assetAccessibleName(asset: { assetNumber: string; assetName?: string | null }): string {
+  return assetHasDistinctName(asset) ? `${assetDisplayName(asset)}, ${asset.assetNumber}` : asset.assetNumber;
+}

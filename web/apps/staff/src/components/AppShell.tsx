@@ -41,6 +41,7 @@ import type { NotificationRecord, StaffSession } from "../domain/types";
 import { NotificationList } from "../notifications/NotificationList";
 import { BELL_ITEMS, useNotificationCenter } from "../notifications/NotificationCenterProvider";
 import { motionTokens } from "../motion/motionTokens";
+import { assetDisplayName, assetHasDistinctName, initialsOf } from "../utils/identity";
 
 export type AppModule =
   | "dashboard"
@@ -236,13 +237,7 @@ function roleSummary(roles: string[]): string {
 }
 
 function initialsFor(name: string): string {
-  const initials = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
-  return initials || "HM";
+  return initialsOf(name) || "HM";
 }
 
 function initialWorkspaceTheme(): WorkspaceTheme {
@@ -466,8 +461,8 @@ export function AppShell({
                 id: asset.id,
                 kind: "asset" as const,
                 module: "assets" as const,
-                title: asset.assetNumber,
-                detail: `${asset.customer.name} · ${asset.product.name}`,
+                title: assetDisplayName(asset),
+                detail: [assetHasDistinctName(asset) ? `Asset #${asset.assetNumber}` : null, asset.customer.name, asset.product.name].filter(Boolean).join(" · "),
                 searchTerms: [
                   asset.assetNumber,
                   asset.assetName ?? "",
@@ -487,10 +482,11 @@ export function AppShell({
                 id: inspection.id,
                 kind: "inspection" as const,
                 module: "inspections" as const,
-                title: inspection.asset.assetNumber,
-                detail: `${inspection.inspectionType.replaceAll("_", " ")} · ${inspection.status}`,
+                title: assetDisplayName(inspection.asset),
+                detail: [assetHasDistinctName(inspection.asset) ? `Asset #${inspection.asset.assetNumber}` : null, `${inspection.inspectionType.replaceAll("_", " ")} · ${inspection.status}`].filter(Boolean).join(" · "),
                 searchTerms: [
                   inspection.asset.assetNumber,
+                  inspection.asset.assetName ?? "",
                   inspection.inspectionType,
                   inspection.status,
                   inspection.customer.name

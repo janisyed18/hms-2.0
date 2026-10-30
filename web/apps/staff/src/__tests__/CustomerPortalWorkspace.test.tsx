@@ -630,3 +630,58 @@ describe("asset identity and required fields", () => {
     expect(screen.getByLabelText("Notes (optional)")).not.toBeRequired();
   });
 });
+
+describe("asset and company identity in the portal", () => {
+  function stubApi(assetBody: Record<string, unknown>[]) {
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url), "http://test").pathname;
+      if (path === "/api/v1/customers") {
+        return response({ total: 1, limit: 100, offset: 0, items: [customer("customer-a", "XERO PTY Ltd")] });
+      }
+      if (path === "/api/v1/assets") return response({ total: assetBody.length, limit: 100, offset: 0, items: assetBody });
+      return response({ total: 0, limit: 100, offset: 0, items: [] });
+    }));
+  }
+  function Assets({ assetId = null }: { assetId?: string | null }) {
+    return <CustomerPortalWorkspace activeModule="assets" assetId={assetId} customerId="customer-a" onAssetChange={vi.fn()} onCustomerChange={vi.fn()} onModuleChange={vi.fn()} session={session} />;
+  }
+
+  it("shows the company's initials, hidden from assistive technology, beside its full name", async () => {
+    stubApi([]);
+    render(<Assets />);
+    const header = (await screen.findByText("Customer workspace")).closest("header") as HTMLElement;
+    expect(within(header).getByText("XP")).toHaveAttribute("aria-hidden", "true");
+    expect(within(header).getByText("XERO PTY Ltd")).toBeInTheDocument();
+    // The signed-in person is not the company: the footer still names them.
+    expect(screen.getByText("Signed in as Customer User.")).toBeInTheDocument();
+  });
+
+  it("lists assets by name with the number underneath, and finds them by either", async () => {
+    const user = userEvent.setup();
+    stubApi([
+      { ...asset("customer-a"), asset_name: "Main Transfer Hose" },
+      { ...asset("customer-a"), id: "asset-2", asset_number: "ASSET-2", asset_name: null }
+    ]);
+    render(<Assets />);
+    const named = (await screen.findByText("Main Transfer Hose")).closest("button") as HTMLElement;
+    expect(within(named).getByText("Asset #ASSET-customer-a")).toBeInTheDocument();
+    // No name: the number is the label, once.
+    expect(screen.getAllByText("ASSET-2")).toHaveLength(1);
+
+    const search = screen.getByLabelText("Search assets");
+    await user.type(search, "transfer");
+    expect(screen.getByText("Main Transfer Hose")).toBeInTheDocument();
+    expect(screen.queryByText("ASSET-2")).toBeNull();
+    await user.clear(search);
+    await user.type(search, "ASSET-2");
+    expect(screen.getByText("ASSET-2")).toBeInTheDocument();
+    expect(screen.queryByText("Main Transfer Hose")).toBeNull();
+  });
+
+  it("titles the asset page with its name and keeps the number beside the product", async () => {
+    stubApi([{ ...asset("customer-a"), asset_name: "Main Transfer Hose" }]);
+    render(<Assets assetId="asset-customer-a" />);
+    expect(await screen.findByRole("heading", { name: "Main Transfer Hose" })).toBeInTheDocument();
+    expect(screen.getByText(/Asset #ASSET-customer-a · Product/)).toBeInTheDocument();
+  });
+});

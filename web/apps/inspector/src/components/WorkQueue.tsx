@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import type { OutboxOperation, WorkItem } from "../domain/types";
 import { StatusPill } from "./StatusPill";
 import { urgencyLabel } from "./workStatus";
+import { assetDisplayName, assetSecondaryNumber } from "../domain/assetIdentity";
 
 interface WorkQueueProps {
   workItems: WorkItem[];
@@ -32,6 +33,7 @@ function matchesQuery(item: WorkItem, query: string) {
   const normalizedQuery = query.trim().toLowerCase();
   return [
     item.assetNumber,
+    item.assetName ?? "",
     item.customerName,
     item.productName,
     item.locationName ?? ""
@@ -115,7 +117,8 @@ export function WorkQueue({ workItems, outbox, onOpenWorkItem }: WorkQueueProps)
               <article className="work-card" key={item.assetId}>
                 <div className="work-card__top">
                   <div>
-                    <h2>{item.assetNumber}</h2>
+                    <h2>{assetDisplayName(item)}</h2>
+                    {assetSecondaryNumber(item) ? <small className="asset-number">Asset #{item.assetNumber}</small> : null}
                     <p>{item.customerName}</p>
                   </div>
                   <StatusPill tone={status.tone}>{status.label}</StatusPill>
@@ -134,7 +137,7 @@ export function WorkQueue({ workItems, outbox, onOpenWorkItem }: WorkQueueProps)
                   </div>
                 </dl>
                 <button
-                  aria-label={`Open ${item.assetNumber}`}
+                  aria-label={`Open ${assetSecondaryNumber(item) ? `${assetDisplayName(item)}, ${item.assetNumber}` : item.assetNumber}`}
                   className="primary-action"
                   onClick={() => onOpenWorkItem(item)}
                   type="button"

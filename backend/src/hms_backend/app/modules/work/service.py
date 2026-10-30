@@ -64,6 +64,7 @@ class WorkItem:
     customer_name: str
     asset_id: str
     asset_number: str
+    asset_name: str | None
     inspection_id: str | None
     booking_id: str | None
     certificate_id: str | None
@@ -233,6 +234,7 @@ def _item(
         customer_name=asset.customer.name,
         asset_id=asset.id,
         asset_number=asset.asset_number,
+        asset_name=asset.asset_name,
         inspection_id=workflow.related.inspection_id,
         booking_id=workflow.related.booking_id,
         certificate_id=workflow.related.certificate_id,

@@ -445,6 +445,7 @@ async def test_dashboard_returns_live_operational_data_and_respects_customer_sco
             {
                 "asset_id": seeded_session["vopak_asset_id"],
                 "asset_number": "997950",
+                "asset_name": None,
                 "customer_name": "Vopak",
                 "product_name": "FUELFLEX GREEN",
                 "due_at": "2023-11-02",
@@ -456,6 +457,7 @@ async def test_dashboard_returns_live_operational_data_and_respects_customer_sco
             {
                 "asset_id": seeded_session["orica_asset_id"],
                 "asset_number": "ORIC-100",
+                "asset_name": None,
                 "customer_name": "Orica",
                 "due_at": (utc_today() + timedelta(days=3)).isoformat(),
             }
@@ -467,6 +469,7 @@ async def test_dashboard_returns_live_operational_data_and_respects_customer_sco
                 ],
                 "asset_id": seeded_session["vopak_asset_id"],
                 "asset_number": "997950",
+                "asset_name": None,
                 "inspection_type": "SERVICE",
                 "status": "SUBMITTED",
                 "result": "PASS",

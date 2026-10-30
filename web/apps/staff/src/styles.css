@@ -3520,6 +3520,13 @@ tbody tr.is-selected {
   padding: 16px;
 }
 
+.customer-portal-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
 .customer-portal-context strong {
   display: block;
   margin-top: 4px;
@@ -3878,4 +3885,19 @@ tbody tr.is-selected {
 
 .inspection-reject button {
   justify-self: start;
+}
+
+.asset-identity {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.asset-identity-name {
+  overflow-wrap: anywhere;
+}
+
+.asset-identity-number {
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }

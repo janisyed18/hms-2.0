@@ -107,4 +107,34 @@ describe("MyWorkWorkspace", () => {
     expect(await screen.findByText(/additional assets were not scanned/i)).toBeInTheDocument();
     expect(screen.queryByText("You're caught up")).not.toBeInTheDocument();
   });
+
+  it("names the asset first and keeps its number, or shows the number once when there is no name", async () => {
+    const item = (assetNumber: string, assetName: string | null, n: number): MyWorkItem => ({
+      id: `CONTINUE_INSPECTION:INSPECTION:inspection-${n}`,
+      kind: "INSPECTION",
+      state: "IN_PROGRESS",
+      priority: "NORMAL",
+      title: "In progress",
+      summary: "Continue the inspection.",
+      customerId: "customer-1",
+      customerName: "Mine Ltd",
+      assetId: `asset-${n}`,
+      assetNumber,
+      assetName,
+      inspectionId: `inspection-${n}`,
+      bookingId: null,
+      certificateId: null,
+      dueAt: null,
+      updatedAt: "2026-10-01T00:00:00Z",
+      nextAction: { code: "CONTINUE_INSPECTION", label: "Continue inspection", targetType: "INSPECTION", targetId: `inspection-${n}`, inspectionId: null }
+    });
+    client.getMyWork.mockResolvedValue(feed([item("A-100", "Main Transfer Hose", 1), item("A-200", null, 2)]));
+
+    render(<MyWorkWorkspace onOpen={vi.fn()} />);
+
+    expect(await screen.findByText("Main Transfer Hose")).toBeInTheDocument();
+    expect(screen.getByText("Asset #A-100")).toBeInTheDocument();
+    expect(screen.getAllByText("A-200")).toHaveLength(1);
+    expect(screen.queryByText("Asset #A-200")).toBeNull();
+  });
 });

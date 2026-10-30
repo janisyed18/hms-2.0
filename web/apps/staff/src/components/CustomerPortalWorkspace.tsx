@@ -14,6 +14,8 @@ import type {
 import type { AppModule } from "./AppShell";
 import { CustomerBookings } from "./CustomerBookings";
 import { WorkspaceState } from "./WorkspaceState";
+import { assetDisplayName, assetHasDistinctName, assetLabel, initialsOf } from "../utils/identity";
+import { AssetIdentity } from "./AssetIdentity";
 
 interface CustomerPortalWorkspaceProps {
   activeModule: AppModule;
@@ -193,9 +195,12 @@ export function CustomerPortalWorkspace({
         </div>
       ) : null}
       <header className="customer-portal-context">
-        <div>
-          <span className="eyebrow">Customer workspace</span>
-          <strong>{customer.name}</strong>
+        <div className="customer-portal-identity">
+          <span aria-hidden="true" className="customer-avatar">{initialsOf(customer.name)}</span>
+          <div>
+            <span className="eyebrow">Customer workspace</span>
+            <strong>{customer.name}</strong>
+          </div>
         </div>
         {customers.length > 1 ? (
           <label>
@@ -242,7 +247,7 @@ function Dashboard({ customer, data, onModuleChange }: { customer: CustomerRecor
     </div>
     <section className="portal-panel">
       <h2>Upcoming retests</h2>
-      {due.length === 0 ? <p>No retests currently require attention.</p> : <ul className="portal-list">{due.slice(0, 5).map((item) => <li key={item.id}><strong>{item.asset.assetNumber}</strong><span>{item.status} · {formatDate(item.dueAt)}</span></li>)}</ul>}
+      {due.length === 0 ? <p>No retests currently require attention.</p> : <ul className="portal-list">{due.slice(0, 5).map((item) => <li key={item.id}><AssetIdentity asset={item.asset} /><span>{item.status} · {formatDate(item.dueAt)}</span></li>)}</ul>}
     </section>
     <div className="portal-actions">
       <button type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button>
@@ -274,8 +279,8 @@ function Assets({ assets, assetId, onAssetChange }: { assets: AssetRecord[]; ass
     }
   }, [asset, assetId, onAssetChange]);
   const visibleAssets = assets.filter((item) => `${item.assetNumber} ${item.assetName ?? ""} ${item.tag ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
-  if (asset) return <section className="portal-panel"><button type="button" onClick={() => onAssetChange(null)}>Back to assets</button><h2>{asset.assetNumber}</h2><p>{asset.product.name} · {asset.lifecycleStatus}</p><dl className="portal-details"><div><dt>Location</dt><dd>{asset.location?.name ?? "Not assigned"}</dd></div><div><dt>Pressure rating</dt><dd>{asset.pressureRating ? `${asset.pressureRating.workingPressureKpa} kPa working / ${asset.pressureRating.testPressureKpa} kPa test` : "Not recorded"}</dd></div><div><dt>Next retest</dt><dd>{formatDate(asset.nextRetestDueAt)}</dd></div></dl><h3>Inspection history</h3>{asset.inspectionHistory.length ? <ul className="portal-list">{asset.inspectionHistory.map((item) => <li key={item.id}><strong>{item.inspectionType.replaceAll("_", " ")}</strong><span>{item.status} · {item.result ?? "Result pending"} · {formatDate(item.approvedAt ?? item.submittedAt)}</span></li>)}</ul> : <p>No inspection history is available.</p>}<h3>Certificate history</h3>{asset.certificateHistory.length ? <ul className="portal-list">{asset.certificateHistory.map((item) => <li key={item.id}><strong>{item.number}</strong><span>{item.status} · Valid through {formatDate(item.validUntil)}</span></li>)}</ul> : <p>No certificate history is available.</p>}</section>;
-  return <section className="portal-panel"><h2>Assets</h2>{unavailable ? <p className="portal-notice is-error" role="alert">That asset could not be found for this organisation.</p> : null}<label className="portal-search">Search assets<input aria-label="Search assets" value={query} onChange={(event) => setQuery(event.target.value)} /></label>{visibleAssets.length === 0 ? <p>No matching assets are assigned to this organisation.</p> : <ul className="portal-list">{visibleAssets.map((item) => <li key={item.id}><button className="portal-record-button" type="button" onClick={() => onAssetChange(item.id)}><strong>{item.assetNumber}</strong><span>{item.product.name} · {item.location?.name ?? "No location"} · {item.lifecycleStatus}</span><span>Next retest: {formatDate(item.nextRetestDueAt)}</span></button></li>)}</ul>}</section>;
+  if (asset) return <section className="portal-panel"><button type="button" onClick={() => onAssetChange(null)}>Back to assets</button><h2>{assetDisplayName(asset)}</h2><p>{[assetHasDistinctName(asset) ? `Asset #${asset.assetNumber}` : null, asset.product.name, asset.lifecycleStatus].filter(Boolean).join(" · ")}</p><dl className="portal-details"><div><dt>Location</dt><dd>{asset.location?.name ?? "Not assigned"}</dd></div><div><dt>Pressure rating</dt><dd>{asset.pressureRating ? `${asset.pressureRating.workingPressureKpa} kPa working / ${asset.pressureRating.testPressureKpa} kPa test` : "Not recorded"}</dd></div><div><dt>Next retest</dt><dd>{formatDate(asset.nextRetestDueAt)}</dd></div></dl><h3>Inspection history</h3>{asset.inspectionHistory.length ? <ul className="portal-list">{asset.inspectionHistory.map((item) => <li key={item.id}><strong>{item.inspectionType.replaceAll("_", " ")}</strong><span>{item.status} · {item.result ?? "Result pending"} · {formatDate(item.approvedAt ?? item.submittedAt)}</span></li>)}</ul> : <p>No inspection history is available.</p>}<h3>Certificate history</h3>{asset.certificateHistory.length ? <ul className="portal-list">{asset.certificateHistory.map((item) => <li key={item.id}><strong>{item.number}</strong><span>{item.status} · Valid through {formatDate(item.validUntil)}</span></li>)}</ul> : <p>No certificate history is available.</p>}</section>;
+  return <section className="portal-panel"><h2>Assets</h2>{unavailable ? <p className="portal-notice is-error" role="alert">That asset could not be found for this organisation.</p> : null}<label className="portal-search">Search assets<input aria-label="Search assets" value={query} onChange={(event) => setQuery(event.target.value)} /></label>{visibleAssets.length === 0 ? <p>No matching assets are assigned to this organisation.</p> : <ul className="portal-list">{visibleAssets.map((item) => <li key={item.id}><button className="portal-record-button" type="button" onClick={() => onAssetChange(item.id)}><AssetIdentity asset={item} /><span>{item.product.name} · {item.location?.name ?? "No location"} · {item.lifecycleStatus}</span><span>Next retest: {formatDate(item.nextRetestDueAt)}</span></button></li>)}</ul>}</section>;
 }
 
 function Locations({ customer, assets, onModuleChange }: { customer: CustomerRecord; assets: AssetRecord[]; onModuleChange: (module: AppModule) => void }) {
@@ -283,15 +288,15 @@ function Locations({ customer, assets, onModuleChange }: { customer: CustomerRec
 }
 
 function Inspections({ inspections }: { inspections: InspectionRecord[] }) {
-  return <section className="portal-panel"><h2>Inspections</h2>{inspections.length === 0 ? <p>No inspections are available.</p> : <ul className="portal-list">{inspections.map((inspection) => <li key={inspection.id}><strong>{inspection.asset.assetNumber}</strong><span>{inspection.inspectionType.replaceAll("_", " ")} · {inspection.status} · {inspection.result ?? "Result pending"}</span><span>{formatDate(inspection.submittedAt)}</span></li>)}</ul>}</section>;
+  return <section className="portal-panel"><h2>Inspections</h2>{inspections.length === 0 ? <p>No inspections are available.</p> : <ul className="portal-list">{inspections.map((inspection) => <li key={inspection.id}><AssetIdentity asset={inspection.asset} /><span>{inspection.inspectionType.replaceAll("_", " ")} · {inspection.status} · {inspection.result ?? "Result pending"}</span><span>{formatDate(inspection.submittedAt)}</span></li>)}</ul>}</section>;
 }
 
 function Certificates({ certificates }: { certificates: CertificateRecord[] }) {
-  return <section className="portal-panel"><h2>Certificates</h2>{certificates.length === 0 ? <p>No certificates are available.</p> : <ul className="portal-list">{certificates.map((certificate) => <li key={certificate.id}><strong>{certificate.number}</strong><span>{certificate.asset.assetNumber} · {certificate.status} · Valid through {formatDate(certificate.validUntil)}</span><span className="portal-actions"><a href={`/api/v1/certificates/verify/${encodeURIComponent(certificate.publicToken)}`} target="_blank" rel="noreferrer">Verify certificate</a><a href={`/api/v1/certificates/verify/${encodeURIComponent(certificate.publicToken)}/pdf`} target="_blank" rel="noreferrer">Download PDF</a></span></li>)}</ul>}</section>;
+  return <section className="portal-panel"><h2>Certificates</h2>{certificates.length === 0 ? <p>No certificates are available.</p> : <ul className="portal-list">{certificates.map((certificate) => <li key={certificate.id}><strong>{certificate.number}</strong><span>{assetLabel(certificate.asset)} · {certificate.status} · Valid through {formatDate(certificate.validUntil)}</span><span className="portal-actions"><a href={`/api/v1/certificates/verify/${encodeURIComponent(certificate.publicToken)}`} target="_blank" rel="noreferrer">Verify certificate</a><a href={`/api/v1/certificates/verify/${encodeURIComponent(certificate.publicToken)}/pdf`} target="_blank" rel="noreferrer">Download PDF</a></span></li>)}</ul>}</section>;
 }
 
 function Retests({ retests, onModuleChange }: { retests: RetestScheduleRecord[]; onModuleChange: (module: AppModule) => void }) {
-  return <section className="portal-panel"><h2>Retest schedule</h2>{retests.length === 0 ? <p>No retests are scheduled.</p> : <ul className="portal-list">{retests.map((retest) => <li key={retest.id}><strong>{retest.asset.assetNumber}</strong><span>{retest.status} · Due {formatDate(retest.dueAt)}</span><span className="portal-actions"><button type="button" onClick={() => onModuleChange("assets")}>View asset</button><button type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
+  return <section className="portal-panel"><h2>Retest schedule</h2>{retests.length === 0 ? <p>No retests are scheduled.</p> : <ul className="portal-list">{retests.map((retest) => <li key={retest.id}><AssetIdentity asset={retest.asset} /><span>{retest.status} · Due {formatDate(retest.dueAt)}</span><span className="portal-actions"><button type="button" onClick={() => onModuleChange("assets")}>View asset</button><button type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
 }
 
 

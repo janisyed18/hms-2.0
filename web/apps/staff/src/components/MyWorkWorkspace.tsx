@@ -2,6 +2,7 @@ import { AlertTriangle, ArrowRight, BriefcaseBusiness, RefreshCcw } from "lucide
 
 import type { MyWorkItem } from "../domain/types";
 import { useMyWork } from "../hooks/useMyWork";
+import { AssetIdentity } from "./AssetIdentity";
 import { WorkspaceState } from "./WorkspaceState";
 
 export function MyWorkWorkspace({
@@ -70,7 +71,7 @@ export function MyWorkWorkspace({
               <p>{item.summary}</p>
               <dl>
                 <div><dt>Customer</dt><dd>{item.customerName}</dd></div>
-                <div><dt>Asset</dt><dd>{item.assetNumber}</dd></div>
+                <div><dt>Asset</dt><dd><AssetIdentity asset={item} /></dd></div>
                 <div><dt>State</dt><dd>{item.state.replaceAll("_", " ")}</dd></div>
                 <div>
                   <dt>{item.dueAt ? "Due" : "Updated"}</dt>
