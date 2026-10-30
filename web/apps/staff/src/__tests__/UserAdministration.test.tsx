@@ -6,6 +6,7 @@ import { OneTimeCredentialDialog } from "../components/OneTimeCredentialDialog";
 import { UserAdminDialog } from "../components/UserAdminDialog";
 import { SystemWorkspace } from "../components/SystemWorkspace";
 import { manageableRoles } from "../components/roleAdmin";
+import { choose, optionLabels } from "../test/choose";
 
 const customers = [
   { id: "c1", name: "Vopak" },
@@ -17,9 +18,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function roleOptionLabels(): string[] {
-  const select = screen.getByLabelText("Role");
-  return within(select).getAllByRole("option").map((o) => o.textContent ?? "");
+async function roleOptionLabels(): Promise<string[]> {
+  return optionLabels(userEvent.setup(), screen.getByLabelText("Role"));
 }
 
 describe("role management matrix", () => {
@@ -68,7 +68,7 @@ describe("UserAdminDialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("offers Super Admin as a role option to a Super Admin actor", () => {
+  it("offers Super Admin as a role option to a Super Admin actor", async () => {
     render(
       <UserAdminDialog
         open
@@ -79,10 +79,10 @@ describe("UserAdminDialog", () => {
         onSubmit={vi.fn()}
       />
     );
-    expect(roleOptionLabels()).toContain("Super Admin");
+    expect(await roleOptionLabels()).toContain("Super Admin");
   });
 
-  it("never offers Super Admin to an HMS Admin actor", () => {
+  it("never offers Super Admin to an HMS Admin actor", async () => {
     render(
       <UserAdminDialog
         open
@@ -93,7 +93,7 @@ describe("UserAdminDialog", () => {
         onSubmit={vi.fn()}
       />
     );
-    expect(roleOptionLabels()).not.toContain("Super Admin");
+    expect(await roleOptionLabels()).not.toContain("Super Admin");
   });
 
   it("requires customer access for Customer User and supports multiple assignments", async () => {
@@ -113,9 +113,7 @@ describe("UserAdminDialog", () => {
     });
     fireEvent.change(screen.getByLabelText("First name"), { target: { value: "New" } });
     fireEvent.change(screen.getByLabelText("Last name"), { target: { value: "User" } });
-    fireEvent.change(screen.getByLabelText("Role"), {
-      target: { value: "CUSTOMER_USER" }
-    });
+    await choose(userEvent.setup(), screen.getByLabelText("Role"), "CUSTOMER_USER");
     // Customer access is required; an operator can assign more than one organisation.
     const submit = screen.getByRole("button", { name: /create user/i });
     const user = userEvent.setup();
@@ -138,7 +136,7 @@ describe("UserAdminDialog", () => {
     );
   });
 
-  it("does not show a customer selector for non-customer roles", () => {
+  it("does not show a customer selector for non-customer roles", async () => {
     render(
       <UserAdminDialog
         open
@@ -149,9 +147,7 @@ describe("UserAdminDialog", () => {
         onClose={vi.fn()}
       />
     );
-    fireEvent.change(screen.getByLabelText("Role"), {
-      target: { value: "INSPECTOR" }
-    });
+    await choose(userEvent.setup(), screen.getByLabelText("Role"), "INSPECTOR");
     expect(screen.queryByLabelText("Customer")).toBeNull();
   });
 });
@@ -268,7 +264,7 @@ describe("SystemWorkspace user lifecycle", () => {
     await user.type(screen.getByLabelText("Email"), "new.inspector@example.com");
     await user.type(screen.getByLabelText("First name"), "New");
     await user.type(screen.getByLabelText("Last name"), "Inspector");
-    await user.selectOptions(within(screen.getByRole("dialog")).getByLabelText("Role"), "INSPECTOR");
+    await choose(user, within(screen.getByRole("dialog")).getByLabelText("Role"), "INSPECTOR");
     await user.click(screen.getByRole("button", { name: /create user/i }));
 
     expect(await screen.findByTestId("credential-value")).toHaveTextContent(

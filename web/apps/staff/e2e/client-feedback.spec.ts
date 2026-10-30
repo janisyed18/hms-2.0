@@ -12,6 +12,7 @@ import {
   signedInPage,
   waitForApiHealth
 } from "./schedulingSupport";
+import { chooseOption, optionTexts } from "./choose";
 
 const STAMP = Date.now().toString().slice(-8);
 const ASSET_NUMBER = `E2E-IDENT-${STAMP}`;
@@ -181,11 +182,11 @@ test.describe("client feedback: customer counts and asset identity", () => {
       // Where the account has more than one organisation, switching changes the avatar with it.
       const switcher = page.getByLabel("Organisation");
       if (await switcher.count()) {
-        const other = (await switcher.locator("option").allTextContents()).find((name) => name.trim() !== company);
+        const other = (await optionTexts(switcher)).find((name) => name.trim() !== company);
         if (other) {
-          await switcher.selectOption({ label: other });
+          await chooseOption(switcher, { label: other });
           await expect(header.locator(".customer-avatar")).toHaveText(expectedInitials(other));
-          await switcher.selectOption({ label: company });
+          await chooseOption(switcher, { label: company });
           await expect(header.locator(".customer-avatar")).toHaveText(expectedInitials(company));
         }
       }

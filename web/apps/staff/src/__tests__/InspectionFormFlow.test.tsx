@@ -8,6 +8,7 @@ import { InspectionForm } from "../components/InspectionForm";
 import { CONDITION_CHECKS, blankFormState, buildValues, passAllConditions } from "../domain/inspectionForm";
 import type { InspectionFormState } from "../domain/inspectionForm";
 import type { AssetRecord, InspectionRecord } from "../domain/types";
+import { choose } from "../test/choose";
 
 const rated = {
   id: "asset-rated",
@@ -38,15 +39,15 @@ const create = () => screen.getByRole("button", { name: "Create inspection" });
 const field = (name: string) => screen.getByLabelText(name) as HTMLInputElement | HTMLSelectElement;
 
 async function fillEverything(user: ReturnType<typeof userEvent.setup>) {
-  await user.selectOptions(field("Instruction"), "REPAIR");
-  await user.selectOptions(field("Test time minutes"), "5");
-  await user.selectOptions(field("Pressure test result"), "PASS");
+  await choose(user, field("Instruction"), "REPAIR");
+  await choose(user, field("Test time minutes"), "5");
+  await choose(user, field("Pressure test result"), "PASS");
   await user.type(field("Ohms end A"), "0.1");
   await user.type(field("Ohms end B"), "0.2");
   await user.type(field("Ohms total"), "0.3");
   await user.click(screen.getByRole("button", { name: "Pass all" }));
-  await user.selectOptions(field(CONDITION_CHECKS[3].label), "FAIL");
-  await user.selectOptions(field("Certificate result"), "FAIL");
+  await choose(user, field(CONDITION_CHECKS[3].label), "FAIL");
+  await choose(user, field("Certificate result"), "FAIL");
   await user.type(field("Inspection notes"), "Kink near end B.");
 }
 
@@ -54,8 +55,8 @@ describe("new inspection (staff)", () => {
   it("starts with no asset chosen, and creating says an asset is needed instead of doing nothing", async () => {
     const user = userEvent.setup();
     const props = renderForm();
-    expect((field("Inspection asset") as HTMLSelectElement).value).toBe("");
-    expect(screen.getByText("Select an asset")).toBeInTheDocument();
+    expect(field("Inspection asset")).toHaveValue("");
+    expect(field("Inspection asset")).toHaveAttribute("placeholder", "Search assets");
     expect(field("Inspection asset")).toBeRequired();
     await user.click(create());
     expect(field("Inspection asset")).toHaveAccessibleDescription("Select the asset being inspected.");
@@ -66,7 +67,7 @@ describe("new inspection (staff)", () => {
   it("is pre-work only: no measurements, results or conditions can be entered before Start", async () => {
     const user = userEvent.setup();
     renderForm();
-    await user.selectOptions(field("Inspection asset"), "asset-rated");
+    await choose(user, field("Inspection asset"), "asset-rated");
     for (const label of [
       "Instruction", "Working pressure kPa", "Test pressure kPa", "Test time minutes", "Pressure test result",
       "Certificate result", "Ohms end A", "Ohms end B", "Ohms total", "Inspection notes", ...CONDITION_CHECKS.map((c) => c.label)
@@ -79,8 +80,8 @@ describe("new inspection (staff)", () => {
   it("creates with the asset and type only, carrying no result and no pressure test", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
-    await user.selectOptions(field("Inspection asset"), "asset-rated");
-    await user.selectOptions(field("Inspection type"), "NEW_ASSET");
+    await choose(user, field("Inspection asset"), "asset-rated");
+    await choose(user, field("Inspection type"), "NEW_ASSET");
     await user.click(create());
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit.mock.calls[0][0]).toEqual({
@@ -92,7 +93,7 @@ describe("new inspection (staff)", () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockRejectedValue(new HmsApiError(422, "validation", "Request validation failed", null));
     render(<InspectionForm assetOptions={[rated]} onClose={vi.fn()} onSubmit={onSubmit} open />);
-    await user.selectOptions(field("Inspection asset"), "asset-rated");
+    await choose(user, field("Inspection asset"), "asset-rated");
     await user.click(create());
     expect(await screen.findByRole("alert")).toHaveTextContent("Request validation failed");
   });
@@ -262,7 +263,7 @@ describe("saved inspection (staff)", () => {
     expect(props.onSaveDraft).toHaveBeenCalledTimes(1);
 
     await user.type(field("Ohms total"), "0.3");
-    await user.selectOptions(field("Certificate result"), "PASS");
+    await choose(user, field("Certificate result"), "PASS");
     expect(submit).toBeEnabled();
     await user.click(submit);
     expect(props.onSubmit).toHaveBeenCalledTimes(1);

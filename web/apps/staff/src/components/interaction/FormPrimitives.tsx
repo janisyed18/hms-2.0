@@ -37,6 +37,7 @@ export function Field({
   className,
   error,
   hint,
+  icon,
   label,
   name,
   required = false
@@ -45,6 +46,8 @@ export function Field({
   className?: string;
   error?: string;
   hint?: string;
+  /** A decorative icon at the start of the control (an envelope for an email, a person for a name). */
+  icon?: ReactNode;
   label: string;
   name: string;
   required?: boolean;
@@ -66,7 +69,12 @@ export function Field({
         {label}
         {required ? <RequiredMark /> : null}
       </span>
-      {children(props)}
+      {icon ? (
+        <span className="field-control">
+          <span aria-hidden="true" className="field-control__icon">{icon}</span>
+          {children(props)}
+        </span>
+      ) : children(props)}
       {hint ? <small className="field-hint" id={hintId}>{hint}</small> : null}
       {error ? <FieldError id={errorId}>{error}</FieldError> : null}
     </label>

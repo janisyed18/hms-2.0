@@ -59,7 +59,7 @@ describe("shared form behaviour on the Asset form", () => {
     const props = assetForm({ asset: null, customerOptions: [], productOptions: [], locationOptions: [] });
     const { rerender } = render(<AssetForm {...props} />);
     rerender(<AssetForm {...props} customerOptions={[customerA]} productOptions={[product]} locationOptions={[{ customerId: "c1", locations: [{ id: "l1", name: "Dock" } as never] }]} />);
-    expect(screen.getByLabelText("Agent")).toHaveValue("c1");
+    expect(screen.getByLabelText("Agent")).toHaveValue("Vopak");
     expect(unsavedStatus()).toBeNull();
   });
 

@@ -19,6 +19,7 @@ import {
   submitBookingForm,
   waitForApiHealth
 } from "./schedulingSupport";
+import { chooseOption } from "./choose";
 
 const INSPECTOR_EMAIL = "inspector@example.test";
 
@@ -221,11 +222,11 @@ test.describe("staff scheduling and dispatch calendar", () => {
       const submit = s.admin.page.locator("form.inspection-booking-form").getByRole("button", { name: "Request reschedule" });
       await expect(submit).toBeDisabled();
       await selectFirstAvailableTime(s.admin.page);
-      await s.admin.page.getByLabel("Inspector for rescheduled inspection").selectOption({ label: INSPECTOR_EMAIL });
+      await chooseOption(s.admin.page.getByLabel("Inspector for rescheduled inspection"), { label: INSPECTOR_EMAIL });
       await submitBookingForm(s.admin.page, "Request reschedule", "/change-requests");
 
       await expect(drawer).toContainText("Waiting for customer confirmation");
-      await expect(drawer).toContainText("Reschedule requested.");
+      await expect(s.admin.page.locator(".toast").filter({ hasText: "Reschedule requested." })).toBeVisible(); // confirmed in the shell, beyond the drawer
       await s.admin.page.keyboard.press("Escape");
       await expect(dayGrid(s.admin.page).getByRole("button", { name: /Change requested/ })).toBeVisible();
 
@@ -286,7 +287,7 @@ test.describe("staff scheduling and dispatch calendar", () => {
       const drawer = s.admin.page.getByRole("dialog");
       await drawer.getByLabel("Inspector to assign").selectOption({ label: INSPECTOR_EMAIL });
       await drawer.getByRole("button", { name: "Assign & approve" }).click();
-      await expect(drawer).toContainText("Booking approved and inspector assigned.");
+      await expect(s.admin.page.locator(".toast").filter({ hasText: "Booking approved and inspector assigned." })).toBeVisible();
       await s.admin.page.keyboard.press("Escape");
       await expect(grid.getByRole("button", { name: /Awaiting approval/ })).toHaveCount(0);
       await expect(grid.getByRole("button", { name: /Confirmed/ })).toHaveCount(2);
@@ -386,7 +387,7 @@ test.describe("staff scheduling and dispatch calendar", () => {
       await expect(drawer).toBeVisible();
       await drawer.getByLabel("Inspector to assign").selectOption({ label: INSPECTOR_EMAIL });
       await drawer.getByRole("button", { name: "Assign & approve" }).click();
-      await expect(drawer).toContainText("Booking approved and inspector assigned.");
+      await expect(s.admin.page.locator(".toast").filter({ hasText: "Booking approved and inspector assigned." })).toBeVisible();
       // Wait for the queue refresh to drop the request, so focus has nowhere else to return.
       await expect(page.getByRole("button", { name: /Review request from/ })).toHaveCount(0);
       await page.keyboard.press("Escape");

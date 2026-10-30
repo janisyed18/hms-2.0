@@ -21,6 +21,7 @@ import {
 } from "../scheduling/scheduleModel";
 import { loadActiveInspectors } from "../scheduling/roster";
 import { addDays, addMonths, ymdOf } from "../scheduling/zonedTime";
+import { useOptionalToast } from "../components/interaction/Toast";
 
 export type SchedulingView = "calendar" | "list" | "pending";
 
@@ -98,6 +99,12 @@ export function useSchedulingWorkspace({
   const [busy, setBusy] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [notice, setNotice] = useState<ActionNotice | null>(null);
+  const toast = useOptionalToast();
+  // A success is confirmed in the shell's toast where there is one; otherwise it is the inline notice.
+  function confirm(message: string) {
+    if (toast) toast.success({ message });
+    else setNotice({ kind: "success", message });
+  }
   const [form, setForm] = useState<FormState>({ open: false, reschedule: null, initialDate: "" });
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [reloadToken, setReloadToken] = useState(0);
@@ -343,7 +350,7 @@ export function useSchedulingWorkspace({
     setNotice(null);
     try {
       await action();
-      setNotice({ kind: "success", message: success });
+      confirm(success);
       if (bookingId) await reloadBooking(bookingId);
       refresh();
       return true;
@@ -401,7 +408,7 @@ export function useSchedulingWorkspace({
   }
   async function submitBooking(values: InspectionBookingCreateValues) {
     await createHmsClient().createInspectionBooking(values);
-    setNotice({ kind: "success", message: "Booking requested." });
+    confirm("Booking requested.");
     closeForm();
     refresh();
   }
@@ -420,7 +427,7 @@ export function useSchedulingWorkspace({
       }
       throw reason;
     }
-    setNotice({ kind: "success", message: "Reschedule requested." });
+    confirm("Reschedule requested.");
     closeForm();
     await reloadBooking(id);
     refresh();

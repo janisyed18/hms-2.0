@@ -10,6 +10,7 @@ import { Field } from "./interaction/FormPrimitives";
 import { isBlank, type FieldErrors } from "./interaction/useFormErrors";
 import type { CertificateIssueValues, InspectionRecord } from "../domain/types";
 import { assetLabel } from "../utils/identity";
+import { Combobox } from "./interaction/Combobox";
 
 interface CertificateFormProps {
   inspectionOptions: InspectionRecord[];
@@ -122,13 +123,16 @@ export function CertificateForm({
         <FormSection>
           <Field error={errors.inspectionId} label="Approved inspection" name="inspectionId" required>
             {(props) => (
-              <select {...props} aria-label="Approved inspection" disabled={nothingToCertify} value={inspectionId} onChange={(event) => chooseInspection(event.target.value)}>
-                {inspectionOptions.map((inspection) => (
-                  <option key={inspection.id} value={inspection.id}>
-                    {assetLabel(inspection.asset)} - {inspection.customer.name}
-                  </option>
-                ))}
-              </select>
+              <Combobox
+                {...props}
+                aria-label="Approved inspection"
+                disabled={nothingToCertify}
+                emptyText="No inspections match"
+                onChange={(next) => { chooseInspection(next); touch(); }}
+                options={inspectionOptions.map((inspection) => ({ value: inspection.id, label: assetLabel(inspection.asset), description: inspection.customer.name, searchText: inspection.asset.assetNumber }))}
+                placeholder="Search approved inspections"
+                value={inspectionId}
+              />
             )}
           </Field>
           <Field error={errors.number} label="Certificate number" name="number" required>

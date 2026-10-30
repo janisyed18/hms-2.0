@@ -9,6 +9,8 @@ import { useFormSubmit } from "./forms/useFormSubmit";
 import { Field } from "./interaction/FormPrimitives";
 import type { FieldErrors } from "./interaction/useFormErrors";
 import { assetLabel } from "../utils/identity";
+import { Combobox } from "./interaction/Combobox";
+import { Select } from "./interaction/Select";
 
 interface InspectionFormProps {
   assetOptions: AssetRecord[];
@@ -96,27 +98,26 @@ export function InspectionForm({
         <FormSection>
           <Field error={errors.assetId} label="Asset" name="assetId" required>
             {(props) => (
-              <select {...props} aria-label="Inspection asset" value={assetId} onChange={(event) => { setAssetId(event.target.value); clearError("assetId"); }}>
-                <option value="">Select an asset</option>
-                {assetOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {assetLabel(option)} - {option.customer.name}
-                  </option>
-                ))}
-              </select>
+              <Combobox
+                {...props}
+                aria-label="Inspection asset"
+                emptyText="No assets match"
+                onChange={(next) => { setAssetId(next); clearError("assetId"); touch(); }}
+                options={assetOptions.map((option) => ({ value: option.id, label: assetLabel(option), description: option.customer.name, searchText: `${option.assetNumber} ${option.assetName ?? ""}` }))}
+                placeholder="Search assets"
+                value={assetId}
+              />
             )}
           </Field>
           <Field label="Inspection type" name="inspectionType">
             {(props) => (
-              <select
+              <Select
                 {...props}
                 aria-label="Inspection type"
+                onChange={(next) => { setInspectionType(next as InspectionType); touch(); }}
+                options={[{ value: "SERVICE", label: "Service" }, { value: "NEW_ASSET", label: "New asset" }]}
                 value={inspectionType}
-                onChange={(event) => setInspectionType(event.target.value as InspectionType)}
-              >
-                <option value="SERVICE">Service</option>
-                <option value="NEW_ASSET">New asset</option>
-              </select>
+              />
             )}
           </Field>
         </FormSection>

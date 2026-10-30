@@ -112,7 +112,7 @@ test.describe("Operational interaction feedback", () => {
       await expect(page.getByRole("alert").filter({ hasText: /changed by someone else/i })).toBeVisible();
       await expect(page.getByLabel("Reminder interval days")).toHaveValue("21");
       await page.getByRole("button", { name: "Save schedule" }).click();
-      await expect(page.getByRole("status").filter({ hasText: "Retest schedule saved" })).toContainText("saved successfully");
+      await expect(page.getByRole("status").filter({ hasText: "Retest schedule for" })).toContainText("saved successfully");
 
       // Escalation: confirmation first, a failed send keeps the dialog, a retry reports the result.
       // The seed's retest dates drift relative to today, so make sure something is overdue on screen.
@@ -189,7 +189,7 @@ test.describe("Operational interaction feedback", () => {
       await expect(drawer.getByRole("alert")).toContainText("no longer available");
       await drawer.getByLabel("Inspector to assign").selectOption({ label: "inspector@example.test" });
       await drawer.getByRole("button", { name: "Assign & approve" }).click();
-      await expect(drawer).toContainText("Booking approved and inspector assigned.");
+      await expect(page.locator(".toast").filter({ hasText: "Booking approved and inspector assigned." })).toBeVisible();
     } finally {
       await Promise.all([customer.context.close(), superAdmin.context.close(), admin.context.close()]);
     }

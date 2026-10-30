@@ -1979,47 +1979,6 @@ button:active:not(:disabled) {
   color: var(--success);
 }
 
-.primary-button,
-.secondary-button,
-.danger-button,
-.detail-link {
-  min-height: var(--control-height);
-  border-radius: 8px;
-  box-shadow: none;
-}
-
-.primary-button {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: var(--color-white);
-}
-
-.primary-button:hover:not(:disabled),
-.primary-button:focus-visible {
-  border-color: var(--color-cobalt-700);
-  background: var(--color-cobalt-700);
-}
-
-.secondary-button,
-.detail-link {
-  border: 1px solid var(--border-strong);
-  background: var(--panel);
-  color: var(--color-neutral-700);
-}
-
-.danger-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border: 1px solid var(--danger);
-  background: var(--danger);
-  color: var(--color-white);
-  padding: 0 14px;
-  font-size: 12px;
-  font-weight: 760;
-}
-
 .field,
 .search-field,
 .select-field {
@@ -4014,15 +3973,6 @@ button:active:not(:disabled) {
   color: var(--ink);
 }
 
-:root:not([data-theme="light"]) .customer-drawer input,
-:root:not([data-theme="light"]) .customer-drawer select,
-:root:not([data-theme="light"]) .customer-drawer textarea {
-  background: var(--panel-subtle);
-  border-color: var(--border-strong);
-  color: var(--ink);
-  color-scheme: dark;
-}
-
 :root:not([data-theme="light"]) .customer-drawer input::placeholder,
 :root:not([data-theme="light"]) .customer-drawer textarea::placeholder {
   color: var(--soft);
@@ -4141,13 +4091,6 @@ button:active:not(:disabled) {
 :root:not([data-theme="light"]) .operations-panel {
   background: var(--panel);
   border-color: var(--border);
-}
-
-:root:not([data-theme="light"]) .secondary-button,
-:root:not([data-theme="light"]) .detail-link {
-  background: var(--panel);
-  border-color: var(--border);
-  color: var(--ink);
 }
 
 :root:not([data-theme="light"]) .filter-field input,

@@ -10,6 +10,7 @@ import { InspectionsWorkspace } from "../components/InspectionsWorkspace";
 import { ReferenceWorkspace } from "../components/ReferenceWorkspace";
 import { RetestScheduleDetail } from "../components/RetestScheduleDetail";
 import type { CertificateRecord, InspectionBookingRecord, InspectionRecord, ReferenceCatalogRecord, RetestScheduleRecord } from "../domain/types";
+import { choose } from "../test/choose";
 
 const client = vi.hoisted(() => ({
   listReferenceCatalog: vi.fn(),
@@ -174,7 +175,7 @@ describe("Certificates", () => {
     await user.click(screen.getByRole("button", { name: /Issue Certificate|Add Certificate/ }));
     expect(screen.getByLabelText("Approved inspection")).toBeRequired();
     expect(screen.getByLabelText("Certificate number")).toBeRequired();
-    expect(screen.getByLabelText("Approved inspection").textContent).toContain("Main Pump Hose — HMS-001842");
+    expect(screen.getByLabelText("Approved inspection")).toHaveValue("Main Pump Hose — HMS-001842");
 
     await user.click(screen.getByRole("button", { name: "Issue certificate" }));
     const failure = await screen.findByRole("alert");
@@ -268,7 +269,7 @@ describe("Inspection bookings", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Choose an inspector to assign first.");
     expect(client.approveInspectionBooking).not.toHaveBeenCalled();
 
-    await user.selectOptions(screen.getByLabelText("Assign inspector for Kooragang"), "ins-1");
+    await choose(user, screen.getByLabelText("Assign inspector for Kooragang"), "ins-1");
     await user.click(screen.getByRole("button", { name: "Assign & approve" }));
     const alert = await screen.findByText("Only pending inspection bookings can be approved.");
     expect(alert.closest('[role="alert"]')).not.toBeNull();
@@ -307,7 +308,7 @@ describe("A successful booking action is never reported as a failure because a l
     const user = userEvent.setup();
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
     await screen.findByText("Kooragang");
-    await user.selectOptions(screen.getByLabelText("Assign inspector for Kooragang"), "ins-1");
+    await choose(user, screen.getByLabelText("Assign inspector for Kooragang"), "ins-1");
     await user.click(screen.getByRole("button", { name: "Assign & approve" }));
 
     const notice = (await screen.findByText(/approved and an inspector assigned, but the latest view could not be refreshed/)).closest('[role="status"]');

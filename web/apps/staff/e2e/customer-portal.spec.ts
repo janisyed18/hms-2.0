@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 
 import { resetAuthTestAccounts } from "./global-setup";
+import { chooseOption } from "./choose";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const customerEmail = "customer.user@example.test";
@@ -130,8 +131,8 @@ async function signInToPortal(page: Page): Promise<string> {
 }
 
 async function selectFirstQuote(page: Page) {
-  await page.getByLabel("Booking location").selectOption({ index: 1 });
-  await page.getByLabel("Booking asset").selectOption({ index: 1 });
+  await chooseOption(page.getByLabel("Booking location"), { first: true });
+  await chooseOption(page.getByLabel("Booking asset"), { first: true });
   await page.getByLabel("Preferred date").fill(bookingDate);
   await page.getByRole("button", { name: "Find availability" }).click();
   await expect(page.getByRole("radio").first()).toBeVisible({ timeout: 30_000 });
@@ -336,7 +337,7 @@ test.describe("customer portal", () => {
 
     const organisation = page.getByRole("combobox", { name: "Organisation" });
     await expect(organisation).toBeVisible();
-    await organisation.selectOption({ label: "Orica Mining Services" });
+    await chooseOption(organisation, { label: "Orica Mining Services" });
     await expect(page.getByText("Orica Mining Services").first()).toBeVisible();
     await page.getByRole("button", { name: "Open navigation menu" }).click();
     const drawer = page.getByRole("dialog", { name: "Navigation menu" });

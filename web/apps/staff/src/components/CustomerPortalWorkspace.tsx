@@ -16,6 +16,7 @@ import { CustomerBookings } from "./CustomerBookings";
 import { WorkspaceState } from "./WorkspaceState";
 import { assetDisplayName, assetHasDistinctName, assetLabel, initialsOf } from "../utils/identity";
 import { AssetIdentity } from "./AssetIdentity";
+import { Select } from "./interaction/Select";
 
 interface CustomerPortalWorkspaceProps {
   activeModule: AppModule;
@@ -205,13 +206,12 @@ export function CustomerPortalWorkspace({
         {customers.length > 1 ? (
           <label>
             <span>Organisation</span>
-            <select
+            <Select
               aria-label="Organisation"
+              onChange={onCustomerChange}
+              options={customers.map((item) => ({ value: item.id, label: item.name }))}
               value={customer.id}
-              onChange={(event) => onCustomerChange(event.target.value)}
-            >
-              {customers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
+            />
           </label>
         ) : null}
       </header>
@@ -250,9 +250,9 @@ function Dashboard({ customer, data, onModuleChange }: { customer: CustomerRecor
       {due.length === 0 ? <p>No retests currently require attention.</p> : <ul className="portal-list">{due.slice(0, 5).map((item) => <li key={item.id}><AssetIdentity asset={item.asset} /><span>{item.status} · {formatDate(item.dueAt)}</span></li>)}</ul>}
     </section>
     <div className="portal-actions">
-      <button type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button>
-      <button type="button" onClick={() => onModuleChange("assets")}>View assets</button>
-      <button type="button" onClick={() => onModuleChange("certificates")}>View certificates</button>
+      <button className="primary-button" type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button>
+      <button className="secondary-button" type="button" onClick={() => onModuleChange("assets")}>View assets</button>
+      <button className="secondary-button" type="button" onClick={() => onModuleChange("certificates")}>View certificates</button>
     </div>
     <section className="portal-panel">
       <h2>Organisation</h2>
@@ -284,7 +284,7 @@ function Assets({ assets, assetId, onAssetChange }: { assets: AssetRecord[]; ass
 }
 
 function Locations({ customer, assets, onModuleChange }: { customer: CustomerRecord; assets: AssetRecord[]; onModuleChange: (module: AppModule) => void }) {
-  return <section className="portal-panel"><h2>Locations</h2>{customer.locations.length === 0 ? <p>No approved locations are available.</p> : <ul className="portal-list">{customer.locations.map((location) => <li key={location.id}><strong>{location.name}</strong><span>{[location.address1, location.city, location.state, location.country].filter(Boolean).join(", ") || "Address not recorded"}</span><span>{assets.filter((asset) => asset.location?.id === location.id).length} assigned asset(s)</span><span>{location.siteContactName ?? "No site contact"}{location.siteContactMobile ? ` · ${location.siteContactMobile}` : ""}</span><span>Timezone: {location.schedulingTimezone ?? "Not configured"}</span><span className="portal-actions"><button type="button" onClick={() => onModuleChange("assets")}>View assets</button><button type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
+  return <section className="portal-panel"><h2>Locations</h2>{customer.locations.length === 0 ? <p>No approved locations are available.</p> : <ul className="portal-list">{customer.locations.map((location) => <li key={location.id}><strong>{location.name}</strong><span>{[location.address1, location.city, location.state, location.country].filter(Boolean).join(", ") || "Address not recorded"}</span><span>{assets.filter((asset) => asset.location?.id === location.id).length} assigned asset(s)</span><span>{location.siteContactName ?? "No site contact"}{location.siteContactMobile ? ` · ${location.siteContactMobile}` : ""}</span><span>Timezone: {location.schedulingTimezone ?? "Not configured"}</span><span className="portal-actions"><button className="secondary-button" type="button" onClick={() => onModuleChange("assets")}>View assets</button><button className="primary-button" type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
 }
 
 function Inspections({ inspections }: { inspections: InspectionRecord[] }) {
@@ -296,7 +296,7 @@ function Certificates({ certificates }: { certificates: CertificateRecord[] }) {
 }
 
 function Retests({ retests, onModuleChange }: { retests: RetestScheduleRecord[]; onModuleChange: (module: AppModule) => void }) {
-  return <section className="portal-panel"><h2>Retest schedule</h2>{retests.length === 0 ? <p>No retests are scheduled.</p> : <ul className="portal-list">{retests.map((retest) => <li key={retest.id}><AssetIdentity asset={retest.asset} /><span>{retest.status} · Due {formatDate(retest.dueAt)}</span><span className="portal-actions"><button type="button" onClick={() => onModuleChange("assets")}>View asset</button><button type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
+  return <section className="portal-panel"><h2>Retest schedule</h2>{retests.length === 0 ? <p>No retests are scheduled.</p> : <ul className="portal-list">{retests.map((retest) => <li key={retest.id}><AssetIdentity asset={retest.asset} /><span>{retest.status} · Due {formatDate(retest.dueAt)}</span><span className="portal-actions"><button className="secondary-button" type="button" onClick={() => onModuleChange("assets")}>View asset</button><button className="primary-button" type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
 }
 
 

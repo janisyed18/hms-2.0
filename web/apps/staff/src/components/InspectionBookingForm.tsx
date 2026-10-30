@@ -15,6 +15,7 @@ import { useDirtyTracker } from "./forms/useDirtyTracker";
 import { useFormSeed } from "./forms/useFormSeed";
 import { useFormSubmit } from "./forms/useFormSubmit";
 import { Field, RequiredMark } from "./interaction/FormPrimitives";
+import { Select } from "./interaction/Select";
 
 const ERROR_OPTIONS = { conflictNeedsRefresh: true };
 
@@ -250,20 +251,16 @@ export function InspectionBookingForm({
         <FormSection title="Where">
           <Field label="Location" name="locationId" required>
             {(props) => (
-              <select
+              <Select
                 {...props}
                 aria-label="Booking location"
                 disabled={Boolean(rescheduleBooking)}
+                onChange={(next) => { updateLocation(next); touch(); }}
+                emptyLabel={rescheduleBooking ? undefined : "Choose the location"}
+                options={locations.map((location) => ({ value: location.id, label: location.label }))}
+                placeholder="Choose the location"
                 value={locationId}
-                onChange={(event) => updateLocation(event.target.value)}
-              >
-                {rescheduleBooking ? null : <option value="">Choose the location</option>}
-                {locations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {location.label}
-                  </option>
-                ))}
-              </select>
+              />
             )}
           </Field>
           <fieldset className="booking-asset-list" disabled={Boolean(rescheduleBooking)}>
@@ -300,26 +297,15 @@ export function InspectionBookingForm({
           {bookingDate ? (
             <Field error={availabilityError ?? undefined} label={`Available time (${schedulingTimezone})`} name="availabilityQuoteId" required>
               {(props) => (
-                <select
+                <Select
                   {...props}
                   aria-label="Available inspection time"
                   disabled={isLoadingAvailability || availableSlots.length === 0}
+                  onChange={(next) => { setChosenQuoteId(next); touch(); }}
+                  options={availableSlots.map((slot) => ({ value: slot.quoteId, label: `${timeFormat.format(new Date(slot.startsAt))} - ${timeFormat.format(new Date(slot.endsAt))}` }))}
+                  placeholder={isLoadingAvailability ? "Checking availability..." : availableSlots.length ? "Select a time" : "No times available"}
                   value={availabilityQuoteId}
-                  onChange={(event) => setChosenQuoteId(event.target.value)}
-                >
-                  <option value="">
-                    {isLoadingAvailability
-                      ? "Checking availability..."
-                      : availableSlots.length
-                        ? "Select a time"
-                        : "No times available"}
-                  </option>
-                  {availableSlots.map((slot) => (
-                    <option key={slot.quoteId} value={slot.quoteId}>
-                      {timeFormat.format(new Date(slot.startsAt))} - {timeFormat.format(new Date(slot.endsAt))}
-                    </option>
-                  ))}
-                </select>
+                />
               )}
             </Field>
           ) : null}
@@ -328,17 +314,14 @@ export function InspectionBookingForm({
           {rescheduleBooking && requiresInspector ? (
             <Field label="Inspector" name="inspectorUserId" required>
               {(props) => (
-                <select
+                <Select
                   {...props}
                   aria-label="Inspector for rescheduled inspection"
+                  onChange={(next) => { setInspectorUserId(next); touch(); }}
+                  options={inspectors.map((inspector) => ({ value: inspector.id, label: inspector.displayName }))}
+                  placeholder="Assign inspector"
                   value={inspectorUserId}
-                  onChange={(event) => setInspectorUserId(event.target.value)}
-                >
-                  <option value="">Assign inspector</option>
-                  {inspectors.map((inspector) => (
-                    <option key={inspector.id} value={inspector.id}>{inspector.displayName}</option>
-                  ))}
-                </select>
+                />
               )}
             </Field>
           ) : null}

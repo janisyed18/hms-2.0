@@ -41,7 +41,7 @@ const asset = {
   aEnd: blankEnd, bEnd: blankEnd
 } as unknown as AssetRecord;
 
-// Focus moves in a deferred step after render; a loaded CI runner can take longer than waitFor's 1s default.
+// Focus follows the render that shows the error (see FocusDeterminism.test); waitFor only absorbs the async save.
 const FOCUS_WAIT = { timeout: 5000 };
 const api = (status: number, message: string, details: unknown = null) => new HmsApiError(status, "code", message, details);
 
@@ -115,7 +115,7 @@ describe("Asset form", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Asset could not be saved");
     expect(alert).toHaveTextContent("Serial number is already assigned to another asset.");
-    // The form moves focus to the notice in a deferred step after rendering it.
+    // Focus lands in the same commit that shows the notice.
     await waitFor(() => expect(alert).toHaveFocus(), FOCUS_WAIT);
     expect(screen.getByRole("heading", { name: "Add Asset" })).toBeInTheDocument();
     expect(screen.getByLabelText("Asset Name")).toHaveValue("Boom Hose");

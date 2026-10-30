@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SchedulingWorkspace } from "../components/SchedulingWorkspace";
 import type { InspectionBookingRecord } from "../domain/types";
+import { choose, openList } from "../test/choose";
 
 const client = vi.hoisted(() => ({
   listInspectionSchedule: vi.fn(),
@@ -417,7 +418,7 @@ describe("filters", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.selectOptions(screen.getByLabelText("Inspector"), "insp-b");
+    await choose(user, screen.getByLabelText("Inspector"), "insp-b");
     await waitFor(() => expect(lastScheduleCall().inspectorUserId).toBe("insp-b"));
     // The mocked server ignores the filter and returns everything; the view still agrees.
     expect(screen.queryByRole("button", { name: /Vopak, Botany/ })).not.toBeInTheDocument();
@@ -428,7 +429,7 @@ describe("filters", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.selectOptions(screen.getByLabelText("Customer"), "cust-shell");
+    await choose(user, screen.getByLabelText("Customer"), "cust-shell");
     await waitFor(() => expect(lastScheduleCall().customerId).toBe("cust-shell"));
     expect(screen.getAllByRole("button", { name: /Shell, Clyde/ })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: /Orica, Kwinana/ })).not.toBeInTheDocument();
@@ -437,7 +438,7 @@ describe("filters", () => {
     await waitFor(() => expect(lastScheduleCall().customerId).toBeUndefined());
     expect(screen.getByRole("button", { name: /Orica, Kwinana/ })).toBeInTheDocument();
 
-    await user.selectOptions(screen.getByLabelText("Location"), "loc-kwinana");
+    await choose(user, screen.getByLabelText("Location"), "loc-kwinana");
     await waitFor(() => expect(lastScheduleCall().locationId).toBe("loc-kwinana"));
     expect(screen.queryByRole("button", { name: /Shell, Clyde/ })).not.toBeInTheDocument();
   });
@@ -446,11 +447,11 @@ describe("filters", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.selectOptions(screen.getByLabelText("Status"), "pending");
+    await choose(user, screen.getByLabelText("Status"), "pending");
     expect(screen.getByRole("button", { name: /Awaiting approval/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Ada Archer, Confirmed/ })).not.toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText("Status"), "");
-    await user.selectOptions(screen.getByLabelText("Assignment"), "unassigned");
+    await choose(user, screen.getByLabelText("Status"), "");
+    await choose(user, screen.getByLabelText("Assignment"), "unassigned");
     await waitFor(() => expect(lastScheduleCall().unassigned).toBe(true));
     expect(screen.queryByRole("button", { name: /Ada Archer/ })).not.toBeInTheDocument();
   });
@@ -459,7 +460,7 @@ describe("filters", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.selectOptions(screen.getByLabelText("Inspector"), "insp-b");
+    await choose(user, screen.getByLabelText("Inspector"), "insp-b");
     await user.click(screen.getByRole("button", { name: "Month" }));
     expect(await screen.findByRole("button", { name: /Monday 1 March: 1 visit\./ })).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "List" }));
@@ -473,7 +474,7 @@ describe("filters", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await screen.findByText(/No inspections scheduled for Monday/);
-    await user.selectOptions(screen.getByLabelText("Assignment"), "assigned");
+    await choose(user, screen.getByLabelText("Assignment"), "assigned");
     expect(screen.getByText(/Nothing matches the current filters/)).toBeInTheDocument();
   });
 });
@@ -596,7 +597,7 @@ describe("actions go through the existing validated endpoints", () => {
     expect(chooser).toHaveAccessibleDescription("Choose an inspector to assign.");
     expect(chooser).toHaveFocus();
     expect(client.approveInspectionBooking).not.toHaveBeenCalled();
-    await user.selectOptions(chooser, "insp-b");
+    await choose(user, chooser, "insp-b");
     expect(chooser).not.toHaveAttribute("aria-invalid");
     await user.click(assign);
     await waitFor(() => expect(client.approveInspectionBooking).toHaveBeenCalledWith("b4", "insp-b"));
@@ -637,7 +638,7 @@ describe("actions go through the existing validated endpoints", () => {
     await ready();
     await user.click(screen.getByRole("button", { name: /Change requested/ }));
     const drawer = await screen.findByRole("dialog");
-    await user.selectOptions(within(drawer).getByLabelText("Inspector to assign"), "insp-a");
+    await choose(user, within(drawer).getByLabelText("Inspector to assign"), "insp-a");
     await user.click(within(drawer).getByRole("button", { name: "Approve reschedule" }));
     await waitFor(() => expect(client.approveInspectionBookingReschedule).toHaveBeenCalledWith("c1-chg", "insp-a"));
   });
@@ -675,8 +676,8 @@ describe("actions go through the existing validated endpoints", () => {
     );
     const submit = within(form).getByRole("button", { name: "Request reschedule" });
     expect(submit).toBeDisabled();
-    await user.selectOptions(await within(form).findByLabelText("Available inspection time"), "quote-1");
-    await user.selectOptions(within(form).getByLabelText("Inspector for rescheduled inspection"), "insp-a");
+    await choose(user, await within(form).findByLabelText("Available inspection time"), "quote-1");
+    await choose(user, within(form).getByLabelText("Inspector for rescheduled inspection"), "insp-a");
     await user.click(submit);
     await waitFor(() =>
       expect(client.requestInspectionBookingReschedule).toHaveBeenCalledWith(
@@ -705,7 +706,7 @@ describe("actions go through the existing validated endpoints", () => {
     await ready();
     await user.click(screen.getByRole("button", { name: /Unassigned, Awaiting approval/ }));
     const drawer = await screen.findByRole("dialog");
-    await user.selectOptions(within(drawer).getByLabelText("Inspector to assign"), "insp-a");
+    await choose(user, within(drawer).getByLabelText("Inspector to assign"), "insp-a");
     const callsBefore = client.listInspectionSchedule.mock.calls.length;
     await user.click(within(drawer).getByRole("button", { name: "Assign & approve" }));
 
@@ -1052,7 +1053,7 @@ describe("the inspector roster beyond one page", () => {
     // Assignment
     await user.click(screen.getByRole("button", { name: /Unassigned, Awaiting approval/ }));
     let drawer = await screen.findByRole("dialog");
-    await user.selectOptions(within(drawer).getByLabelText("Inspector to assign"), "ins-129");
+    await choose(user, within(drawer).getByLabelText("Inspector to assign"), "ins-129");
     await user.click(within(drawer).getByRole("button", { name: "Assign & approve" }));
     await waitFor(() => expect(client.approveInspectionBooking).toHaveBeenCalledWith("b4", "ins-129"));
     await user.click(within(drawer).getByRole("button", { name: "Close appointment details" }));
@@ -1063,10 +1064,12 @@ describe("the inspector roster beyond one page", () => {
     await user.click(within(drawer).getByRole("button", { name: "Request reschedule" }));
     const form = (await screen.findByRole("heading", { name: "Request reschedule" })).closest("form") as HTMLElement;
     fireEvent.change(within(form).getByLabelText("Preferred inspection date"), { target: { value: "2027-03-08" } });
-    await user.selectOptions(await within(form).findByLabelText("Available inspection time"), "quote-1");
+    await choose(user, await within(form).findByLabelText("Available inspection time"), "quote-1");
     const picker = within(form).getByLabelText("Inspector for rescheduled inspection");
-    expect(within(picker).getAllByRole("option", { name: "Inspector 129" })).toHaveLength(1);
-    await user.selectOptions(picker, "ins-129");
+    const offered = await openList(user, picker);
+    expect(within(offered).getAllByRole("option", { name: "Inspector 129" })).toHaveLength(1);
+    await user.keyboard("{Escape}");
+    await choose(user, picker, "ins-129");
     await user.click(within(form).getByRole("button", { name: "Request reschedule" }));
     await waitFor(() =>
       expect(client.requestInspectionBookingReschedule).toHaveBeenCalledWith(
@@ -1166,7 +1169,7 @@ describe("view tabs and the folding filters", () => {
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(filters).toHaveClass("is-open");
-    await user.selectOptions(within(filters).getByLabelText("Status"), "pending");
+    await choose(user, within(filters).getByLabelText("Status"), "pending");
     expect(screen.getByRole("button", { name: "Filters (1)" })).toBeInTheDocument();
   });
 });
@@ -1302,7 +1305,7 @@ describe("drawer focus and back-out", () => {
     await user.click(screen.getByRole("tab", { name: /^Pending requests/ }));
     await user.click(await screen.findByRole("button", { name: /Review request from Vopak/ }));
     const drawer = await screen.findByRole("dialog");
-    await user.selectOptions(within(drawer).getByLabelText("Inspector to assign"), "insp-a");
+    await choose(user, within(drawer).getByLabelText("Inspector to assign"), "insp-a");
     waiting = [];
     await user.click(within(drawer).getByRole("button", { name: "Assign & approve" }));
     await within(drawer).findByText("Booking approved and inspector assigned.");
@@ -1326,7 +1329,7 @@ describe("drawer focus and back-out", () => {
     await ready();
     await user.click(screen.getByRole("button", { name: /Unassigned, Awaiting approval/ }));
     const drawer = await screen.findByRole("dialog");
-    await user.selectOptions(within(drawer).getByLabelText("Inspector to assign"), "insp-a");
+    await choose(user, within(drawer).getByLabelText("Inspector to assign"), "insp-a");
     await user.click(within(drawer).getByRole("button", { name: "Assign & approve" }));
     await within(drawer).findByText("Booking approved and inspector assigned.");
     await waitFor(() => expect(within(drawer).queryByRole("button", { name: "Assign & approve" })).not.toBeInTheDocument());
@@ -1365,7 +1368,7 @@ describe("drawer focus and back-out", () => {
     await ready();
     await user.click(screen.getByRole("button", { name: /Unassigned, Awaiting approval/ }));
     const drawer = await screen.findByRole("dialog");
-    await user.selectOptions(within(drawer).getByLabelText("Inspector to assign"), "insp-a");
+    await choose(user, within(drawer).getByLabelText("Inspector to assign"), "insp-a");
     const assign = within(drawer).getByRole("button", { name: "Assign & approve" });
     await user.click(assign);
     await waitFor(() => expect(assign).toBeDisabled());

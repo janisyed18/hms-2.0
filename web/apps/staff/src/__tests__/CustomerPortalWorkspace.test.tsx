@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CustomerPortalWorkspace } from "../components/CustomerPortalWorkspace";
 import type { StaffSession } from "../domain/types";
+import { choose, openList } from "../test/choose";
 
 const session: StaffSession = {
   userId: "customer-user",
@@ -118,18 +119,18 @@ describe("CustomerPortalWorkspace", () => {
 
     const organisation = await screen.findByRole("combobox", { name: "Organisation" });
     const location = screen.getByRole("combobox", { name: "Booking location" });
-    await user.selectOptions(location, "location-customer-a");
+    await choose(user, location, "location-customer-a");
     const bookingAsset = screen.getByRole("combobox", { name: "Booking asset" });
     expect(bookingAsset).toHaveValue("");
     expect(screen.getByRole("button", { name: "Find availability" })).toBeDisabled();
 
-    await user.selectOptions(bookingAsset, "asset-customer-a");
+    await choose(user, bookingAsset, "asset-customer-a");
     fireEvent.change(screen.getByLabelText("Preferred date"), { target: { value: "2026-10-25" } });
     await waitFor(() => expect(screen.getByRole("button", { name: "Find availability" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Find availability" }));
     expect(await screen.findByRole("radio")).toBeInTheDocument();
 
-    await user.selectOptions(organisation, "customer-b");
+    await choose(user, organisation, "customer-b");
     expect(await screen.findByRole("heading", { name: "Request an inspection" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Booking location" })).toHaveValue("");
     expect(screen.queryByRole("radio")).toBeNull();
@@ -307,8 +308,8 @@ function withZone(zone: string | null): Json {
 }
 
 async function pickSlotSearch(user: ReturnType<typeof userEvent.setup>, date = "2027-10-04") {
-  await user.selectOptions(await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
-  await user.selectOptions(screen.getByRole("combobox", { name: "Booking asset" }), "asset-customer-a");
+  await choose(user, await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
+  await choose(user, screen.getByRole("combobox", { name: "Booking asset" }), "asset-customer-a");
   fireEvent.change(screen.getByLabelText("Preferred date"), { target: { value: date } });
   await user.click(screen.getByRole("button", { name: "Find availability" }));
 }
@@ -376,27 +377,42 @@ describe("availability selection", () => {
     expect(submit).toBeDisabled();
   });
 
+  // Expiry is driven by the page's clock, so the tests own that clock: the time to live is generous and the
+  // test moves the clock past it, which no slow machine can get wrong.
+  async function withClock(run: (user: ReturnType<typeof userEvent.setup>, expiresAt: string) => Promise<void>) {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      const user = userEvent.setup({ advanceTimers: (ms) => vi.advanceTimersByTime(ms) });
+      await run(user, new Date(Date.now() + 60_000).toISOString());
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
   it("drops times that expire while on screen and asks for a fresh search", async () => {
-    const soon = new Date(Date.now() + 400).toISOString();
-    stubPortal({ customerJson: withZone("Australia/Sydney"), availability: [[slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z", soon)]] });
-    const user = userEvent.setup();
-    render(<WorkspaceHarness activeModule="bookings" />);
-    await pickSlotSearch(user);
-    await user.click(await screen.findByRole("radio"));
-    expect(await screen.findByText(/have expired/, undefined, { timeout: 3000 })).toBeInTheDocument();
-    expect(screen.queryByRole("radio")).toBeNull();
-    expect(screen.getByRole("button", { name: "Submit booking request" })).toBeDisabled();
+    await withClock(async (user, expiresAt) => {
+      stubPortal({ customerJson: withZone("Australia/Sydney"), availability: [[slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z", expiresAt)]] });
+      render(<WorkspaceHarness activeModule="bookings" />);
+      await pickSlotSearch(user);
+      await user.click(await screen.findByRole("radio"));
+      expect(screen.queryByText(/have expired/)).toBeNull();
+      await act(async () => { vi.advanceTimersByTime(61_000); });
+      expect(await screen.findByText(/have expired/)).toBeInTheDocument();
+      expect(screen.queryByRole("radio")).toBeNull();
+      expect(screen.getByRole("button", { name: "Submit booking request" })).toBeDisabled();
+    });
   });
 
   it("drops expired times even when none was selected", async () => {
-    const soon = new Date(Date.now() + 400).toISOString();
-    stubPortal({ customerJson: withZone("Australia/Sydney"), availability: [[slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z", soon)]] });
-    const user = userEvent.setup();
-    render(<WorkspaceHarness activeModule="bookings" />);
-    await pickSlotSearch(user);
-    expect(await screen.findByRole("radio")).toBeInTheDocument();
-    expect(await screen.findByText(/have expired/, undefined, { timeout: 3000 })).toBeInTheDocument();
-    expect(screen.queryByRole("radio")).toBeNull();
+    await withClock(async (user, expiresAt) => {
+      stubPortal({ customerJson: withZone("Australia/Sydney"), availability: [[slot("q1", "2027-10-03T21:00:00Z", "2027-10-03T22:00:00Z", expiresAt)]] });
+      render(<WorkspaceHarness activeModule="bookings" />);
+      await pickSlotSearch(user);
+      expect(await screen.findByRole("radio")).toBeInTheDocument();
+      await act(async () => { vi.advanceTimersByTime(61_000); });
+      expect(await screen.findByText(/have expired/)).toBeInTheDocument();
+      expect(screen.queryByRole("radio")).toBeNull();
+    });
   });
 
   it("explains an empty organisation and a location with no assets", async () => {
@@ -412,7 +428,7 @@ describe("availability selection", () => {
     }));
     const user = userEvent.setup();
     render(<WorkspaceHarness activeModule="bookings" />);
-    await user.selectOptions(await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
+    await choose(user, await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
     expect(screen.getByText(/No assets are assigned to this location/)).toBeInTheDocument();
   });
 });
@@ -432,7 +448,7 @@ describe("submitting a booking", () => {
     });
     const notice = await screen.findByText("Your inspection request was submitted for approval.");
     expect(stub.calls.filter((call) => call === "POST /api/v1/inspection-bookings")).toHaveLength(1);
-    expect(notice).toHaveFocus();
+    await waitFor(() => expect(notice).toHaveFocus());
     expect(screen.queryByRole("radio")).toBeNull(); // the form starts fresh
   });
 
@@ -451,8 +467,8 @@ describe("submitting a booking", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(/no longer available/);
     expect(alert).toHaveTextContent(/check availability again/);
-    expect(screen.getByRole("combobox", { name: "Booking location" })).toHaveValue("location-customer-a");
-    expect(screen.getByRole("combobox", { name: "Booking asset" })).toHaveValue("asset-customer-a");
+    expect(screen.getByRole("combobox", { name: "Booking location" })).toHaveTextContent("Customer A Site");
+    expect(screen.getByRole("combobox", { name: "Booking asset" })).toHaveValue("ASSET-customer-a");
     expect(screen.getByLabelText("Preferred date")).toHaveValue("2027-10-04");
     expect(screen.queryByRole("radio")).toBeNull();
     expect(screen.getByRole("button", { name: "Submit booking request" })).toBeDisabled();
@@ -519,7 +535,7 @@ describe("booking history", () => {
     await user.click(screen.getByRole("button", { name: "Yes, cancel this booking" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(/has changed since you opened it, so nothing was cancelled/);
-    expect(alert).toHaveFocus();
+    await waitFor(() => expect(alert).toHaveFocus());
     await waitFor(() => expect(stub.calls.filter((call) => call === "GET /api/v1/inspection-bookings").length).toBeGreaterThan(readsBefore));
   });
 
@@ -542,10 +558,10 @@ describe("keyboard use and long names", () => {
     const user = userEvent.setup();
     render(<WorkspaceHarness activeModule="bookings" />);
     const location = await screen.findByRole("combobox", { name: "Booking location" });
-    await user.selectOptions(location, "location-customer-a");
+    await choose(user, location, "location-customer-a");
     await user.tab();
     expect(screen.getByRole("combobox", { name: "Booking asset" })).toHaveFocus();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Booking asset" }), "asset-customer-a");
+    await choose(user, screen.getByRole("combobox", { name: "Booking asset" }), "asset-customer-a");
     fireEvent.change(screen.getByLabelText("Preferred date"), { target: { value: "2027-10-04" } });
     const find = screen.getByRole("button", { name: "Find availability" });
     find.focus();
@@ -567,8 +583,11 @@ describe("keyboard use and long names", () => {
       customerJson: { ...base, locations: base.locations.map((location) => ({ ...location, name: longName })) },
       bookings: [rawBooking({ location: { id: "location-customer-a", name: longName, address_1: null, address_2: null, city: null, state: null, country: null, scheduling_timezone: "Australia/Sydney" } })]
     });
+    const user = userEvent.setup();
     render(<WorkspaceHarness activeModule="bookings" />);
-    expect(await screen.findByRole("option", { name: longName })).toBeInTheDocument();
+    const list = await openList(user, await screen.findByRole("combobox", { name: "Booking location" }));
+    expect(within(list).getByRole("option", { name: longName })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
     expect(screen.getByText(longName, { selector: "strong" })).toBeInTheDocument();
   });
 });
@@ -587,10 +606,13 @@ describe("asset identity and required fields", () => {
     render(<WorkspaceHarness activeModule="bookings" />);
     const label = `${NAME} — ASSET-customer-a`;
     const picker = await screen.findByRole("combobox", { name: "Booking asset" });
-    await user.selectOptions(await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
-    expect(within(picker).getByRole("option", { name: label })).toBeInTheDocument();
+    await choose(user, await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
+    const offered = await openList(user, picker);
+    // The name leads and the number sits beside it, in that order.
+    expect(within(offered).getByRole("option", { name: new RegExp(`^${NAME}.*ASSET-customer-a`) })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
 
-    await user.selectOptions(picker, "asset-customer-a");
+    await choose(user, picker, "asset-customer-a");
     fireEvent.change(screen.getByLabelText("Preferred date"), { target: { value: "2027-10-04" } });
     await user.click(screen.getByRole("button", { name: "Find availability" }));
     await user.click(await screen.findByRole("radio"));
@@ -613,8 +635,9 @@ describe("asset identity and required fields", () => {
     render(<WorkspaceHarness activeModule="bookings" />);
     expect(await screen.findByText("Assets: ASSET-customer-a")).toBeInTheDocument();
     expect(screen.getByText("Assets: ASSET-elsewhere")).toBeInTheDocument();
-    await user.selectOptions(await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
-    expect(screen.getByRole("option", { name: "ASSET-customer-a" })).toBeInTheDocument();
+    await choose(user, await screen.findByRole("combobox", { name: "Booking location" }), "location-customer-a");
+    const offered = await openList(user, screen.getByRole("combobox", { name: "Booking asset" }));
+    expect(within(offered).getByRole("option", { name: "ASSET-customer-a" })).toBeInTheDocument();
   });
 
   it("marks location, asset and date as required, visibly and to assistive technology", async () => {

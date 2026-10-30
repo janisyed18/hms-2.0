@@ -23,6 +23,7 @@ export function FormShell({
   closeLabel = "Close form",
   description,
   dirty,
+  headerIcon,
   errorSummaryTitle,
   errors,
   fieldLabels,
@@ -39,6 +40,7 @@ export function FormShell({
   onSubmit,
   pendingLabel,
   submitDisabled = false,
+  submitIcon,
   submitError,
   submitLabel,
   title
@@ -47,6 +49,8 @@ export function FormShell({
   closeLabel?: string;
   /** A line under the title saying what the form is for. */
   description?: ReactNode;
+  /** A decorative icon tile beside the title (the form's subject, not a status). */
+  headerIcon?: ReactNode;
   dirty: boolean;
   errorSummaryTitle: string;
   errors: FieldErrors;
@@ -74,6 +78,8 @@ export function FormShell({
   pendingLabel: string;
   /** The submit action is not available yet (nothing to choose, a required choice missing). */
   submitDisabled?: boolean;
+  /** A decorative icon before the submit label. */
+  submitIcon?: ReactNode;
   submitError: string | null;
   submitLabel: string;
   title: string;
@@ -102,8 +108,9 @@ export function FormShell({
       >
         {inline ? null : (
           <div className={headerClassName}>
+            {headerIcon ? <span aria-hidden="true" className="drawer-header__icon">{headerIcon}</span> : null}
             {description ? (
-              <div>
+              <div className="drawer-header__text">
                 <h2>{title}</h2>
                 <p>{description}</p>
               </div>
@@ -129,9 +136,9 @@ export function FormShell({
           {inline ? (
             dirty ? <ActionButton disabled={isSubmitting} onClick={onClose} variant="ghost">Discard changes</ActionButton> : null
           ) : (
-            <ActionButton disabled={isSubmitting} onClick={guard.requestClose} variant="ghost">Cancel</ActionButton>
+            <ActionButton disabled={isSubmitting} onClick={guard.requestClose} variant="secondary">Cancel</ActionButton>
           )}
-          <ActionButton disabled={submitDisabled} pending={isSubmitting} pendingLabel={pendingLabel} type="submit" variant="primary">{submitLabel}</ActionButton>
+          <ActionButton disabled={submitDisabled} pending={isSubmitting} pendingLabel={pendingLabel} type="submit" variant="primary">{submitIcon ? <span aria-hidden="true" className="action-button__icon">{submitIcon}</span> : null}{submitLabel}</ActionButton>
         </StickyFormActions>
       </Form>
       <ConfirmDialog

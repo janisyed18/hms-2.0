@@ -17,6 +17,7 @@ import { InspectionFormFields } from "./InspectionFormFields";
 import { assetLabel } from "../utils/identity";
 import { inspectionStatusLabel } from "../utils/inspectionStatus";
 import { Field } from "./interaction/FormPrimitives";
+import { useFocusAfterRender } from "./forms/useFocusAfterRender";
 
 interface InspectionDetailProps {
   canApprove: boolean;
@@ -65,6 +66,7 @@ export function InspectionDetail({
   onStart,
   onSubmit
 }: InspectionDetailProps) {
+  const focusAfterRender = useFocusAfterRender();
   const [form, setForm] = useState<InspectionFormState>(() => blankFormState(null));
   const [isSaving, setSaving] = useState(false);
   const [isSubmitting, setSubmitting] = useState(false);
@@ -126,7 +128,7 @@ export function InspectionDetail({
       setError(friendly.message);
       // The record may have moved on (already approved, wrong state): reload what is shown.
       if (friendly.kind === "conflict" || friendly.kind === "missing") onRefresh?.();
-      window.setTimeout(() => document.querySelector<HTMLElement>(".inspection-detail-form .action-notice")?.focus(), 0);
+      focusAfterRender(() => document.querySelector<HTMLElement>(".inspection-detail-form .action-notice")?.focus());
     } finally {
       lock.current = false;
       setBusy(false);
@@ -143,7 +145,7 @@ export function InspectionDetail({
     if (!values || missing.length > 0) {
       // Say what is still needed instead of leaving a dead button.
       setError(`Still needed: ${missing.join(", ")}.`);
-      window.setTimeout(() => document.querySelector<HTMLElement>(".inspection-detail-form .action-notice")?.focus(), 0);
+      focusAfterRender(() => document.querySelector<HTMLElement>(".inspection-detail-form .action-notice")?.focus());
       return;
     }
     await guarded(() => action(values), setBusy, fallback);
@@ -173,7 +175,7 @@ export function InspectionDetail({
   async function handleReject() {
     if (!reason.trim()) {
       setReasonError("Say what needs to change, so the inspector knows what to fix.");
-      window.setTimeout(() => document.getElementById(`inspection-${inspection!.id}-reject-reason`)?.focus(), 0);
+      focusAfterRender(() => document.getElementById(`inspection-${inspection!.id}-reject-reason`)?.focus());
       return;
     }
     setReasonError(null);

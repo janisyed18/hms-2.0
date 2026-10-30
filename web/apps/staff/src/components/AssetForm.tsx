@@ -17,6 +17,9 @@ import type {
   CustomerLocation,
   RecordSummary
 } from "../domain/types";
+import { useFocusAfterRender } from "./forms/useFocusAfterRender";
+import { Combobox } from "./interaction/Combobox";
+import { Select } from "./interaction/Select";
 
 interface AssetFormProps {
   asset: AssetRecord | null;
@@ -94,6 +97,7 @@ export function AssetForm({
   const { errors, setErrors, clearError, clearAll } = useFormErrors();
   const formRef = useRef<HTMLFormElement>(null);
   const submitLock = useRef(false);
+  const focusAfterRender = useFocusAfterRender();
   const { dirty, markClean, touch } = useDirtyTracker(JSON.stringify([
     customerId, locationId, assetName, serialNumber, notes, purchaseOrderNumber, installationDate, graveDate,
     nextInspectionDate, lengthM, productId, materialId, nominalBoreId, aEnd, bEnd
@@ -229,11 +233,11 @@ export function AssetForm({
       const friendly = friendlyApiError(reason, { fallback: "The asset could not be saved. Try again.", fieldMap: FIELD_MAP });
       setErrors(friendly.fieldErrors);
       setSubmitError(friendly.message);
-      window.setTimeout(() => {
+      focusAfterRender(() => {
         if (!focusFirstInvalid(formRef.current, REQUIRED_ORDER, friendly.fieldErrors)) {
           formRef.current?.querySelector<HTMLElement>(".action-notice")?.focus();
         }
-      }, 0);
+      });
     } finally {
       if (startedIn === session.current) {
         submitLock.current = false;
@@ -266,18 +270,27 @@ export function AssetForm({
           <FormGrid>
             <Field error={errors.customerId} label="Agent" name="customerId" required>
               {(props) => (
-                <select {...props} aria-label="Agent" value={customerId} onChange={(event) => { setCustomerId(event.target.value); clearError("customerId"); }}>
-                  <option value="">Select agent</option>
-                  {customerOptions.map((customer) => <option key={customer.id} value={customer.id}>{customerLabel(customer)}</option>)}
-                </select>
+                <Combobox
+                  {...props}
+                  aria-label="Agent"
+                  emptyText="No agents match"
+                  onChange={(next) => { setCustomerId(next); clearError("customerId"); touch(); }}
+                  options={customerOptions.map((customer) => ({ value: customer.id, label: customer.name, description: customer.code ?? undefined, searchText: customerLabel(customer) }))}
+                  placeholder="Search agents"
+                  value={customerId}
+                />
               )}
             </Field>
             <Field error={errors.locationId} label="Location" name="locationId" required>
               {(props) => (
-                <select {...props} aria-label="Location" value={locationId} onChange={(event) => { setLocationId(event.target.value); clearError("locationId"); }}>
-                  <option value="">Select location</option>
-                  {customerLocations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
-                </select>
+                <Select
+                  {...props}
+                  aria-label="Location"
+                  onChange={(next) => { setLocationId(next); clearError("locationId"); touch(); }}
+                  options={customerLocations.map((location) => ({ value: location.id, label: location.name }))}
+                  placeholder="Select location"
+                  value={locationId}
+                />
               )}
             </Field>
           </FormGrid>
@@ -315,10 +328,15 @@ export function AssetForm({
           <FormGrid>
             <Field error={errors.productId} label="Product" name="productId" required>
               {(props) => (
-                <select {...props} aria-label="Product" value={productId} onChange={(event) => { setProductId(event.target.value); clearError("productId"); }}>
-                  <option value="">Select product</option>
-                  {productOptions.map((product) => <option key={product.id} value={product.id}>{productLabel(product)}</option>)}
-                </select>
+                <Combobox
+                  {...props}
+                  aria-label="Product"
+                  emptyText="No products match"
+                  onChange={(next) => { setProductId(next); clearError("productId"); touch(); }}
+                  options={productOptions.map((product) => ({ value: product.id, label: product.name, description: product.code, searchText: productLabel(product) }))}
+                  placeholder="Search products"
+                  value={productId}
+                />
               )}
             </Field>
             <Field label="Length (m)" name="lengthM">
@@ -326,18 +344,26 @@ export function AssetForm({
             </Field>
             <Field label="Material" name="materialId">
               {(props) => (
-                <select {...props} aria-label="Material" value={materialId} onChange={(event) => setMaterialId(event.target.value)}>
-                  <option value="">Select material</option>
-                  {configurationOptions.materials.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-                </select>
+                <Select
+                  {...props}
+                  aria-label="Material"
+                  onChange={(next) => { setMaterialId(next); touch(); }}
+                  options={[{ value: "", label: "Not specified" }, ...configurationOptions.materials.map((option) => ({ value: option.id, label: option.name }))]}
+                  placeholder="Select material"
+                  value={materialId}
+                />
               )}
             </Field>
             <Field label="Nominal Bore" name="nominalBoreId">
               {(props) => (
-                <select {...props} aria-label="Nominal Bore" value={nominalBoreId} onChange={(event) => setNominalBoreId(event.target.value)}>
-                  <option value="">Select nominal bore</option>
-                  {configurationOptions.nominalBores.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-                </select>
+                <Select
+                  {...props}
+                  aria-label="Nominal Bore"
+                  onChange={(next) => { setNominalBoreId(next); touch(); }}
+                  options={[{ value: "", label: "Not specified" }, ...configurationOptions.nominalBores.map((option) => ({ value: option.id, label: option.name }))]}
+                  placeholder="Select nominal bore"
+                  value={nominalBoreId}
+                />
               )}
             </Field>
           </FormGrid>

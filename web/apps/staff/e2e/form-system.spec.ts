@@ -13,6 +13,7 @@ import {
   signedInPage,
   waitForApiHealth
 } from "./schedulingSupport";
+import { chooseOption } from "./choose";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const ASSET = "00000000-0000-7000-8000-0000000000c1";
@@ -161,7 +162,7 @@ test.describe("shared Staff form system", () => {
       await page.getByRole("button", { name: "Add Asset" }).click();
       const form = page.getByRole("form", { name: "Add Asset" });
       await expect(form).toBeVisible();
-      await form.getByLabel("Agent").selectOption({ label: "Vopak — VOPA" });
+      await chooseOption(form.getByLabel("Agent"), { label: "Vopak" });
       await form.getByRole("button", { name: "Save asset" }).click();
       await expect(form.getByLabel("Asset Name")).toBeFocused();
       await form.getByRole("button", { name: "Serial Number" }).click();
@@ -277,7 +278,7 @@ test.describe("shared Staff form system", () => {
       await page.getByRole("button", { name: `Manage ${email}` }).click();
       await page.getByRole("menuitem", { name: "Edit user" }).click();
       await edit.getByLabel("First name").fill("Formal");
-      await edit.getByLabel("Role").selectOption("REVIEWER");
+      await chooseOption(edit.getByLabel("Role"), "REVIEWER");
       await expect(edit.getByText("Unsaved changes")).toBeVisible();
 
       await page.keyboard.press("Escape");
@@ -296,7 +297,7 @@ test.describe("shared Staff form system", () => {
       await edit.getByRole("button", { name: "Save changes" }).click();
       await expect(edit.getByRole("alert")).toContainText("User not updated");
       await expect(edit.getByLabel("First name")).toHaveValue("Formal");
-      await expect(edit.getByLabel("Role")).toHaveValue("REVIEWER");
+      await expect(edit.getByLabel("Role")).toHaveText("Reviewer");
       await edit.getByRole("button", { name: "Save changes" }).click();
       await expect(page.getByRole("status").filter({ hasText: "updated successfully" })).toBeVisible();
       await expect(edit).toHaveCount(0);

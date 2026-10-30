@@ -1,0 +1,656 @@
+/*
+ * Shared controls: buttons, form fields, the Select and Combobox lists, drawers and dialogs,
+ * success toasts, and the card surface. Loaded after every other sheet, so these are the
+ * definitions; colours, radii and sizes come from tokens.css, which is also where light and
+ * dark differ. Nothing here reads a theme directly.
+ */
+
+/* ---------- Buttons ---------- */
+/* One contract for ActionButton (.action-button) and the older .primary-button family. */
+.action-button,
+.primary-button,
+.secondary-button,
+.danger-button,
+.detail-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--control-height);
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: var(--control-radius);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) ease, border-color var(--duration-fast) ease, color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+.action-button:focus-visible,
+.primary-button:focus-visible,
+.secondary-button:focus-visible,
+.danger-button:focus-visible,
+.detail-link:focus-visible,
+.icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.action-button:disabled,
+.primary-button:disabled,
+.secondary-button:disabled,
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Primary: the one main action on a page or form. */
+.action-button--primary,
+.primary-button {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--color-white);
+  box-shadow: var(--shadow-card);
+}
+
+.action-button--primary:hover:not(:disabled),
+.primary-button:hover:not(:disabled) {
+  border-color: var(--color-cobalt-700);
+  background: var(--color-cobalt-700);
+}
+
+.action-button--primary:active:not(:disabled),
+.primary-button:active:not(:disabled) {
+  box-shadow: none;
+  filter: brightness(0.94);
+}
+
+/* Secondary: an important alternative. Outlined, never grey-on-grey. */
+.action-button--secondary,
+.secondary-button,
+.detail-link {
+  border-color: var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+
+.action-button--secondary:hover:not(:disabled),
+.secondary-button:hover:not(:disabled),
+.detail-link:hover {
+  border-color: var(--accent);
+  background: var(--surface-muted);
+}
+
+.action-button--secondary:active:not(:disabled),
+.secondary-button:active:not(:disabled) {
+  background: var(--border);
+}
+
+/* Ghost: low emphasis (Cancel, Back, View all). Still readable as a control. */
+.action-button--ghost {
+  background: transparent;
+  color: var(--ink);
+}
+
+.action-button--ghost:hover:not(:disabled) {
+  background: var(--surface-muted);
+}
+
+.action-button--ghost:active:not(:disabled) {
+  background: var(--border);
+}
+
+/* Danger: the confirming step of a destructive action. */
+.action-button--danger,
+.danger-button {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--color-white);
+}
+
+.action-button--danger:hover:not(:disabled),
+.danger-button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.action-button--danger:active:not(:disabled),
+.danger-button:active:not(:disabled) {
+  filter: brightness(0.9);
+}
+
+/* Icon-only. Always has an aria-label. */
+.action-button--icon {
+  width: var(--control-height);
+  padding: 0;
+  border-color: var(--border);
+  background: var(--surface-raised);
+}
+
+.action-button--icon:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+/* Working: the label changes ("Saving…") and a small ring says it is in progress. */
+.action-button.is-pending {
+  cursor: progress;
+  opacity: 0.85;
+}
+
+.action-button.is-pending::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: control-spin 700ms linear infinite;
+}
+
+@keyframes control-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- Form fields ---------- */
+.form-field,
+.portal-form-grid label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.form-field > span:first-child {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.required-mark { color: var(--danger); }
+
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+/* One look for every text control inside a form: drawers, dialogs and the inline detail forms. */
+.customer-drawer :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+.modal-card :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+.inspection-detail-form :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+.form-field :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+.portal-form-grid :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height);
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--control-radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  outline: 0;
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+.customer-drawer textarea,
+.modal-card textarea,
+.inspection-detail-form textarea,
+.form-field textarea {
+  height: auto;
+  min-height: 96px;
+  padding: 10px 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.customer-drawer :is(input, select, textarea)::placeholder,
+.modal-card :is(input, textarea)::placeholder,
+.form-field :is(input, textarea)::placeholder {
+  color: var(--soft);
+  opacity: 1;
+}
+
+.customer-drawer :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea):hover:not(:disabled),
+.modal-card :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea):hover:not(:disabled),
+.form-field :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea):hover:not(:disabled),
+.portal-form-grid :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea):hover:not(:disabled) {
+  border-color: var(--border-hover);
+}
+
+.customer-drawer :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea):focus-visible,
+.modal-card :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea):focus-visible,
+.inspection-detail-form :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea):focus-visible,
+.form-field :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea):focus-visible,
+.portal-form-grid :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea):focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--focus);
+}
+
+.customer-drawer :is(input, select, textarea):disabled,
+.modal-card :is(input, select, textarea):disabled,
+.inspection-detail-form :is(input, select, textarea):disabled,
+.form-field :is(input, select, textarea):disabled {
+  border-color: var(--border);
+  background: var(--surface-muted);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.form-field.has-error :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+.form-field :is(input, select, textarea)[aria-invalid="true"],
+.form-field .choice-control[aria-invalid="true"] {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger);
+}
+
+/* A native list, where one is kept: closed it matches the controls; the chevron is drawn here. */
+.customer-drawer select:not([multiple]),
+.modal-card select:not([multiple]),
+.form-field select:not([multiple]) {
+  padding-right: 36px;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px;
+}
+
+/* A multi-select is a list box, not a dropdown: bordered, with room for several rows. */
+.customer-drawer select[multiple],
+.modal-card select[multiple],
+.form-field select[multiple] {
+  height: auto;
+  min-height: 132px;
+  padding: 6px;
+}
+
+.customer-drawer select[multiple] option,
+.modal-card select[multiple] option,
+.form-field select[multiple] option {
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+/* ---------- Select and Combobox ---------- */
+.choice-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-height);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--control-radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+button.choice-control {
+  gap: 8px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.choice-control:hover:not(:disabled):not(.is-disabled) { border-color: var(--border-hover); }
+.choice-control:focus-visible,
+.choice-control:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus);
+  outline: 0;
+}
+
+.choice-control:disabled,
+.choice-control.is-disabled {
+  border-color: var(--border);
+  background: var(--surface-muted);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.choice-control__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.choice-control__value.is-placeholder { color: var(--soft); }
+
+.choice-control__chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.choice-control--combobox .choice-control__chevron {
+  position: absolute;
+  right: 12px;
+}
+
+/* Inside a combobox the input is the control; the wrapper draws the box. */
+.form-field .choice-control__input,
+.customer-drawer .choice-control__input,
+.modal-card .choice-control__input {
+  height: calc(var(--control-height) - 2px);
+  padding: 0 36px 0 12px;
+  border: 0;
+  border-radius: var(--control-radius);
+  background: transparent;
+  box-shadow: none;
+}
+
+.form-field .choice-control__input:focus-visible,
+.customer-drawer .choice-control__input:focus-visible,
+.modal-card .choice-control__input:focus-visible {
+  border: 0;
+  box-shadow: none;
+}
+
+.choice-menu {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--control-radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+  animation: choice-menu-in var(--duration-fast) ease both;
+}
+
+@keyframes choice-menu-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+
+.choice-menu__list {
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.choice-menu__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.choice-menu__option.is-active { background: var(--surface-muted); }
+.choice-menu__option.is-selected { font-weight: 650; }
+.choice-menu__option.is-disabled { color: var(--muted); cursor: not-allowed; }
+
+.choice-menu__text { display: grid; min-width: 0; }
+.choice-menu__label { overflow-wrap: anywhere; }
+.choice-menu__description { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.choice-menu__check { flex: 0 0 auto; color: var(--accent); }
+.choice-menu__empty { margin: 0; padding: 12px 14px; color: var(--muted); font-size: 13px; }
+
+/* ---------- Forms: drawers and dialogs ---------- */
+.drawer-backdrop {
+  background: rgb(7 19 33 / 55%);
+}
+
+.customer-drawer {
+  gap: 20px;
+  width: min(520px, 100vw);
+  padding: 0 24px 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.customer-drawer.customer-profile-form,
+.customer-drawer.inspection-booking-form { width: min(600px, 100vw); }
+.drawer-backdrop .asset-profile-form { width: min(720px, 100vw); }
+
+.drawer-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  align-items: flex-start;
+  margin: 0 -24px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.drawer-header h2 { font-size: 18px; font-weight: 700; line-height: 1.3; }
+.drawer-header p { margin: 4px 0 0; font-size: 13px; }
+
+.customer-drawer .form-actions { margin: 0 -24px; padding: 14px 24px; }
+
+.form-section__header h3 { font-size: 13px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
+.form-section + .form-section { padding-top: 20px; }
+
+.form-actions {
+  background: var(--surface-raised);
+  box-shadow: 0 -8px 16px -12px rgb(0 0 0 / 35%);
+}
+
+.form-actions__status { font-weight: 650; }
+
+.modal-backdrop { background: rgb(7 19 33 / 60%); }
+
+.modal-card {
+  width: min(500px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  gap: 18px;
+  padding: 24px 24px 0;
+  border-radius: 12px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+}
+
+.modal-header { padding-bottom: 18px; border-bottom: 1px solid var(--border); margin: 0 -24px; padding-left: 24px; padding-right: 24px; }
+.modal-header h2 { font-size: 20px; font-weight: 700; }
+
+.modal-card .form-actions { margin: 4px -24px 0; padding: 14px 24px; }
+
+@media (max-width: 640px) {
+  .customer-drawer { padding: 0 16px; }
+  .drawer-header { margin: 0 -16px; padding: 16px; }
+  .customer-drawer .form-actions { margin: 0 -16px; padding: 12px 16px; }
+  .modal-card { padding: 20px 16px 0; }
+  .modal-header { margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
+  .modal-card .form-actions { margin: 4px -16px 0; padding: 12px 16px; }
+}
+
+
+/* ---------- Form details: header tile, numbered sections, field icons, notes ---------- */
+.drawer-header,
+.modal-header {
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.drawer-header__icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--color-white);
+  box-shadow: var(--shadow-card);
+}
+
+.drawer-header__text,
+.modal-header .drawer-header__text { flex: 1 1 auto; min-width: 0; }
+.drawer-header__text h2,
+.modal-header .drawer-header__text h2 { margin: 0; }
+.drawer-header__text p { margin: 4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.modal-header > .icon-button { margin-left: auto; }
+
+.form-section__header.has-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.form-section__step {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--color-white);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.form-section__header.has-step h3 { margin: 0; color: var(--ink); font-size: 16px; letter-spacing: 0; text-transform: none; }
+.form-section__header.has-step p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+
+.field-control { position: relative; display: block; min-width: 0; }
+.field-control__icon,
+.choice-control__icon {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+.field-control__icon { position: absolute; top: 0; bottom: 0; left: 12px; }
+.form-field .field-control > :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { padding-left: 40px; }
+.field-control:focus-within .field-control__icon { color: var(--accent); }
+.choice-control__icon { flex: 0 0 auto; }
+
+.form-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--surface-muted);
+}
+.form-note__icon { display: grid; flex: 0 0 auto; place-items: center; margin-top: 1px; color: var(--accent); }
+.form-note p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+.action-button__icon { display: inline-grid; place-items: center; }
+
+/* The Add user dialog: the reference screen for the shared form look. */
+.modal-card .form-section + .form-section { margin-top: 2px; padding-top: 22px; }
+.modal-card .form-actions { justify-content: flex-end; }
+
+/* ---------- Success toasts ---------- */
+.toast-region {
+  position: fixed;
+  top: calc(var(--topbar-height) + 8px);
+  right: 16px;
+  z-index: 100;
+  display: grid;
+  gap: 8px;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid var(--success);
+  border-radius: var(--card-radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  pointer-events: auto;
+  animation: toast-in var(--duration-base) ease both;
+}
+
+.toast__icon { flex: 0 0 auto; margin-top: 1px; color: var(--success); }
+.toast__text { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+
+.toast__close {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.toast__close:hover { background: var(--surface-muted); color: var(--ink); }
+.toast__close:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (max-width: 640px) {
+  .toast-region { right: 16px; left: 16px; width: auto; }
+}
+
+/* ---------- Cards and surfaces ---------- */
+.customer-card,
+.portal-panel,
+.customer-portal-metric,
+.customer-portal-context {
+  border: 1px solid var(--border);
+  border-radius: var(--card-radius);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+}
+
+.customer-card { transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease; }
+.customer-card:hover { border-color: var(--border-hover); }
+.customer-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.customer-card.is-selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+/* The portal's actions read as a hierarchy: the booking first, the rest secondary. */
+.portal-panel h2 { font-size: 16px; font-weight: 700; }
+.customer-portal-metric span { font-size: 12px; font-weight: 650; text-transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .action-button,
+  .primary-button,
+  .secondary-button,
+  .choice-control,
+  .toast,
+  .choice-menu,
+  .customer-card { transition: none; animation: none; }
+  .action-button.is-pending::before { animation-duration: 2s; }
+}
