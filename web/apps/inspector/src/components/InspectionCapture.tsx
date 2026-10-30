@@ -12,6 +12,7 @@ import type { PressureTestDraft, WorkItem } from "../domain/types";
 import { InspectionFields } from "./InspectionFields";
 import { StatusPill } from "./StatusPill";
 import { urgencyLabel } from "./workStatus";
+import { assetDisplayName, assetSecondaryNumber } from "../domain/assetIdentity";
 
 interface InspectionCaptureProps {
   workItem: WorkItem | null;
@@ -120,7 +121,8 @@ export function InspectionCapture({
         <aside className="capture-context" aria-label="Asset context">
           <article className="asset-context">
             <p>Service inspection</p>
-            <h2>{workItem.assetNumber}</h2>
+            <h2>{assetDisplayName(workItem)}</h2>
+            {assetSecondaryNumber(workItem) ? <small className="asset-number">Asset #{workItem.assetNumber}</small> : null}
             <span>{workItem.customerName}</span>
             <small>{workItem.productName}</small>
             {workItem.locationName ? <small>{workItem.locationName}</small> : null}

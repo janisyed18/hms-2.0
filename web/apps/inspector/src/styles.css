@@ -1317,3 +1317,9 @@ button:disabled {
 @media (max-width: 560px) {
   .header-status { gap: 6px 10px; }
 }
+
+.asset-number {
+  display: block;
+  color: var(--muted, inherit);
+  overflow-wrap: anywhere;
+}

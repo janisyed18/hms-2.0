@@ -348,6 +348,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
   const renderedActiveModule = route.view as AppModule;
   const [customerUnavailable, setCustomerUnavailable] = useState(false);
   const workspace = useCustomerWorkspace({
+    active: renderedActiveModule === "customers",
     onSelectedChange: (id) => navigate((current) => ({ ...emptyRoute("customers"), customer: id, users: current.users }))
   });
   const { setSelectedId: setWorkspaceSelectedId, addCustomer: addWorkspaceCustomer, isLoading: customersLoading, customers: workspaceCustomers } = workspace;

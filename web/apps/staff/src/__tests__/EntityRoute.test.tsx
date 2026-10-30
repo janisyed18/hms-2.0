@@ -269,7 +269,10 @@ describe("the customer portal asset follows the URL", () => {
 
   it("restores the asset detail named by the link", async () => {
     portal({ customerId: "org-1", assetId: "2" });
-    expect(await screen.findByRole("heading", { name: "HMS-2" })).toBeInTheDocument();
+    // The name is the heading; the number stays on the page as the secondary identifier.
+    const heading = await screen.findByRole("heading", { name: "x" });
+    expect(heading).toBeInTheDocument();
+    expect(screen.getByText(/Asset #HMS-2/)).toBeInTheDocument();
   });
 
   it("never shows an asset that is not among this organisation's, and the link stops naming it", async () => {

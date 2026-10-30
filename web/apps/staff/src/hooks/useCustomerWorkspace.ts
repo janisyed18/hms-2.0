@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
 import { useActionNotice } from "../components/interaction/ActionNotice";
@@ -8,9 +8,10 @@ import type { CustomerFormValues, CustomerRecord } from "../domain/types";
 /**
  * `onSelectedChange` lets the owner of the URL decide what selecting (or closing) a customer does;
  * the selection itself then comes back in through `setSelectedId`. Without it the hook keeps its own.
+ * `active` is whether the Customers workspace is on screen: each time it becomes so, the asset counts are re-read.
  */
-export function useCustomerWorkspace(options: { onSelectedChange?: (id: string | null) => void } = {}) {
-  const { onSelectedChange } = options;
+export function useCustomerWorkspace(options: { active?: boolean; onSelectedChange?: (id: string | null) => void } = {}) {
+  const { active = false, onSelectedChange } = options;
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -47,6 +48,35 @@ export function useCustomerWorkspace(options: { onSelectedChange?: (id: string |
       active = false;
     };
   }, []);
+
+  /**
+   * Asset counts live in the customer list, but assets are created, moved and archived elsewhere, so the
+   * list read on first load goes stale. Re-reading it replaces each returned customer with the server's
+   * current figures; customers read individually (not on the page) and the selection are kept. A failed
+   * re-read leaves what is shown as it was.
+   */
+  const refreshMetrics = useCallback(() => {
+    void createHmsClient().listCustomers()
+      .then((result) => {
+        setCustomers((current) => {
+          const fresh = new Map(result.items.map((item) => [item.id, item]));
+          const known = new Set(current.map((item) => item.id));
+          return [
+            ...current.map((item) => fresh.get(item.id) ?? item),
+            ...result.items.filter((item) => !known.has(item.id))
+          ];
+        });
+        setTotalCount(result.total);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  // Entering Customers shows the server's current counts, whatever changed them since the last read.
+  const wasActive = useRef(active);
+  useEffect(() => {
+    if (active && !wasActive.current) refreshMetrics();
+    wasActive.current = active;
+  }, [active, refreshMetrics]);
 
   const visibleCustomers = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -96,5 +126,5 @@ export function useCustomerWorkspace(options: { onSelectedChange?: (id: string |
     notify({ kind: "success", message: `${customerLabel(saved)} ${editingCustomer ? "updated" : "created"} successfully.`, title: "Customer saved" });
   }
 
-  return { activeTab, addCustomer, dismissNotice, notice, closeDetail, closeCustomerForm, customers, editingCustomer, error, isFormOpen, isLoading, openCreateCustomer, openEditCustomer, query, riskFilter, saveCustomer, selectCustomer, selectedCustomer, setActiveTab, setQuery, setRiskFilter, setSelectedId, setStatusFilter, statusFilter, totalCount, visibleCustomers };
+  return { activeTab, addCustomer, refreshMetrics, dismissNotice, notice, closeDetail, closeCustomerForm, customers, editingCustomer, error, isFormOpen, isLoading, openCreateCustomer, openEditCustomer, query, riskFilter, saveCustomer, selectCustomer, selectedCustomer, setActiveTab, setQuery, setRiskFilter, setSelectedId, setStatusFilter, statusFilter, totalCount, visibleCustomers };
 }

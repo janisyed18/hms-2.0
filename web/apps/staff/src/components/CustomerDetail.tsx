@@ -5,6 +5,8 @@ import { AnimatePresence, m, useReducedMotion } from "motion/react";
 import { createHmsClient } from "../api/hmsClient";
 import type { AssetRecord, CustomerRecord } from "../domain/types";
 import { motionTokens } from "../motion/motionTokens";
+import { assetDisplayName, assetHasDistinctName } from "../utils/identity";
+import { AssetIdentity } from "./AssetIdentity";
 
 interface CustomerDetailProps {
   activeTab: string;
@@ -280,7 +282,7 @@ export function CustomerDetail({
                           {locationAssets.map((asset) => (
                             <li key={asset.id}>
                               <button
-                                aria-label={`Open asset ${asset.assetNumber}`}
+                                aria-label={assetHasDistinctName(asset) ? `Open asset ${assetDisplayName(asset)}, ${asset.assetNumber}` : `Open asset ${asset.assetNumber}`}
                                 className="customer-location-asset-link"
                                 onClick={() => {
                                   onClose();
@@ -288,7 +290,7 @@ export function CustomerDetail({
                                 }}
                                 type="button"
                               >
-                                {asset.assetNumber}
+                                <AssetIdentity asset={asset} />
                               </button>
                             </li>
                           ))}

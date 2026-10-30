@@ -2,6 +2,7 @@ import { ArrowLeft, ClipboardCheck, Copy, FileCheck2, Edit3, X } from "lucide-re
 
 import type { AssetRecord, AssetWorkflowAction } from "../domain/types";
 import { AssetWorkflowCard } from "./AssetWorkflowCard";
+import { assetDisplayName, assetHasDistinctName } from "../utils/identity";
 
 interface AssetDetailProps {
   asset: AssetRecord;
@@ -55,7 +56,7 @@ function historyStatus(status: string) {
 }
 
 export function AssetDetail({ asset, canWrite, onBack, onCopy, onEdit, canOpenWorkflowAction, onWorkflowAction }: AssetDetailProps) {
-  const assetName = asset.assetName || asset.assetNumber;
+  const assetName = assetDisplayName(asset);
   const { inspectionHistory, certificateHistory } = asset;
 
   return (
@@ -92,7 +93,7 @@ export function AssetDetail({ asset, canWrite, onBack, onCopy, onEdit, canOpenWo
       <div className="detail-page-title">
         <div>
           <h2>{assetName}</h2>
-          <p>{asset.customer.name}{asset.location ? ` · ${asset.location.name}` : ""}</p>
+          <p>{[assetHasDistinctName(asset) ? `Asset #${asset.assetNumber}` : null, asset.customer.name, asset.location?.name].filter(Boolean).join(" · ")}</p>
         </div>
       </div>
 
@@ -112,6 +113,10 @@ export function AssetDetail({ asset, canWrite, onBack, onCopy, onEdit, canOpenWo
           <div>
             <dt>Asset name</dt>
             <dd>{assetName}</dd>
+          </div>
+          <div>
+            <dt>Asset number</dt>
+            <dd>{asset.assetNumber}</dd>
           </div>
           <div>
             <dt>Serial number</dt>

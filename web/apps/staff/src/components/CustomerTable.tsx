@@ -7,6 +7,7 @@ import { PaginationControls, usePagination } from "./Pagination";
 import { WorkspaceState } from "./WorkspaceState";
 import { ManagementHeader, ManagementMetric, ManagementMetricStrip } from "./ManagementPrimitives";
 import type { CustomerRecord } from "../domain/types";
+import { initialsOf } from "../utils/identity";
 
 interface CustomerTableProps {
   canWrite: boolean;
@@ -200,7 +201,7 @@ export function CustomerTable({
               whileTap={reducedMotion ? undefined : { scale: 0.985 }}
             >
               <span className="customer-card-top">
-                <span className="customer-avatar">{customer.code.slice(0, 2)}</span>
+                <span aria-hidden="true" className="customer-avatar">{initialsOf(customer.name) || customer.code.slice(0, 2)}</span>
                 <span className="customer-card-state">
                   {isSelected ? (
                     <m.span
