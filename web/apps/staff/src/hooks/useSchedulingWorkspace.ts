@@ -207,7 +207,7 @@ export function useSchedulingWorkspace({
           ...all[kind],
           isLoading: false,
           isLoadingMore: false,
-          error: reason instanceof Error ? reason.message : "Pending requests could not be loaded."
+          error: reason instanceof Error ? reason.message : "Awaiting approval could not be loaded."
         }
       }));
     }

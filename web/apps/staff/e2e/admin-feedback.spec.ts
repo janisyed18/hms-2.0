@@ -49,7 +49,7 @@ test.describe("Admin and security interaction feedback", () => {
     const email = `e2e.feedback.${Date.now()}@example.test`;
     try {
       await nav(page, "Users & Roles");
-      await page.getByRole("button", { name: "Add User" }).click();
+      await page.getByRole("button", { name: "Add user" }).click();
       const dialog = page.getByRole("dialog", { name: "Add user" });
       await expect(dialog.getByText("* Required fields")).toBeVisible();
       await dialog.getByRole("button", { name: "Create user" }).click();

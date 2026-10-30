@@ -116,7 +116,7 @@ export function ProductForm({
         pendingLabel="Saving…"
         submitError={submission.submitError}
         submitLabel="Save product"
-        title={product ? "Edit Product" : "Add Product"}
+        title={product ? "Edit product" : "Add product"}
       >
         <FormSection>
           <Field error={errors.code} label="Product code" name="code" required>

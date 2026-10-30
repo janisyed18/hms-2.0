@@ -1,7 +1,7 @@
 import type { InspectionBookingRecord } from "../../domain/types";
 import type { Queue, QueueKind } from "../../hooks/useSchedulingWorkspace";
 import { STATUS_META, toEntry, type ScheduleEntry } from "../../scheduling/scheduleModel";
-import { formatDateTime } from "../../scheduling/zonedTime";
+import { formatWithZone } from "../../scheduling/zonedTime";
 
 function age(from: string): string {
   const days = Math.floor((Date.now() - new Date(from).getTime()) / 86_400_000);
@@ -176,7 +176,7 @@ function Row({
           <>
             <span>
               Requested for{" "}
-              <time dateTime={booking.scheduledAt}>{formatDateTime(entry.start, entry.timeZone)}</time>
+              <time dateTime={booking.scheduledAt}>{formatWithZone(entry.start, entry.timeZone)}</time>
             </span>
             <span>
               {age(booking.createdAt)} · {booking.assets.length} {booking.assets.length === 1 ? "asset" : "assets"}
@@ -185,12 +185,12 @@ function Row({
         ) : (
           <>
             <span>
-              Now <time dateTime={booking.scheduledAt}>{formatDateTime(entry.start, entry.timeZone)}</time>
+              Now <time dateTime={booking.scheduledAt}>{formatWithZone(entry.start, entry.timeZone)}</time>
             </span>
             {change ? (
               <span>
                 Requested change to{" "}
-                <time dateTime={change.startsAt}>{formatDateTime(change.startsAt, entry.timeZone)}</time>
+                <time dateTime={change.startsAt}>{formatWithZone(change.startsAt, entry.timeZone)}</time>
                 {" · "}
                 {change.status === "PENDING_ADMIN_APPROVAL" ? "needs admin approval" : "waiting for customer"}
                 {" · "}

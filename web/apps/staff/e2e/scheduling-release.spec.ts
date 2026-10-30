@@ -355,7 +355,7 @@ test.describe("scheduling release workflow", () => {
       await admin.page.getByRole("navigation", { name: "Primary navigation" })
         .getByRole("button", { name: "Customers", exact: true }).click();
       // Searching narrows the list but must not change the customer's own count.
-      await admin.page.getByPlaceholder("Search customers...").fill(expected.name);
+      await admin.page.getByLabel("Search customers", { exact: true }).fill(expected.name);
       const card = admin.page.getByRole("button", { name: `Select customer ${expected.name}` });
       await expect(card).toContainText(new RegExp(`${expected.fromMetrics}\\s*Assets`));
       await card.click();

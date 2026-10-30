@@ -6,7 +6,7 @@ import {
   formatDuration,
   type ScheduleEntry
 } from "../../scheduling/scheduleModel";
-import { formatDateTime } from "../../scheduling/zonedTime";
+import { formatWithZone } from "../../scheduling/zonedTime";
 import { PaginationControls, usePagination } from "../Pagination";
 
 export function ScheduleList({
@@ -68,7 +68,7 @@ export function ScheduleList({
                 <tr key={entry.id}>
                   <td>
                     <time dateTime={entry.booking.scheduledAt}>
-                      {formatDateTime(entry.start, entry.timeZone)}
+                      {formatWithZone(entry.start, entry.timeZone)}
                     </time>
                     <small>{formatDuration(durationMinutes(entry))}</small>
                   </td>
@@ -83,7 +83,7 @@ export function ScheduleList({
                   </td>
                   <td>
                     <button
-                      aria-label={`Open ${entry.customerName} at ${entry.locationName}, ${formatDateTime(entry.start, entry.timeZone)}`}
+                      aria-label={`Open ${entry.customerName} at ${entry.locationName}, ${formatWithZone(entry.start, entry.timeZone)}`}
                       onClick={() => onSelect(entry)}
                       type="button"
                     >

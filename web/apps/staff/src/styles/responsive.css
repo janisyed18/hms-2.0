@@ -365,7 +365,6 @@
     display: none;
   }
 
-  .topbar-primary,
   .icon-button,
   .user-menu {
     min-height: var(--control-height-mobile);

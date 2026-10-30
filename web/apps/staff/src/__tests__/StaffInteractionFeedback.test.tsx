@@ -65,8 +65,8 @@ async function openAddAsset() {
   const user = userEvent.setup();
   render(<AssetsWorkspace canWrite />);
   await screen.findByText("Main Pump Hose");
-  await user.click(screen.getByRole("button", { name: "Add Asset" }));
-  await screen.findByRole("heading", { name: "Add Asset" });
+  await user.click(screen.getByRole("button", { name: "Add asset" }));
+  await screen.findByRole("heading", { name: "Add asset" });
   return user;
 }
 
@@ -117,7 +117,7 @@ describe("Asset form", () => {
     expect(alert).toHaveTextContent("Serial number is already assigned to another asset.");
     // Focus lands in the same commit that shows the notice.
     await waitFor(() => expect(alert).toHaveFocus(), FOCUS_WAIT);
-    expect(screen.getByRole("heading", { name: "Add Asset" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Add asset" })).toBeInTheDocument();
     expect(screen.getByLabelText("Asset Name")).toHaveValue("Boom Hose");
     expect(screen.getByLabelText("Serial Number")).toHaveValue("SN-77");
     expect(screen.queryByText(/saved successfully/i)).toBeNull();
@@ -169,7 +169,7 @@ describe("Asset form", () => {
     await act(async () => save.resolve({ ...asset, id: "asset-2", assetName: "Boom Hose", assetNumber: "HMS-009999" }));
     const success = await screen.findByRole("status");
     expect(success).toHaveTextContent("Boom Hose — HMS-009999 created successfully.");
-    expect(screen.queryByRole("heading", { name: "Add Asset" })).toBeNull(); // drawer closes only on success
+    expect(screen.queryByRole("heading", { name: "Add asset" })).toBeNull(); // drawer closes only on success
   });
 });
 
@@ -245,8 +245,8 @@ describe("Product form and archive (same contract)", () => {
     const user = userEvent.setup();
     render(<ProductsWorkspace canManage />);
     await screen.findByText("Hydraulic Hose");
-    await user.click(screen.getByRole("button", { name: "Add Product" }));
-    await screen.findByRole("heading", { name: "Add Product" });
+    await user.click(screen.getByRole("button", { name: "Add product" }));
+    await screen.findByRole("heading", { name: "Add product" });
     return user;
   }
 

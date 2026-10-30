@@ -26,7 +26,7 @@ import type {
   StaffRole
 } from "../domain/types";
 import { formatDateTime } from "../utils/dateTime";
-import { formatDateTime as formatInstant } from "../scheduling/zonedTime";
+import { formatWithZone } from "../scheduling/zonedTime";
 import { deviceLabel, personName, userLabel } from "../utils/identity";
 import { hasActiveFilters, useUserDirectory, type UsersRouteControl } from "../hooks/useUserDirectory";
 import { ActionButton } from "./interaction/ActionButton";
@@ -301,7 +301,7 @@ export function SystemWorkspace({
             </div>
             <ActionButton onClick={() => openUserDialog({ mode: "create" })} variant="primary">
               <Plus aria-hidden="true" size={15} />
-              Add User
+              Add user
             </ActionButton>
           </div>
           <UserDirectoryFilters
@@ -493,7 +493,7 @@ function UserTable({
                 <td>{user.mfaEnabled ? "Enabled" : "MFA setup required"}</td>
                 <td>
                   {user.lastLoginAt ? (
-                    <time dateTime={user.lastLoginAt}>{formatInstant(user.lastLoginAt, browserTimeZone())}</time>
+                    <time dateTime={user.lastLoginAt}>{formatWithZone(user.lastLoginAt, browserTimeZone())}</time>
                   ) : (
                     "Never"
                   )}

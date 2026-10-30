@@ -11,6 +11,7 @@ export type CertificateStatusFilter = "ALL" | CertificateStatus;
 
 export function useCertificatesWorkspace() {
   const [certificates, setCertificates] = useState<CertificateRecord[]>([]);
+  const [serverTotal, setServerTotal] = useState<number | undefined>(undefined);
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<CertificateStatusFilter>("ALL");
@@ -27,7 +28,7 @@ export function useCertificatesWorkspace() {
     void Promise.all([client.listCertificates({ sort: "-issued_at" }), client.listInspections({ sort: "-approved_at" })])
       .then(([certificateResult, inspectionResult]) => {
         if (!active) return;
-        setCertificates(certificateResult.items); setInspections(inspectionResult.items);
+        setCertificates(certificateResult.items); setServerTotal(certificateResult.total); setInspections(inspectionResult.items);
       })
       .catch((reason: unknown) => {
         if (active) setLoadError(friendlyApiError(reason, { fallback: "Certificates could not be loaded." }).message);
@@ -47,7 +48,7 @@ export function useCertificatesWorkspace() {
         (statusFilter === "ALL" || certificate.status === statusFilter) &&
         (!validFrom || (validUntil && validUntil >= validFrom)) &&
         (!validTo || (validUntil && validUntil <= validTo)) &&
-        (!normalized || [certificate.number, certificate.asset.assetNumber, certificate.asset.tag, certificate.customer.code, certificate.customer.name, certificate.product.code, certificate.product.name, certificate.publicToken, certificate.status, certificate.issuedByUserId].filter(Boolean).some((value) => value?.toLowerCase().includes(normalized)))
+        (!normalized || [certificate.number, certificate.asset.assetNumber, certificate.asset.assetName, certificate.asset.tag, certificate.customer.code, certificate.customer.name, certificate.product.code, certificate.product.name, certificate.publicToken, certificate.status, certificate.issuedByUserId].filter(Boolean).some((value) => value?.toLowerCase().includes(normalized)))
       );
     });
   }, [certificates, query, statusFilter, validFrom, validTo]);
@@ -73,5 +74,5 @@ export function useCertificatesWorkspace() {
   function requestLifecycle(action: "revoke" | "supersede") { if (selectedCertificate) lifecycle.request({ action, certificate: selectedCertificate }); }
   function clearCertificateFilters() { setValidFrom(""); setValidTo(""); }
   const activeFilterCount = [Boolean(validFrom), Boolean(validTo)].filter(Boolean).length;
-  return { activeFilterCount, certificates, dismissNotice, lifecycle, loadError, notice, requestLifecycle, clearCertificateFilters, closeDetail, eligibleInspections, isFormOpen, issueCertificate, openCreate, openDetail, query, selectedCertificate, setFormOpen, setQuery, setStatusFilter, setValidFrom, setValidTo, statusFilter, validFrom, validTo, visibleCertificates };
+  return { serverTotal, activeFilterCount, certificates, dismissNotice, lifecycle, loadError, notice, requestLifecycle, clearCertificateFilters, closeDetail, eligibleInspections, isFormOpen, issueCertificate, openCreate, openDetail, query, selectedCertificate, setFormOpen, setQuery, setStatusFilter, setValidFrom, setValidTo, statusFilter, validFrom, validTo, visibleCertificates };
 }

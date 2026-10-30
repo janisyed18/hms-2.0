@@ -5,7 +5,7 @@ import { createHmsClient, HmsApiError } from "../api/hmsClient";
 import type { AuditEventRecord } from "../domain/types";
 import { formatDateTime } from "../utils/dateTime";
 import { ManagementHeader, ManagementMetric, ManagementMetricStrip } from "./ManagementPrimitives";
-import { ModuleTable, type ModuleColumn } from "./ModuleTable";
+import { ModuleTable, activeFilterList, type ModuleColumn } from "./ModuleTable";
 
 function actionLabel(action: string) {
   return action.split(".").map((part, index) => (
@@ -98,6 +98,15 @@ export function AuditWorkspace() {
           <button className="secondary-button filter-clear" type="button" onClick={() => { setEntity("ALL"); setAction("ALL"); setFrom(""); setTo(""); }}>Reset audit filters</button>
         </>}
         activeFilterCount={activeFilters}
+        activeFilters={activeFilterList([
+          { id: "action", label: "Event type", value: action !== "ALL" && actionLabel(action), onRemove: () => setAction("ALL") },
+          { id: "entity", label: "Record type", value: entity !== "ALL" && entity, onRemove: () => setEntity("ALL") },
+          { id: "from", label: "From", value: from, onRemove: () => setFrom("") },
+          { id: "to", label: "To", value: to, onRemove: () => setTo("") }
+        ])}
+        emptyHint="Audit events appear here as people use the system."
+        noun="audit events"
+        onClearFilters={() => { setEntity("ALL"); setAction("ALL"); setFrom(""); setTo(""); }}
         filtersInitiallyOpen
         getRowKey={(event) => String(event.sequence)}
         items={visibleEvents}
@@ -105,7 +114,7 @@ export function AuditWorkspace() {
         onQueryChange={setQuery}
         query={query}
         searchLabel="Search audit events"
-        searchPlaceholder="Search events, actors, or records..."
+        searchPlaceholder="Search audit events by action, record or actor"
         tableLabel="Audit trail events"
       />
     </section>

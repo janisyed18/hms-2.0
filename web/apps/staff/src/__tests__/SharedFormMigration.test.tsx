@@ -97,7 +97,7 @@ const cases: Case[] = [
     name: "Inspection (create)",
     ui: ({ onClose, onSubmit }) => <InspectionForm assetOptions={[asset("1"), asset("2")]} onClose={onClose} onSubmit={onSubmit} open />,
     edit: async (user) => { await choose(user, screen.getByLabelText("Inspection type"), "NEW_ASSET"); },
-    field: "Inspection type", fieldValue: "New asset", save: "Create inspection",
+    field: "Inspection type", fieldValue: "New asset", save: "Save inspection",
     complete: async (user) => { await choose(user, screen.getByLabelText("Inspection asset"), "1"); },
     firstInvalid: "Inspection asset", hasEditMode: false
   }

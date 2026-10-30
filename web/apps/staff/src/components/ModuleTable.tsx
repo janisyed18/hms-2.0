@@ -1,5 +1,6 @@
-import { Download, Filter, Plus, Search } from "lucide-react";
+import { Download, Filter, Plus, Search, X } from "lucide-react";
 import {
+  useRef,
   useState,
   type KeyboardEvent,
   type MouseEvent,
@@ -9,6 +10,15 @@ import {
 import { WorkspaceState } from "./WorkspaceState";
 import { PresencePanel } from "../motion/MotionPrimitives";
 import { PaginationControls, usePagination } from "./Pagination";
+import { ActionButton } from "./interaction/ActionButton";
+
+/** One filter that is narrowing the list right now, and how to take it off. */
+export interface ActiveFilter {
+  id: string;
+  label: string;
+  value: string;
+  onRemove: () => void;
+}
 
 export interface ModuleColumn<TItem> {
   header: string;
@@ -17,6 +27,8 @@ export interface ModuleColumn<TItem> {
 
 interface ModuleTableProps<TItem> {
   actionLabel?: string;
+  /** "secondary" where the page has another, more important action (Inspections: booking is the main one). */
+  actionVariant?: "primary" | "secondary";
   actionsInToolbar?: boolean;
   className?: string;
   columns: ModuleColumn<TItem>[];
@@ -25,6 +37,17 @@ interface ModuleTableProps<TItem> {
   exportRows: (item: TItem) => string[];
   filterControls?: ReactNode;
   activeFilterCount?: number;
+  /** The filters narrowing the list (label and value), each removable. Takes the place of a bare count. */
+  activeFilters?: ActiveFilter[];
+  /** Removes every filter (not the search text). */
+  onClearFilters?: () => void;
+  /** What the records are called, plural and lower-case ("assets"): used in counts and empty states. */
+  noun?: string;
+  /** How many records exist on the server, when the API said, and how many of them this list holds: together they let the count be honest about a partial list. */
+  totalCount?: number;
+  loadedCount?: number;
+  /** What an empty list means, and what to do (shown when nothing has been added yet). */
+  emptyHint?: string;
   error?: string | null;
   filtersInitiallyOpen?: boolean;
   getRowKey: (item: TItem) => string;
@@ -68,6 +91,7 @@ function isInteractiveTarget(target: EventTarget | null) {
 
 export function ModuleTable<TItem>({
   actionLabel,
+  actionVariant = "primary",
   actionsInToolbar = false,
   className,
   columns,
@@ -76,6 +100,12 @@ export function ModuleTable<TItem>({
   exportRows,
   filterControls,
   activeFilterCount = 0,
+  activeFilters,
+  onClearFilters,
+  noun,
+  totalCount,
+  loadedCount,
+  emptyHint,
   error = null,
   filtersInitiallyOpen = false,
   getRowKey,
@@ -91,12 +121,20 @@ export function ModuleTable<TItem>({
   tableLabel
 }: ModuleTableProps<TItem>) {
   const [filtersOpen, setFiltersOpen] = useState(filtersInitiallyOpen);
+  const searchInput = useRef<HTMLInputElement>(null);
   const pagination = usePagination(items);
   const exportData = [columns.map((column) => column.header), ...items.map(exportRows)];
+  const chips = activeFilters ?? [];
+  const narrowed = query.trim().length > 0 || chips.length > 0 || activeFilterCount > 0;
+  const summary = noun ? resultSummary({ narrowed, noun, shown: items.length, totalCount, loadedCount, fallback: countLabel }) : countLabel;
+  function clearView() {
+    onQueryChange("");
+    onClearFilters?.();
+  }
   const tableActions = (
     <>
       {actionLabel && onAction ? (
-        <button className="primary-button" type="button" onClick={onAction}>
+        <button className={actionVariant === "secondary" ? "secondary-button" : "primary-button"} type="button" onClick={onAction}>
           <Plus aria-hidden="true" size={17} />
           {actionLabel}
         </button>
@@ -145,7 +183,18 @@ export function ModuleTable<TItem>({
             placeholder={searchPlaceholder}
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
+            ref={searchInput}
           />
+          {query ? (
+            <button
+              aria-label="Clear search"
+              className="search-clear"
+              onClick={() => { onQueryChange(""); searchInput.current?.focus(); }}
+              type="button"
+            >
+              <X aria-hidden="true" size={15} />
+            </button>
+          ) : null}
         </label>
         <div className="module-toolbar-actions">
           <button
@@ -175,8 +224,10 @@ export function ModuleTable<TItem>({
         </PresencePanel>
       ) : null}
 
+      <FilterChips chips={chips} onClearAll={onClearFilters} />
+
       <div className="table-actions">
-        <span>{countLabel}</span>
+        <span aria-live="polite">{summary}</span>
         {!actionsInToolbar ? <div>{tableActions}</div> : null}
       </div>
 
@@ -220,7 +271,26 @@ export function ModuleTable<TItem>({
               {items.length === 0 ? (
                 <tr>
                   <td colSpan={columns.length}>
-                    <WorkspaceState title="No records found">{emptyLabel}</WorkspaceState>
+                    {noun ? (
+                      narrowed ? (
+                        <WorkspaceState
+                          action={<ActionButton onClick={clearView} variant="secondary">Clear filters</ActionButton>}
+                          title={`No matching ${noun}`}
+                        >
+                          {chips.length > 0 || activeFilterCount > 0
+                            ? "Try changing your search or clearing one of the active filters."
+                            : "Try a different search."}
+                        </WorkspaceState>
+                      ) : (
+                        <WorkspaceState title={`No ${noun} yet`}>
+                          {/* The add action is already the button above; the message points at it rather than repeating it. */}
+                          {emptyHint ?? emptyLabel}
+                          {actionLabel && onAction ? ` Use "${actionLabel}" above to add the first.` : ""}
+                        </WorkspaceState>
+                      )
+                    ) : (
+                      <WorkspaceState title="No records found">{emptyLabel}</WorkspaceState>
+                    )}
                   </td>
                 </tr>
               ) : null}
@@ -239,5 +309,53 @@ export function ModuleTable<TItem>({
         total={pagination.total}
       />
     </section>
+  );
+}
+
+/** "8 matching assets", "50 of 130 assets loaded": never a total the page does not hold. */
+export function resultSummary({
+  fallback,
+  loadedCount,
+  narrowed,
+  noun,
+  shown,
+  totalCount
+}: {
+  fallback: string;
+  loadedCount?: number;
+  narrowed: boolean;
+  noun: string;
+  shown: number;
+  totalCount?: number;
+}): string {
+  const partial = totalCount !== undefined && loadedCount !== undefined && totalCount > loadedCount;
+  if (narrowed) return partial ? `${shown} matching ${noun} (searching the ${loadedCount} of ${totalCount} loaded)` : `${shown} matching ${noun}`;
+  if (partial) return `${loadedCount} of ${totalCount} ${noun} loaded`;
+  return fallback;
+}
+
+/** The filters that are on: entries with no value are off and are left out. */
+export function activeFilterList(
+  entries: Array<{ id: string; label: string; value: string | null | false | undefined; onRemove: () => void }>
+): ActiveFilter[] {
+  return entries.flatMap((entry) => (entry.value ? [{ id: entry.id, label: entry.label, value: entry.value, onRemove: entry.onRemove }] : []));
+}
+
+/** The filters that are narrowing a list, each removable, with how many and a way to clear them all. */
+export function FilterChips({ chips, onClearAll }: { chips: ActiveFilter[]; onClearAll?: () => void }) {
+  if (chips.length === 0) return null;
+  return (
+    <div aria-label="Active filters" className="filter-chips" role="group">
+      {chips.map((chip) => (
+        <span className="filter-chip" key={chip.id}>
+          <span>{chip.label}: <strong>{chip.value}</strong></span>
+          <button aria-label={`Remove filter ${chip.label}: ${chip.value}`} onClick={chip.onRemove} type="button">
+            <X aria-hidden="true" size={13} />
+          </button>
+        </span>
+      ))}
+      <span className="filter-chips__count">{chips.length} {chips.length === 1 ? "filter" : "filters"} active</span>
+      {onClearAll ? <button className="filter-chips__clear" onClick={onClearAll} type="button">Clear all</button> : null}
+    </div>
   );
 }

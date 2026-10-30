@@ -52,7 +52,7 @@ test.describe("User discovery and real-name identity", () => {
       await expect(page.getByRole("row", { name: /assembly@example\.test/ })).toContainText("Name not set");
 
       // Creating a user needs a first and a last name, and the first gap takes focus.
-      await page.getByRole("button", { name: "Add User" }).click();
+      await page.getByRole("button", { name: "Add user" }).click();
       const dialog = page.getByRole("dialog", { name: "Add user" });
       await dialog.getByRole("button", { name: "Create user" }).click();
       await expect(dialog.getByLabel("Email")).toBeFocused();

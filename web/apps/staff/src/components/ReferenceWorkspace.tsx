@@ -118,7 +118,9 @@ export function ReferenceWorkspace({ canManage }: ReferenceWorkspaceProps) {
             actionLabel={canManage ? `Add ${workspace.activeMeta.singular}` : undefined}
             columns={columns}
             countLabel={`${workspace.visibleRecords.length} ${workspace.activeMeta.plural.toLowerCase()}`}
+            emptyHint={`${workspace.activeMeta.plural} appear here once they are added.`}
             emptyLabel={`No ${workspace.activeMeta.plural.toLowerCase()} match the current search.`}
+            noun={workspace.activeMeta.plural.toLowerCase()}
             error={workspace.error}
             exportRows={(record) => [record.code, record.name, ""]}
             getRowKey={(record) => record.id}
@@ -128,7 +130,7 @@ export function ReferenceWorkspace({ canManage }: ReferenceWorkspaceProps) {
             onQueryChange={workspace.setQuery}
             query={workspace.query}
             searchLabel={`Search ${workspace.activeMeta.plural.toLowerCase()}`}
-            searchPlaceholder={`Search ${workspace.activeMeta.plural.toLowerCase()}...`}
+            searchPlaceholder={`Search ${workspace.activeMeta.plural.toLowerCase()} by code or name`}
             tableLabel={`${workspace.activeMeta.plural} catalog`}
           />
           <ConfirmDialog

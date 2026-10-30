@@ -36,8 +36,8 @@ test.describe("remaining Staff forms on the shared form system", () => {
     const code = `E2E${Date.now().toString().slice(-8)}`;
     try {
       await page.goto("/?view=products");
-      await page.getByRole("button", { name: "Add Product" }).first().click();
-      const create = page.getByRole("form", { name: "Add Product" });
+      await page.getByRole("button", { name: "Add product" }).first().click();
+      const create = page.getByRole("form", { name: "Add product" });
       await expect(create).toBeVisible();
       await expect(create.getByText("Unsaved changes")).toHaveCount(0);
 
@@ -77,7 +77,7 @@ test.describe("remaining Staff forms on the shared form system", () => {
       const row = page.getByRole("row", { name: new RegExp(code) });
       await expect(row).toBeVisible();
       await row.getByRole("button", { name: "Edit" }).click();
-      const edit = page.getByRole("form", { name: "Edit Product" });
+      const edit = page.getByRole("form", { name: "Edit product" });
       await expect(edit.getByLabel("Product name")).toHaveValue("E2E remaining-forms hose");
       await expect(edit.getByText("Unsaved changes")).toHaveCount(0);
       await edit.getByLabel("Product name").fill("Changed then discarded");
@@ -97,8 +97,8 @@ test.describe("remaining Staff forms on the shared form system", () => {
     page.setDefaultTimeout(15_000);
     try {
       await page.goto("/?view=customers");
-      await page.getByRole("button", { name: "Add Customer" }).first().click();
-      const form = page.getByRole("form", { name: "Add Customer" });
+      await page.getByRole("button", { name: "Add customer" }).first().click();
+      const form = page.getByRole("form", { name: "Add customer" });
       await expect(form).toBeVisible();
 
       await form.getByRole("button", { name: "Save customer" }).click();

@@ -3,7 +3,7 @@ import { Archive, Boxes, Layers3, ShieldCheck } from "lucide-react";
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
-import { ModuleTable, type ModuleColumn } from "./ModuleTable";
+import { ModuleTable, activeFilterList, type ModuleColumn } from "./ModuleTable";
 import { productLabel } from "../utils/identity";
 import { ManagementHeader, ManagementMetric, ManagementMetricStrip } from "./ManagementPrimitives";
 import { ProductDetail } from "./ProductDetail";
@@ -88,10 +88,19 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
       <div className={`inspection-layout${workspace.selectedProduct ? "" : " detail-closed"}`}>
         <div className="inspection-table-wrap">
           <ModuleTable
-            actionLabel={canManage ? "Add Product" : undefined}
+            actionLabel={canManage ? "Add product" : undefined}
             columns={productColumns}
+            activeFilters={activeFilterList([
+              { id: "category", label: "Category", value: workspace.categoryFilter !== "ALL" && workspace.categoryFilter, onRemove: () => workspace.setCategoryFilter("ALL") },
+              { id: "standard", label: "Standard", value: workspace.standardFilter !== "ALL" && workspace.standardFilter, onRemove: () => workspace.setStandardFilter("ALL") }
+            ])}
             countLabel={`${workspace.products.length} products`}
+            emptyHint="Products appear here once they are added to the catalog."
             emptyLabel="No products match the current filters."
+            loadedCount={workspace.products.length}
+            noun="products"
+            onClearFilters={workspace.clearProductFilters}
+            totalCount={workspace.serverTotal}
             exportRows={(product) => [
               product.code,
               product.name,
@@ -145,7 +154,7 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
             onRowSelect={workspace.openDetail}
             query={workspace.query}
             searchLabel="Search products"
-            searchPlaceholder="Search products..."
+            searchPlaceholder="Search products by code, name or category"
             selectedRowKey={workspace.selectedProduct?.id ?? null}
             tableLabel="Product records"
           />

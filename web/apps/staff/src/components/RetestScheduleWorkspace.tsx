@@ -15,7 +15,7 @@ import { useMemo, useState } from "react";
 
 import { guardNavigation } from "../routing/navigationGuard";
 import { ActionNotice } from "./interaction/ActionNotice";
-import { ModuleTable, type ModuleColumn } from "./ModuleTable";
+import { ModuleTable, activeFilterList, type ModuleColumn } from "./ModuleTable";
 import { RetestScheduleDetail } from "./RetestScheduleDetail";
 import {
   type RetestScheduleStatusFilter,
@@ -254,8 +254,17 @@ export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
             actionsInToolbar
             className="asset-register-table retest-register-table"
             columns={columns}
+            activeFilters={activeFilterList([
+              { id: "dueFrom", label: "Due from", value: workspace.dueFrom, onRemove: () => workspace.setDueFrom("") },
+              { id: "dueTo", label: "Due to", value: workspace.dueTo, onRemove: () => workspace.setDueTo("") }
+            ])}
             countLabel={`${workspace.visibleSchedules.length} schedules`}
+            emptyHint="Retest schedules appear here once assets have a retest date."
             emptyLabel="No retest schedules match the current filters."
+            loadedCount={workspace.schedules.length}
+            noun="retest schedules"
+            onClearFilters={workspace.clearDateFilters}
+            totalCount={workspace.serverTotal}
             exportRows={(schedule) => [
               schedule.asset.assetNumber,
               schedule.customer.name,
@@ -313,7 +322,7 @@ export function RetestScheduleWorkspace({ canWrite }: { canWrite: boolean }) {
             onRowSelect={openSchedule}
             query={workspace.query}
             searchLabel="Search retest schedules"
-            searchPlaceholder="Search schedules, assets, customers..."
+            searchPlaceholder="Search retest schedules by asset, customer or product"
             selectedRowKey={workspace.selectedSchedule?.id}
             tableLabel="Retest schedule records"
           />

@@ -203,7 +203,7 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
         pendingLabel="Saving…"
         submitError={submission.submitError}
         submitLabel="Save customer"
-        title={customer ? "Edit Customer" : "Add Customer"}
+        title={customer ? "Edit customer" : "Add customer"}
       >
         <FormSection title="Customer">
           <Field error={errors.name} label="Name" name="name" required>

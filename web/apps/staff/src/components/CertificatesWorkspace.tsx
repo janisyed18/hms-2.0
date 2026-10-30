@@ -2,7 +2,7 @@ import { AlertTriangle, CalendarDays, FileCheck2, KeyRound, ShieldCheck } from "
 
 import { CertificateDetail } from "./CertificateDetail";
 import { CertificateForm } from "./CertificateForm";
-import { ModuleTable, type ModuleColumn } from "./ModuleTable";
+import { ModuleTable, activeFilterList, type ModuleColumn } from "./ModuleTable";
 import {
   type CertificateStatusFilter,
   useCertificatesWorkspace
@@ -185,8 +185,17 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
             actionsInToolbar
             className="asset-register-table certificate-register-table"
             columns={columns}
+            activeFilters={activeFilterList([
+              { id: "validFrom", label: "Valid from", value: workspace.validFrom, onRemove: () => workspace.setValidFrom("") },
+              { id: "validTo", label: "Valid to", value: workspace.validTo, onRemove: () => workspace.setValidTo("") }
+            ])}
             countLabel={`${workspace.visibleCertificates.length} certificates`}
+            emptyHint="Certificates appear here once an approved inspection has one issued."
             emptyLabel="No certificates match the current filters."
+            loadedCount={workspace.certificates.length}
+            noun="certificates"
+            onClearFilters={workspace.clearCertificateFilters}
+            totalCount={workspace.serverTotal}
             exportRows={(certificate) => [
               certificate.status,
               certificate.number,
@@ -240,7 +249,7 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
             onRowSelect={workspace.openDetail}
             query={workspace.query}
             searchLabel="Search certificates"
-            searchPlaceholder="Search certificates, assets, customers..."
+            searchPlaceholder="Search certificates by number, asset or customer"
             selectedRowKey={workspace.selectedCertificate?.id ?? null}
             tableLabel="Certificate records"
           />

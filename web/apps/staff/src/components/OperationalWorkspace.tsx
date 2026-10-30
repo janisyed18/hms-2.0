@@ -295,9 +295,9 @@ export function OperationalWorkspace({
           <StaggerItem>
             <MetricCard
               icon={<Hourglass aria-hidden="true" size={18} />}
-              label="Pending Review"
+              label="Awaiting review"
               value={formatNumber(dashboard.awaitingReviewInspections)}
-              helper="Submitted inspections pending review"
+              helper="Inspections waiting for a reviewer"
               action="Review submitted inspections"
               onClick={() => onModuleChange("inspections")}
               tone="amber"
@@ -411,7 +411,7 @@ export function OperationalWorkspace({
           <section className="data-panel awaiting-panel">
             <div className="panel-heading">
               <div>
-                <div className="section-title"><h2>Awaiting Review</h2><span className="section-count" aria-hidden="true">{formatNumber(dashboard.awaitingReviewInspections)}</span></div>
+                <div className="section-title"><h2>Awaiting review</h2><span className="section-count" aria-hidden="true">{formatNumber(dashboard.awaitingReviewInspections)}</span></div>
                 <p>{dashboard.awaitingReviewInspections} {dashboard.awaitingReviewInspections === 1 ? "inspection" : "inspections"} pending reviewer approval</p>
               </div>
               <button className="secondary-button" onClick={() => onModuleChange("inspections")} type="button">Review All <ArrowRight aria-hidden="true" size={14} /></button>

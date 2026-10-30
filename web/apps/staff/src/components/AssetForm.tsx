@@ -264,7 +264,7 @@ export function AssetForm({
         pendingLabel="Saving…"
         submitError={submitError}
         submitLabel="Save asset"
-        title={isCopy ? "Copy Asset" : asset ? "Edit Asset" : "Add Asset"}
+        title={isCopy ? "Copy asset" : asset ? "Edit asset" : "Add asset"}
       >
         <FormSection title="Ownership">
           <FormGrid>

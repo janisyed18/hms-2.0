@@ -128,7 +128,7 @@ describe("the asset workflow card inside the asset detail", () => {
       });
     const first = render(<App initialSession={session(["ASSEMBLY"])} />);
     await userEvent.setup().click(await screen.findByRole("button", { name: "Complete asset setup" }, SLOW));
-    expect(await screen.findByRole("heading", { name: "Edit Asset" }, SLOW)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Edit asset" }, SLOW)).toBeInTheDocument();
     first.unmount();
 
     open("/?view=assets&asset=a1");

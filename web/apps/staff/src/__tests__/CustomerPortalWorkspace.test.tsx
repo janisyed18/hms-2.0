@@ -263,6 +263,10 @@ interface Stub {
   failBookingsFrom?: number;
   postDelayMs?: number;
   assetName?: string | null;
+  /** Retest schedules the API returns (none by default). */
+  retests?: Json[];
+  /** Replaces the single default asset. */
+  assetItems?: Json[];
 }
 
 function stubPortal(options: Partial<Stub> = {}): Stub {
@@ -275,7 +279,11 @@ function stubPortal(options: Partial<Stub> = {}): Stub {
     const path = requestUrl.pathname;
     state.calls.push(`${init?.method ?? "GET"} ${path}`);
     if (path === "/api/v1/customers") return response({ total: 1, limit: 100, offset: 0, items: [state.customerJson] });
-    if (path === "/api/v1/assets") return response({ total: 1, limit: 100, offset: 0, items: [{ ...asset("customer-a"), asset_name: state.assetName ?? null }] });
+    if (path === "/api/v1/assets") {
+      const items = state.assetItems ?? [{ ...asset("customer-a"), asset_name: state.assetName ?? null }];
+      return response({ total: items.length, limit: 100, offset: 0, items });
+    }
+    if (path === "/api/v1/retest-schedules") return response({ total: state.retests?.length ?? 0, limit: 100, offset: 0, items: state.retests ?? [] });
     if (path === "/api/v1/inspection-availability") {
       const next = state.availability.shift();
       if (typeof next === "number") return new Response(JSON.stringify({ error: { code: "server", message: "Availability service unavailable" } }), { status: next });
@@ -499,7 +507,10 @@ describe("booking history", () => {
       bookings: [rawBooking({ status: "APPROVED", appointment: confirmedAppointment("2027-10-04T23:30:00", "2027-10-05T00:30:00") })]
     });
     render(<WorkspaceHarness activeModule="bookings" />);
-    const card = (await screen.findByText(/Australia\/Sydney \(UTC\+11:00\)/)).closest("li") as HTMLElement;
+    const zone = await screen.findByText(/^Australia\/Sydney · AE[DS]T$/);
+    // The offset stays available, and the zone reads as part of the time, on its own line.
+    expect(zone).toHaveAttribute("title", "UTC+11:00");
+    const card = zone.closest("li") as HTMLElement;
     expect(card).toHaveTextContent(/Monday 4 October 2027, 11:30\s?pm to Tuesday 5 October 2027, 12:30\s?am/i);
   });
 
@@ -708,3 +719,102 @@ describe("asset and company identity in the portal", () => {
     expect(screen.getByText(/Asset #ASSET-customer-a · Product/)).toBeInTheDocument();
   });
 });
+
+describe("portal dashboard hierarchy and empty states", () => {
+  const retest = (id: string, status: string, due: string): Json => ({
+    id, asset_id: "asset-customer-a", customer_id: "customer-a", due_at: due, status, reminder_interval_days: 30, escalation_interval_days: 7,
+    last_reminded_at: null, escalated_at: null,
+    asset: { id: "asset-customer-a", asset_number: "ASSET-customer-a", asset_name: "Main Transfer Hose", tag: null, lifecycle_status: "IN_SERVICE" },
+    customer: { id: "customer-a", code: "CUSTOMER-A", name: "Customer A" },
+    product: { id: "product-1", code: "PRODUCT", name: "Product", category: "Hose" }
+  });
+
+  it("answers what I have, what needs attention and what I can do, in that order", async () => {
+    stubPortal({ retests: [retest("r1", "OVERDUE", "2026-10-01")] });
+    render(<WorkspaceHarness activeModule="dashboard" />);
+    const glance = await screen.findByRole("group", { name: "At a glance" });
+    expect(glance).toHaveTextContent("Assets");
+    const attention = screen.getByRole("heading", { name: "Needs attention" });
+    const next = screen.getByRole("heading", { name: "Next steps" });
+    expect(glance.compareDocumentPosition(attention) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(attention.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The retest is named for the person, not in the API's code.
+    const list = attention.closest("section") as HTMLElement;
+    expect(within(list).getByText("Main Transfer Hose")).toBeInTheDocument();
+    expect(within(list).getByText(/^Overdue · /)).toBeInTheDocument();
+    expect(within(list).queryByText(/OVERDUE/)).toBeNull();
+  });
+
+  it("makes booking the one primary action and the rest secondary", async () => {
+    stubPortal();
+    render(<WorkspaceHarness activeModule="dashboard" />);
+    const next = (await screen.findByRole("heading", { name: "Next steps" })).closest("section") as HTMLElement;
+    expect(within(next).getByRole("button", { name: "Book inspection" })).toHaveClass("primary-button");
+    expect(within(next).getByRole("button", { name: "View assets" })).toHaveClass("secondary-button");
+    expect(within(next).getByRole("button", { name: "View certificates" })).toHaveClass("secondary-button");
+    expect(next.querySelectorAll(".primary-button")).toHaveLength(1);
+  });
+
+  it("an up-to-date organisation reads as intentional, not as a zero", async () => {
+    stubPortal();
+    render(<WorkspaceHarness activeModule="dashboard" />);
+    expect(await screen.findByText("Nothing needs attention")).toBeInTheDocument();
+    expect(screen.getByText(/You are up to date\. Assets appear here when a retest approaches\./)).toBeInTheDocument();
+  });
+
+  it("with no assets at all it says so plainly instead of showing a wall of zeros", async () => {
+    const base = customer("customer-a", "Customer A") as unknown as Json;
+    stubPortal({ customerJson: { ...base, metrics: { asset_count: 0, in_service_count: 0 } }, assetItems: [] });
+    render(<WorkspaceHarness activeModule="dashboard" />);
+    expect(await screen.findByText("No assets yet")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "At a glance" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Book inspection" })).toBeNull();
+  });
+
+  it("brings a time waiting for the customer's confirmation to the top", async () => {
+    stubPortal({
+      bookings: [rawBooking({
+        status: "APPROVED",
+        appointment: confirmedAppointment("2027-10-04T11:00:00", "2027-10-04T12:00:00"),
+        change_requests: [{ id: "c1", status: "PENDING_CUSTOMER_CONFIRMATION", starts_at: "2027-10-05T00:00:00Z", ends_at: "2027-10-05T01:00:00Z", reason: null, emergency: false, created_at: "2027-10-01T00:00:00Z" }]
+      })]
+    });
+    const user = userEvent.setup();
+    render(<WorkspaceHarness activeModule="dashboard" />);
+    expect(await screen.findByText(/waiting for your confirmation/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review bookings" })).toBeInTheDocument();
+    expect(screen.queryByText("Nothing needs attention")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Review bookings" }));
+  });
+});
+
+describe("portal asset list: empty versus no match", () => {
+  function Assets({ assetId = null }: { assetId?: string | null }) {
+    return <CustomerPortalWorkspace activeModule="assets" assetId={assetId} customerId="customer-a" onAssetChange={vi.fn()} onCustomerChange={vi.fn()} onModuleChange={vi.fn()} session={session} />;
+  }
+
+  it("tells an organisation with no assets from a search that found none, and clears in a click", async () => {
+    const user = userEvent.setup();
+    stubPortal({ assetItems: [] });
+    const first = render(<Assets />);
+    expect(await screen.findByText("No assets yet")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear search" })).toBeNull();
+    first.unmount();
+
+    stubPortal({ assetName: "Main Transfer Hose" });
+    render(<Assets />);
+    const box = await screen.findByLabelText("Search assets");
+    expect(box).toHaveAttribute("placeholder", "Search assets by name, number or tag");
+    expect(await screen.findByText("1 asset")).toBeInTheDocument();
+    await user.type(box, "zzz");
+    expect(screen.getByText("No matching assets")).toBeInTheDocument();
+    expect(screen.getByText("0 matching assets")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show all assets" }));
+    expect(box).toHaveValue("");
+    expect(screen.getByText("Main Transfer Hose")).toBeInTheDocument();
+    await user.type(box, "zzz");
+    await user.click(screen.getByRole("button", { name: "Clear search" })); // the box's own clear does the same
+    expect(box).toHaveValue("");
+  });
+});
+

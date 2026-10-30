@@ -434,16 +434,10 @@
   font-weight: 650;
 }
 
-.topbar-primary,
 .icon-button,
 .user-menu {
   min-height: var(--control-height);
   border-radius: var(--radius-sm);
-}
-
-.topbar-primary {
-  padding: 0 14px;
-  white-space: nowrap;
 }
 
 .icon-button {

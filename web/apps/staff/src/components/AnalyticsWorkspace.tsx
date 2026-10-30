@@ -268,7 +268,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
                 whileTap={reducedMotion ? undefined : { scale: 0.99 }}
               >
                 <span className="analytics-outcome-totals">
-                  <b>{inspectionTotals.submitted}<small>Submitted</small></b>
+                  <b>{inspectionTotals.submitted}<small>Awaiting review</small></b>
                   <b>{inspectionTotals.approved}<small>Approved</small></b>
                   <b>{inspectionTotals.rejected}<small>Rejected</small></b>
                 </span>

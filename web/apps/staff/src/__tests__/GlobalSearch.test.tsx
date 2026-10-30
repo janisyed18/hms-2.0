@@ -42,7 +42,6 @@ function renderSearch(
       <NotificationCenterProvider customerId={notificationCustomerId}>
         <AppShell
           activeModule="dashboard"
-          canCreateAsset
           description="Operational snapshot"
           onModuleChange={vi.fn()}
           onSearchRecordOpen={onSearchRecordOpen}

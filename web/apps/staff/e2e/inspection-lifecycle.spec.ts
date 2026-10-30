@@ -35,7 +35,7 @@ function sqlValue(command: string): string {
   ).trim();
 }
 
-// An asset of its own, with no inspection: the journey creates one through the real Add Inspection flow.
+// An asset of its own, with no inspection: the journey creates one through the real Create inspection flow.
 function prepare() {
   cleanup();
   sql(`
@@ -100,13 +100,13 @@ test.describe("inspection lifecycle", () => {
     try {
       // The real creation flow captures no work: only the asset and the type.
       await page.goto("/?view=inspections");
-      await page.getByRole("button", { name: "Add Inspection" }).click();
-      const drawer = page.getByRole("heading", { name: "Add Inspection" }).locator("xpath=ancestor::form");
+      await page.getByRole("button", { name: "Create inspection" }).click();
+      const drawer = page.getByRole("heading", { name: "Create inspection" }).locator("xpath=ancestor::form");
       await chooseOption(drawer.getByLabel("Inspection asset"), { label: "E2E-LIFECYCLE-1" });
       for (const label of ["Instruction", "Working pressure kPa", "Ohms total", "Certificate result", "Inspection notes"]) {
         await expect(drawer.getByLabel(label)).toHaveCount(0);
       }
-      await drawer.getByRole("button", { name: "Create inspection" }).click();
+      await drawer.getByRole("button", { name: "Save inspection" }).click();
       await expect.poll(() => new URL(page.url()).searchParams.get("inspection"), SLOW).not.toBeNull();
       const inspectionId = new URL(page.url()).searchParams.get("inspection")!;
       const detail = detailOf(page);
