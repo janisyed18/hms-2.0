@@ -47,30 +47,30 @@ class _Template:
 _TEMPLATES: dict[tuple[NotificationCategory, NotificationChannel], _Template] = {
     (_Cat.INSPECTION_SUBMITTED, _Ch.EMAIL): _Template(
         "Inspection {inspection_id} awaiting your review",
-        "An inspection for asset {asset_number} ({customer_name}) has been "
+        "An inspection for asset {asset_label} ({customer_name}) has been "
         "submitted and is awaiting review.\n\nOpen it in HMS to review and "
         "approve or reject.",
     ),
     (_Cat.INSPECTION_REJECTED, _Ch.EMAIL): _Template(
         "Inspection {inspection_id} rejected — action needed",
-        "Your inspection for asset {asset_number} was rejected and needs "
+        "Your inspection for asset {asset_label} was rejected and needs "
         "re-inspection.\n\nReason: {reason}",
     ),
     (_Cat.INSPECTION_REJECTED, _Ch.SMS): _Template(
-        "", "HMS: inspection for {asset_number} rejected — re-inspection needed. {link}"
+        "", "HMS: inspection for {asset_label} rejected — re-inspection needed. {link}"
     ),
     (_Cat.INSPECTION_APPROVED, _Ch.EMAIL): _Template(
         "Inspection {inspection_id} approved",
-        "Your inspection for asset {asset_number} has been approved.",
+        "Your inspection for asset {asset_label} has been approved.",
     ),
     (_Cat.INSPECTION_FAILED, _Ch.EMAIL): _Template(
-        "SAFETY: asset {asset_number} failed inspection",
-        "Asset {asset_number} ({customer_name}) failed inspection and must be "
+        "SAFETY: asset {asset_label} failed inspection",
+        "Asset {asset_label} ({customer_name}) failed inspection and must be "
         "removed from service pending assessment.",
     ),
     (_Cat.INSPECTION_FAILED, _Ch.SMS): _Template(
         "",
-        "HMS SAFETY: asset {asset_number} FAILED inspection. "
+        "HMS SAFETY: asset {asset_label} FAILED inspection. "
         "Remove from service. {link}",
     ),
     (_Cat.INSPECTION_BOOKING_REQUESTED, _Ch.EMAIL): _Template(
@@ -134,54 +134,54 @@ _TEMPLATES: dict[tuple[NotificationCategory, NotificationChannel], _Template] = 
         "Inspection booking rescheduled", "{location_name}"
     ),
     (_Cat.CERTIFICATE_ISSUED, _Ch.EMAIL): _Template(
-        "Certificate {certificate_number} issued for asset {asset_number}",
-        "A test certificate has been issued for asset {asset_number} "
+        "Certificate {certificate_number} issued for asset {asset_label}",
+        "A test certificate has been issued for asset {asset_label} "
         "({customer_name}).\n\nView and verify it here: {link}",
     ),
     (_Cat.CERTIFICATE_ISSUED, _Ch.SMS): _Template(
-        "", "HMS: certificate {certificate_number} issued for {asset_number}. {link}"
+        "", "HMS: certificate {certificate_number} issued for {asset_label}. {link}"
     ),
     (_Cat.CERTIFICATE_REVOKED, _Ch.EMAIL): _Template(
         "Certificate {certificate_number} revoked",
-        "Certificate {certificate_number} for asset {asset_number} has been "
+        "Certificate {certificate_number} for asset {asset_label} has been "
         "revoked and is no longer valid.",
     ),
     (_Cat.CERTIFICATE_REVOKED, _Ch.SMS): _Template(
-        "", "HMS: certificate {certificate_number} for {asset_number} REVOKED. {link}"
+        "", "HMS: certificate {certificate_number} for {asset_label} REVOKED. {link}"
     ),
     (_Cat.ASSET_CONDEMNED, _Ch.EMAIL): _Template(
-        "SAFETY: asset {asset_number} condemned",
-        "Asset {asset_number} ({customer_name}) has been condemned and must not "
+        "SAFETY: asset {asset_label} condemned",
+        "Asset {asset_label} ({customer_name}) has been condemned and must not "
         "be used. Please remove it from service immediately.",
     ),
     (_Cat.ASSET_CONDEMNED, _Ch.SMS): _Template(
-        "", "HMS SAFETY: asset {asset_number} CONDEMNED. Do not use. {link}"
+        "", "HMS SAFETY: asset {asset_label} CONDEMNED. Do not use. {link}"
     ),
     (_Cat.ASSET_APPROACHING_CONDEMNATION, _Ch.EMAIL): _Template(
-        "Asset {asset_number} approaching condemnation",
-        "Asset {asset_number} ({customer_name}) is approaching its condemnation "
+        "Asset {asset_label} approaching condemnation",
+        "Asset {asset_label} ({customer_name}) is approaching its condemnation "
         "date ({grave_date}). Please plan its replacement.",
     ),
     (_Cat.RETEST_ADVANCE, _Ch.EMAIL): _Template(
-        "Retest due soon for asset {asset_number}",
-        "Asset {asset_number} ({customer_name}) is due for retest on "
+        "Retest due soon for asset {asset_label}",
+        "Asset {asset_label} ({customer_name}) is due for retest on "
         "{due_date} ({days_before} days). Please arrange testing.",
     ),
     (_Cat.RETEST_DUE, _Ch.EMAIL): _Template(
-        "Retest due today for asset {asset_number}",
-        "Asset {asset_number} ({customer_name}) is due for retest today "
+        "Retest due today for asset {asset_label}",
+        "Asset {asset_label} ({customer_name}) is due for retest today "
         "({due_date}).",
     ),
     (_Cat.RETEST_DUE, _Ch.SMS): _Template(
-        "", "HMS: asset {asset_number} retest due today ({due_date}). {link}"
+        "", "HMS: asset {asset_label} retest due today ({due_date}). {link}"
     ),
     (_Cat.RETEST_OVERDUE, _Ch.EMAIL): _Template(
-        "OVERDUE: retest for asset {asset_number}",
-        "Asset {asset_number} ({customer_name}) retest is overdue since "
+        "OVERDUE: retest for asset {asset_label}",
+        "Asset {asset_label} ({customer_name}) retest is overdue since "
         "{due_date} ({days_overdue} days). Escalation level {escalation_level}.",
     ),
     (_Cat.RETEST_OVERDUE, _Ch.SMS): _Template(
-        "", "HMS: asset {asset_number} retest OVERDUE {days_overdue}d. {link}"
+        "", "HMS: asset {asset_label} retest OVERDUE {days_overdue}d. {link}"
     ),
     # --- Device & identity ---
     (_Cat.DEVICE_REGISTERED, _Ch.EMAIL): _Template(
@@ -228,6 +228,7 @@ def render(
     """Render a message for a category/channel with sender ID + (opt-out) footer."""
     template = _TEMPLATES.get((category, channel)) or _fallback(category, channel)
     safe = _SafeDict(context)
+    safe.setdefault("asset_label", _asset_label(context))
     subject = template.subject.format_map(safe)
     body = template.body.format_map(safe)
 
@@ -264,6 +265,17 @@ def render(
     )
 
 
+def _asset_label(context: dict[str, object]) -> str:
+    """How a message names an asset: "Name — NUMBER", or the number alone.
+
+    The number alone is used when there is no distinct name. Events written before
+    the name was carried have only the number, and read exactly as they did.
+    """
+    number = str(context.get("asset_number") or "").strip()
+    name = str(context.get("asset_name") or "").strip()
+    return f"{name} — {number}" if name and number and name != number else number
+
+
 def _fallback(
     category: NotificationCategory, channel: NotificationChannel
 ) -> _Template:
@@ -271,7 +283,7 @@ def _fallback(
     if channel is NotificationChannel.SMS:
         return _Template("", f"HMS: {label} — {{link}}")
     return _Template(
-        f"HMS notification: {label}", f"{label} for asset {{asset_number}}."
+        f"HMS notification: {label}", f"{label} for asset {{asset_label}}."
     )
 
 

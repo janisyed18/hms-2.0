@@ -32,6 +32,8 @@ import { ActionNotice } from "./interaction/ActionNotice";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
 import { friendlyApiError } from "./interaction/friendlyApiError";
 import { WorkspaceState } from "./WorkspaceState";
+import { assetAccessibleName, assetLabel } from "../utils/identity";
+import { AssetIdentity } from "./AssetIdentity";
 import { downloadCsv } from "./ModuleTable";
 import { PaginationControls, usePagination } from "./Pagination";
 import { ReportingPeriodControl } from "./ReportingPeriodControl";
@@ -380,10 +382,10 @@ export function OperationalWorkspace({
                 columns={["Asset", "Customer", "Product", "Due Date", "Days Overdue", "Status"]}
                 emptyMessage="No overdue retests. Your retest schedule is up to date."
                 onFirstCellClick={(index) => onAssetOpen(dashboard.overdueRetests[index].assetId)}
-                firstCellActionLabel={(index) => `Open asset ${dashboard.overdueRetests[index].assetNumber}`}
+                firstCellActionLabel={(index) => `Open asset ${assetAccessibleName(dashboard.overdueRetests[index])}`}
                 paginate={false}
                 rows={dashboard.overdueRetests.map((retest) => [
-                  retest.assetNumber,
+                  assetLabel(retest),
                   retest.customerName,
                   retest.productName,
                   retest.dueAt,
@@ -417,7 +419,7 @@ export function OperationalWorkspace({
             <div className="review-strip">
               {dashboard.awaitingReview.map((inspection) => (
                 <m.button
-                  aria-label={`Open inspection ${inspection.assetNumber}`}
+                  aria-label={`Open inspection ${assetAccessibleName(inspection)}`}
                   className="review-card"
                   key={inspection.inspectionId}
                   onClick={() => onModuleChange("inspections", inspection.inspectionId)}
@@ -428,7 +430,7 @@ export function OperationalWorkspace({
                 >
                   <span className="review-icon"><ClipboardCheck aria-hidden="true" size={20} /></span>
                   <span className="review-identity">
-                    <strong>{inspection.assetNumber}</strong>
+                    <AssetIdentity asset={inspection} />
                     <span>{inspection.inspectionType.replaceAll("_", " ").toLowerCase()}</span>
                   </span>
                   <span className="review-card-result">{inspection.result ?? "Not assessed"}</span>
@@ -449,10 +451,10 @@ export function OperationalWorkspace({
             </div>
             <div className="due-list">
               {dashboard.dueThisWeek.map((item) => (
-                <button className="due-item" aria-label={`Open scheduled asset ${item.assetNumber}`} key={item.assetId} onClick={() => onAssetOpen(item.assetId)} type="button">
+                <button className="due-item" aria-label={`Open scheduled asset ${assetAccessibleName(item)}`} key={item.assetId} onClick={() => onAssetOpen(item.assetId)} type="button">
                   <CalendarClock aria-hidden="true" size={15} />
                   <span>
-                    <strong>{item.assetNumber}</strong>
+                    <AssetIdentity asset={item} />
                     <span>{item.customerName}</span>
                   </span>
                   <time>{item.dueAt}</time>

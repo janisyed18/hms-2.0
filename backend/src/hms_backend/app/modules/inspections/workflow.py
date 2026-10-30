@@ -249,6 +249,7 @@ async def mark_submitted(
             "inspection_id": inspection.id,
             "asset_id": inspection.asset.id,
             "asset_number": inspection.asset.asset_number,
+            "asset_name": inspection.asset.asset_name,
             "customer_id": inspection.asset.customer_id,
             "reviewer_user_id": inspection.reviewer_user_id,
             "link": settings.public_base_url.rstrip("/"),

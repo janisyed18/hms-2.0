@@ -130,6 +130,16 @@ test.describe("client feedback: customer counts and asset identity", () => {
       }
       await page.setViewportSize({ width: 1440, height: 900 });
 
+      // The top bar finds it by name, too, and lists it under that name.
+      const topSearch = page.getByPlaceholder("Search customers, assets, inspections...");
+      await topSearch.fill("chemical transfer hose");
+      const suggestion = page.getByRole("option").filter({ hasText: ASSET_NAME });
+      await expect(suggestion).toBeVisible();
+      await expect(suggestion).toContainText(`Asset #${ASSET_NUMBER}`);
+      await topSearch.fill(ASSET_NUMBER);
+      await expect(page.getByRole("option").filter({ hasText: ASSET_NAME })).toBeVisible();
+      await page.keyboard.press("Escape");
+
       // Detail: the name is the title, the number is the first thing under it.
       await page.getByRole("row").filter({ hasText: ASSET_NUMBER }).locator(".asset-identity-name").click();
       const detail = page.getByRole("complementary", { name: "Asset detail" });

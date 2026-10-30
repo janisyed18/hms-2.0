@@ -727,6 +727,7 @@ class RetestEscalationResponse(BaseModel):
 class DashboardRetestRead(BaseModel):
     asset_id: str
     asset_number: str
+    asset_name: str | None = None
     customer_name: str
     product_name: str
     due_at: date
@@ -737,6 +738,7 @@ class DashboardRetestRead(BaseModel):
 class DashboardDueRead(BaseModel):
     asset_id: str
     asset_number: str
+    asset_name: str | None = None
     customer_name: str
     due_at: date
 
@@ -745,6 +747,7 @@ class DashboardReviewRead(BaseModel):
     inspection_id: str
     asset_id: str
     asset_number: str
+    asset_name: str | None = None
     inspection_type: str
     status: str
     result: str | None
@@ -784,6 +787,7 @@ class MyWorkItemRead(BaseModel):
     customer_name: str
     asset_id: str
     asset_number: str
+    asset_name: str | None = None
     inspection_id: str | None = None
     booking_id: str | None = None
     certificate_id: str | None = None

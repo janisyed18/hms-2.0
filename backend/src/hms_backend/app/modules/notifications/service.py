@@ -662,6 +662,7 @@ async def _emit_for_schedule(
         "customer_id": schedule.customer_id,
         "asset_id": asset.id,
         "asset_number": asset.asset_number,
+        "asset_name": asset.asset_name,
         "due_date": due.isoformat(),
         "link": settings.public_base_url.rstrip("/"),
     }

@@ -1,6 +1,7 @@
 export interface DashboardRetestRecord {
   assetId: string;
   assetNumber: string;
+  assetName?: string | null;
   customerName: string;
   productName: string;
   dueAt: string;
@@ -11,6 +12,7 @@ export interface DashboardRetestRecord {
 export interface DashboardDueRecord {
   assetId: string;
   assetNumber: string;
+  assetName?: string | null;
   customerName: string;
   dueAt: string;
 }
@@ -19,6 +21,7 @@ export interface DashboardReviewRecord {
   inspectionId: string;
   assetId: string;
   assetNumber: string;
+  assetName?: string | null;
   inspectionType: string;
   status: string;
   result: string | null;
@@ -58,6 +61,7 @@ export interface MyWorkItem {
   customerName: string;
   assetId: string;
   assetNumber: string;
+  assetName?: string | null;
   inspectionId: string | null;
   bookingId: string | null;
   certificateId: string | null;

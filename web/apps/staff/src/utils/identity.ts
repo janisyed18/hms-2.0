@@ -82,3 +82,8 @@ export function initialsOf(name: string | null | undefined): string {
     .map((word) => Array.from(word)[0]?.toUpperCase() ?? "")
     .join("");
 }
+
+/** "Main Transfer Hose, HMS-001842" for an accessible name, or the number alone when there is no distinct name. */
+export function assetAccessibleName(asset: { assetNumber: string; assetName?: string | null }): string {
+  return assetHasDistinctName(asset) ? `${assetDisplayName(asset)}, ${asset.assetNumber}` : asset.assetNumber;
+}
