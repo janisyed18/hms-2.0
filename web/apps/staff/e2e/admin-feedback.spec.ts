@@ -71,7 +71,10 @@ test.describe("Admin and security interaction feedback", () => {
 
       // Security actions ask first, name the person, and a failure changes nothing.
       // The directory is sorted by name and paged by the server, so find the new user by their email.
+      // The search is debounced and refetches the list, which re-renders the rows: let that finish before opening a row's menu.
+      const searched = page.waitForResponse((response) => response.url().includes("/api/v1/admin/users") && decodeURIComponent(response.url()).includes(email));
       await page.getByRole("searchbox", { name: "Search users" }).fill(email);
+      await searched;
       const row = page.getByRole("row", { name: new RegExp(email) });
       await expect(row).toBeVisible();
       await page.getByRole("button", { name: `Manage ${email}` }).click();
