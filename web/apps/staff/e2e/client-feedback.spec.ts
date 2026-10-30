@@ -15,6 +15,8 @@ import {
 
 const STAMP = Date.now().toString().slice(-8);
 const ASSET_NUMBER = `E2E-IDENT-${STAMP}`;
+const PORTAL_ASSET_NUMBER = `E2E-PORTAL-${STAMP}`;
+const PORTAL_ASSET_ID = "00000000-0000-7000-8000-0000000000d8";
 const ASSET_NAME = "High Pressure Chemical Transfer Hose Assembly 04";
 const WIDTHS: Array<[number, number]> = [[1440, 900], [1024, 800], [768, 1000], [390, 844]];
 const noSidewaysScroll = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1);
@@ -48,7 +50,7 @@ test.describe("client feedback: customer counts and asset identity", () => {
   });
 
   test.afterAll(() => {
-    sql(`DELETE FROM assets WHERE asset_number = '${ASSET_NUMBER}';`);
+    sql(`DELETE FROM assets WHERE asset_number IN ('${ASSET_NUMBER}', '${PORTAL_ASSET_NUMBER}');`);
   });
 
   test("a customer's asset count follows an asset created while Customers was not open, and survives a reload", async ({ browser }) => {
@@ -151,16 +153,35 @@ test.describe("client feedback: customer counts and asset identity", () => {
       await expect(header.locator(".customer-avatar")).toHaveText(expectedInitials(company));
       await expect(header.locator(".customer-avatar")).toHaveAttribute("aria-hidden", "true");
 
-      // Switching organisation switches the avatar with it.
-      await page.getByLabel("Organisation").selectOption({ label: "Vopak" });
-      await expect(header.locator("strong").first()).toHaveText("Vopak");
-      await expect(header.locator(".customer-avatar")).toHaveText("V");
+      // An asset for whichever organisation this account opens on (the seed differs between runs).
+      sql(`
+        INSERT INTO assets (id, version, created_at, updated_at, customer_id, location_id, product_id, asset_number, asset_name, customer_serial_no, lifecycle_status)
+          SELECT '${PORTAL_ASSET_ID}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, c.id, l.id, p.id, '${PORTAL_ASSET_NUMBER}', '${ASSET_NAME}', NULL, 'IN_SERVICE'
+          FROM customers c
+          JOIN customer_locations l ON l.customer_id = c.id
+          CROSS JOIN (SELECT id FROM products ORDER BY created_at LIMIT 1) p
+          WHERE c.name = '${company.replace(/'/g, "''")}' LIMIT 1;
+      `);
+      await page.reload();
+      await expect(header).toBeVisible();
+
+      // Where the account has more than one organisation, switching changes the avatar with it.
+      const switcher = page.getByLabel("Organisation");
+      if (await switcher.count()) {
+        const other = (await switcher.locator("option").allTextContents()).find((name) => name.trim() !== company);
+        if (other) {
+          await switcher.selectOption({ label: other });
+          await expect(header.locator(".customer-avatar")).toHaveText(expectedInitials(other));
+          await switcher.selectOption({ label: company });
+          await expect(header.locator(".customer-avatar")).toHaveText(expectedInitials(company));
+        }
+      }
 
       await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Assets", exact: true }).click();
-      await page.getByLabel("Search assets", { exact: true }).fill(ASSET_NUMBER);
-      const item = page.locator(".portal-record-button").filter({ hasText: ASSET_NUMBER });
+      await page.getByLabel("Search assets", { exact: true }).fill(PORTAL_ASSET_NUMBER);
+      const item = page.locator(".portal-record-button").filter({ hasText: PORTAL_ASSET_NUMBER });
       await expect(item.locator(".asset-identity-name")).toHaveText(ASSET_NAME);
-      await expect(item.locator(".asset-identity-number")).toHaveText(`Asset #${ASSET_NUMBER}`);
+      await expect(item.locator(".asset-identity-number")).toHaveText(`Asset #${PORTAL_ASSET_NUMBER}`);
       await page.getByLabel("Search assets", { exact: true }).fill("chemical transfer hose");
       await expect(item).toHaveCount(1);
 
@@ -174,7 +195,7 @@ test.describe("client feedback: customer counts and asset identity", () => {
 
       await item.click();
       await expect(page.getByRole("heading", { name: ASSET_NAME, level: 2 })).toBeVisible();
-      await expect(page.getByText(new RegExp(`Asset #${ASSET_NUMBER}`))).toBeVisible();
+      await expect(page.getByText(new RegExp(`Asset #${PORTAL_ASSET_NUMBER}`))).toBeVisible();
     } finally {
       await customer.context.close();
     }
