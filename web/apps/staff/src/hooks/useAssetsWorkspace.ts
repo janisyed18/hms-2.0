@@ -16,6 +16,7 @@ const productSummary = (product: ProductRecord): AssetProductSummary => ({ id: p
 
 export function useAssetsWorkspace() {
   const [assets, setAssets] = useState<AssetRecord[]>([]);
+  const [serverTotal, setServerTotal] = useState<number | undefined>(undefined);
   const [customers, setCustomers] = useState<CustomerRecord[]>([]);
   const [products, setProducts] = useState<AssetProductSummary[]>([]);
   const [configurationOptions, setConfigurationOptions] = useState<AssetConfigurationOptions>(emptyConfigurationOptions);
@@ -51,6 +52,7 @@ export function useAssetsWorkspace() {
     ]).then(([assetResult, customerResult, productResult, configurationResult]) => {
       if (!active) return;
       setAssets(assetResult.items);
+      setServerTotal(assetResult.total);
       setCustomers(customerResult.items);
       setProducts(uniqueById([...productResult.items.map(productSummary), ...assetResult.items.map((asset) => asset.product)]));
       setConfigurationOptions(configurationResult);
@@ -133,5 +135,5 @@ export function useAssetsWorkspace() {
   }
   function clearAssetFilters() { setCustomerFilter("ALL"); setProductFilter("ALL"); setLifecycleFilter("ALL"); setDueFrom(""); setDueTo(""); }
   const activeFilterCount = [customerFilter !== "ALL", productFilter !== "ALL", lifecycleFilter !== "ALL", Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
-  return { activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, notice, requestArchive, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, closeForm, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
+  return { serverTotal, activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, notice, requestArchive, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, closeForm, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
 }

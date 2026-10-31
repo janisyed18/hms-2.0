@@ -2,7 +2,7 @@ import { ArrowRight, RotateCcw } from "lucide-react";
 
 import type { AssetWorkflowAction } from "../domain/types";
 import { useAssetWorkflow } from "../hooks/useAssetWorkflow";
-import { formatDateTime } from "../scheduling/zonedTime";
+import { formatWithZone, viewerZone } from "../scheduling/zonedTime";
 
 interface AssetWorkflowCardProps {
   assetId: string;
@@ -51,7 +51,7 @@ export function AssetWorkflowCard({ assetId, canOpen, onAction }: AssetWorkflowC
                 <dt>Scheduled</dt>
                 <dd>
                   <time dateTime={state.workflow.context.scheduledAt}>
-                    {formatDateTime(state.workflow.context.scheduledAt, Intl.DateTimeFormat().resolvedOptions().timeZone)}
+                    {formatWithZone(state.workflow.context.scheduledAt, viewerZone())}
                   </time>
                 </dd>
               </div>

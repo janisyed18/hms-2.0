@@ -143,7 +143,7 @@ describe("shared form behaviour on the Asset form", () => {
     const user = userEvent.setup();
     render(<AssetForm {...assetForm({ onSubmit })} />);
     await user.type(screen.getByLabelText("Serial Number"), "X");
-    const form = screen.getByRole("form", { name: "Edit Asset" });
+    const form = screen.getByRole("form", { name: "Edit asset" });
     fireEvent.submit(form);
     fireEvent.submit(form);
     await user.click(screen.getByRole("button", { name: "Saving…" }));
@@ -256,9 +256,9 @@ describe("shared form behaviour on the Asset form", () => {
     const save = screen.getByRole("button", { name: "Save asset" });
     save.focus();
     await user.tab();
-    expect(screen.getByRole("form", { name: "Edit Asset" }).contains(document.activeElement)).toBe(true);
+    expect(screen.getByRole("form", { name: "Edit asset" }).contains(document.activeElement)).toBe(true);
     await user.tab({ shift: true });
-    expect(screen.getByRole("form", { name: "Edit Asset" }).contains(document.activeElement)).toBe(true);
+    expect(screen.getByRole("form", { name: "Edit asset" }).contains(document.activeElement)).toBe(true);
   });
 });
 

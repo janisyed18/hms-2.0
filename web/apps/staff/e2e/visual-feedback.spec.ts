@@ -41,8 +41,8 @@ test.describe("shared controls and success feedback", () => {
     const code = `VIS${Date.now().toString().slice(-8)}`;
     try {
       await page.goto("/?view=products");
-      await page.getByRole("button", { name: "Add Product" }).first().click();
-      const form = page.getByRole("form", { name: "Add Product" });
+      await page.getByRole("button", { name: "Add product" }).first().click();
+      const form = page.getByRole("form", { name: "Add product" });
       await form.getByLabel("Product code").fill(code);
       await form.getByLabel("Product name").fill("Toast check hose");
       await form.getByLabel("Category", { exact: true }).fill("Hose");
@@ -69,8 +69,8 @@ test.describe("shared controls and success feedback", () => {
     try {
       await page.setViewportSize({ width: 390, height: 844 }); // the phone: the toast must fit here too
       await page.goto("/?view=products");
-      await page.getByRole("button", { name: "Add Product" }).first().click();
-      const form = page.getByRole("form", { name: "Add Product" });
+      await page.getByRole("button", { name: "Add product" }).first().click();
+      const form = page.getByRole("form", { name: "Add product" });
       await form.getByLabel("Product code").fill(`VIS${Date.now().toString().slice(-8)}`);
       await form.getByLabel("Product name").fill("Refused hose");
       await form.getByLabel("Category", { exact: true }).fill("Hose");
@@ -104,7 +104,7 @@ test.describe("shared controls and success feedback", () => {
     page.setDefaultTimeout(15_000);
     try {
       await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Users & Roles", exact: true }).click();
-      await page.getByRole("button", { name: "Add User" }).click();
+      await page.getByRole("button", { name: "Add user" }).click();
       const dialog = page.getByRole("dialog", { name: "Add user" });
       await expect(dialog.getByRole("heading", { name: "Identity" })).toBeVisible();
       await expect(dialog.getByRole("heading", { name: "Access" })).toBeVisible();
@@ -164,12 +164,12 @@ test.describe("shared controls and success feedback", () => {
     page.setDefaultTimeout(15_000);
     try {
       await page.goto("/?view=assets");
-      await page.getByRole("button", { name: "Add Asset" }).first().click();
-      const form = page.getByRole("form", { name: "Add Asset" });
+      await page.getByRole("button", { name: "Add asset" }).first().click();
+      const form = page.getByRole("form", { name: "Add asset" });
       const agent = form.getByRole("combobox", { name: "Agent" });
       await agent.click();
       const options = page.getByRole("listbox", { name: "Agent" }).getByRole("option");
-      expect(await options.count()).toBeGreaterThan(1);
+      await expect.poll(() => options.count()).toBeGreaterThan(1);
       await agent.fill("vopa");
       await expect(options).toHaveCount(1);
       await page.keyboard.press("ArrowDown");

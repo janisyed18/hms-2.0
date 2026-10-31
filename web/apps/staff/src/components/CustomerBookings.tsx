@@ -10,6 +10,7 @@ import type {
 } from "../domain/types";
 import { assetDisplayName, assetHasDistinctName, assetLabel } from "../utils/identity";
 import { useFocusAfterRender } from "./forms/useFocusAfterRender";
+import { zoneNote } from "../scheduling/zonedTime";
 import { Combobox } from "./interaction/Combobox";
 import { Select } from "./interaction/Select";
 
@@ -51,19 +52,27 @@ function slotRange(slot: { startsAt: string; endsAt: string }, timeZone: string)
   return `${clock(start, timeZone)} ${startZone} to ${clock(end, timeZone)} ${endZone}`;
 }
 
-function dayAndTime(value: string, timeZone: string): string {
+/** A time at the site: the day and clock, and (on its own line) which zone that is, e.g. "Australia/Sydney · AEDT". */
+function dayAndTime(value: string, timeZone: string): { when: string; zone: string } {
   const instant = new Date(value);
-  return `${longDay(instant, timeZone)}, ${clock(instant, timeZone)} (${zoneName(instant, timeZone)})`;
+  return { when: `${longDay(instant, timeZone)}, ${clock(instant, timeZone)}`, zone: zoneNote(instant, timeZone) };
 }
 
 /** A recorded appointment is shown from its stored site-local snapshot, never recomputed. */
-function recordedAppointment(appointment: NonNullable<InspectionBookingRecord["appointment"]>): string {
+function recordedAppointment(
+  appointment: NonNullable<InspectionBookingRecord["appointment"]>,
+  at: string
+): { when: string; zone: string; offset: string } {
   const start = new Date(`${appointment.localStartSnapshot}Z`);
   const end = new Date(`${appointment.localEndSnapshot}Z`);
   const day = longDay(start, "UTC");
   const endsSameDay = appointment.localStartSnapshot.slice(0, 10) === appointment.localEndSnapshot.slice(0, 10);
   const until = endsSameDay ? clock(end, "UTC") : `${longDay(end, "UTC")}, ${clock(end, "UTC")}`;
-  return `${day}, ${clock(start, "UTC")} to ${until} · ${appointment.timezoneId} (UTC${appointment.utcOffsetStart})`;
+  return {
+    when: `${day}, ${clock(start, "UTC")} to ${until}`,
+    zone: zoneNote(new Date(at), appointment.timezoneId),
+    offset: `UTC${appointment.utcOffsetStart}`
+  };
 }
 
 export interface BookingStatusView {
@@ -486,6 +495,7 @@ export function CustomerBookings({
               const proposal = booking.changeRequests.find((item) => item.status === "PENDING_CUSTOMER_CONFIRMATION") ?? null;
               const waitingOnUs = booking.changeRequests.some((item) => item.status === "PENDING_ADMIN_APPROVAL");
               const appointmentStatus = booking.appointment?.status;
+              const shown = booking.appointment ? recordedAppointment(booking.appointment, booking.scheduledAt) : dayAndTime(booking.scheduledAt, zoneId);
               const open =
                 booking.status === "PENDING_APPROVAL" ||
                 (booking.status === "APPROVED" && appointmentStatus !== "CANCELLED" && appointmentStatus !== "COMPLETED" && appointmentStatus !== "NO_SHOW");
@@ -495,13 +505,16 @@ export function CustomerBookings({
                     <strong>{booking.location.name}</strong>
                     <span className="portal-status" title={view.hint}>{view.label}</span>
                   </div>
-                  <span>{booking.appointment ? recordedAppointment(booking.appointment) : dayAndTime(booking.scheduledAt, zoneId)}</span>
+                  <span className="portal-when">
+                    <strong>{shown.when}</strong>
+                    <span className="portal-zone" title={"offset" in shown ? (shown as { offset: string }).offset : undefined}>{shown.zone}</span>
+                  </span>
                   <span>Assets: {booking.assets.map(bookedAssetLabel).join(", ")}</span>
                   <span className="portal-hint">{view.hint}</span>
                   {booking.rejectionReason ? <span>Reason: {booking.rejectionReason}</span> : null}
                   {proposal ? (
                     <span className="portal-proposal">
-                      Proposed new time: <strong>{dayAndTime(proposal.startsAt, zoneId)}</strong>. Your current appointment stays until you confirm.
+                      Proposed new time: <strong>{dayAndTime(proposal.startsAt, zoneId).when}</strong> ({dayAndTime(proposal.startsAt, zoneId).zone}). Your current appointment stays until you confirm.
                     </span>
                   ) : null}
                   {waitingOnUs ? <span className="portal-hint">A reschedule request is waiting for approval.</span> : null}
@@ -519,7 +532,10 @@ export function CustomerBookings({
                       ) : null}
                       {open && confirmingCancel === booking.id ? (
                         <>
-                          <button className="danger-button" disabled={busy} type="button" onClick={() => cancelBooking(booking)}>
+                          <span className="portal-confirm" id={`cancel-${booking.id}`}>
+                            Cancel the booking for {booking.assets.map(bookedAssetLabel).join(", ")} on {shown.when}? The time is released.
+                          </span>
+                          <button aria-describedby={`cancel-${booking.id}`} className="danger-button" disabled={busy} type="button" onClick={() => cancelBooking(booking)}>
                             Yes, cancel this booking
                           </button>
                           <button className="secondary-button" disabled={busy} type="button" onClick={() => setConfirmingCancel(null)}>

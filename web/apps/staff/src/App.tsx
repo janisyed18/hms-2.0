@@ -356,7 +356,6 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
   const activeCopy = portalMode
     ? customerPortalCopy[renderedActiveModule] ?? moduleCopy[renderedActiveModule]
     : moduleCopy[renderedActiveModule];
-  const canCreateAsset = hasPermission(session, "asset:write");
 
   useEffect(() => {
     setSession(normaliseSession(providedSession));
@@ -494,7 +493,6 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
       >
       <AppShell
         activeModule={renderedActiveModule}
-        canCreateAsset={canCreateAsset}
         description={activeCopy.description}
         hideGlobalSearch={portalMode}
         navGroups={portalMode ? customerPortalNavGroups : undefined}

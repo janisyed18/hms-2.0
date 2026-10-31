@@ -35,7 +35,7 @@ function renderForm() {
   return { onSubmit };
 }
 
-const create = () => screen.getByRole("button", { name: "Create inspection" });
+const create = () => screen.getByRole("button", { name: "Save inspection" });
 const field = (name: string) => screen.getByLabelText(name) as HTMLInputElement | HTMLSelectElement;
 
 async function fillEverything(user: ReturnType<typeof userEvent.setup>) {

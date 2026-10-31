@@ -13,7 +13,6 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
-  Plus,
   RefreshCcw,
   Search,
   ShieldCheck,
@@ -74,7 +73,6 @@ export interface NavItem {
 
 interface AppShellProps {
   activeModule: AppModule;
-  canCreateAsset: boolean;
   children: ReactNode;
   description: string;
   hideGlobalSearch?: boolean;
@@ -362,7 +360,6 @@ function SidebarNavigation({
 
 export function AppShell({
   activeModule,
-  canCreateAsset,
   children,
   description,
   hideGlobalSearch = false,
@@ -818,16 +815,6 @@ export function AppShell({
                 </div>
               ) : null}
             </div>
-            {canCreateAsset ? (
-              <button
-                className="primary-button topbar-primary"
-                onClick={() => handleModuleChange("assets")}
-                type="button"
-              >
-                <Plus aria-hidden="true" size={17} />
-                New Asset
-              </button>
-            ) : null}
             <button
               aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
               aria-pressed={theme === "dark"}

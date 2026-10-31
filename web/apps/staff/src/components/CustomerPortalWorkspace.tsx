@@ -17,6 +17,7 @@ import { WorkspaceState } from "./WorkspaceState";
 import { assetDisplayName, assetHasDistinctName, assetLabel, initialsOf } from "../utils/identity";
 import { AssetIdentity } from "./AssetIdentity";
 import { Select } from "./interaction/Select";
+import { certificateStatusLabel, inspectionResultLabel, inspectionStatusLabel, lifecycleStatusLabel, plainWords, retestStatusLabel } from "../utils/statusLabels";
 
 interface CustomerPortalWorkspaceProps {
   activeModule: AppModule;
@@ -217,7 +218,7 @@ export function CustomerPortalWorkspace({
       </header>
 
       {activeModule === "dashboard" ? <Dashboard customer={customer} data={data} onModuleChange={onModuleChange} /> : null}
-      {activeModule === "assets" ? <Assets assets={data.assets} assetId={assetId} onAssetChange={onAssetChange} /> : null}
+      {activeModule === "assets" ? <Assets assets={data.assets} assetId={assetId} organisation={customer.name} onAssetChange={onAssetChange} /> : null}
       {activeModule === "locations" ? <Locations customer={customer} assets={data.assets} onModuleChange={onModuleChange} /> : null}
       {activeModule === "bookings" ? (
         <CustomerBookings
@@ -238,26 +239,52 @@ export function CustomerPortalWorkspace({
 
 function Dashboard({ customer, data, onModuleChange }: { customer: CustomerRecord; data: PortalData; onModuleChange: (module: AppModule) => void }) {
   const due = data.retests.filter((item) => item.status === "DUE" || item.status === "OVERDUE");
+  const openBookings = data.bookings.filter((item) => item.status === "PENDING_APPROVAL" || item.status === "APPROVED").length;
+  const awaitingYou = data.bookings.filter((booking) => booking.changeRequests.some((change) => change.status === "PENDING_CUSTOMER_CONFIRMATION"));
+  const organisation = (
+    <section aria-labelledby="portal-organisation" className="portal-panel">
+      <h2 id="portal-organisation">Sites and contacts</h2>
+      <p>{customer.locations.length} approved location{customer.locations.length === 1 ? "" : "s"} and {customer.contacts.length} listed contact{customer.contacts.length === 1 ? "" : "s"}.</p>
+    </section>
+  );
+  if (customer.metrics.assetCount === 0) {
+    return <>
+      <section aria-labelledby="portal-no-assets" className="portal-panel">
+        <h2 className="sr-only" id="portal-no-assets">Assets</h2>
+        <WorkspaceState title="No assets yet">Assets registered for {customer.name} will appear here, with their retest dates and certificates.</WorkspaceState>
+      </section>
+      {organisation}
+    </>;
+  }
   return <>
-    <div className="customer-portal-metrics">
+    <div aria-label="At a glance" className="customer-portal-metrics" role="group">
       <Metric label="Assets" value={customer.metrics.assetCount} />
       <Metric label="In service" value={customer.metrics.inServiceCount} />
       <Metric label="Retests requiring attention" value={due.length} />
-      <Metric label="Open bookings" value={data.bookings.filter((item) => item.status === "PENDING_APPROVAL" || item.status === "APPROVED").length} />
+      <Metric label="Open bookings" value={openBookings} />
     </div>
-    <section className="portal-panel">
-      <h2>Upcoming retests</h2>
-      {due.length === 0 ? <p>No retests currently require attention.</p> : <ul className="portal-list">{due.slice(0, 5).map((item) => <li key={item.id}><AssetIdentity asset={item.asset} /><span>{item.status} · {formatDate(item.dueAt)}</span></li>)}</ul>}
+    <section aria-labelledby="portal-attention" className="portal-panel">
+      <h2 id="portal-attention">Needs attention</h2>
+      {awaitingYou.length > 0 ? (
+        <p className="portal-notice is-warning">
+          <span>{awaitingYou.length === 1 ? "A new time for one of your bookings is waiting for your confirmation." : `New times for ${awaitingYou.length} of your bookings are waiting for your confirmation.`}</span>
+          <button className="secondary-button" type="button" onClick={() => onModuleChange("bookings")}>Review bookings</button>
+        </p>
+      ) : null}
+      {due.length === 0 && awaitingYou.length === 0 ? (
+        <WorkspaceState title="Nothing needs attention">You are up to date. Assets appear here when a retest approaches.</WorkspaceState>
+      ) : null}
+      {due.length > 0 ? <ul className="portal-list">{due.slice(0, 5).map((item) => <li key={item.id}><AssetIdentity asset={item.asset} /><span>{retestStatusLabel(item.status)} · {formatDate(item.dueAt)}</span></li>)}</ul> : null}
     </section>
-    <div className="portal-actions">
-      <button className="primary-button" type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button>
-      <button className="secondary-button" type="button" onClick={() => onModuleChange("assets")}>View assets</button>
-      <button className="secondary-button" type="button" onClick={() => onModuleChange("certificates")}>View certificates</button>
-    </div>
-    <section className="portal-panel">
-      <h2>Organisation</h2>
-      <p>{customer.locations.length} approved location{customer.locations.length === 1 ? "" : "s"} and {customer.contacts.length} listed contact{customer.contacts.length === 1 ? "" : "s"}.</p>
+    <section aria-labelledby="portal-next" className="portal-panel">
+      <h2 id="portal-next">Next steps</h2>
+      <div className="portal-actions">
+        <button className="primary-button" type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button>
+        <button className="secondary-button" type="button" onClick={() => onModuleChange("assets")}>View assets</button>
+        <button className="secondary-button" type="button" onClick={() => onModuleChange("certificates")}>View certificates</button>
+      </div>
     </section>
+    {organisation}
   </>;
 }
 
@@ -265,7 +292,7 @@ function Metric({ label, value }: { label: string; value: number }) {
   return <article className="customer-portal-metric"><span>{label}</span><strong>{value}</strong></article>;
 }
 
-function Assets({ assets, assetId, onAssetChange }: { assets: AssetRecord[]; assetId: string | null; onAssetChange: (assetId: string | null, options?: { replace?: boolean }) => void }) {
+function Assets({ assets, assetId, organisation, onAssetChange }: { assets: AssetRecord[]; assetId: string | null; organisation: string; onAssetChange: (assetId: string | null, options?: { replace?: boolean }) => void }) {
   const [query, setQuery] = useState("");
   const [unavailable, setUnavailable] = useState(false);
   const asset = assets.find((item) => item.id === assetId) ?? null;
@@ -279,24 +306,24 @@ function Assets({ assets, assetId, onAssetChange }: { assets: AssetRecord[]; ass
     }
   }, [asset, assetId, onAssetChange]);
   const visibleAssets = assets.filter((item) => `${item.assetNumber} ${item.assetName ?? ""} ${item.tag ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
-  if (asset) return <section className="portal-panel"><button type="button" onClick={() => onAssetChange(null)}>Back to assets</button><h2>{assetDisplayName(asset)}</h2><p>{[assetHasDistinctName(asset) ? `Asset #${asset.assetNumber}` : null, asset.product.name, asset.lifecycleStatus].filter(Boolean).join(" · ")}</p><dl className="portal-details"><div><dt>Location</dt><dd>{asset.location?.name ?? "Not assigned"}</dd></div><div><dt>Pressure rating</dt><dd>{asset.pressureRating ? `${asset.pressureRating.workingPressureKpa} kPa working / ${asset.pressureRating.testPressureKpa} kPa test` : "Not recorded"}</dd></div><div><dt>Next retest</dt><dd>{formatDate(asset.nextRetestDueAt)}</dd></div></dl><h3>Inspection history</h3>{asset.inspectionHistory.length ? <ul className="portal-list">{asset.inspectionHistory.map((item) => <li key={item.id}><strong>{item.inspectionType.replaceAll("_", " ")}</strong><span>{item.status} · {item.result ?? "Result pending"} · {formatDate(item.approvedAt ?? item.submittedAt)}</span></li>)}</ul> : <p>No inspection history is available.</p>}<h3>Certificate history</h3>{asset.certificateHistory.length ? <ul className="portal-list">{asset.certificateHistory.map((item) => <li key={item.id}><strong>{item.number}</strong><span>{item.status} · Valid through {formatDate(item.validUntil)}</span></li>)}</ul> : <p>No certificate history is available.</p>}</section>;
-  return <section className="portal-panel"><h2>Assets</h2>{unavailable ? <p className="portal-notice is-error" role="alert">That asset could not be found for this organisation.</p> : null}<label className="portal-search">Search assets<input aria-label="Search assets" value={query} onChange={(event) => setQuery(event.target.value)} /></label>{visibleAssets.length === 0 ? <p>No matching assets are assigned to this organisation.</p> : <ul className="portal-list">{visibleAssets.map((item) => <li key={item.id}><button className="portal-record-button" type="button" onClick={() => onAssetChange(item.id)}><AssetIdentity asset={item} /><span>{item.product.name} · {item.location?.name ?? "No location"} · {item.lifecycleStatus}</span><span>Next retest: {formatDate(item.nextRetestDueAt)}</span></button></li>)}</ul>}</section>;
+  if (asset) return <section className="portal-panel"><button type="button" onClick={() => onAssetChange(null)}>Back to assets</button><h2>{assetDisplayName(asset)}</h2><p>{[assetHasDistinctName(asset) ? `Asset #${asset.assetNumber}` : null, asset.product.name, lifecycleStatusLabel(asset.lifecycleStatus)].filter(Boolean).join(" · ")}</p><dl className="portal-details"><div><dt>Location</dt><dd>{asset.location?.name ?? "Not assigned"}</dd></div><div><dt>Pressure rating</dt><dd>{asset.pressureRating ? `${asset.pressureRating.workingPressureKpa} kPa working / ${asset.pressureRating.testPressureKpa} kPa test` : "Not recorded"}</dd></div><div><dt>Next retest</dt><dd>{formatDate(asset.nextRetestDueAt)}</dd></div></dl><h3>Inspection history</h3>{asset.inspectionHistory.length ? <ul className="portal-list">{asset.inspectionHistory.map((item) => <li key={item.id}><strong>{plainWords(item.inspectionType)}</strong><span>{inspectionStatusLabel(item.status)} · {inspectionResultLabel(item.result)} · {formatDate(item.approvedAt ?? item.submittedAt)}</span></li>)}</ul> : <p>No inspection history is available.</p>}<h3>Certificate history</h3>{asset.certificateHistory.length ? <ul className="portal-list">{asset.certificateHistory.map((item) => <li key={item.id}><strong>{item.number}</strong><span>{item.status} · Valid through {formatDate(item.validUntil)}</span></li>)}</ul> : <p>No certificate history is available.</p>}</section>;
+  return <section className="portal-panel"><h2>Assets</h2>{unavailable ? <p className="portal-notice is-error" role="alert">That asset could not be found for this organisation.</p> : null}<label className="portal-search">Search assets<span className="portal-search__field"><input aria-label="Search assets" placeholder="Search assets by name, number or tag" value={query} onChange={(event) => setQuery(event.target.value)} />{query ? <button aria-label="Clear search" className="search-clear" type="button" onClick={() => setQuery("")}>×</button> : null}</span></label><p aria-live="polite" className="portal-count">{query.trim() ? `${visibleAssets.length} matching ${visibleAssets.length === 1 ? "asset" : "assets"}` : `${assets.length} ${assets.length === 1 ? "asset" : "assets"}`}</p>{visibleAssets.length === 0 ? (query.trim() ? <WorkspaceState action={<button className="secondary-button" type="button" onClick={() => setQuery("")}>Show all assets</button>} title="No matching assets">Try a different name, number or tag.</WorkspaceState> : <WorkspaceState title="No assets yet">Assets registered for {organisation} will appear here.</WorkspaceState>) : <ul className="portal-list">{visibleAssets.map((item) => <li key={item.id}><button className="portal-record-button" type="button" onClick={() => onAssetChange(item.id)}><AssetIdentity asset={item} /><span>{item.product.name} · {item.location?.name ?? "No location"} · {lifecycleStatusLabel(item.lifecycleStatus)}</span><span>Next retest: {formatDate(item.nextRetestDueAt)}</span></button></li>)}</ul>}</section>;
 }
 
 function Locations({ customer, assets, onModuleChange }: { customer: CustomerRecord; assets: AssetRecord[]; onModuleChange: (module: AppModule) => void }) {
-  return <section className="portal-panel"><h2>Locations</h2>{customer.locations.length === 0 ? <p>No approved locations are available.</p> : <ul className="portal-list">{customer.locations.map((location) => <li key={location.id}><strong>{location.name}</strong><span>{[location.address1, location.city, location.state, location.country].filter(Boolean).join(", ") || "Address not recorded"}</span><span>{assets.filter((asset) => asset.location?.id === location.id).length} assigned asset(s)</span><span>{location.siteContactName ?? "No site contact"}{location.siteContactMobile ? ` · ${location.siteContactMobile}` : ""}</span><span>Timezone: {location.schedulingTimezone ?? "Not configured"}</span><span className="portal-actions"><button className="secondary-button" type="button" onClick={() => onModuleChange("assets")}>View assets</button><button className="primary-button" type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
+  return <section className="portal-panel"><h2>Locations</h2>{customer.locations.length === 0 ? <WorkspaceState title="No approved locations">Approved locations for {customer.name} will appear here.</WorkspaceState> : <ul className="portal-list">{customer.locations.map((location) => <li key={location.id}><strong>{location.name}</strong><span>{[location.address1, location.city, location.state, location.country].filter(Boolean).join(", ") || "Address not recorded"}</span><span>{assets.filter((asset) => asset.location?.id === location.id).length} assigned asset(s)</span><span>{location.siteContactName ?? "No site contact"}{location.siteContactMobile ? ` · ${location.siteContactMobile}` : ""}</span><span>Timezone: {location.schedulingTimezone ?? "Not configured"}</span><span className="portal-actions"><button className="secondary-button" type="button" onClick={() => onModuleChange("assets")}>View assets</button><button className="primary-button" type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
 }
 
 function Inspections({ inspections }: { inspections: InspectionRecord[] }) {
-  return <section className="portal-panel"><h2>Inspections</h2>{inspections.length === 0 ? <p>No inspections are available.</p> : <ul className="portal-list">{inspections.map((inspection) => <li key={inspection.id}><AssetIdentity asset={inspection.asset} /><span>{inspection.inspectionType.replaceAll("_", " ")} · {inspection.status} · {inspection.result ?? "Result pending"}</span><span>{formatDate(inspection.submittedAt)}</span></li>)}</ul>}</section>;
+  return <section className="portal-panel"><h2>Inspections</h2>{inspections.length === 0 ? <WorkspaceState title="No inspections yet">Inspections appear here once one has been completed for your assets.</WorkspaceState> : <ul className="portal-list">{inspections.map((inspection) => <li key={inspection.id}><AssetIdentity asset={inspection.asset} /><span>{plainWords(inspection.inspectionType)} · {inspectionStatusLabel(inspection.status)} · {inspectionResultLabel(inspection.result)}</span><span>{formatDate(inspection.submittedAt)}</span></li>)}</ul>}</section>;
 }
 
 function Certificates({ certificates }: { certificates: CertificateRecord[] }) {
-  return <section className="portal-panel"><h2>Certificates</h2>{certificates.length === 0 ? <p>No certificates are available.</p> : <ul className="portal-list">{certificates.map((certificate) => <li key={certificate.id}><strong>{certificate.number}</strong><span>{assetLabel(certificate.asset)} · {certificate.status} · Valid through {formatDate(certificate.validUntil)}</span><span className="portal-actions"><a href={`/api/v1/certificates/verify/${encodeURIComponent(certificate.publicToken)}`} target="_blank" rel="noreferrer">Verify certificate</a><a href={`/api/v1/certificates/verify/${encodeURIComponent(certificate.publicToken)}/pdf`} target="_blank" rel="noreferrer">Download PDF</a></span></li>)}</ul>}</section>;
+  return <section className="portal-panel"><h2>Certificates</h2>{certificates.length === 0 ? <WorkspaceState title="No certificates yet">A certificate is issued once an inspection has been approved.</WorkspaceState> : <ul className="portal-list">{certificates.map((certificate) => <li key={certificate.id}><strong>{certificate.number}</strong><span>{assetLabel(certificate.asset)} · {certificateStatusLabel(certificate.status)} · Valid through {formatDate(certificate.validUntil)}</span><span className="portal-actions"><a href={`/api/v1/certificates/verify/${encodeURIComponent(certificate.publicToken)}`} target="_blank" rel="noreferrer">Verify certificate</a><a href={`/api/v1/certificates/verify/${encodeURIComponent(certificate.publicToken)}/pdf`} target="_blank" rel="noreferrer">Download PDF</a></span></li>)}</ul>}</section>;
 }
 
 function Retests({ retests, onModuleChange }: { retests: RetestScheduleRecord[]; onModuleChange: (module: AppModule) => void }) {
-  return <section className="portal-panel"><h2>Retest schedule</h2>{retests.length === 0 ? <p>No retests are scheduled.</p> : <ul className="portal-list">{retests.map((retest) => <li key={retest.id}><AssetIdentity asset={retest.asset} /><span>{retest.status} · Due {formatDate(retest.dueAt)}</span><span className="portal-actions"><button className="secondary-button" type="button" onClick={() => onModuleChange("assets")}>View asset</button><button className="primary-button" type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
+  return <section className="portal-panel"><h2>Retest schedule</h2>{retests.length === 0 ? <WorkspaceState title="No retests scheduled">You are up to date. Retests appear here when an asset has a retest date.</WorkspaceState> : <ul className="portal-list">{retests.map((retest) => <li key={retest.id}><AssetIdentity asset={retest.asset} /><span>{retestStatusLabel(retest.status)} · Due {formatDate(retest.dueAt)}</span><span className="portal-actions"><button className="secondary-button" type="button" onClick={() => onModuleChange("assets")}>View asset</button><button className="primary-button" type="button" onClick={() => onModuleChange("bookings")}>Book inspection</button></span></li>)}</ul>}</section>;
 }
 
 

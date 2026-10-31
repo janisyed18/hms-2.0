@@ -185,3 +185,55 @@ export function formatYmd(
     new Date(Date.UTC(year, month - 1, day))
   );
 }
+
+/**
+ * Presentation helpers for operational times. A time is always shown in a zone that is known
+ * (the site's recorded zone, or UTC where a record carries none), and always with that zone named,
+ * so nobody has to guess whether "10:00" is theirs, the site's or Greenwich's. The zone is never
+ * assumed: where none is recorded the time is labelled UTC, not the browser's or a default region's.
+ */
+export function resolveZone(timeZone: string | null | undefined): string {
+  return timeZone && timeZone.trim() ? timeZone : "UTC";
+}
+
+/** The zone this device is set to: a real, named zone, used only where a record has none of its own. */
+export function viewerZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+/** "Mon, 30 Aug 2027" for the instant, as it falls on the calendar in `timeZone`. */
+export function formatDay(instant: Date | string | number, timeZone: string | null | undefined): string {
+  return new Intl.DateTimeFormat("en-AU", {
+    timeZone: resolveZone(timeZone),
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric"
+  }).format(new Date(instant));
+}
+
+/** "10:00 am – 11:00 am". When a clock change falls inside, each end names its zone ("… AEST – … AEDT"). */
+export function formatRange(
+  start: Date | string | number,
+  end: Date | string | number,
+  timeZone: string | null | undefined
+): string {
+  const zone = resolveZone(timeZone);
+  const from = zoneLabel(start, zone);
+  const to = zoneLabel(end, zone);
+  if (from === to) return `${formatTime(start, zone)} – ${formatTime(end, zone)}`;
+  return `${formatTime(start, zone)} ${from} – ${formatTime(end, zone)} ${to}`;
+}
+
+/** "Australia/Sydney · AEDT": the zone's full name and its short name on that date (just "UTC" for UTC). */
+export function zoneNote(instant: Date | string | number, timeZone: string | null | undefined): string {
+  const zone = resolveZone(timeZone);
+  const short = zoneLabel(instant, zone);
+  return short === zone ? zone : `${zone} · ${short}`;
+}
+
+/** "Mon, 30 Aug 2027, 10:00 am AEST": one instant, in `timeZone` (UTC when none), with the zone named. */
+export function formatWithZone(instant: Date | string | number, timeZone: string | null | undefined): string {
+  const zone = resolveZone(timeZone);
+  return `${formatDay(instant, zone)}, ${formatTime(instant, zone)} ${zoneLabel(instant, zone)}`;
+}

@@ -4,6 +4,7 @@ import type { MyWorkItem } from "../domain/types";
 import { useMyWork } from "../hooks/useMyWork";
 import { AssetIdentity } from "./AssetIdentity";
 import { WorkspaceState } from "./WorkspaceState";
+import { formatWithZone, viewerZone } from "../scheduling/zonedTime";
 
 export function MyWorkWorkspace({
   onOpen,
@@ -94,6 +95,7 @@ function Summary({ label, tone, value }: { label: string; tone: string; value: n
   return <div className={`my-work-summary-card summary-${tone}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
+/** A task has no site of its own, so its time is shown in the zone this device is set to, and says which. */
 function formatWorkTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  return formatWithZone(value, viewerZone());
 }

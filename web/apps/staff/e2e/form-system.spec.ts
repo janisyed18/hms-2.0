@@ -86,7 +86,7 @@ test.describe("shared Staff form system", () => {
     const page = admin.page;
     page.setDefaultTimeout(15_000);
     const deepLink = `/?view=assets&asset=${ASSET}`;
-    const form = page.getByRole("form", { name: "Edit Asset" });
+    const form = page.getByRole("form", { name: "Edit asset" });
     try {
       await page.goto(deepLink);
       await expect(page.getByRole("complementary", { name: "Asset detail" })).toContainText("Form Test Hose");
@@ -159,8 +159,8 @@ test.describe("shared Staff form system", () => {
     page.setDefaultTimeout(15_000);
     try {
       await page.goto("/?view=assets");
-      await page.getByRole("button", { name: "Add Asset" }).click();
-      const form = page.getByRole("form", { name: "Add Asset" });
+      await page.getByRole("button", { name: "Add asset" }).click();
+      const form = page.getByRole("form", { name: "Add asset" });
       await expect(form).toBeVisible();
       await chooseOption(form.getByLabel("Agent"), { label: "Vopak" });
       await form.getByRole("button", { name: "Save asset" }).click();
@@ -199,7 +199,7 @@ test.describe("shared Staff form system", () => {
       const edit = page.getByRole("complementary", { name: "Asset detail" }).getByRole("button", { name: "Edit" });
       await edit.focus();
       await page.keyboard.press("Enter");
-      const form = page.getByRole("form", { name: "Edit Asset" });
+      const form = page.getByRole("form", { name: "Edit asset" });
       await expect(form.getByLabel("Agent")).toBeFocused(); // focus moved into the form
       await page.keyboard.press("Tab");
       await expect(form.getByLabel("Location")).toBeFocused();
@@ -243,7 +243,7 @@ test.describe("shared Staff form system", () => {
       await expect(page.getByRole("heading", { name: "User Directory" })).toBeVisible();
 
       // Create: validation, then correction, then success.
-      await page.getByRole("button", { name: "Add User" }).click();
+      await page.getByRole("button", { name: "Add user" }).click();
       const create = page.getByRole("dialog", { name: "Add user" });
       await create.getByRole("button", { name: "Create user" }).click();
       await expect(create.getByLabel("Email")).toBeFocused();

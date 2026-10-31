@@ -826,13 +826,14 @@ describe("App", () => {
     expect(screen.getByText("Management")).toBeVisible();
     expect(screen.getByText("System")).toBeVisible();
     expect(screen.queryByText("Live Environment")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New Asset" })).toBeVisible();
+    // One place to add an asset: the Assets register. The top bar no longer repeats it.
+    expect(screen.queryByRole("button", { name: "New Asset" })).not.toBeInTheDocument();
     expect(await screen.findByText("Total Assets")).toBeVisible();
     expect(await screen.findByText("Healthy Fleet")).toBeVisible();
     expect(await screen.findByText("Overdue Retests")).toBeVisible();
     expect(await screen.findByText("Fleet Health")).toBeVisible();
     expect(await screen.findByText("Due This Week")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Awaiting Review" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Awaiting review" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Customers" }));
 
     expect(await screen.findByRole("heading", { name: "Customer Management" })).toBeVisible();
@@ -855,7 +856,7 @@ describe("App", () => {
     expect(screen.queryByRole("dialog", { name: /Vopak API/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Select customer Vopak API/i }));
     await user.click(screen.getByRole("button", { name: "Edit customer" }));
-    expect(screen.getByRole("heading", { name: "Edit Customer" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Edit customer" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Close form" }));
     await user.click(screen.getByRole("button", { name: /Select customer Vopak API/i }));
     await user.keyboard("{Escape}");
@@ -886,9 +887,9 @@ describe("App", () => {
     expect(
       [...within(dashboard).getByLabelText("Operational highlights").querySelectorAll(".kpi-label")]
         .map((label) => label.textContent)
-    ).toEqual(["Total Assets", "Healthy Fleet", "Overdue", "Pending Review", "Escalations"]);
+    ).toEqual(["Total Assets", "Healthy Fleet", "Overdue", "Awaiting review", "Escalations"]);
     expect(
-      screen.getByRole("heading", { name: "Awaiting Review" }).closest(".dashboard-primary")
+      screen.getByRole("heading", { name: "Awaiting review" }).closest(".dashboard-primary")
     ).not.toBeNull();
   });
 
@@ -1174,7 +1175,7 @@ describe("App", () => {
     expect((await screen.findAllByRole("row", { name: /API-777/i }))[0]).toBeVisible();
     const inspectionOverview = screen.getByRole("region", { name: "Inspection overview" });
     expect(inspectionOverview).toHaveTextContent("Draft1");
-    expect(inspectionOverview).toHaveTextContent("Submitted0");
+    expect(inspectionOverview).toHaveTextContent("Awaiting review0");
 
     await user.click(screen.getByRole("button", { name: "Certificates" }));
     expect(await screen.findByRole("row", { name: /CERT-API-777-1/i })).toBeVisible();
@@ -1193,7 +1194,7 @@ describe("App", () => {
     await user.click(await screen.findByRole("row", { name: /API-777/i }));
     await user.click(await screen.findByRole("button", { name: "Copy" }));
 
-    expect(await screen.findByRole("heading", { name: "Copy Asset" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Copy asset" })).toBeVisible();
     expect(screen.getByLabelText("Asset Name")).toHaveValue("API-777 copy");
     expect(screen.getByLabelText("Serial Number")).toHaveValue("");
   });
@@ -1205,7 +1206,7 @@ describe("App", () => {
     render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Assets" }));
-    await user.click(screen.getByRole("button", { name: "Add Asset" }));
+    await user.click(screen.getByRole("button", { name: "Add asset" }));
 
     const agents = await openList(user, screen.getByLabelText("Agent"));
     expect(within(agents).getByRole("option", { name: /E2E API Customer.*E2EAPI/ })).toBeVisible();
@@ -1236,7 +1237,7 @@ describe("App", () => {
     render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Assets" }));
-    await user.click(await screen.findByRole("button", { name: "Add Asset" }));
+    await user.click(await screen.findByRole("button", { name: "Add asset" }));
     await user.type(screen.getByLabelText("Asset Name"), "Async transfer hose");
     await user.type(screen.getByLabelText("Serial Number"), "SERIAL-ASYNC");
 
@@ -1443,7 +1444,7 @@ describe("App", () => {
     render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Users & Roles" }));
-    await user.click(await screen.findByRole("button", { name: "Add User" }));
+    await user.click(await screen.findByRole("button", { name: "Add user" }));
     await user.type(screen.getByLabelText("Email"), "reviewer2@example.com");
     await user.type(screen.getByLabelText("First name"), "Riley");
     await user.type(screen.getByLabelText("Last name"), "Reviewer");

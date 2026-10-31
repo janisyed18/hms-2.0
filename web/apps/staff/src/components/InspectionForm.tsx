@@ -92,8 +92,8 @@ export function InspectionForm({
         onSubmit={handleSubmit}
         pendingLabel="Creating…"
         submitError={submission.submitError}
-        submitLabel="Create inspection"
-        title="Add Inspection"
+        submitLabel="Save inspection"
+        title="Create inspection"
       >
         <FormSection>
           <Field error={errors.assetId} label="Asset" name="assetId" required>

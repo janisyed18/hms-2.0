@@ -8,6 +8,7 @@ import type { ProductFormValues, ProductRecord } from "../domain/types";
 
 export function useProductsWorkspace() {
   const [products, setProducts] = useState<ProductRecord[]>([]);
+  const [serverTotal, setServerTotal] = useState<number | undefined>(undefined);
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [standardFilter, setStandardFilter] = useState("ALL");
@@ -23,7 +24,7 @@ export function useProductsWorkspace() {
   useEffect(() => {
     let active = true;
     void createHmsClient().listProducts({ sort: "code" }).then((result) => {
-      if (active) setProducts(result.items);
+      if (active) { setProducts(result.items); setServerTotal(result.total); }
     }).catch((reason: unknown) => {
       if (active) setLoadError(friendlyApiError(reason, { fallback: "Products could not be loaded." }).message);
     });
@@ -73,5 +74,5 @@ export function useProductsWorkspace() {
   }
   function clearProductFilters() { setCategoryFilter("ALL"); setStandardFilter("ALL"); }
   const activeFilterCount = [categoryFilter !== "ALL", standardFilter !== "ALL"].filter(Boolean).length;
-  return { activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, loadError, notice, requestArchive, categoryFilter, categoryOptions, closeDetail, clearProductFilters, editingProduct, isFormOpen, openCreate, openDetail, openEdit, products, query, saveProduct, selectedProduct, setCategoryFilter, setFormOpen, setQuery, setStandardFilter, standardFilter, standardOptions, visibleProducts };
+  return { serverTotal, activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, loadError, notice, requestArchive, categoryFilter, categoryOptions, closeDetail, clearProductFilters, editingProduct, isFormOpen, openCreate, openDetail, openEdit, products, query, saveProduct, selectedProduct, setCategoryFilter, setFormOpen, setQuery, setStandardFilter, standardFilter, standardOptions, visibleProducts };
 }

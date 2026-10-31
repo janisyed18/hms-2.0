@@ -29,7 +29,7 @@ const apiError = (message: string) => ({ error: { code: "error", message, detail
 const nav = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name, exact: true }).click();
 
-/** Pending requests at consecutive slots of the scheduling day, booked as the customer. */
+/** Awaiting approval at consecutive slots of the scheduling day, booked as the customer. */
 async function requestSlots(page: Page, slots: number[]) {
   const context = await bookingApiContext(page);
   return page.evaluate(async ({ context, localDate, slots }) => {

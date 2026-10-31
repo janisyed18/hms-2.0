@@ -13,7 +13,7 @@ import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
 import { InspectionForm } from "./InspectionForm";
-import { ModuleTable, type ModuleColumn } from "./ModuleTable";
+import { ModuleTable, activeFilterList, type ModuleColumn } from "./ModuleTable";
 import {
   type InspectionStatusFilter,
   useInspectionsWorkspace
@@ -22,10 +22,11 @@ import type { InspectionRecord } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { assetLabel } from "../utils/identity";
 import { inspectionStatusLabel } from "../utils/inspectionStatus";
+import { formatWithZone } from "../scheduling/zonedTime";
 
 const statusFilters: Array<{ label: string; value: InspectionStatusFilter }> = [
   { label: "All", value: "ALL" },
-  { label: "Submitted", value: "SUBMITTED" },
+  { label: "Awaiting review", value: "SUBMITTED" },
   { label: "Approved", value: "APPROVED" },
   { label: "Changes required", value: "REJECTED" },
   { label: "In progress", value: "IN_PROGRESS" },
@@ -59,11 +60,7 @@ function countByStatus(inspections: InspectionRecord[], status: string) {
 }
 
 function formatLocationDateTime(value: string, timezone: string | null | undefined) {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: timezone ?? "UTC"
-  }).format(new Date(value));
+  return formatWithZone(value, timezone);
 }
 
 export function InspectionsWorkspace({
@@ -162,7 +159,7 @@ export function InspectionsWorkspace({
         <section aria-label="Inspection overview">
           <StaggerGroup className="inspection-metrics inspection-command-metrics">
             <InspectionMetric icon={ClipboardCheck} label="Draft" value={draftCount} detail="Awaiting completion" tone="blue" />
-            <InspectionMetric icon={Clock3} label="Submitted" value={submittedCount} detail="Pending review" tone="amber" />
+            <InspectionMetric icon={Clock3} label="Awaiting review" value={submittedCount} detail="Waiting for a reviewer" tone="amber" />
             <InspectionMetric icon={CheckCircle2} label="Approved" value={approvedCount} detail="Ready for records" tone="green" />
             <InspectionMetric icon={AlertTriangle} label="Attention" value={attentionCount} detail="Draft or rejected work" tone="red" />
           </StaggerGroup>
@@ -344,7 +341,8 @@ export function InspectionsWorkspace({
         ) : (
           <div className="inspection-table-wrap">
             <ModuleTable
-              actionLabel={canWrite ? "Add Inspection" : undefined}
+              actionLabel={canWrite ? "Create inspection" : undefined}
+              actionVariant="secondary"
               actionsInToolbar
               className="inspection-register-table"
               columns={columns}
@@ -353,7 +351,16 @@ export function InspectionsWorkspace({
                   ? "Loading inspections"
                   : `${workspace.visibleInspections.length} inspections`
               }
+              activeFilters={activeFilterList([
+                { id: "type", label: "Type", value: workspace.typeFilter !== "ALL" && workspace.typeFilter.replaceAll("_", " ").toLowerCase(), onRemove: () => workspace.setTypeFilter("ALL") },
+                { id: "result", label: "Result", value: workspace.resultFilter !== "ALL" && workspace.resultFilter.replaceAll("_", " ").toLowerCase(), onRemove: () => workspace.setResultFilter("ALL") }
+              ])}
+              emptyHint="Inspections appear here once one is created or an inspector starts a booked visit."
               emptyLabel="No inspections match the current filters."
+              loadedCount={workspace.inspections.length}
+              noun="inspections"
+              onClearFilters={workspace.clearInspectionFilters}
+              totalCount={workspace.serverTotal}
               exportRows={(inspection) => [
                 inspection.status,
                 inspection.asset.assetNumber,
@@ -406,7 +413,7 @@ export function InspectionsWorkspace({
               onRowSelect={workspace.openDetail}
               query={workspace.query}
               searchLabel="Search inspections"
-              searchPlaceholder="Search inspections..."
+              searchPlaceholder="Search inspections by asset, customer or product"
               tableLabel="Inspection records"
               error={workspace.error}
             />
@@ -417,9 +424,9 @@ export function InspectionsWorkspace({
       <ConfirmDialog
         confirmLabel={workspace.bookingDecision.target?.action === "reject" ? "Decline booking" : "Cancel booking"}
         error={workspace.bookingDecision.error}
-        message={workspace.bookingDecision.target?.action === "reject"
-          ? "The customer is told the request was declined."
-          : "The confirmed time is released for other bookings."}
+        message={workspace.bookingDecision.target
+          ? `${workspace.bookingDecision.target.booking.assets.map(assetLabel).join(", ")} · ${formatWithZone(workspace.bookingDecision.target.booking.scheduledAt, workspace.bookingDecision.target.booking.location.schedulingTimezone)}. ${workspace.bookingDecision.target.action === "reject" ? "The customer is told the request was declined." : "The confirmed time is released for other bookings."}`
+          : ""}
         onCancel={workspace.bookingDecision.cancel}
         onConfirm={() => void workspace.bookingDecision.confirm()}
         open={workspace.bookingDecision.target !== null}

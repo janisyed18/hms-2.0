@@ -20,7 +20,7 @@ const CHANGE_LABEL: Record<string, string> = {
   PENDING_ADMIN_APPROVAL: "Waiting for admin approval",
   PENDING_CUSTOMER_CONFIRMATION: "Waiting for customer confirmation",
   APPLIED: "Applied",
-  REJECTED: "Rejected",
+  REJECTED: "Declined",
   CANCELLED: "Cancelled"
 };
 

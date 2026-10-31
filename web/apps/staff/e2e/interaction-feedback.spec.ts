@@ -50,8 +50,8 @@ test.describe("Staff interaction feedback", () => {
     const name = `E2E Feedback Hose ${Date.now()}`;
     try {
       await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Assets", exact: true }).click();
-      await page.getByRole("button", { name: "Add Asset" }).click();
-      await expect(page.getByRole("heading", { name: "Add Asset" })).toBeVisible();
+      await page.getByRole("button", { name: "Add asset" }).click();
+      await expect(page.getByRole("heading", { name: "Add asset" })).toBeVisible();
 
       // Required fields are marked, and an empty save explains itself and focuses the first gap.
       await expect(page.getByText("* Required fields")).toBeVisible();
@@ -71,17 +71,17 @@ test.describe("Staff interaction feedback", () => {
       await page.getByRole("button", { name: "Save asset" }).click();
       const alert = page.getByRole("alert").filter({ hasText: "Asset could not be saved" });
       await expect(alert).toContainText("Serial number is already assigned to another asset.");
-      await expect(page.getByRole("heading", { name: "Add Asset" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Add asset" })).toBeVisible();
       await expect(page.getByLabel("Asset Name")).toHaveValue(name);
 
       // Saving again works: success is announced, the drawer closes.
       await page.getByRole("button", { name: "Save asset" }).click();
       const success = page.getByRole("status").filter({ hasText: "created successfully" });
       await expect(success).toContainText(name);
-      await expect(page.getByRole("heading", { name: "Add Asset" })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Add asset" })).toHaveCount(0);
 
       // Archiving asks first, by name and HMS number; a failed archive leaves everything in place.
-      await page.getByPlaceholder("Search assets...").fill(name);
+      await page.getByLabel("Search assets", { exact: true }).fill(name);
       const row = page.getByRole("row", { name: new RegExp(name) });
       await expect(row).toBeVisible();
       await row.getByRole("button", { name: "Archive" }).click();
@@ -111,7 +111,7 @@ test.describe("Staff interaction feedback", () => {
     const form = page.locator("form.customer-drawer");
     try {
       await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Products", exact: true }).click();
-      await page.getByRole("button", { name: "Add Product" }).click();
+      await page.getByRole("button", { name: "Add product" }).click();
       await page.getByRole("button", { name: "Save product" }).click();
       await expect(form.getByLabel("Product code")).toBeFocused();
       await expect(page.getByText("Enter a product code.")).toBeVisible();

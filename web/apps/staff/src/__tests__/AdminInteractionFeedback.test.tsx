@@ -63,7 +63,7 @@ const dialog = () => screen.findByRole("alertdialog");
 
 describe("User dialog", () => {
   async function openAdd(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(await screen.findByRole("button", { name: "Add User" }));
+    await user.click(await screen.findByRole("button", { name: "Add user" }));
     await screen.findByRole("dialog", { name: "Add user" });
   }
 

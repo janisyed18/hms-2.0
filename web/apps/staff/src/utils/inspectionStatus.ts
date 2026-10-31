@@ -3,7 +3,7 @@ import type { InspectionStatus } from "../domain/types";
 const LABELS: Record<InspectionStatus, string> = {
   DRAFT: "Draft",
   IN_PROGRESS: "In progress",
-  SUBMITTED: "Submitted",
+  SUBMITTED: "Awaiting review",
   APPROVED: "Approved",
   REJECTED: "Changes required"
 };

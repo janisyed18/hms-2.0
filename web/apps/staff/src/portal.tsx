@@ -11,6 +11,7 @@ import "./styles/interaction.css";
 import "./styles/scheduling.css";
 import "./styles/responsive.css";
 import "./styles/controls.css";
+import "./styles/portal-controls.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

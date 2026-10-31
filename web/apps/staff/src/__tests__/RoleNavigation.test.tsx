@@ -110,12 +110,12 @@ describe("role navigation", () => {
     render(<HmsApp session={session("CUSTOMER_USER")} />);
 
     await user.click(await screen.findByRole("button", { name: "Assets" }));
-    expect(screen.queryByRole("button", { name: "Add Asset" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add asset" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Inspections" }));
-    expect(screen.queryByRole("button", { name: "Add Inspection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create inspection" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Certificates" }));
     expect(screen.queryByRole("button", { name: "Issue Certificate" })).not.toBeInTheDocument();

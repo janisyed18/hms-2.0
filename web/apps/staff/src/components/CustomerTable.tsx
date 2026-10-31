@@ -1,4 +1,4 @@
-import { Boxes, CheckCircle2, Download, Filter, MapPin, Plus, Search, UsersRound } from "lucide-react";
+import { Boxes, CheckCircle2, Download, Filter, MapPin, Plus, Search, UsersRound, X } from "lucide-react";
 import { useState } from "react";
 import { m, useReducedMotion } from "motion/react";
 
@@ -8,6 +8,8 @@ import { WorkspaceState } from "./WorkspaceState";
 import { ManagementHeader, ManagementMetric, ManagementMetricStrip } from "./ManagementPrimitives";
 import type { CustomerRecord } from "../domain/types";
 import { initialsOf } from "../utils/identity";
+import { ActionButton } from "./interaction/ActionButton";
+import { FilterChips, activeFilterList, resultSummary } from "./ModuleTable";
 
 interface CustomerTableProps {
   canWrite: boolean;
@@ -70,6 +72,7 @@ export function CustomerTable({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const reducedMotion = useReducedMotion();
   const pagination = usePagination(customers);
+  const narrowed = query.trim().length > 0 || statusFilter !== "All" || riskFilter !== "All";
   const activeCustomers = allCustomers.filter((customer) => customer.status === "Active").length;
   const totalSites = allCustomers.reduce((total, customer) => total + customer.locations.length, 0);
   const totalAssets = allCustomers.reduce((total, customer) => total + customer.metrics.assetCount, 0);
@@ -114,10 +117,15 @@ export function CustomerTable({
           <span className="sr-only">Search customers</span>
           <input
             aria-label="Search customers"
-            placeholder="Search customers..."
+            placeholder="Search customers by name, code or city"
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
           />
+          {query ? (
+            <button aria-label="Clear search" className="search-clear" onClick={() => onQueryChange("")} type="button">
+              <X aria-hidden="true" size={15} />
+            </button>
+          ) : null}
         </label>
         <button
           aria-expanded={filtersOpen}
@@ -139,7 +147,7 @@ export function CustomerTable({
         {canWrite ? (
           <button className="primary-button" type="button" onClick={onAddCustomer}>
             <Plus aria-hidden="true" size={17} />
-            Add Customer
+            Add customer
           </button>
         ) : null}
       </div>
@@ -175,8 +183,16 @@ export function CustomerTable({
         </div>
       ) : null}
 
+      <FilterChips
+        chips={activeFilterList([
+          { id: "status", label: "Status", value: statusFilter !== "All" && statusFilter, onRemove: () => onStatusFilterChange("All") },
+          { id: "risk", label: "Risk", value: riskFilter !== "All" && riskFilter, onRemove: () => onRiskFilterChange("All") }
+        ])}
+        onClearAll={() => { onStatusFilterChange("All"); onRiskFilterChange("All"); }}
+      />
+
       <div className="customer-count-row">
-        <span>{totalCount} customers</span>
+        <span aria-live="polite">{resultSummary({ fallback: `${totalCount} customers`, loadedCount: allCustomers.length, narrowed, noun: "customers", shown: customers.length, totalCount })}</span>
       </div>
 
       <div className="customer-card-grid">
@@ -252,9 +268,18 @@ export function CustomerTable({
         total={pagination.total}
       />
       {customers.length === 0 ? (
-        <WorkspaceState title="No customers found">
-          Adjust the search text or filters to expand the current view.
-        </WorkspaceState>
+        narrowed ? (
+          <WorkspaceState
+            action={<ActionButton onClick={() => { onQueryChange(""); onStatusFilterChange("All"); onRiskFilterChange("All"); }} variant="secondary">Clear filters</ActionButton>}
+            title="No matching customers"
+          >
+            {statusFilter !== "All" || riskFilter !== "All" ? "Try changing your search or clearing one of the active filters." : "Try a different search."}
+          </WorkspaceState>
+        ) : (
+          <WorkspaceState title="No customers yet">
+            Customers appear here once they are added.{canWrite ? ' Use "Add customer" above to add the first.' : ""}
+          </WorkspaceState>
+        )
       ) : null}
     </section>
   );

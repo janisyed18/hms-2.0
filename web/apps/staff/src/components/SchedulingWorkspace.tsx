@@ -34,7 +34,7 @@ const ZONES = [
 const VIEWS: Array<{ id: SchedulingView; label: string }> = [
   { id: "calendar", label: "Calendar" },
   { id: "list", label: "List" },
-  { id: "pending", label: "Pending requests" }
+  { id: "pending", label: "Awaiting approval" }
 ];
 const MODES: Array<{ id: CalendarMode; label: string }> = [
   { id: "day", label: "Day" },

@@ -793,7 +793,7 @@ describe("List view", () => {
   });
 });
 
-describe("Pending requests", () => {
+describe("Awaiting approval", () => {
   const change = booking({ id: "p2", customer: "Shell", customerId: "cust-shell", start: "2027-03-03T00:00:00Z", end: "2027-03-03T01:00:00Z", change: "PENDING_ADMIN_APPROVAL" });
 
   it("lists new requests and reschedule requests with their age and requested time", async () => {
@@ -805,7 +805,7 @@ describe("Pending requests", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.click(screen.getByRole("tab", { name: /^Pending requests/ }));
+    await user.click(screen.getByRole("tab", { name: /^Awaiting approval/ }));
     expect(await screen.findByRole("heading", { name: "New booking requests (1)" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Reschedule requests (1)" })).toBeInTheDocument();
     expect(screen.getByText(/Requested change to/)).toBeInTheDocument();
@@ -821,12 +821,12 @@ describe("Pending requests", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.click(screen.getByRole("tab", { name: /^Pending requests/ }));
+    await user.click(screen.getByRole("tab", { name: /^Awaiting approval/ }));
     expect(await screen.findByText("Nothing is waiting for a decision")).toBeInTheDocument();
 
     client.listInspectionBookings.mockRejectedValue(new Error("Boom"));
     await user.click(screen.getByRole("tab", { name: "Calendar" }));
-    await user.click(screen.getByRole("tab", { name: /^Pending requests/ }));
+    await user.click(screen.getByRole("tab", { name: /^Awaiting approval/ }));
     expect(await screen.findAllByText(/could not be loaded\. Boom/)).toHaveLength(2);
     client.listInspectionBookings.mockResolvedValue({ total: 0, items: [], etag: null });
     await act(async () => screen.getAllByRole("button", { name: "Try again" })[0].click());
@@ -868,7 +868,7 @@ function serveQueues(requestTotal: number, changeTotal: number) {
   return { calls, requests, changes };
 }
 
-describe("Pending requests beyond one page", () => {
+describe("Awaiting approval beyond one page", () => {
   const reviewButtons = () => screen.getAllByRole("button", { name: /^Review / });
 
   it("reports the server's total, not how many happen to be loaded", async () => {
@@ -876,7 +876,7 @@ describe("Pending requests beyond one page", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.click(screen.getByRole("tab", { name: /Pending requests/ }));
+    await user.click(screen.getByRole("tab", { name: /Awaiting approval/ }));
 
     expect(await screen.findByRole("heading", { name: "New booking requests (137)" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Reschedule requests (120)" })).toBeInTheDocument();
@@ -893,7 +893,7 @@ describe("Pending requests beyond one page", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.click(screen.getByRole("tab", { name: /Pending requests/ }));
+    await user.click(screen.getByRole("tab", { name: /Awaiting approval/ }));
     await screen.findByRole("heading", { name: "New booking requests (137)" });
     const loadMoreRequests = () => screen.queryByRole("button", { name: /Load more booking requests/ });
 
@@ -936,7 +936,7 @@ describe("Pending requests beyond one page", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.click(screen.getByRole("tab", { name: /Pending requests/ }));
+    await user.click(screen.getByRole("tab", { name: /Awaiting approval/ }));
     await screen.findByText("Showing 50 of 137");
 
     failNext = true;
@@ -1146,11 +1146,11 @@ describe("view tabs and the folding filters", () => {
     expect(screen.getByRole("tabpanel")).toHaveAccessibleName("List");
 
     await user.keyboard("{End}");
-    expect(screen.getByRole("tab", { name: /^Pending requests/ })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: /^Awaiting approval/ })).toHaveFocus();
     await user.keyboard("{ArrowRight}");
     expect(calendar).toHaveFocus(); // wraps round
     await user.keyboard("{ArrowLeft}");
-    expect(screen.getByRole("tab", { name: /^Pending requests/ })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: /^Awaiting approval/ })).toHaveFocus();
     await user.keyboard("{Home}");
     expect(calendar).toHaveFocus();
     expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Calendar");
@@ -1302,7 +1302,7 @@ describe("drawer focus and back-out", () => {
     const user = userEvent.setup();
     renderWorkspace();
     await ready();
-    await user.click(screen.getByRole("tab", { name: /^Pending requests/ }));
+    await user.click(screen.getByRole("tab", { name: /^Awaiting approval/ }));
     await user.click(await screen.findByRole("button", { name: /Review request from Vopak/ }));
     const drawer = await screen.findByRole("dialog");
     await choose(user, within(drawer).getByLabelText("Inspector to assign"), "insp-a");
@@ -1313,7 +1313,7 @@ describe("drawer focus and back-out", () => {
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.getByRole("tab", { name: /^Pending requests/ })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: /^Awaiting approval/ })).toHaveFocus();
   });
 
   it("keeps keyboard focus in the drawer when an action removes the focused button", async () => {

@@ -6,12 +6,13 @@ import { AssetForm } from "./AssetForm";
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
-import { ModuleTable, type ModuleColumn } from "./ModuleTable";
+import { ModuleTable, activeFilterList, type ModuleColumn } from "./ModuleTable";
 import { assetDisplayName, assetLabel } from "../utils/identity";
 import { AssetIdentity } from "./AssetIdentity";
 import { useAssetsWorkspace } from "../hooks/useAssetsWorkspace";
 import type { AssetRecord, AssetWorkflowAction } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
+import { lifecycleStatusLabel } from "../utils/statusLabels";
 
 function locationLabel(asset: AssetRecord) {
   if (!asset.location) {
@@ -244,12 +245,24 @@ export function AssetsWorkspace({
       ) : null}
 
       <ModuleTable
-        actionLabel={canWrite ? "Add Asset" : undefined}
+        actionLabel={canWrite ? "Add asset" : undefined}
         actionsInToolbar
         className="asset-register-table"
         columns={assetColumns}
+        activeFilters={activeFilterList([
+          { id: "customer", label: "Customer", value: workspace.customerFilter !== "ALL" && (workspace.customerOptions.find((option) => option.id === workspace.customerFilter)?.name ?? "Selected customer"), onRemove: () => workspace.setCustomerFilter("ALL") },
+          { id: "product", label: "Product", value: workspace.productFilter !== "ALL" && (workspace.productOptions.find((option) => option.id === workspace.productFilter)?.name ?? "Selected product"), onRemove: () => workspace.setProductFilter("ALL") },
+          { id: "lifecycle", label: "Lifecycle", value: workspace.lifecycleFilter !== "ALL" && (lifecycleStatusLabel(workspace.lifecycleFilter)), onRemove: () => workspace.setLifecycleFilter("ALL") },
+          { id: "dueFrom", label: "Due from", value: workspace.dueFrom, onRemove: () => workspace.setDueFrom("") },
+          { id: "dueTo", label: "Due to", value: workspace.dueTo, onRemove: () => workspace.setDueTo("") }
+        ])}
         countLabel={workspace.isLoading ? "Loading assets" : `${workspace.assets.length} assets`}
+        emptyHint="Assets appear here once they are registered."
         emptyLabel="No assets match the current filters."
+        loadedCount={workspace.assets.length}
+        noun="assets"
+        onClearFilters={workspace.clearAssetFilters}
+        totalCount={workspace.serverTotal}
         exportRows={(asset) => [
           assetDisplayName(asset),
           asset.customer.name,
@@ -340,7 +353,7 @@ export function AssetsWorkspace({
         onQueryChange={workspace.setQuery}
         query={workspace.query}
         searchLabel="Search assets"
-        searchPlaceholder="Search assets..."
+        searchPlaceholder="Search assets by name, number, serial, customer or location"
         tableLabel="Asset records"
         error={workspace.error}
       />

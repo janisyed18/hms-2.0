@@ -314,11 +314,11 @@ test.describe("staff scheduling and dispatch calendar", () => {
         page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       for (const [width, height] of [[1440, 900], [1280, 800], [1024, 800], [768, 1024], [390, 844]] as const) {
         await page.setViewportSize({ width, height });
-        for (const view of ["Calendar", "List", "Pending requests"]) {
+        for (const view of ["Calendar", "List", "Awaiting approval"]) {
           await page.getByRole("tab", { name: view }).click();
           if (view === "Calendar") await expect(dayGrid(page)).toBeVisible();
           if (view === "List") await expect(page.getByRole("table", { name: "Scheduled inspections" })).toBeVisible();
-          if (view === "Pending requests") await expect(page.getByRole("button", { name: /Review request from/ }).first()).toBeVisible();
+          if (view === "Awaiting approval") await expect(page.getByRole("button", { name: /Review request from/ }).first()).toBeVisible();
           expect(await pageOverflow(), `${view} at ${width}px`).toBeLessThanOrEqual(1);
           await expect(page.getByRole("button", { name: "Book inspection" })).toBeVisible();
         }
@@ -328,7 +328,7 @@ test.describe("staff scheduling and dispatch calendar", () => {
 
       // The review action is a normal button, not a stretched bar, at tablet width.
       await page.setViewportSize({ width: 1024, height: 800 });
-      await page.getByRole("tab", { name: "Pending requests" }).click();
+      await page.getByRole("tab", { name: "Awaiting approval" }).click();
       const review = await page.getByRole("button", { name: /Review request from/ }).first().boundingBox();
       expect(review!.width).toBeLessThan(200);
 
@@ -378,7 +378,7 @@ test.describe("staff scheduling and dispatch calendar", () => {
       await page.getByLabel("Calendar time zone").selectOption("Australia/Sydney");
 
       // Pending -> drawer -> action -> refreshed state, driven from the keyboard.
-      await page.getByRole("tab", { name: /^Pending requests/ }).focus();
+      await page.getByRole("tab", { name: /^Awaiting approval/ }).focus();
       await page.keyboard.press("Enter");
       const review = page.getByRole("button", { name: /Review request from/ }).first();
       await review.focus();
@@ -393,7 +393,7 @@ test.describe("staff scheduling and dispatch calendar", () => {
       await page.keyboard.press("Escape");
       await expect(drawer).toHaveCount(0);
       // The request has left the queue, so focus falls back to the open view's tab.
-      await expect(page.getByRole("tab", { name: /^Pending requests/ })).toBeFocused();
+      await expect(page.getByRole("tab", { name: /^Awaiting approval/ })).toBeFocused();
       await page.getByRole("tab", { name: "Calendar" }).click();
       await expect(dayGrid(page).getByRole("button", { name: /Awaiting approval/ })).toHaveCount(0);
     } finally {

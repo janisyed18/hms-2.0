@@ -1,0 +1,30 @@
+/* Portal booking fields use the shared Select/Combobox primitives, but the portal form's generic
+ * input rules are more specific than the combobox's inner-input reset in controls.css. Keep the
+ * wrapper as the visible control so disabled fields are clearly muted instead of looking enabled. */
+.portal-form-grid .choice-control input.choice-control__input:not([type="checkbox"]):not([type="radio"]) {
+  height: calc(var(--control-height) - 2px);
+  padding: 0 36px 0 12px;
+  border: 0;
+  border-radius: var(--control-radius);
+  background: transparent;
+  box-shadow: none;
+}
+
+.portal-form-grid .choice-control input.choice-control__input:not([type="checkbox"]):not([type="radio"]):focus-visible {
+  border: 0;
+  box-shadow: none;
+}
+
+.portal-form-grid :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea):disabled {
+  border-color: var(--border);
+  background: var(--surface-muted);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.portal-form-grid .choice-control input.choice-control__input:not([type="checkbox"]):not([type="radio"]):disabled {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: not-allowed;
+}

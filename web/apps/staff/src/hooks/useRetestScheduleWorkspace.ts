@@ -10,6 +10,7 @@ export type RetestScheduleStatusFilter = "ALL" | RetestScheduleStatus;
 
 export function useRetestScheduleWorkspace() {
   const [schedules, setSchedules] = useState<RetestScheduleRecord[]>([]);
+  const [serverTotal, setServerTotal] = useState<number | undefined>(undefined);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<RetestScheduleStatusFilter>("ALL");
   const [dueFrom, setDueFrom] = useState("");
@@ -21,7 +22,7 @@ export function useRetestScheduleWorkspace() {
   useEffect(() => {
     let active = true;
     void createHmsClient().listRetestSchedules({ sort: "due_at" }).then((result) => {
-      if (active) setSchedules(result.items);
+      if (active) { setSchedules(result.items); setServerTotal(result.total); }
     }).catch((reason: unknown) => {
       if (active) setLoadError(friendlyApiError(reason, { fallback: "Retest schedules could not be loaded." }).message);
     });
@@ -34,7 +35,7 @@ export function useRetestScheduleWorkspace() {
       (statusFilter === "ALL" || schedule.status === statusFilter) &&
       (!dueFrom || schedule.dueAt >= dueFrom) &&
       (!dueTo || schedule.dueAt <= dueTo) &&
-      (!normalized || [schedule.asset.assetNumber, schedule.asset.tag, schedule.customer.code, schedule.customer.name, schedule.product.code, schedule.product.name, schedule.status, schedule.dueAt].filter(Boolean).some((value) => value?.toLowerCase().includes(normalized)))
+      (!normalized || [schedule.asset.assetNumber, schedule.asset.assetName, schedule.asset.tag, schedule.customer.code, schedule.customer.name, schedule.product.code, schedule.product.name, schedule.status, schedule.dueAt].filter(Boolean).some((value) => value?.toLowerCase().includes(normalized)))
     ));
   }, [dueFrom, dueTo, query, schedules, statusFilter]);
   const selectedSchedule = useMemo(() => schedules.find((schedule) => schedule.id === selectedId) ?? null, [schedules, selectedId]);
@@ -49,5 +50,5 @@ export function useRetestScheduleWorkspace() {
   }
   function clearDateFilters() { setDueFrom(""); setDueTo(""); }
   const activeFilterCount = [Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
-  return { activeFilterCount, dismissNotice, loadError, notice, clearDateFilters, closeDetail, dueFrom, dueTo, openDetail, query, saveSchedule, schedules, selectedSchedule, setQuery, setDueFrom, setDueTo, setStatusFilter, statusFilter, visibleSchedules };
+  return { serverTotal, activeFilterCount, dismissNotice, loadError, notice, clearDateFilters, closeDetail, dueFrom, dueTo, openDetail, query, saveSchedule, schedules, selectedSchedule, setQuery, setDueFrom, setDueTo, setStatusFilter, statusFilter, visibleSchedules };
 }
