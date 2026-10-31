@@ -169,7 +169,7 @@ test.describe("shared controls and success feedback", () => {
       const agent = form.getByRole("combobox", { name: "Agent" });
       await agent.click();
       const options = page.getByRole("listbox", { name: "Agent" }).getByRole("option");
-      expect(await options.count()).toBeGreaterThan(1);
+      await expect.poll(() => options.count()).toBeGreaterThan(1);
       await agent.fill("vopa");
       await expect(options).toHaveCount(1);
       await page.keyboard.press("ArrowDown");
