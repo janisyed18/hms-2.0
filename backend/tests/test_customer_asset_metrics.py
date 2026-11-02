@@ -228,7 +228,11 @@ async def test_a_new_customer_starts_at_zero(
 ) -> None:
     async with api_as(session_factory, ADMIN) as client:
         created = await client.post(
-            "/api/v1/customers", json={"name": "Fresh Customer Pty Ltd"}
+            "/api/v1/customers",
+            json={
+                "name": "Fresh Customer Pty Ltd",
+                "locations": [{"name": "Head office"}],
+            },
         )
     assert created.status_code == 201, created.text
     assert created.json()["metrics"] == {"asset_count": 0, "in_service_count": 0}

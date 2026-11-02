@@ -31,6 +31,7 @@ from hms_backend.app.core.audit import (
     redact_sensitive,
 )
 from hms_backend.app.core.config import settings
+from hms_backend.app.core.lifecycle import require_super_admin
 from hms_backend.app.core.passwords import (
     generate_temporary_password,
     hash_password,
@@ -590,8 +591,34 @@ async def delete_user(
     principal: PrincipalDep,
 ) -> Response:
     _require_admin(principal, Permission.USER_ADMIN)
+    require_super_admin(principal)
 
     user = await _active_user(session, user_id)
+    if user.id == principal.persisted_user_id or user.oidc_subject == principal.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You cannot delete your own account.",
+        )
+    if user.role == Role.SUPER_ADMIN.value:
+        other_active = await session.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(
+                User.role == Role.SUPER_ADMIN.value,
+                User.deleted_at.is_(None),
+                User.account_status == AccountStatus.ACTIVE.value,
+                User.id != user.id,
+            )
+        )
+        if not other_active:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The last active Super Admin cannot be deleted.",
+            )
+    # Deleted accounts cannot authenticate: sessions are revoked and the account is
+    # disabled, while the row stays so audit history keeps its attribution.
+    await _auth_service.revoke_all_sessions(session, user.id)
+    user.account_status = AccountStatus.DISABLED.value
     await soft_delete(
         session,
         user,

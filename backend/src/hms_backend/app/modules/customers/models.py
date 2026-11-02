@@ -2,9 +2,10 @@ from __future__ import annotations
 
 # ruff: noqa: E402, F401, I001
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hms_backend.app.models.base import Base, SyncableMixin
@@ -22,6 +23,11 @@ class Customer(SyncableMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     retest_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     default_retest_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Archive is the reversible lifecycle step (customer and history kept, hidden
+    # from new work); ``deleted_at`` is the separate logical delete.
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     locations: Mapped[list[CustomerLocation]] = relationship(
         back_populates="customer",

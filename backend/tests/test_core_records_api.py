@@ -18,7 +18,7 @@ from hms_backend.app.api.records import (
 from hms_backend.app.core.audit import verify_audit_chain
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
-from hms_backend.app.models.base import Base
+from hms_backend.app.models.base import Base, utc_now
 from hms_backend.app.models.foundation import AuditEvent, SyncChange
 from hms_backend.app.modules.assets.models import (
     Asset,
@@ -267,7 +267,7 @@ async def test_reference_catalog_material_lifecycle_writes_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
 
@@ -1245,7 +1245,11 @@ async def test_customer_user_cannot_create_customer(
     async with api_client(session_factory, principal) as client:
         response = await client.post(
             "/api/v1/customers",
-            json={"code": "NEWC", "name": "New Customer"},
+            json={
+                "code": "NEWC",
+                "name": "New Customer",
+                "locations": [{"name": "Head office"}],
+            },
         )
 
     assert response.status_code == 403
@@ -1270,6 +1274,7 @@ async def test_create_customer_writes_sync_change_and_audit_event(
                 "notes": "Preferred contact before scheduling retests.",
                 "retest_enabled": True,
                 "default_retest_months": 6,
+                "locations": [{"name": "Head office"}],
             },
         )
 
@@ -1280,15 +1285,23 @@ async def test_create_customer_writes_sync_change_and_audit_event(
     assert body["notes"] == "Preferred contact before scheduling retests."
     assert body["retest_enabled"] is True
     assert body["default_retest_months"] == 6
-    assert body["locations"] == []
+    assert [item["name"] for item in body["locations"]] == ["Head office"]
     assert body["contacts"] == []
 
     async with session_factory() as session:
         customer = (
             await session.scalars(select(Customer).where(Customer.code == "ACME"))
         ).one()
-        sync_change = (await session.scalars(select(SyncChange))).one()
-        audit_event = (await session.scalars(select(AuditEvent))).one()
+        sync_change = (
+            await session.scalars(
+                select(SyncChange).where(SyncChange.entity == "Customer")
+            )
+        ).one()
+        audit_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "customer.created")
+            )
+        ).one()
 
         assert customer.version == 1
         assert customer.name == "ACME Mining"
@@ -1528,23 +1541,28 @@ async def test_soft_delete_customer_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
+    async with session_factory() as session:
+        temporary = Customer(code="TEMP", name="Temporary", archived_at=utc_now())
+        session.add(temporary)
+        await session.commit()
+        temporary_id = temporary.id
 
     async with api_client(session_factory, principal) as client:
-        delete_response = await client.delete(
-            f"/api/v1/customers/{seeded_session['vopak_id']}"
-        )
+        delete_response = await client.delete(f"/api/v1/customers/{temporary_id}")
         list_response = await client.get("/api/v1/customers")
 
     assert delete_response.status_code == 204
     assert list_response.status_code == 200
-    assert list_response.json()["total"] == 1
-    assert {item["code"] for item in list_response.json()["items"]} == {"ORIC"}
+    assert {item["code"] for item in list_response.json()["items"]} == {
+        "VOPA",
+        "ORIC",
+    }
 
     async with session_factory() as session:
-        customer = await session.get(Customer, seeded_session["vopak_id"])
+        customer = await session.get(Customer, temporary_id)
         sync_change = (await session.scalars(select(SyncChange))).one()
         audit_event = (await session.scalars(select(AuditEvent))).one()
 
@@ -1559,7 +1577,7 @@ async def test_soft_delete_customer_writes_tombstone_sync_and_audit(
         assert audit_event.entity == "Customer"
         assert audit_event.entity_id == customer.id
         assert audit_event.before is not None
-        assert audit_event.before["name"] == "Vopak"
+        assert audit_event.before["name"] == "Temporary"
         assert audit_event.after is not None
         assert audit_event.after["deleted_at"] is not None
         assert await verify_audit_chain(session)
@@ -1751,15 +1769,20 @@ async def test_soft_delete_customer_location_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
+
+    async with session_factory() as session:
+        spare = CustomerLocation(customer_id=seeded_session["vopak_id"], name="Site B")
+        session.add(spare)
+        await session.commit()
+        spare_id = spare.id
 
     async with api_client(session_factory, principal) as client:
         delete_response = await client.delete(
             "/api/v1/customers/"
-            f"{seeded_session['vopak_id']}/locations/"
-            f"{seeded_session['vopak_location_id']}"
+            f"{seeded_session['vopak_id']}/locations/{spare_id}"
         )
         customer_response = await client.get(
             f"/api/v1/customers/{seeded_session['vopak_id']}"
@@ -1767,13 +1790,12 @@ async def test_soft_delete_customer_location_writes_tombstone_sync_and_audit(
 
     assert delete_response.status_code == 204
     assert customer_response.status_code == 200
-    assert customer_response.json()["locations"] == []
+    assert [item["name"] for item in customer_response.json()["locations"]] == [
+        "Site A"
+    ]
 
     async with session_factory() as session:
-        location = await session.get(
-            CustomerLocation,
-            seeded_session["vopak_location_id"],
-        )
+        location = await session.get(CustomerLocation, spare_id)
         sync_change = (await session.scalars(select(SyncChange))).one()
         audit_event = (await session.scalars(select(AuditEvent))).one()
 
@@ -1786,7 +1808,7 @@ async def test_soft_delete_customer_location_writes_tombstone_sync_and_audit(
         assert sync_change.version == 2
         assert audit_event.action == "customer_location.deleted"
         assert audit_event.before is not None
-        assert audit_event.before["name"] == "Site A"
+        assert audit_event.before["name"] == "Site B"
         assert audit_event.after is not None
         assert audit_event.after["deleted_at"] is not None
         assert await verify_audit_chain(session)
@@ -1861,7 +1883,7 @@ async def test_soft_delete_customer_contact_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
 
@@ -1991,13 +2013,18 @@ async def test_soft_delete_reference_standard_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
     async with session_factory() as session:
         standard_id = (
             await session.scalars(select(Standard.id).where(Standard.code == "AS2683"))
         ).one()
+
+    async with session_factory() as session:
+        for product in (await session.scalars(select(Product))).all():
+            product.deleted_at = utc_now()
+        await session.commit()
 
     async with api_client(session_factory, principal) as client:
         delete_response = await client.delete(
@@ -2140,9 +2167,15 @@ async def test_soft_delete_product_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
+
+    async with session_factory() as session:
+        asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        assert asset is not None
+        asset.deleted_at = utc_now()
+        await session.commit()
 
     async with api_client(session_factory, principal) as client:
         delete_response = await client.delete(
@@ -2700,7 +2733,7 @@ async def test_delete_routes_enforce_if_match_when_supplied(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
     async with session_factory() as session:

@@ -112,6 +112,7 @@ from hms_backend.app.core.inspector_access import (
     is_inspector_scoped,
     lock_assigned_bookings,
 )
+from hms_backend.app.core.lifecycle import ensure_not_referenced, require_super_admin
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
@@ -573,6 +574,7 @@ async def delete_reference_catalog_item(
     if_match: IfMatchHeader = None,
 ) -> Response:
     _require_reference_admin(principal)
+    require_super_admin(principal)
     model, _ = _reference_catalog_or_404(category)
     record = await session.get(model, record_id)
     if record is None or record.deleted_at is not None:
@@ -581,6 +583,13 @@ async def delete_reference_catalog_item(
             detail="Reference catalog item not found",
         )
     _enforce_if_match(if_match, record.version)
+    await ensure_not_referenced(
+        session,
+        model,
+        record.id,
+        what="reference item",
+        alternative="Disable it instead; history keeps its reference.",
+    )
     await soft_delete(
         session,
         record,
@@ -702,6 +711,7 @@ async def delete_standard(
     if_match: IfMatchHeader = None,
 ) -> Response:
     _require_reference_admin(principal)
+    require_super_admin(principal)
     standard = await _get_standard_or_404(session, standard_id)
     if standard is None:
         raise HTTPException(
@@ -709,6 +719,13 @@ async def delete_standard(
             detail="Standard not found",
         )
     _enforce_if_match(if_match, standard.version)
+    await ensure_not_referenced(
+        session,
+        Standard,
+        standard.id,
+        what="standard",
+        alternative="Disable it instead; history keeps its reference.",
+    )
 
     await soft_delete(
         session,
@@ -777,12 +794,17 @@ async def list_customers(
     session: SessionDep,
     principal: PrincipalDep,
     search: str | None = None,
+    lifecycle: Annotated[str, Query(pattern="^(active|archived|all)$")] = "active",
     sort: str | None = None,
     limit: LimitParam = 50,
     offset: OffsetParam = 0,
 ) -> CustomerListResponse:
     _require_customer_read(principal)
     statement = _customer_statement().where(Customer.deleted_at.is_(None))
+    if lifecycle == "active":
+        statement = statement.where(Customer.archived_at.is_(None))
+    elif lifecycle == "archived":
+        statement = statement.where(Customer.archived_at.is_not(None))
     statement = _apply_customer_scope(statement, principal)
     if search:
         search_pattern = f"%{search.lower()}%"
@@ -831,6 +853,7 @@ async def create_customer_location(
 ) -> CustomerLocationRead:
     _require_customer_write(principal)
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    _require_active_customer(customer)
     location = CustomerLocation(
         customer=customer,
         name=payload.name.strip(),
@@ -927,11 +950,29 @@ async def delete_customer_location(
     principal: PrincipalDep,
 ) -> Response:
     _require_customer_write(principal)
+    require_super_admin(principal)
     location = await _get_visible_customer_location_or_404(
         session,
         customer_id,
         location_id,
         principal,
+    )
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    if sum(1 for item in customer.locations if item.deleted_at is None) <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A customer must have at least one location. "
+                "Add another location before deleting this one."
+            ),
+        )
+    await ensure_not_referenced(
+        session,
+        CustomerLocation,
+        location.id,
+        what="location",
+        ignore={"inspection_availability_quotes"},
+        alternative="Move or retire that work before deleting the location.",
     )
     await soft_delete(
         session,
@@ -1031,6 +1072,7 @@ async def delete_customer_contact(
     principal: PrincipalDep,
 ) -> Response:
     _require_customer_write(principal)
+    require_super_admin(principal)
     contact = await _get_visible_customer_contact_or_404(
         session,
         customer_id,
@@ -1155,6 +1197,60 @@ async def update_customer(
     return await _customer_read_for_principal(session, customer, principal)
 
 
+@router.post("/customers/{customer_id}/archive", response_model=CustomerRead)
+async def archive_customer(
+    customer_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerRead:
+    _require_customer_write(principal)
+    require_super_admin(principal, "archive")
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    if customer.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This customer is already archived.",
+        )
+    before = customer.to_audit_dict()
+    customer.archived_at = utc_now()
+    await record_update(
+        session,
+        customer,
+        actor_id=principal.user_id,
+        action="customer.archived",
+        before=before,
+    )
+    await session.commit()
+    return await _customer_read_for_principal(session, customer, principal)
+
+
+@router.post("/customers/{customer_id}/restore", response_model=CustomerRead)
+async def restore_customer(
+    customer_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerRead:
+    _require_customer_write(principal)
+    require_super_admin(principal, "restore")
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    if customer.archived_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This customer is not archived.",
+        )
+    before = customer.to_audit_dict()
+    customer.archived_at = None
+    await record_update(
+        session,
+        customer,
+        actor_id=principal.user_id,
+        action="customer.restored",
+        before=before,
+    )
+    await session.commit()
+    return await _customer_read_for_principal(session, customer, principal)
+
+
 @router.delete("/customers/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_customer(
     customer_id: str,
@@ -1163,8 +1259,22 @@ async def delete_customer(
     if_match: IfMatchHeader = None,
 ) -> Response:
     _require_customer_write(principal)
+    require_super_admin(principal)
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
     _enforce_if_match(if_match, customer.version)
+    if customer.archived_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archive the customer before deleting it.",
+        )
+    await ensure_not_referenced(
+        session,
+        Customer,
+        customer.id,
+        what="customer",
+        ignore={"customer_locations", "customer_contacts"},
+        alternative="History is kept, so an in-use customer stays archived.",
+    )
     await soft_delete(
         session,
         customer,
@@ -1231,6 +1341,7 @@ async def create_asset(
 ) -> AssetRead:
     _require_asset_write(principal)
     customer = await _get_customer_or_404(session, payload.customer_id)
+    _require_active_customer(customer)
     product = await _get_product_or_404(session, payload.product_id)
     location = await _get_location_or_400(
         session,
@@ -2211,6 +2322,7 @@ async def create_inspection_booking(
     customer = await _get_visible_customer_or_404(
         session, payload.customer_id, principal
     )
+    _require_active_customer(customer)
     location = await _get_visible_customer_location_or_404(
         session, customer.id, payload.location_id, principal
     )
@@ -3364,8 +3476,17 @@ async def delete_product(
     if_match: IfMatchHeader = None,
 ) -> Response:
     _require_reference_admin(principal)
+    require_super_admin(principal)
     product = await _get_product_or_404(session, product_id)
     _enforce_if_match(if_match, product.version)
+    await ensure_not_referenced(
+        session,
+        Product,
+        product.id,
+        what="product",
+        ignore={"product_pressure_ratings"},
+        alternative="Disable the product instead; history keeps its reference.",
+    )
     await soft_delete(
         session,
         product,
@@ -3468,6 +3589,8 @@ async def update_asset(
     target_customer = asset.customer
     if "customer_id" in updates and payload.customer_id is not None:
         target_customer = await _get_customer_or_404(session, payload.customer_id)
+        if target_customer.id != asset.customer_id:
+            _require_active_customer(target_customer)
         asset.customer = target_customer
     if "product_id" in updates and payload.product_id is not None:
         asset.product = await _get_product_or_404(session, payload.product_id)
@@ -4086,6 +4209,8 @@ def _customer_read(customer: Customer, metrics: CustomerMetricsRead) -> Customer
         notes=customer.notes,
         retest_enabled=customer.retest_enabled,
         default_retest_months=customer.default_retest_months,
+        status="ARCHIVED" if customer.archived_at is not None else "ACTIVE",
+        archived_at=customer.archived_at,
         locations=[_customer_location_read(location) for location in locations],
         contacts=[_customer_contact_read(contact) for contact in contacts],
         metrics=metrics,
@@ -4167,7 +4292,9 @@ def _product_read(product: Product) -> ProductRead:
         name=product.name,
         category=product.category,
         sub_category=product.sub_category,
+        standard_id=product.standard_id,
         standard_code=standard_code,
+        enabled=product.enabled,
     )
 
 
@@ -4184,6 +4311,14 @@ async def _get_standard_or_404(
             detail="Standard not found",
         )
     return standard
+
+
+def _require_active_customer(customer: Customer) -> None:
+    if customer.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This customer is archived. Restore it before adding new work.",
+        )
 
 
 async def _get_customer_or_404(session: AsyncSession, customer_id: str) -> Customer:

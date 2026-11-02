@@ -72,7 +72,9 @@ class ProductRead(BaseModel):
     name: str
     category: str
     sub_category: str | None
+    standard_id: str | None
     standard_code: str | None
+    enabled: bool
 
 
 class ProductListResponse(BaseModel):
@@ -148,6 +150,8 @@ class CustomerRead(BaseModel):
     notes: str | None
     retest_enabled: bool
     default_retest_months: int | None
+    status: str
+    archived_at: datetime | None
     locations: list[CustomerLocationRead]
     contacts: list[CustomerContactRead]
     metrics: CustomerMetricsRead
@@ -239,7 +243,8 @@ class CustomerCreate(BaseModel):
     notes: str | None = None
     retest_enabled: bool = False
     default_retest_months: int | None = None
-    locations: list[CustomerLocationWrite] = Field(default_factory=list)
+    # A customer is never without a location, so the first one is part of creating it.
+    locations: list[CustomerLocationWrite] = Field(min_length=1)
 
 
 class CustomerUpdate(BaseModel):
