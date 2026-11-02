@@ -26,6 +26,7 @@ from hms_backend.app.core.object_storage import LocalObjectStorage
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
+from hms_backend.app.models.foundation import AuditEvent
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
 from hms_backend.app.modules.certificates.models import Certificate
 from hms_backend.app.modules.certificates.tasks import _run_batch
@@ -241,6 +242,13 @@ async def test_bulk_generate_auto_selects_eligible(
     assert body["total"] == 2
     assert body["status"] == "PENDING"
     assert body["task_id"] == "task-123"
+
+    # The request itself is on the audit ledger: who asked for how many certificates.
+    async with session_factory() as session:
+        event = (await session.scalars(select(AuditEvent))).one()
+    assert event.action == "certificate.batch.requested"
+    assert event.entity_id == body["id"]
+    assert event.after["total"] == 2
 
     async with _client(session_factory, _REVIEWER) as client:
         got = await client.get(f"/api/v1/jobs/certificate-batches/{body['id']}")

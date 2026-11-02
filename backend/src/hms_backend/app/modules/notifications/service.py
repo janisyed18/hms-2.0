@@ -18,6 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hms_backend.app.core.config import Settings
 from hms_backend.app.core.config import settings as default_settings
+from hms_backend.app.core.unsubscribe_tokens import (
+    UnsubscribeClaim,
+    create_unsubscribe_token,
+)
 from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.certificates.models import NON_CERTIFIABLE_ASSET_STATUSES
 from hms_backend.app.modules.notifications.channels.base import (
@@ -394,13 +398,19 @@ def _unsubscribe_url(
     settings: Settings,
     recipient: ResolvedRecipient,
     category: NotificationCategory,
-) -> str:
-    base = settings.public_base_url.rstrip("/")
-    return (
-        f"{base}/api/v1/notifications/unsubscribe"
-        f"?party_type={recipient.party_type}&party_id={recipient.recipient_id}"
-        f"&category={category.value}"
+) -> str | None:
+    token = create_unsubscribe_token(
+        UnsubscribeClaim(
+            party_type=recipient.party_type,
+            party_id=recipient.recipient_id,
+            category=category.value,
+        ),
+        settings,
     )
+    if token is None:
+        return None
+    base = settings.public_base_url.rstrip("/")
+    return f"{base}/api/v1/notifications/unsubscribe?token={token}"
 
 
 # --- Dispatcher: claim, send, record -----------------------------------------------

@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
+from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +38,10 @@ from hms_backend.app.core.rbac import (
     Principal,
     is_customer_scoped,
     require_permission,
+)
+from hms_backend.app.core.unsubscribe_tokens import (
+    UnsubscribeClaim,
+    read_unsubscribe_token,
 )
 from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.notifications.enums import (
@@ -208,27 +215,63 @@ async def _upsert_pref(
     return pref
 
 
-@router.get("/notifications/unsubscribe", response_model=MessageResponse)
+def _unsubscribe_claim(token: str) -> UnsubscribeClaim:
+    claim = read_unsubscribe_token(token, settings)
+    if claim is None or claim.party_type not in {t.value for t in RecipientType}:
+        # Links from before signing was introduced, or edited links, land here.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This unsubscribe link is not valid. Use a recent email.",
+        )
+    _valid_category(claim.category)
+    return claim
+
+
+@router.get("/notifications/unsubscribe", response_class=HTMLResponse)
+async def unsubscribe_confirmation(token: str) -> HTMLResponse:
+    """Ask for confirmation; opening or prefetching the link changes nothing."""
+    claim = _unsubscribe_claim(token)
+    page = (
+        "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<title>Unsubscribe</title><body style=\"font-family:system-ui,sans-serif;"
+        "max-width:32rem;margin:4rem auto;padding:0 1rem\">"
+        f"<h1>Unsubscribe from {html.escape(claim.category)} emails?</h1>"
+        "<p>Essential safety and account messages are still delivered.</p>"
+        "<form method=\"post\" action=\"\">"
+        f"<input type=\"hidden\" name=\"token\" value=\"{html.escape(token)}\">"
+        "<button type=\"submit\">Unsubscribe</button></form></body></html>"
+    )
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/notifications/unsubscribe", response_model=MessageResponse)
 async def unsubscribe(
+    request: Request,
     session: SessionDep,
-    party_type: str,
-    party_id: str,
-    category: str,
+    token: str | None = None,
 ) -> MessageResponse:
-    """Public one-click unsubscribe from a non-essential category (N-10)."""
-    category = _valid_category(category)
+    """One-click unsubscribe from a non-essential category (N-10, RFC 8058).
+
+    The token is signed, so only a recipient of that email can use it. It may arrive in
+    the query string (mail-client one-click POST) or in the confirmation form body.
+    """
+    if token is None:
+        form = parse_qs((await request.body()).decode("utf-8", "replace"))
+        token = (form.get("token") or [None])[0]
+    claim = _unsubscribe_claim(token or "")
     await _upsert_pref(
         session,
-        party_type,
-        party_id,
-        category,
+        claim.party_type,
+        claim.party_id,
+        claim.category,
         NotificationChannel.EMAIL.value,
         opted_in=False,
     )
     await session.commit()
     return MessageResponse(
         message=(
-            f"You have been unsubscribed from {category} email updates. "
+            f"You have been unsubscribed from {claim.category} email updates. "
             "Essential safety and account messages are still delivered."
         )
     )

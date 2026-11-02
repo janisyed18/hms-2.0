@@ -19,6 +19,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
+from hms_backend.app.core.audit import append_audit_event
 from hms_backend.app.core.client_identity import client_address
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.passwords import hash_password, verify_password
@@ -108,6 +109,15 @@ async def change_password(
             detail="Current password is incorrect",
         )
     user.password_hash = hash_password(payload.new_password)
+    await append_audit_event(
+        session,
+        actor_id=principal.user_id,
+        action="auth.password.changed",
+        entity="user",
+        entity_id=user.id,
+        before=None,
+        after={"email": user.email},
+    )
     await session.commit()
     return MessageResponse(message="Password updated")
 
@@ -131,6 +141,15 @@ async def admin_set_password(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
     user.password_hash = hash_password(payload.new_password)
+    await append_audit_event(
+        session,
+        actor_id=principal.user_id,
+        action="auth.password.admin_set",
+        entity="user",
+        entity_id=user.id,
+        before=None,
+        after={"email": user.email},
+    )
     await session.commit()
     return MessageResponse(message=f"Password set for {user.email}")
 
