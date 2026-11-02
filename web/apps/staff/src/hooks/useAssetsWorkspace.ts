@@ -4,7 +4,7 @@ import { createHmsClient } from "../api/hmsClient";
 import { useActionNotice } from "../components/interaction/ActionNotice";
 import { friendlyApiError } from "../components/interaction/friendlyApiError";
 import { assetLabel } from "../utils/identity";
-import type { AssetConfigurationOptions, AssetProductSummary, AssetFormValues, AssetRecord, CustomerLocation, CustomerRecord, ProductRecord, RecordSummary } from "../domain/types";
+import type { AssetConfigurationOptions, AssetProductSummary, AssetFormValues, AssetRecord, CustomerRecord, ProductRecord, RecordSummary } from "../domain/types";
 
 function uniqueById<T extends { id: string }>(items: T[]): T[] {
   return Array.from(new Map(items.map((item) => [item.id, item])).values());
@@ -78,7 +78,6 @@ export function useAssetsWorkspace() {
   }, [assets, customerFilter, dueFrom, dueTo, lifecycleFilter, productFilter, query]);
 
   const customerOptions = useMemo(() => customers.length ? customers.map(customerSummary) : uniqueById(assets.map((asset) => asset.customer)), [assets, customers]);
-  const locationOptions = useMemo(() => customers.map((customer) => ({ customerId: customer.id, locations: (customer.locations ?? []).filter((location): location is CustomerLocation => Boolean(location)) })), [customers]);
   const productOptions = useMemo(() => products.length ? products : uniqueById(assets.map((asset) => asset.product)), [assets, products]);
   function openCreate() { formSession.current += 1; setEditingAsset(null); setFormAsset(null); setIsCopy(false); setFormOpen(true); }
   function openEdit(asset: AssetRecord) { formSession.current += 1; setViewingAsset(null); setEditingAsset(asset); setFormAsset(asset); setIsCopy(false); setFormOpen(true); }
@@ -135,5 +134,5 @@ export function useAssetsWorkspace() {
   }
   function clearAssetFilters() { setCustomerFilter("ALL"); setProductFilter("ALL"); setLifecycleFilter("ALL"); setDueFrom(""); setDueTo(""); }
   const activeFilterCount = [customerFilter !== "ALL", productFilter !== "ALL", lifecycleFilter !== "ALL", Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
-  return { serverTotal, activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, notice, requestArchive, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, closeForm, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
+  return { serverTotal, activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, notice, requestArchive, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, closeForm, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
 }

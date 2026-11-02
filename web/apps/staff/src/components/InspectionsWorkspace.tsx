@@ -438,7 +438,6 @@ export function InspectionsWorkspace({
       />
       {canWrite ? (
         <InspectionForm
-          assetOptions={workspace.assetOptions}
           open={workspace.isFormOpen}
           onClose={() => workspace.setFormOpen(false)}
           onSubmit={workspace.saveInspection}

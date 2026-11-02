@@ -294,7 +294,7 @@ export function CertificatesWorkspace({ canManage }: { canManage: boolean }) {
       />
       {canManage ? (
         <CertificateForm
-          inspectionOptions={workspace.eligibleInspections}
+          issuedInspectionIds={workspace.issuedInspectionIds}
           open={workspace.isFormOpen}
           onClose={() => workspace.setFormOpen(false)}
           onSubmit={workspace.issueCertificate}

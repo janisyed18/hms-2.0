@@ -13,10 +13,11 @@ import type { ProductRecord } from "../domain/types";
 
 interface ProductsWorkspaceProps {
   canManage?: boolean;
+  canDelete?: boolean;
   embedded?: boolean;
 }
 
-export function ProductsWorkspace({ canManage = true, embedded = false }: ProductsWorkspaceProps) {
+export function ProductsWorkspace({ canManage = true, canDelete = false, embedded = false }: ProductsWorkspaceProps) {
   const workspace = useProductsWorkspace();
   const categoryCount = new Set(workspace.products.map((product) => product.category)).size;
   const standardCount = new Set(workspace.products.map((product) => product.standardCode).filter(Boolean)).size;
@@ -51,13 +52,14 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
           <ActionButton onClick={() => workspace.openEdit(product)} variant="secondary">
             Edit
           </ActionButton>
-          <ActionButton
-            aria-label={`Archive ${product.name}`}
-            onClick={() => workspace.requestArchive(product)}
-            variant="ghost"
-          >
-            Archive
+          <ActionButton aria-label={`${workspace.statusFilter === "ACTIVE" ? "Disable" : "Enable"} ${product.name}`} onClick={() => void workspace.toggleEnabled(product)} variant="ghost">
+            {workspace.statusFilter === "ACTIVE" ? "Disable" : "Enable"}
           </ActionButton>
+          {canDelete ? (
+            <ActionButton aria-label={`Delete ${product.name}`} onClick={() => workspace.requestDelete(product)} variant="ghost">
+              Delete
+            </ActionButton>
+          ) : null}
         </span>
       ) : "Read only"
     }
@@ -142,6 +144,13 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
                     ))}
                   </select>
                 </label>
+                <label className="filter-field">
+                  <span>Status</span>
+                  <select aria-label="Product status filter" value={workspace.statusFilter} onChange={(event) => workspace.setStatusFilter(event.target.value as "ACTIVE" | "DISABLED")}>
+                    <option value="ACTIVE">Enabled</option>
+                    <option value="DISABLED">Disabled</option>
+                  </select>
+                </label>
                 <button className="secondary-button filter-clear" type="button" onClick={workspace.clearProductFilters}>
                   Clear product filters
                 </button>
@@ -167,15 +176,15 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
         ) : null}
       </div>
       <ConfirmDialog
-        confirmLabel="Archive product"
-        error={workspace.archiveError}
-        message="It will no longer appear in the product catalog. Assets already using it are not changed."
-        onCancel={workspace.cancelArchive}
-        onConfirm={() => void workspace.confirmArchive()}
-        open={workspace.archiveTarget !== null}
-        pending={workspace.isArchiving}
-        pendingLabel="Archiving…"
-        title={workspace.archiveTarget ? `Archive ${productLabel(workspace.archiveTarget)}?` : "Archive product?"}
+        confirmLabel="Delete product"
+        error={workspace.deleteError}
+        message="This permanently removes the product from the catalogue. It cannot be deleted while assets use it; disable it instead to stop it being offered."
+        onCancel={workspace.cancelDelete}
+        onConfirm={() => void workspace.confirmDelete()}
+        open={workspace.deleteTarget !== null}
+        pending={workspace.isDeleting}
+        pendingLabel="Deleting…"
+        title={workspace.deleteTarget ? `Delete ${productLabel(workspace.deleteTarget)}?` : "Delete product?"}
       />
       <ProductForm
         open={workspace.isFormOpen}

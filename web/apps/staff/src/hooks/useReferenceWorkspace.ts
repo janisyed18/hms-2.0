@@ -33,7 +33,7 @@ export function useReferenceWorkspace() {
   useEffect(() => {
     let active = true;
     setLoading(true); setError(null);
-    void createHmsClient().listReferenceCatalog(activeCategory)
+    void createHmsClient().listReferenceCatalog(activeCategory, true)
       .then((result) => { if (active) setCatalogs((current) => ({ ...current, [activeCategory]: result.items })); })
       .catch((reason: unknown) => { if (active) setError(friendlyApiError(reason, { fallback: "Catalog data could not be loaded." }).message); })
       .finally(() => { if (active) setLoading(false); });
@@ -56,13 +56,23 @@ export function useReferenceWorkspace() {
     setEditingRecord(null); setFormOpen(false);
     notify({ kind: "success", title: `${activeMeta.singular} saved`, message: `${nameAndCode(saved)} ${editingRecord ? "saved" : "created"} successfully.` });
   }
-  const archive = useConfirmedAction<ReferenceCatalogRecord>(
+  const remove = useConfirmedAction<ReferenceCatalogRecord>(
     async (record) => {
-      await createHmsClient().archiveReferenceCatalogItem(activeCategory, record.id, record.etag);
+      await createHmsClient().deleteReferenceCatalogItem(activeCategory, record.id, record.etag);
       setCatalogs((current) => ({ ...current, [activeCategory]: current[activeCategory].filter((item) => item.id !== record.id) }));
-      notify({ kind: "success", title: `${activeMeta.singular} archived`, message: `${nameAndCode(record)} was archived.` });
+      notify({ kind: "success", title: `${activeMeta.singular} deleted`, message: `${nameAndCode(record)} was deleted.` });
     },
-    (record) => ({ fallback: `${nameAndCode(record)} could not be archived. Try again.` })
+    (record) => ({ fallback: `${nameAndCode(record)} could not be deleted. Try again.` })
   );
-  return { activeCategory, activeMeta, archive, dismissNotice, notice, editingRecord, error, isFormOpen, isLoading, openCreate, openEdit, query, saveRecord, selectCategory, setFormOpen, setQuery, visibleRecords };
+  async function toggleEnabled(record: ReferenceCatalogRecord) {
+    const enable = !record.enabled;
+    try {
+      const saved = await createHmsClient().setReferenceCatalogEnabled(activeCategory, record.id, enable, record.etag);
+      setCatalogs((current) => ({ ...current, [activeCategory]: current[activeCategory].map((item) => item.id === record.id ? saved : item) }));
+      notify({ kind: "success", title: `${activeMeta.singular} ${enable ? "enabled" : "disabled"}`, message: `${nameAndCode(record)} was ${enable ? "enabled" : "disabled"}. Existing records that use it are unchanged.` });
+    } catch (reason) {
+      notify({ kind: "error", title: `${activeMeta.singular} not changed`, message: friendlyApiError(reason, { fallback: `${nameAndCode(record)} could not be ${enable ? "enabled" : "disabled"}. Try again.` }).message });
+    }
+  }
+  return { activeCategory, activeMeta, remove, toggleEnabled, dismissNotice, notice, editingRecord, error, isFormOpen, isLoading, openCreate, openEdit, query, saveRecord, selectCategory, setFormOpen, setQuery, visibleRecords };
 }

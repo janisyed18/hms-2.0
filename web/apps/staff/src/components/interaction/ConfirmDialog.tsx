@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { ActionButton } from "./ActionButton";
 import { ActionNotice } from "./ActionNotice";
@@ -11,6 +12,7 @@ import { ActionNotice } from "./ActionNotice";
 export function ConfirmDialog({
   cancelLabel = "Cancel",
   confirmLabel,
+  elevated = false,
   error,
   message,
   onCancel,
@@ -22,6 +24,8 @@ export function ConfirmDialog({
 }: {
   cancelLabel?: string;
   confirmLabel: string;
+  /** Show above a modal that is already open (the customer profile). */
+  elevated?: boolean;
   error?: string | null;
   message: ReactNode;
   onCancel: () => void;
@@ -42,17 +46,17 @@ export function ConfirmDialog({
     };
   }, [open]);
   if (!open) return null;
-  return (
-    <div className="confirm-backdrop" role="presentation">
+  const node = (
+    <div className={`confirm-backdrop${elevated ? " confirm-backdrop--elevated" : ""}`} role="presentation">
       <div
         aria-describedby="confirm-dialog-message"
         aria-labelledby="confirm-dialog-title"
         aria-modal="true"
         className="confirm-dialog"
         onKeyDown={(event) => {
-          if (event.key === "Escape" && !pending) {
+          if (event.key === "Escape") {
             event.stopPropagation();
-            onCancel();
+            if (!pending) onCancel();
           }
           if (event.key !== "Tab" || !dialog.current) return;
           const controls = Array.from(dialog.current.querySelectorAll<HTMLElement>("button:not(:disabled)"));
@@ -84,4 +88,6 @@ export function ConfirmDialog({
       </div>
     </div>
   );
+  // Over an open profile dialog it is portalled out, since that dialog's transform would anchor it.
+  return elevated ? createPortal(node, document.body) : node;
 }

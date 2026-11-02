@@ -173,9 +173,7 @@ export interface StaffSession {
   authMode: "dev" | "bearer" | string;
 }
 
-export type RiskLevel = "High" | "Medium" | "Low";
-
-export type CustomerStatus = "Active" | "Review" | "Paused";
+export type CustomerStatus = "Active" | "Archived";
 
 export type InspectionState = "Overdue" | "Due Soon" | "Current";
 
@@ -250,32 +248,55 @@ export interface CustomerRecord {
   locations: CustomerLocation[];
   contacts: CustomerContact[];
   status: CustomerStatus;
-  riskLevel: RiskLevel;
-  industry: string;
-  paymentTerms: string;
-  contractStart: string;
-  contractEnd: string;
-  lastActivity: string;
+  /** When the customer was archived; null while it is active. */
+  archivedAt: string | null;
   metrics: CustomerMetrics;
 }
 
+export interface LocationFormValues {
+  name: string;
+  address1: string;
+  address2: string;
+  city: string;
+  state: string;
+  country: string;
+  siteContactName: string;
+  siteContactMobile: string;
+  siteContactEmail: string;
+  ppeRequirements: string[];
+  additionalRequirements: string[];
+  schedulingTimezone: string;
+  schedulingOpenTime: string;
+  schedulingCloseTime: string;
+  schedulingWeekdays: number[];
+  schedulingBlackoutDates: string[];
+}
+
+/** A customer is created with its first location; more are added from Customer Details. */
 export interface CustomerFormValues {
   name: string;
   notes: string;
-  locations: Array<{
-    id?: string;
-    name: string;
-    siteContactName?: string;
-    siteContactMobile?: string;
-    siteContactEmail?: string;
-    ppeRequirements: string[];
-    additionalRequirements: string[];
-    schedulingTimezone?: string;
-    schedulingOpenTime?: string;
-    schedulingCloseTime?: string;
-    schedulingWeekdays?: number[];
-    schedulingBlackoutDates?: string[];
-  }>;
+  firstLocation: LocationFormValues;
+}
+
+export interface CustomerUpdateValues {
+  name: string;
+  notes: string;
+}
+
+export interface ContactFormValues {
+  name: string;
+  email: string;
+  phone: string;
+  role: string;
+  receivesRetestReminders: boolean;
+}
+
+export interface CustomerSummary {
+  activeCustomers: number;
+  archivedCustomers: number;
+  locations: number;
+  assets: number;
 }
 
 export interface ApiListResult<TItem> {
@@ -296,6 +317,7 @@ export interface ReferenceCatalogRecord {
   id: string;
   code: string;
   name: string;
+  enabled: boolean;
   etag?: string | null;
 }
 
@@ -310,14 +332,10 @@ export interface ProductRecord {
   name: string;
   category: string;
   subCategory: string | null;
+  standardId: string | null;
   standardCode: string | null;
+  enabled: boolean;
   etag?: string | null;
-}
-
-export interface PressureRatingRecord {
-  id: string;
-  label: string;
-  pressureKpa: number;
 }
 
 export interface ProductFormValues {
@@ -326,7 +344,6 @@ export interface ProductFormValues {
   category: string;
   subCategory: string | null;
   standardId: string | null;
-  pressureRatings: PressureRatingRecord[];
 }
 
 export interface RecordSummary {

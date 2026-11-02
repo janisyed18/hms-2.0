@@ -22,6 +22,7 @@ import type { ReferenceCatalogKey, ReferenceCatalogRecord } from "../domain/type
 
 interface ReferenceWorkspaceProps {
   canManage: boolean;
+  canDelete?: boolean;
 }
 
 const catalogTabs: Array<{
@@ -38,18 +39,20 @@ const catalogTabs: Array<{
   { key: "nominal-bores", label: "Nominal Bores", icon: CircleGauge }
 ];
 
-export function ReferenceWorkspace({ canManage }: ReferenceWorkspaceProps) {
+export function ReferenceWorkspace({ canManage, canDelete = false }: ReferenceWorkspaceProps) {
   const workspace = useReferenceWorkspace();
   const [activeTab, setActiveTab] = useState<ReferenceCatalogKey | "products">("standards");
   const columns: ModuleColumn<ReferenceCatalogRecord>[] = [
     { header: "Code", render: (record) => <strong>{record.code}</strong> },
     { header: "Name", render: (record) => record.name },
+    { header: "Status", render: (record) => record.enabled ? "Enabled" : "Disabled" },
     {
       header: "Actions",
       render: (record) => canManage ? (
         <span className="row-actions">
           <ActionButton onClick={() => workspace.openEdit(record)} variant="secondary">Edit</ActionButton>
-          <ActionButton onClick={() => workspace.archive.request(record)} variant="ghost">Archive</ActionButton>
+          <ActionButton onClick={() => void workspace.toggleEnabled(record)} variant="ghost">{record.enabled ? "Disable" : "Enable"}</ActionButton>
+          {canDelete ? <ActionButton onClick={() => workspace.remove.request(record)} variant="ghost">Delete</ActionButton> : null}
         </span>
       ) : "Read only"
     }
@@ -96,7 +99,7 @@ export function ReferenceWorkspace({ canManage }: ReferenceWorkspaceProps) {
               {canManage ? "Managed access" : "Read only"}
             </span>
           </div>
-          <ProductsWorkspace canManage={canManage} embedded />
+          <ProductsWorkspace canManage={canManage} canDelete={canDelete} embedded />
         </PresencePanel>
       ) : (
         <PresencePanel presenceKey={workspace.activeCategory} className="reference-catalog-panel">
@@ -134,15 +137,15 @@ export function ReferenceWorkspace({ canManage }: ReferenceWorkspaceProps) {
             tableLabel={`${workspace.activeMeta.plural} catalog`}
           />
           <ConfirmDialog
-            confirmLabel={`Archive ${workspace.activeMeta.singular.toLowerCase()}`}
-            error={workspace.archive.error}
-            message="It will no longer be offered when configuring assets and products. Records already using it are not changed."
-            onCancel={workspace.archive.cancel}
-            onConfirm={() => void workspace.archive.confirm()}
-            open={workspace.archive.target !== null}
-            pending={workspace.archive.pending}
-            pendingLabel="Archiving…"
-            title={workspace.archive.target ? `Archive ${nameAndCode(workspace.archive.target)}?` : `Archive ${workspace.activeMeta.singular.toLowerCase()}?`}
+            confirmLabel={`Delete ${workspace.activeMeta.singular.toLowerCase()}`}
+            error={workspace.remove.error}
+            message="This permanently removes it from the catalogue. It cannot be deleted while any record still uses it; disable it instead to stop it being offered."
+            onCancel={workspace.remove.cancel}
+            onConfirm={() => void workspace.remove.confirm()}
+            open={workspace.remove.target !== null}
+            pending={workspace.remove.pending}
+            pendingLabel="Deleting…"
+            title={workspace.remove.target ? `Delete ${nameAndCode(workspace.remove.target)}?` : `Delete ${workspace.activeMeta.singular.toLowerCase()}?`}
           />
           <ReferenceForm
             entityLabel={workspace.activeMeta.singular}

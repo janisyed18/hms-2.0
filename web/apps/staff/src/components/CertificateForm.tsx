@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 
-import { ActionNotice } from "./interaction/ActionNotice";
+import { createHmsClient } from "../api/hmsClient";
+import { useRemoteOptions } from "../hooks/useRemoteOptions";
+
 import { FormSection } from "./forms/FormLayout";
 import { FormShell } from "./forms/FormShell";
 import { useDirtyTracker } from "./forms/useDirtyTracker";
@@ -13,7 +15,8 @@ import { assetLabel } from "../utils/identity";
 import { Combobox } from "./interaction/Combobox";
 
 interface CertificateFormProps {
-  inspectionOptions: InspectionRecord[];
+  /** Inspections that already have a certificate, so they are not offered again. */
+  issuedInspectionIds?: string[];
   open: boolean;
   onClose: () => void;
   onSubmit: (values: CertificateIssueValues) => Promise<void>;
@@ -36,7 +39,7 @@ function defaultValidUntil() {
 }
 
 export function CertificateForm({
-  inspectionOptions,
+  issuedInspectionIds = [],
   open,
   onClose,
   onSubmit
@@ -46,16 +49,24 @@ export function CertificateForm({
   const [validUntil, setValidUntil] = useState(defaultValidUntil);
   const formRef = useRef<HTMLFormElement>(null);
   const { dirty, markClean, touch } = useDirtyTracker(JSON.stringify([inspectionId, number, validUntil]));
-  const optionIds = useMemo(() => inspectionOptions.map((inspection) => inspection.id), [inspectionOptions]);
+  const [chosen, setChosen] = useState<InspectionRecord | null>(null);
+  const issued = useMemo(() => new Set(issuedInspectionIds), [issuedInspectionIds]);
+  // Approved inspections are searched on the server, so one beyond the first page is still reachable.
+  const search = useRemoteOptions(
+    (text) => createHmsClient()
+      .listInspections({ status: "APPROVED", search: text, sort: "-approved_at", limit: 25 })
+      .then((result) => result.items.filter((inspection) => !issued.has(inspection.id))),
+    open
+  );
   const seed = useFormSeed({
     dirty,
     sourceKey: open ? "issue" : null,
-    // A refreshed list of approved inspections re-seeds a form nobody has touched, never one being filled in.
-    sourceSignature: JSON.stringify(optionIds),
+    sourceSignature: "",
     seed: () => {
-      const firstInspection = inspectionOptions[0];
-      setInspectionId(firstInspection?.id ?? "");
-      setNumber(defaultCertificateNumber(firstInspection));
+      // Nothing is chosen for the person: the asset, customer and number follow an explicit choice.
+      setInspectionId("");
+      setChosen(null);
+      setNumber("");
       setValidUntil(defaultValidUntil());
       submission.reset();
       markClean();
@@ -75,9 +86,11 @@ export function CertificateForm({
   }
 
   function chooseInspection(nextId: string) {
+    const inspection = search.items.find((item) => item.id === nextId) ?? null;
     setInspectionId(nextId);
-    // Choosing another inspection offers its own certificate number.
-    setNumber(defaultCertificateNumber(inspectionOptions.find((inspection) => inspection.id === nextId)));
+    setChosen(inspection);
+    // Choosing an inspection offers its own certificate number.
+    setNumber(defaultCertificateNumber(inspection ?? undefined));
     clearError("inspectionId");
   }
 
@@ -93,7 +106,6 @@ export function CertificateForm({
     );
   }
 
-  const nothingToCertify = inspectionOptions.length === 0;
   return (
     <div className="drawer-backdrop">
       <FormShell
@@ -112,34 +124,32 @@ export function CertificateForm({
         onEdit={touch}
         onSubmit={handleSubmit}
         pendingLabel="Issuing…"
-        submitDisabled={nothingToCertify}
         submitError={submission.submitError}
         submitLabel="Issue certificate"
         title="Issue Certificate"
       >
-        {nothingToCertify ? (
-          <ActionNotice kind="info" title="Nothing to certify">There are no approved inspections waiting for a certificate.</ActionNotice>
-        ) : null}
         <FormSection>
           <Field error={errors.inspectionId} label="Approved inspection" name="inspectionId" required>
             {(props) => (
               <Combobox
                 {...props}
                 aria-label="Approved inspection"
-                disabled={nothingToCertify}
-                emptyText="No inspections match"
+                emptyText="No approved inspections match"
+                loading={search.loading}
                 onChange={(next) => { chooseInspection(next); touch(); }}
-                options={inspectionOptions.map((inspection) => ({ value: inspection.id, label: assetLabel(inspection.asset), description: inspection.customer.name, searchText: inspection.asset.assetNumber }))}
-                placeholder="Search approved inspections"
+                onSearch={search.search}
+                options={search.items.map((inspection) => ({ value: inspection.id, label: assetLabel(inspection.asset), description: inspection.customer.name, searchText: inspection.asset.assetNumber }))}
+                placeholder="Select an approved inspection"
+                selectedOption={chosen ? { value: chosen.id, label: assetLabel(chosen.asset), description: chosen.customer.name } : null}
                 value={inspectionId}
               />
             )}
           </Field>
           <Field error={errors.number} label="Certificate number" name="number" required>
-            {(props) => <input {...props} aria-label="Certificate number" disabled={nothingToCertify} value={number} onChange={(event) => { setNumber(event.target.value); clearError("number"); }} />}
+            {(props) => <input {...props} aria-label="Certificate number" value={number} onChange={(event) => { setNumber(event.target.value); clearError("number"); }} />}
           </Field>
-          <Field label="Valid until" name="validUntil">
-            {(props) => <input {...props} aria-label="Valid until" disabled={nothingToCertify} type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} />}
+          <Field hint="Starts one year from today. Change it if this certificate needs a different validity." label="Valid until" name="validUntil">
+            {(props) => <input {...props} aria-label="Valid until" type="date" value={validUntil} onChange={(event) => setValidUntil(event.target.value)} />}
           </Field>
         </FormSection>
       </FormShell>

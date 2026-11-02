@@ -373,9 +373,6 @@ export function AssetsWorkspace({
           asset={workspace.formAsset}
           isCopy={workspace.isCopy}
           configurationOptions={workspace.configurationOptions}
-          customerOptions={workspace.customerOptions}
-          locationOptions={workspace.locationOptions}
-          productOptions={workspace.productOptions}
           open={workspace.isFormOpen}
           onClose={workspace.closeForm}
           onSubmit={workspace.saveAsset}

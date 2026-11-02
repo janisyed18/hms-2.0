@@ -17,6 +17,7 @@ import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
 import { CustomerForm } from "./components/CustomerForm";
 import { ActionNotice } from "./components/interaction/ActionNotice";
+import { ConfirmDialog } from "./components/interaction/ConfirmDialog";
 import { ToastProvider } from "./components/interaction/Toast";
 import { CustomerTable } from "./components/CustomerTable";
 import type { OperationalModule } from "./components/OperationalWorkspace";
@@ -576,16 +577,19 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                         ) : null}
                         <CustomerTable
                           canWrite={hasPermission(session, "customer:write")}
-                          allCustomers={workspace.customers}
                           customers={workspace.visibleCustomers}
                           totalCount={workspace.totalCount}
+                          summary={workspace.summary}
                           selectedId={workspace.selectedCustomer?.id ?? null}
                           query={workspace.query}
-                          riskFilter={workspace.riskFilter}
-                          statusFilter={workspace.statusFilter}
+                          lifecycle={workspace.lifecycle}
+                          page={workspace.page}
+                          pageSize={workspace.pageSize}
+                          isLoading={workspace.isLoading}
                           onQueryChange={workspace.setQuery}
-                          onRiskFilterChange={workspace.setRiskFilter}
-                          onStatusFilterChange={workspace.setStatusFilter}
+                          onLifecycleChange={workspace.setLifecycle}
+                          onPageChange={workspace.setPage}
+                          onPageSizeChange={workspace.setPageSize}
                           onSelectCustomer={workspace.selectCustomer}
                           onAddCustomer={workspace.openCreateCustomer}
                         />
@@ -597,7 +601,10 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                   customer={workspace.selectedCustomer}
                   activeTab={workspace.activeTab}
                   canWrite={hasPermission(session, "customer:write")}
+                  canDelete={session.roles.includes("SUPER_ADMIN")}
                   onAssetOpen={handleAssetOpen}
+                  onCustomerChange={workspace.replaceCustomer}
+                  onLifecycle={workspace.requestLifecycle}
                   onClose={workspace.closeDetail}
                   onEdit={() => {
                     if (!workspace.selectedCustomer) return;
@@ -606,6 +613,24 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                     workspace.openEditCustomer(customer);
                   }}
                   onTabChange={workspace.setActiveTab}
+                />
+                <ConfirmDialog
+                  confirmLabel={workspace.lifecycleTarget?.action === "delete" ? "Delete customer" : workspace.lifecycleTarget?.action === "restore" ? "Restore customer" : "Archive customer"}
+                  elevated
+                  error={workspace.lifecycleError}
+                  message={
+                    workspace.lifecycleTarget?.action === "delete"
+                      ? "The customer is removed from the system. Its history is kept, and a customer that still has assets or bookings cannot be deleted."
+                      : workspace.lifecycleTarget?.action === "restore"
+                        ? "The customer returns to active work and appears in selectors again."
+                        : "The customer and its history are kept. It is left out of new work and selectors until it is restored."
+                  }
+                  onCancel={workspace.cancelLifecycle}
+                  onConfirm={() => void workspace.confirmLifecycle()}
+                  open={workspace.lifecycleTarget !== null}
+                  pending={workspace.isChangingLifecycle}
+                  pendingLabel="Working…"
+                  title={workspace.lifecycleTarget ? `${{ archive: "Archive", restore: "Restore", delete: "Delete" }[workspace.lifecycleTarget.action]} ${workspace.lifecycleTarget.customer.name}?` : "Customer"}
                 />
                 <CustomerForm
                   open={workspace.isFormOpen}
@@ -629,10 +654,10 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                     <AnalyticsWorkspace onModuleChange={handleModuleChange} />
                   ) : null}
                   {renderedActiveModule === "products" ? (
-                    <ProductsWorkspace canManage={hasPermission(session, "reference:admin")} />
+                    <ProductsWorkspace canManage={hasPermission(session, "reference:admin")} canDelete={session.roles.includes("SUPER_ADMIN")} />
                   ) : null}
                   {renderedActiveModule === "reference" ? (
-                    <ReferenceWorkspace canManage={hasPermission(session, "reference:admin")} />
+                    <ReferenceWorkspace canManage={hasPermission(session, "reference:admin")} canDelete={session.roles.includes("SUPER_ADMIN")} />
                   ) : null}
                   {renderedActiveModule === "scheduling" ? (
                     <SchedulingWorkspace

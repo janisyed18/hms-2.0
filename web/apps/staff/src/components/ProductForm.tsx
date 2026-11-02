@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { FormSection } from "./forms/FormLayout";
 import { FormShell } from "./forms/FormShell";
@@ -7,12 +7,9 @@ import { useFormSeed } from "./forms/useFormSeed";
 import { useFormSubmit } from "./forms/useFormSubmit";
 import { Field } from "./interaction/FormPrimitives";
 import { isBlank, type FieldErrors } from "./interaction/useFormErrors";
-import { PressureMatrixEditor } from "./PressureMatrixEditor";
-import type {
-  PressureRatingRecord,
-  ProductFormValues,
-  ProductRecord
-} from "../domain/types";
+import { Combobox } from "./interaction/Combobox";
+import { createHmsClient } from "../api/hmsClient";
+import type { ProductFormValues, ProductRecord, ReferenceCatalogRecord } from "../domain/types";
 
 interface ProductFormProps {
   open: boolean;
@@ -35,9 +32,10 @@ export function ProductForm({
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [subCategory, setSubCategory] = useState("");
-  const [pressureRatings, setPressureRatings] = useState<PressureRatingRecord[]>([]);
+  const [standardId, setStandardId] = useState("");
+  const [standards, setStandards] = useState<ReferenceCatalogRecord[]>([]);
   const formRef = useRef<HTMLFormElement>(null);
-  const { dirty, markClean, touch } = useDirtyTracker(JSON.stringify([code, name, category, subCategory, pressureRatings]));
+  const { dirty, markClean, touch } = useDirtyTracker(JSON.stringify([code, name, category, subCategory, standardId]));
   const seed = useFormSeed({
     dirty,
     sourceKey: open ? (product?.id ?? "new") : null,
@@ -47,7 +45,7 @@ export function ProductForm({
       setName(product?.name ?? "");
       setCategory(product?.category ?? "");
       setSubCategory(product?.subCategory ?? "");
-      setPressureRatings([]);
+      setStandardId(product?.standardId ?? "");
       submission.reset();
       markClean();
     }
@@ -62,19 +60,18 @@ export function ProductForm({
   });
   const { clearError, errors } = submission;
 
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    // Enabled standards are offered; the product's current standard is kept even if it was later disabled.
+    void createHmsClient().listReferenceCatalog("standards", true)
+      .then((result) => { if (active) setStandards(result.items); })
+      .catch(() => { if (active) setStandards([]); });
+    return () => { active = false; };
+  }, [open]);
+
   if (!open) {
     return null;
-  }
-
-  function addPressureRating() {
-    setPressureRatings((current) => [
-      ...current,
-      {
-        id: `rating-${current.length + 1}`,
-        label: `Rating ${current.length + 1}`,
-        pressureKpa: 1000 + current.length * 250
-      }
-    ]);
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -90,8 +87,7 @@ export function ProductForm({
         name: name.trim(),
         category: category.trim(),
         subCategory: subCategory.trim() || null,
-        standardId: null,
-        pressureRatings
+        standardId: standardId || null
       }),
       markClean
     );
@@ -100,7 +96,7 @@ export function ProductForm({
   return (
     <div className="drawer-backdrop">
       <FormShell
-        description="Maintain catalog data and pressure ratings."
+        description="Maintain catalog data. Pressure ratings are not yet maintained here."
         dirty={dirty}
         errorSummaryTitle="Product could not be saved"
         errors={errors}
@@ -131,9 +127,19 @@ export function ProductForm({
           <Field label="Sub category" name="subCategory">
             {(props) => <input {...props} aria-label="Sub category" value={subCategory} onChange={(event) => setSubCategory(event.target.value)} />}
           </Field>
-        </FormSection>
-        <FormSection title="Pressure ratings">
-          <PressureMatrixEditor rows={pressureRatings} onAddRow={addPressureRating} />
+          <Field label="Standard" name="standardId">
+            {(props) => (
+              <Combobox
+                {...props}
+                aria-label="Standard"
+                emptyText="No standards match"
+                onChange={(next) => { setStandardId(next); touch(); }}
+                options={[{ value: "", label: "No standard" }, ...standards.filter((item) => item.enabled || item.id === standardId).map((item) => ({ value: item.id, label: `${item.code} - ${item.name}`, searchText: item.name }))]}
+                placeholder="No standard"
+                value={standardId}
+              />
+            )}
+          </Field>
         </FormSection>
       </FormShell>
     </div>

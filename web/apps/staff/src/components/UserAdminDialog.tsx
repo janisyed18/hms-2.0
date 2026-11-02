@@ -7,7 +7,10 @@ import { FormGrid, FormNote, FormSection } from "./forms/FormLayout";
 import { FormShell } from "./forms/FormShell";
 import { useDirtyTracker } from "./forms/useDirtyTracker";
 import { Field } from "./interaction/FormPrimitives";
+import { Combobox } from "./interaction/Combobox";
 import { Select } from "./interaction/Select";
+import { createHmsClient } from "../api/hmsClient";
+import { useRemoteOptions } from "../hooks/useRemoteOptions";
 import { friendlyApiError } from "./interaction/friendlyApiError";
 import { focusFirstInvalid, isBlank, useFormErrors, type FieldErrors } from "./interaction/useFormErrors";
 import { ROLE_LABELS, manageableRoles, requiresCustomer } from "./roleAdmin";
@@ -40,8 +43,8 @@ interface UserAdminDialogProps {
   onSubmit: (values: UserAdminValues) => Promise<void>;
 }
 
-const FOCUS_ORDER = ["email", "firstName", "lastName", "customers"];
-const FIELD_LABELS: Record<string, string> = { email: "Email", firstName: "First name", lastName: "Last name", customers: "Customers" };
+const FOCUS_ORDER = ["email", "firstName", "lastName", "role", "customers"];
+const FIELD_LABELS: Record<string, string> = { email: "Email", firstName: "First name", lastName: "Last name", role: "Role", customers: "Customers" };
 
 export function UserAdminDialog({
   open,
@@ -58,7 +61,8 @@ export function UserAdminDialog({
   const nameRequired = (existing?: string) => mode === "create" || Boolean(existing);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [role, setRole] = useState<StaffRole>(roleOptions[0] ?? "INSPECTOR");
+  // No role is chosen for a new user: access is granted on purpose, never by whichever option is listed first.
+  const [role, setRole] = useState<StaffRole | "">("");
   const [customerIds, setCustomerIds] = useState<string[]>([]);
   const [isSubmitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -93,7 +97,7 @@ export function UserAdminDialog({
     setEmail(initial?.email ?? "");
     setFirstName(initial?.firstName ?? "");
     setLastName(initial?.lastName ?? "");
-    setRole(initial?.role ?? roleOptions[0] ?? "INSPECTOR");
+    setRole(initial?.role ?? "");
     setCustomerIds(initial?.customerIds ?? (initial?.customerId ? [initial.customerId] : []));
     setSubmitError(null);
     clearAll();
@@ -101,7 +105,31 @@ export function UserAdminDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceKey, sourceSignature, rolesKey]);
 
-  const needsCustomer = requiresCustomer(role);
+  const needsCustomer = role !== "" && requiresCustomer(role);
+
+  // Customers to assign are searched on the server as the person types, so none is out of reach on a later page.
+  const customerSearch = useRemoteOptions(
+    (text) => createHmsClient().listCustomers({ search: text, sort: "name", limit: 25 }).then((result) => result.items.map((customer) => ({ id: customer.id, name: customer.name }))),
+    open && needsCustomer
+  );
+  const [customerNames, setCustomerNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!open) return;
+    const known = new Map<string, string>([...customers.map((customer) => [customer.id, customer.name] as [string, string]), ...customerSearch.items.map((customer) => [customer.id, customer.name] as [string, string])]);
+    const missing = customerIds.filter((id) => !customerNames[id] && !known.has(id));
+    setCustomerNames((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const id of customerIds) if (!next[id] && known.has(id)) { next[id] = known.get(id) as string; changed = true; }
+      return changed ? next : current;
+    });
+    for (const id of missing) {
+      void createHmsClient().getCustomer(id)
+        .then((customer) => setCustomerNames((current) => ({ ...current, [id]: customer.name })))
+        .catch(() => setCustomerNames((current) => ({ ...current, [id]: "Unavailable customer" })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, customerIds, customerSearch.items, customers]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -118,6 +146,7 @@ export function UserAdminDialog({
     if (mode === "create" || initial?.lastName) {
       if (isBlank(lastName)) found.lastName = "Enter the user's last name.";
     }
+    if (role === "") found.role = "Select a role.";
     if (needsCustomer && customerIds.length === 0) found.customers = "Select at least one customer for this user.";
     setErrors(found);
     if (Object.keys(found).length > 0) {
@@ -132,7 +161,7 @@ export function UserAdminDialog({
         email: email.trim(),
         firstName: firstName.trim(),
         lastName: lastName.trim(),
-        role,
+        role: role as StaffRole,
         customerId: needsCustomer ? customerIds[0] ?? null : null,
         customerIds: needsCustomer ? customerIds : []
       });
@@ -219,14 +248,15 @@ export function UserAdminDialog({
               </FormGrid>
             </FormSection>
             <FormSection description="What they can see and do." step={2} title="Access">
-              <Field label="Role" name="role" required>
+              <Field error={errors.role} label="Role" name="role" required>
                 {(props) => (
                   <Select
                     {...props}
                     aria-label="Role"
                     icon={<ShieldCheck size={16} />}
-                    onChange={(next) => { setRole(next as StaffRole); touch(); }}
+                    onChange={(next) => { setRole(next as StaffRole); clearError("role"); touch(); }}
                     options={roleOptions.map((option) => ({ value: option, label: ROLE_LABELS[option] }))}
+                    placeholder="Select a role"
                     value={role}
                   />
                 )}
@@ -237,19 +267,44 @@ export function UserAdminDialog({
               {needsCustomer ? (
                 <Field error={errors.customers} label="Customers" name="customers" required>
                   {(props) => (
-                    <select
-                      {...props}
-                      aria-label="Customers"
-                      multiple
-                      value={customerIds}
-                      onChange={(event) => { setCustomerIds(Array.from(event.currentTarget.selectedOptions, (option) => option.value)); clearError("customers"); }}
-                    >
-                      {customers.map((customer) => (
-                        <option key={customer.id} value={customer.id}>
-                          {customer.name}
-                        </option>
-                      ))}
-                    </select>
+                    <div>
+                      <Combobox
+                        {...props}
+                        aria-label="Customers"
+                        emptyText="No customers match"
+                        loading={customerSearch.loading}
+                        onChange={(next) => {
+                          if (next && !customerIds.includes(next)) {
+                            const found = customerSearch.items.find((customer) => customer.id === next);
+                            if (found) setCustomerNames((current) => ({ ...current, [next]: found.name }));
+                            setCustomerIds([...customerIds, next]);
+                            touch();
+                          }
+                          clearError("customers");
+                        }}
+                        onSearch={customerSearch.search}
+                        options={customerSearch.items.filter((customer) => !customerIds.includes(customer.id)).map((customer) => ({ value: customer.id, label: customer.name }))}
+                        placeholder="Search customers to assign"
+                        value=""
+                      />
+                      {customerIds.length > 0 ? (
+                        <ul aria-label="Assigned customers" className="assigned-customers">
+                          {customerIds.map((id) => (
+                            <li key={id}>
+                              <span>{customerNames[id] ?? "Loading…"}</span>
+                              <button
+                                aria-label={`Remove ${customerNames[id] ?? "customer"}`}
+                                className="icon-button light"
+                                onClick={() => { setCustomerIds(customerIds.filter((item) => item !== id)); touch(); }}
+                                type="button"
+                              >
+                                ×
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
                   )}
                 </Field>
               ) : null}

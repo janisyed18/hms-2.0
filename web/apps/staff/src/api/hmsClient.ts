@@ -21,8 +21,12 @@ import type {
   CertificateIssueValues,
   CertificateRecord,
   CertificateStatus,
+  ContactFormValues,
   CustomerContact,
   CustomerFormValues,
+  CustomerSummary,
+  CustomerUpdateValues,
+  LocationFormValues,
   CustomerLocation,
   CustomerRecord,
   DashboardRecord,
@@ -217,6 +221,7 @@ interface ApiReferenceStandard {
   id: string;
   code: string;
   name: string;
+  enabled?: boolean;
 }
 
 interface ApiReferenceStandardList {
@@ -1055,7 +1060,8 @@ function toReferenceCatalog(
     {
       id: standard.id,
       code: standard.code,
-      name: standard.name
+      name: standard.name,
+      enabled: standard.enabled ?? true
     },
     etag
   );
@@ -2474,10 +2480,13 @@ export function createHmsClient(options: HmsClientOptions = {}) {
     },
 
     async listReferenceCatalog(
-      category: ReferenceCatalogKey
+      category: ReferenceCatalogKey,
+      includeDisabled = false
     ): Promise<ApiListResult<ReferenceCatalogRecord>> {
       const response = await request<ApiReferenceStandardList>(
-        referenceCatalogPath(category)
+        referenceCatalogPath(category),
+        {},
+        { include_disabled: includeDisabled }
       );
       return {
         total: response.data.items.length,

@@ -5,14 +5,13 @@ import { useActionNotice } from "../components/interaction/ActionNotice";
 import { friendlyApiError } from "../components/interaction/friendlyApiError";
 import { useConfirmedAction } from "../components/interaction/useConfirmedAction";
 import { assetLabel } from "../utils/identity";
-import type { CertificateIssueValues, CertificateRecord, CertificateStatus, InspectionRecord } from "../domain/types";
+import type { CertificateIssueValues, CertificateRecord, CertificateStatus } from "../domain/types";
 
 export type CertificateStatusFilter = "ALL" | CertificateStatus;
 
 export function useCertificatesWorkspace() {
   const [certificates, setCertificates] = useState<CertificateRecord[]>([]);
   const [serverTotal, setServerTotal] = useState<number | undefined>(undefined);
-  const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<CertificateStatusFilter>("ALL");
   const [validFrom, setValidFrom] = useState("");
@@ -25,10 +24,10 @@ export function useCertificatesWorkspace() {
   useEffect(() => {
     let active = true;
     const client = createHmsClient();
-    void Promise.all([client.listCertificates({ sort: "-issued_at" }), client.listInspections({ sort: "-approved_at" })])
-      .then(([certificateResult, inspectionResult]) => {
+    void client.listCertificates({ sort: "-issued_at" })
+      .then((certificateResult) => {
         if (!active) return;
-        setCertificates(certificateResult.items); setServerTotal(certificateResult.total); setInspections(inspectionResult.items);
+        setCertificates(certificateResult.items); setServerTotal(certificateResult.total);
       })
       .catch((reason: unknown) => {
         if (active) setLoadError(friendlyApiError(reason, { fallback: "Certificates could not be loaded." }).message);
@@ -36,10 +35,7 @@ export function useCertificatesWorkspace() {
     return () => { active = false; };
   }, []);
 
-  const eligibleInspections = useMemo(() => {
-    const issuedInspectionIds = new Set(certificates.map((certificate) => certificate.inspectionId));
-    return inspections.filter((inspection) => inspection.status === "APPROVED" && !issuedInspectionIds.has(inspection.id));
-  }, [certificates, inspections]);
+  const issuedInspectionIds = useMemo(() => certificates.map((certificate) => certificate.inspectionId), [certificates]);
   const visibleCertificates = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return certificates.filter((certificate) => {
@@ -74,5 +70,5 @@ export function useCertificatesWorkspace() {
   function requestLifecycle(action: "revoke" | "supersede") { if (selectedCertificate) lifecycle.request({ action, certificate: selectedCertificate }); }
   function clearCertificateFilters() { setValidFrom(""); setValidTo(""); }
   const activeFilterCount = [Boolean(validFrom), Boolean(validTo)].filter(Boolean).length;
-  return { serverTotal, activeFilterCount, certificates, dismissNotice, lifecycle, loadError, notice, requestLifecycle, clearCertificateFilters, closeDetail, eligibleInspections, isFormOpen, issueCertificate, openCreate, openDetail, query, selectedCertificate, setFormOpen, setQuery, setStatusFilter, setValidFrom, setValidTo, statusFilter, validFrom, validTo, visibleCertificates };
+  return { serverTotal, activeFilterCount, certificates, dismissNotice, lifecycle, loadError, notice, requestLifecycle, clearCertificateFilters, closeDetail, issuedInspectionIds, isFormOpen, issueCertificate, openCreate, openDetail, query, selectedCertificate, setFormOpen, setQuery, setStatusFilter, setValidFrom, setValidTo, statusFilter, validFrom, validTo, visibleCertificates };
 }
