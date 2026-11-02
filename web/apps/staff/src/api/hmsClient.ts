@@ -697,6 +697,8 @@ interface ListAssetOptions {
   locationId?: string;
   dueFrom?: string;
   dueTo?: string;
+  /** Only assets that can take new work (an archived customer's are left out). History keeps the default. */
+  newWorkOnly?: boolean;
   sort?: string;
   limit?: number;
   offset?: number;
@@ -1989,6 +1991,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         location_id: listOptions.locationId,
         due_from: listOptions.dueFrom,
         due_to: listOptions.dueTo,
+        new_work_only: listOptions.newWorkOnly ? true : undefined,
         sort: listOptions.sort
       });
       return {

@@ -1375,22 +1375,32 @@ async def test_customer_profile_create_and_update_keeps_requirements_per_locatio
         ]
 
         location_id = created["locations"][0]["id"]
+        rename_response = await client.patch(
+            f"/api/v1/customers/{created['id']}/locations/{location_id}",
+            json={"name": "Kooragang service workshop"},
+        )
+        add_response = await client.post(
+            f"/api/v1/customers/{created['id']}/locations",
+            json={
+                "name": "Port of Newcastle berth",
+                "ppe_requirements": ["Safety Glasses"],
+                "additional_requirements": ["Vehicle Site Approval"],
+            },
+        )
         update_response = await client.patch(
             f"/api/v1/customers/{created['id']}",
             headers={"If-Match": '"1"'},
-            json={
-                "name": "Summit Marine Services",
-                "locations": [
-                    {"id": location_id, "name": "Kooragang service workshop"},
-                    {
-                        "name": "Port of Newcastle berth",
-                        "ppe_requirements": ["Safety Glasses"],
-                        "additional_requirements": ["Vehicle Site Approval"],
-                    },
-                ],
-            },
+            json={"name": "Summit Marine Services"},
+        )
+        nested_response = await client.patch(
+            f"/api/v1/customers/{created['id']}",
+            json={"locations": [{"name": "Sneaked in"}]},
         )
 
+    assert rename_response.status_code == 200
+    assert add_response.status_code == 201
+    # Locations change through their own endpoints only: one path, one set of rules.
+    assert nested_response.status_code == 422
     assert update_response.status_code == 200
     updated = update_response.json()
     assert updated["name"] == "Summit Marine Services"
@@ -1698,26 +1708,18 @@ async def test_customer_location_returns_site_contact_details(
 
     async with api_client(session_factory, principal) as client:
         update_response = await client.patch(
-            f"/api/v1/customers/{seeded_session['vopak_id']}",
+            f"/api/v1/customers/{seeded_session['vopak_id']}/locations/"
+            f"{response.json()['id']}",
             json={
-                "locations": [
-                    {
-                        "id": response.json()["id"],
-                        "name": "Newcastle Depot",
-                        "site_contact_name": "Morgan Lee",
-                        "site_contact_mobile": "+61 401 222 333",
-                        "site_contact_email": "morgan.lee@example.test",
-                    }
-                ],
+                "name": "Newcastle Depot",
+                "site_contact_name": "Morgan Lee",
+                "site_contact_mobile": "+61 401 222 333",
+                "site_contact_email": "morgan.lee@example.test",
             },
         )
 
     assert update_response.status_code == 200
-    updated_location = next(
-        location
-        for location in update_response.json()["locations"]
-        if location["id"] == response.json()["id"]
-    )
+    updated_location = update_response.json()
     assert updated_location["site_contact_name"] == "Morgan Lee"
 
 

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -66,13 +66,20 @@ describe("Staff asset register", () => {
     render(<AssetsWorkspace canWrite onAssetRouteChange={vi.fn()} routeAssetId={null} />);
     await screen.findByText("Main Transfer Hose");
     const search = screen.getByLabelText("Search assets");
+    // The server does the searching; the stand-in answers like it does, on number and name.
+    client.listAssets.mockImplementation(async (options: { search?: string } = {}) => {
+      const needle = (options.search ?? "").toLowerCase();
+      return list([asset("1", "HMS-373CEBA88", "Main Transfer Hose"), asset("2", "HMS-222", LONG), asset("3", "HMS-333", null)]
+        .filter((item) => !needle || `${item.assetNumber} ${item.assetName ?? ""}`.toLowerCase().includes(needle)));
+    });
     await user.type(search, "hms-373ceba88");
+    await waitFor(() => expect(screen.queryByText(LONG)).toBeNull());
     expect(screen.getByText("Main Transfer Hose")).toBeInTheDocument();
-    expect(screen.queryByText(LONG)).toBeNull();
+    expect(client.listAssets).toHaveBeenLastCalledWith(expect.objectContaining({ search: "hms-373ceba88" }));
     await user.clear(search);
     await user.type(search, "chemical transfer");
+    await waitFor(() => expect(screen.queryByText("Main Transfer Hose")).toBeNull());
     expect(screen.getByText(LONG)).toBeInTheDocument();
-    expect(screen.queryByText("Main Transfer Hose")).toBeNull();
   });
 
   it("titles the detail with the name and lists the number among the facts", async () => {

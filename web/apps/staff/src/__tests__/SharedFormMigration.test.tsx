@@ -356,6 +356,7 @@ describe("Booking form", () => {
     assets: [{ id: "a1", assetNumber: "A-1", assetName: null }]
   } as never;
   beforeEach(() => {
+    lookups.customers = [{ id: "c1", code: "C1", name: "Vopak" }];
     vi.stubGlobal("fetch", vi.fn(async () => ({
       ok: true, status: 200, headers: new Headers(),
       json: async () => ({ items: [{ quote_id: "q1", starts_at: "2026-10-30T01:00:00Z", ends_at: "2026-10-30T02:00:00Z", expires_at: "2099-01-01T00:00:00Z" }] })
@@ -364,18 +365,17 @@ describe("Booking form", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("offers no booking until the choices are complete, and starts clean", () => {
-    render(<InspectionBookingForm assetOptions={[asset("1")]} onClose={vi.fn()} onSubmit={vi.fn()} open />);
+    render(<InspectionBookingForm onClose={vi.fn()} onSubmit={vi.fn()} open />);
     expect(screen.getByRole("button", { name: "Create booking" })).toBeDisabled();
     expect(unsaved()).toBeNull();
   });
 
-  it("a prefilled date is not an edit; choosing a location is, and Cancel then asks", async () => {
+  it("a prefilled date is not an edit; choosing a customer is, and Cancel then asks", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
-    const withLocation = { ...asset("1"), location: { id: "l1", name: "Dock", schedulingTimezone: "UTC" } } as unknown as AssetRecord;
-    render(<InspectionBookingForm assetOptions={[withLocation]} initialDate="2026-10-30" onClose={onClose} onSubmit={vi.fn()} open />);
+    render(<InspectionBookingForm initialDate="2026-10-30" onClose={onClose} onSubmit={vi.fn()} open />);
     expect(unsaved()).toBeNull();
-    await choose(user, screen.getByLabelText("Booking location"), "l1");
+    await choose(user, screen.getByRole("combobox", { name: "Booking customer" }), "c1");
     expect(unsaved()).not.toBeNull();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(dialog()).not.toBeNull();
@@ -385,10 +385,10 @@ describe("Booking form", () => {
 
   it("a reschedule starts clean and a typed reason is kept when the booking refreshes", async () => {
     const user = userEvent.setup();
-    const { rerender } = render(<InspectionBookingForm assetOptions={[]} onClose={vi.fn()} onReschedule={vi.fn()} onSubmit={vi.fn()} open rescheduleBooking={rescheduled} />);
+    const { rerender } = render(<InspectionBookingForm onClose={vi.fn()} onReschedule={vi.fn()} onSubmit={vi.fn()} open rescheduleBooking={rescheduled} />);
     expect(unsaved()).toBeNull();
     await user.type(screen.getByLabelText("Additional inspection information"), "Site closed");
-    rerender(<InspectionBookingForm assetOptions={[]} onClose={vi.fn()} onReschedule={vi.fn()} onSubmit={vi.fn()} open rescheduleBooking={{ ...(rescheduled as object) } as never} />);
+    rerender(<InspectionBookingForm onClose={vi.fn()} onReschedule={vi.fn()} onSubmit={vi.fn()} open rescheduleBooking={{ ...(rescheduled as object) } as never} />);
     expect((screen.getByLabelText("Additional inspection information") as HTMLTextAreaElement).value).toBe("Site closed");
     expect(unsaved()).not.toBeNull();
   });

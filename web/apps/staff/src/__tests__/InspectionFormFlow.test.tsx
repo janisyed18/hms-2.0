@@ -76,6 +76,15 @@ describe("new inspection (staff)", () => {
     expect(props.onSubmit).not.toHaveBeenCalled();
   });
 
+  it("asks the server only for assets that can take new work, so an archived customer's are not offered", async () => {
+    const user = userEvent.setup();
+    renderForm();
+    await choose(user, field("Inspection asset"), "asset-rated");
+    const asked = lookups.calls.filter((call) => call.method === "listAssets");
+    expect(asked.length).toBeGreaterThan(0);
+    asked.forEach((call) => expect(call.options).toEqual(expect.objectContaining({ newWorkOnly: true })));
+  });
+
   it("chooses no inspection type for the person and asks for one", async () => {
     const user = userEvent.setup();
     const props = renderForm();

@@ -11,9 +11,12 @@ import type {
 import { choose } from "../test/choose";
 
 const listInspectionAvailability = vi.hoisted(() => vi.fn());
+const listCustomers = vi.hoisted(() => vi.fn());
+const getCustomer = vi.hoisted(() => vi.fn());
+const listAssets = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/hmsClient", () => ({
-  createHmsClient: () => ({ listInspectionAvailability })
+  createHmsClient: () => ({ listInspectionAvailability, listCustomers, getCustomer, listAssets })
 }));
 
 function asset(id: string, number: string, customerId: string, customerName: string, locationId: string, locationName: string): AssetRecord {
@@ -25,11 +28,41 @@ function asset(id: string, number: string, customerId: string, customerName: str
   } as unknown as AssetRecord;
 }
 
+// 60 assets at Harris Park: more than one page of the lookup, so a later page has to be reachable.
 const assets = [
-  asset("a1", "ASSET-A1", "cust-1", "TH Industries", "loc-a", "Harris Park"),
-  asset("a2", "ASSET-A2", "cust-1", "TH Industries", "loc-a", "Harris Park"),
-  asset("b1", "ASSET-B1", "cust-2", "Other Co", "loc-b", "Preston")
+  ...Array.from({ length: 60 }, (_, index) => asset(`a${index + 1}`, `ASSET-A${index + 1}`, "cust-1", "TH Industries", "loc-a", "Harris Park")),
+  asset("b1", "ASSET-B1", "cust-1", "TH Industries", "loc-b", "Preston")
 ];
+const customers = [
+  { id: "cust-1", code: "cust-1", name: "TH Industries", locations: [{ id: "loc-a", name: "Harris Park", schedulingTimezone: "Australia/Perth" }, { id: "loc-b", name: "Preston", schedulingTimezone: "Australia/Perth" }] },
+  { id: "cust-2", code: "cust-2", name: "Other Co", locations: [{ id: "loc-d", name: "Elsewhere", schedulingTimezone: "Australia/Perth" }] }
+];
+
+/** Stands in for the server: it filters by customer, location and search, and pages by offset and limit. */
+function serveLookups() {
+  listCustomers.mockImplementation(async ({ search = "" }: { search?: string }) => ({
+    total: customers.length,
+    items: customers.filter((customer) => customer.name.toLowerCase().includes(search.toLowerCase()))
+  }));
+  getCustomer.mockImplementation(async (id: string) => customers.find((customer) => customer.id === id));
+  listAssets.mockImplementation(async (options: { customerId?: string; locationId?: string; search?: string; limit?: number; offset?: number }) => {
+    const matching = assets.filter((item) =>
+      (!options.customerId || item.customer.id === options.customerId)
+      && (!options.locationId || item.location?.id === options.locationId)
+      && (!options.search || item.assetNumber.toLowerCase().includes(options.search.toLowerCase())));
+    const offset = options.offset ?? 0;
+    return { total: matching.length, items: matching.slice(offset, offset + (options.limit ?? 50)) };
+  });
+}
+
+async function pickCustomer(user: ReturnType<typeof userEvent.setup>, id: string) {
+  await choose(user, screen.getByRole("combobox", { name: "Booking customer" }), id);
+}
+
+async function assetBoxes() {
+  await waitFor(() => expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0));
+  return screen.getAllByRole("checkbox").map((box) => (box as HTMLInputElement).labels?.[0]?.textContent);
+}
 
 function slots(prefix: string): InspectionAvailabilitySlot[] {
   return [
@@ -41,7 +74,6 @@ function renderForm(overrides: Partial<React.ComponentProps<typeof InspectionBoo
   const onSubmit = vi.fn().mockResolvedValue(undefined);
   const onReschedule = vi.fn().mockResolvedValue(undefined);
   const props = {
-    assetOptions: assets,
     open: true,
     onClose: vi.fn(),
     onSubmit,
@@ -55,40 +87,71 @@ function renderForm(overrides: Partial<React.ComponentProps<typeof InspectionBoo
 const submitButton = () => screen.getByRole("button", { name: /Create booking|Request reschedule/ });
 
 beforeEach(() => {
+  listCustomers.mockReset(); getCustomer.mockReset(); listAssets.mockReset();
+  serveLookups();
   listInspectionAvailability.mockReset();
   listInspectionAvailability.mockImplementation(async ({ locationId }: { locationId: string }) => slots(locationId));
 });
 
 describe("new booking", () => {
-  it("starts with no location, no assets and nothing submittable", () => {
+  it("starts with no customer, no location, no assets and nothing submittable", () => {
     renderForm();
 
     const location = screen.getByLabelText("Booking location");
-    expect(location).toHaveTextContent("Choose the location");
+    expect(location).toHaveTextContent("Choose a customer first");
+    expect(location).toBeDisabled();
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
     expect(screen.getByText("Choose a location to see its assets.")).toBeVisible();
     expect(submitButton()).toBeDisabled();
     expect(listInspectionAvailability).not.toHaveBeenCalled();
+    expect(listAssets).not.toHaveBeenCalled();
   });
 
-  it("lists only the chosen location's assets and selects none of them", async () => {
+  it("lists the chosen location's assets a page at a time and selects none of them", async () => {
     const user = userEvent.setup();
     renderForm();
 
+    await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
 
-    expect(screen.getAllByRole("checkbox").map((box) => (box as HTMLInputElement).labels?.[0]?.textContent))
-      .toEqual(["ASSET-A1", "ASSET-A2"]);
+    const labels = await assetBoxes();
+    expect(labels).toHaveLength(25);
+    expect(labels[0]).toBe("ASSET-A1");
     screen.getAllByRole("checkbox").forEach((box) => expect(box).not.toBeChecked());
+    expect(screen.getByText(/25 of 60 assets shown/)).toBeVisible();
+    // Only assets that can take new work are asked for.
+    expect(listAssets).toHaveBeenCalledWith(expect.objectContaining({ customerId: "cust-1", locationId: "loc-a", newWorkOnly: true, limit: 25, offset: 0 }));
     expect(submitButton()).toBeDisabled();
+  });
+
+  it("reaches an asset beyond the first page, by paging and by searching", async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    await pickCustomer(user, "cust-1");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-a");
+    await assetBoxes();
+    expect(screen.queryByRole("checkbox", { name: "ASSET-A60" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Show more assets" }));
+    await user.click(await screen.findByRole("button", { name: "Show more assets" }));
+    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A60" }));
+    expect(screen.getByRole("checkbox", { name: "ASSET-A60" })).toBeChecked();
+
+    // Searching moves the page on, and the ticked asset is still counted and still shown.
+    await user.type(screen.getByLabelText("Search assets"), "ASSET-A5");
+    await waitFor(() => expect(screen.getByText(/11 matching/)).toBeVisible());
+    expect(screen.getByRole("checkbox", { name: "ASSET-A60" })).toBeChecked();
+    expect(screen.getByText(/1 selected/)).toBeVisible();
   });
 
   it("books after the user explicitly picks location, asset, date and a quoted time", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
 
+    await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await user.click(screen.getByRole("checkbox", { name: "ASSET-A2" }));
+    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A2" }));
     expect(submitButton()).toBeDisabled();
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
     await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
@@ -116,8 +179,9 @@ describe("new booking", () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
 
+    await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await user.click(screen.getByRole("checkbox", { name: "ASSET-A1" }));
+    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A1" }));
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
     await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
     await choose(user, screen.getByLabelText("Available inspection time"), "loc-a-quote-1");
@@ -125,7 +189,7 @@ describe("new booking", () => {
 
     await choose(user, screen.getByLabelText("Booking location"), "loc-b");
 
-    expect(screen.getAllByRole("checkbox").map((box) => (box as HTMLInputElement).labels?.[0]?.textContent)).toEqual(["ASSET-B1"]);
+    expect(await assetBoxes()).toEqual(["ASSET-B1"]);
     expect(screen.getByRole("checkbox", { name: "ASSET-B1" })).not.toBeChecked();
     expect(screen.getByLabelText("Preferred inspection date")).toHaveValue("");
     expect(screen.queryByLabelText("Available inspection time")).not.toBeInTheDocument();
@@ -142,11 +206,12 @@ describe("new booking", () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
 
+    await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await user.click(screen.getByRole("checkbox", { name: "ASSET-A1" }));
+    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A1" }));
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
     await choose(user, screen.getByLabelText("Booking location"), "loc-b");
-    await user.click(screen.getByRole("checkbox", { name: "ASSET-B1" }));
+    await user.click(await screen.findByRole("checkbox", { name: "ASSET-B1" }));
     await act(async () => resolveSlow(slots("loc-a-stale")));
 
     expect(screen.queryByRole("option", { name: /loc-a-stale/ })).not.toBeInTheDocument();
@@ -159,8 +224,9 @@ describe("new booking", () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();
 
+    await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await user.click(screen.getByRole("checkbox", { name: "ASSET-A1" }));
+    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A1" }));
     const date = screen.getByLabelText("Preferred inspection date");
     await user.type(date, "2030-01-07");
     await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
@@ -173,13 +239,14 @@ describe("new booking", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("keeps the user's selections when the asset list is refreshed while the form is open", async () => {
+  it("keeps the user's selections when the form re-renders while open", async () => {
     const user = userEvent.setup();
     const { rerender, props } = renderForm();
 
+    await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await user.click(screen.getByRole("checkbox", { name: "ASSET-A2" }));
-    rerender(<InspectionBookingForm {...props} assetOptions={[...assets]} />);
+    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A2" }));
+    rerender(<InspectionBookingForm {...props} />);
 
     expect(screen.getByLabelText("Booking location")).toHaveTextContent("Harris Park");
     expect(screen.getByRole("checkbox", { name: "ASSET-A2" })).toBeChecked();

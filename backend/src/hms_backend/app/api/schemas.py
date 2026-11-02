@@ -242,7 +242,6 @@ class LocationSchedulingValidation(BaseModel):
 
 
 class CustomerLocationWrite(LocationSchedulingValidation):
-    id: str | None = None
     name: str = Field(min_length=1, max_length=160)
     address_1: str | None = None
     address_2: str | None = None
@@ -272,12 +271,15 @@ class CustomerCreate(BaseModel):
 
 
 class CustomerUpdate(BaseModel):
+    """Customer-level fields only; locations have their own endpoints and rules."""
+
+    model_config = ConfigDict(extra="forbid")
+
     code: str | None = None
     name: str | None = None
     notes: str | None = None
     retest_enabled: bool | None = None
     default_retest_months: int | None = None
-    locations: list[CustomerLocationWrite] | None = None
 
 
 class CustomerLocationCreate(LocationSchedulingValidation):

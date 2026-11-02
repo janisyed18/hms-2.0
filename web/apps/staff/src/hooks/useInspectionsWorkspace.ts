@@ -19,7 +19,8 @@ export function useInspectionsWorkspace(
 ) {
   const [inspections, setInspections] = useState<InspectionRecord[]>([]);
   const [serverTotal, setServerTotal] = useState<number | undefined>(undefined);
-  const [assets, setAssets] = useState<AssetRecord[]>([]);
+  // The pressure rating of the open inspection's asset, read from that one asset rather than a loaded list.
+  const [ratings, setRatings] = useState<Record<string, AssetRecord["pressureRating"] | null>>({});
   const [bookings, setBookings] = useState<InspectionBookingRecord[]>([]);
   const [inspectors, setInspectors] = useState<AdminUserRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -41,16 +42,15 @@ export function useInspectionsWorkspace(
     setIsLoading(true); setError(null);
     void Promise.all([
       client.listInspections({ sort: "-created_at" }),
-      client.listAllAssets({ sort: "asset_number" }),
       client.listInspectionBookings()
     ])
-      .then(async ([inspectionResult, assetResult, bookingResult]) => {
+      .then(async ([inspectionResult, bookingResult]) => {
         const userResult = canApproveBookings
           && bookingResult.items.some((booking) => booking.status === "PENDING_APPROVAL" || booking.changeRequests.some((change) => change.status === "PENDING_ADMIN_APPROVAL"))
             ? await client.listAdminUsers({ sort: "email", limit: 100 })
             : { items: [] as AdminUserRecord[] };
         if (!active) return;
-        setInspections(inspectionResult.items); setServerTotal(inspectionResult.total); setAssets(assetResult.items); setBookings(bookingResult.items);
+        setInspections(inspectionResult.items); setServerTotal(inspectionResult.total); setBookings(bookingResult.items);
         setInspectors(userResult.items.filter((user) => user.role === "INSPECTOR" && user.accountStatus === "ACTIVE"));
       })
       .catch((reason: unknown) => { if (active) setError(friendlyApiError(reason, { fallback: "Inspection records could not be loaded." }).message); })
@@ -69,6 +69,18 @@ export function useInspectionsWorkspace(
   }, [inspections, query, resultFilter, statusFilter, typeFilter]);
   const resultOptions = useMemo(() => Array.from(new Set(inspections.map((inspection) => inspection.result ?? "PENDING"))).sort(), [inspections]);
   const selectedInspection = useMemo(() => inspections.find((inspection) => inspection.id === selectedId) ?? null, [inspections, selectedId]);
+  const selectedAssetId = selectedInspection?.assetId ?? null;
+  useEffect(() => {
+    if (!selectedAssetId || selectedAssetId in ratings) return;
+    let active = true;
+    createHmsClient().getAsset(selectedAssetId)
+      .then((asset) => asset.pressureRating ?? null)
+      .catch(() => null)
+      .then((rating) => { if (active) setRatings((current) => ({ ...current, [selectedAssetId]: rating })); });
+    return () => { active = false; };
+  }, [selectedAssetId, ratings]);
+  const ratingReady = selectedAssetId === null || selectedAssetId in ratings;
+  const ratingFor = useCallback((assetId: string) => ratings[assetId] ?? null, [ratings]);
 
   // Each direction reacts only to its own side changing, so the URL and the screen cannot chase each other.
   const live = useRef({ routeInspectionId, selectedId, onInspectionRouteChange, notify });
@@ -270,5 +282,5 @@ export function useInspectionsWorkspace(
   }
   function clearInspectionFilters() { setTypeFilter("ALL"); setResultFilter("ALL"); }
   const activeFilterCount = [typeFilter !== "ALL", resultFilter !== "ALL"].filter(Boolean).length;
-  return { serverTotal, activeFilterCount, approveInspection, beginInspectionRework, rejectInspection, startInspection, approveInspectionBooking, approveInspectionBookingReschedule, assetOptions: assets, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
+  return { serverTotal, activeFilterCount, approveInspection, beginInspectionRework, rejectInspection, startInspection, approveInspectionBooking, approveInspectionBookingReschedule, ratingFor, ratingReady, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
 }

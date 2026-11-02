@@ -693,7 +693,18 @@ describe("actions go through the existing validated endpoints", () => {
     await ready();
     await user.click(screen.getByRole("button", { name: "Book inspection" }));
     const form = (await screen.findByRole("heading", { name: "Book inspection", level: 2 })).closest("form") as HTMLElement;
-    expect(within(form).getByLabelText("Preferred inspection date")).toHaveValue(MONDAY);
+    // The form is seeded in an effect right after it opens, so wait for the settled value rather than the first paint.
+    await waitFor(() => expect(within(form).getByLabelText("Preferred inspection date")).toHaveValue(MONDAY));
+  });
+
+  it("opens the booking form on the day navigated to, not the day first shown", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Next day" }));
+    await user.click(screen.getByRole("button", { name: "Book inspection" }));
+    const form = (await screen.findByRole("heading", { name: "Book inspection", level: 2 })).closest("form") as HTMLElement;
+    await waitFor(() => expect(within(form).getByLabelText("Preferred inspection date")).toHaveValue("2027-03-02"));
   });
 
   it("explains a conflict, refreshes the booking and keeps the user where they were", async () => {

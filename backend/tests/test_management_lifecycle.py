@@ -562,3 +562,163 @@ async def test_customer_summary_counts_the_whole_system_not_a_page(
         "locations": 14,
         "assets": 0,
     }
+
+
+# --- archived customers get no new work, disabled products no new assets -----
+
+
+async def _asset_for(
+    session_factory: async_sessionmaker[AsyncSession],
+    customer_id: str,
+    location_id: str,
+    product: Product,
+    number: str,
+) -> str:
+    async with session_factory() as session:
+        asset = Asset(
+            customer_id=customer_id,
+            location_id=location_id,
+            product_id=product.id,
+            asset_number=number,
+            customer_serial_no=f"SN-{number}",
+            tag=f"HMS-{number}",
+            lifecycle_status=AssetLifecycleStatus.IN_SERVICE.value,
+        )
+        session.add(asset)
+        await session.commit()
+        return asset.id
+
+
+async def _product(
+    session_factory: async_sessionmaker[AsyncSession], code: str, *, enabled: bool
+) -> Product:
+    async with session_factory() as session:
+        product = Product(category="Hose", code=code, name=code, enabled=enabled)
+        session.add(product)
+        await session.commit()
+        return product
+
+
+@pytest.mark.asyncio
+async def test_archived_customer_keeps_history_but_gets_no_new_inspection(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(
+        session_factory, "Alpha"
+    )
+    product = await _product(session_factory, "P1", enabled=True)
+    asset_id = await _asset_for(
+        session_factory, customer_id, location_id, product, "A-1"
+    )
+    body = {"inspection_type": "SERVICE"}
+    async with client_for(session_factory, SUPER) as client:
+        first = await client.post(f"/api/v1/assets/{asset_id}/inspections", json=body)
+        await client.post(f"/api/v1/customers/{customer_id}/archive")
+        blocked = await client.post(f"/api/v1/assets/{asset_id}/inspections", json=body)
+        everything = await client.get("/api/v1/assets")
+        for_new_work = await client.get("/api/v1/assets?new_work_only=true")
+        detail = await client.get(f"/api/v1/assets/{asset_id}")
+        history = await client.get("/api/v1/inspections")
+        certificates = await client.get("/api/v1/certificates")
+        await client.post(f"/api/v1/customers/{customer_id}/restore")
+        restored = await client.get("/api/v1/assets?new_work_only=true")
+        again = await client.post(f"/api/v1/assets/{asset_id}/inspections", json=body)
+
+    assert first.status_code == 201
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == (
+        "This customer is archived. Restore it before adding new work."
+    )
+    # The register, detail, inspections and certificates keep showing history.
+    assert [item["id"] for item in everything.json()["items"]] == [asset_id]
+    assert for_new_work.json()["items"] == []
+    assert for_new_work.json()["total"] == 0
+    assert detail.status_code == 200
+    assert history.status_code == 200 and history.json()["total"] == 1
+    assert certificates.status_code == 200
+    assert [item["id"] for item in restored.json()["items"]] == [asset_id]
+    assert again.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_archived_customer_cannot_receive_a_location_by_any_route(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(
+        session_factory, "Alpha"
+    )
+    async with client_for(session_factory, SUPER) as client:
+        await client.post(f"/api/v1/customers/{customer_id}/archive")
+        dedicated = await client.post(
+            f"/api/v1/customers/{customer_id}/locations", json={"name": "Second"}
+        )
+        nested = await client.patch(
+            f"/api/v1/customers/{customer_id}",
+            json={"locations": [{"name": "Second"}]},
+        )
+
+    assert dedicated.status_code == 409
+    # The old nested path is gone, so it cannot carry different rules.
+    assert nested.status_code == 422
+    async with session_factory() as session:
+        names = (
+            await session.scalars(
+                select(CustomerLocation.name).where(
+                    CustomerLocation.customer_id == customer_id
+                )
+            )
+        ).all()
+    assert list(names) == ["Alpha"]
+    assert location_id
+
+
+@pytest.mark.asyncio
+async def test_disabled_product_cannot_be_assigned_but_existing_assets_still_work(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(
+        session_factory, "Alpha"
+    )
+    old = await _product(session_factory, "OLD", enabled=True)
+    other = await _product(session_factory, "OTHER", enabled=True)
+    on_old = await _asset_for(session_factory, customer_id, location_id, old, "A-1")
+    on_other = await _asset_for(
+        session_factory, customer_id, location_id, other, "A-2"
+    )
+    new_asset = {
+        "customer_id": customer_id,
+        "location_id": location_id,
+        "product_id": old.id,
+        "asset_name": "Hose",
+        "customer_serial_no": "SN-NEW",
+    }
+    async with client_for(session_factory, ADMIN) as client:
+        disable = await client.patch(
+            f"/api/v1/products/{old.id}", json={"enabled": False}
+        )
+        create = await client.post("/api/v1/assets", json=new_asset)
+        reassign = await client.patch(
+            f"/api/v1/assets/{on_other}", json={"product_id": old.id}
+        )
+        unrelated = await client.patch(
+            f"/api/v1/assets/{on_old}", json={"notes": "Checked on site"}
+        )
+        still_there = await client.get(f"/api/v1/assets/{on_old}")
+        enable = await client.patch(
+            f"/api/v1/products/{old.id}", json={"enabled": True}
+        )
+        create_again = await client.post("/api/v1/assets", json=new_asset)
+        reassign_again = await client.patch(
+            f"/api/v1/assets/{on_other}", json={"product_id": old.id}
+        )
+
+    assert disable.status_code == 200
+    assert create.status_code == 409
+    assert "disabled" in create.json()["detail"]
+    assert reassign.status_code == 409
+    assert unrelated.status_code == 200
+    assert still_there.status_code == 200
+    assert still_there.json()["product"]["id"] == old.id
+    assert enable.status_code == 200
+    assert create_again.status_code == 201
+    assert reassign_again.status_code == 200

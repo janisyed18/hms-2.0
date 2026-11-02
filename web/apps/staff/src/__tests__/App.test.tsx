@@ -1158,7 +1158,8 @@ describe("App", () => {
     expect(await screen.findByRole("row", { name: /API-777/i })).toBeVisible();
     const assetSummary = screen.getByRole("region", { name: "Asset register summary" });
     expect(assetSummary).toHaveTextContent("Total assets1");
-    expect(assetSummary).toHaveTextContent("Customers with assets1");
+    // Every figure is a whole-register total from the server, not a count of the rows on screen.
+    expect(assetSummary).toHaveTextContent("Overdue1");
 
     await user.click(screen.getByRole("button", { name: "Retest Schedule" }));
     expect(await screen.findByRole("row", { name: /API-777/i })).toHaveTextContent(

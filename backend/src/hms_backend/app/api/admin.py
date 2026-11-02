@@ -600,17 +600,23 @@ async def delete_user(
             detail="You cannot delete your own account.",
         )
     if user.role == Role.SUPER_ADMIN.value:
-        other_active = await session.scalar(
-            select(func.count())
-            .select_from(User)
-            .where(
-                User.role == Role.SUPER_ADMIN.value,
-                User.deleted_at.is_(None),
-                User.account_status == AccountStatus.ACTIVE.value,
-                User.id != user.id,
+        # Lock every active Super Admin row, in id order, before deciding. A concurrent
+        # delete of another Super Admin waits here, and once it commits this query no
+        # longer returns the row it removed, so two requests can never both see
+        # "another one is left".
+        locked = (
+            await session.scalars(
+                select(User.id)
+                .where(
+                    User.role == Role.SUPER_ADMIN.value,
+                    User.deleted_at.is_(None),
+                    User.account_status == AccountStatus.ACTIVE.value,
+                )
+                .order_by(User.id)
+                .with_for_update()
             )
-        )
-        if not other_active:
+        ).all()
+        if not any(user_id != user.id for user_id in locked):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="The last active Super Admin cannot be deleted.",

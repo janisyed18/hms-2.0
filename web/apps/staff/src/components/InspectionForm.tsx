@@ -54,7 +54,7 @@ export function InspectionForm({
   const { clearError, errors } = submission;
   // Assets are searched on the server, so one beyond the first page can still be inspected.
   const assetSearch = useRemoteOptions(
-    (text) => createHmsClient().listAssets({ search: text, sort: "asset_number", limit: 25 }).then((result) => result.items),
+    (text) => createHmsClient().listAssets({ search: text, newWorkOnly: true, sort: "asset_number", limit: 25 }).then((result) => result.items),
     open
   );
   const [chosenAsset, setChosenAsset] = useState<{ value: string; label: string; description?: string } | null>(null);
