@@ -175,6 +175,9 @@ class BrowserAuthService:
         user.mfa_secret_ciphertext = encrypted.ciphertext
         user.mfa_secret_key_version = encrypted.key_version
         await session.flush()
+        await self._audit(
+            session, user, email=user.email, action="auth.mfa.enrollment.started"
+        )
         uri = mfa.build_totp_uri(
             secret, email=user.email, issuer=self._settings.auth_totp_issuer
         )
@@ -321,6 +324,13 @@ class BrowserAuthService:
         )
         if record is not None and record.revoked_at is None:
             record.revoked_at = self._now()
+            user = await session.get(User, record.user_id)
+            await self._audit(
+                session,
+                user,
+                email=user.email if user else None,
+                action="auth.logout",
+            )
 
     async def revoke_all_sessions(self, session: AsyncSession, user_id: str) -> None:
         await session.execute(

@@ -11,11 +11,29 @@ Use the attached HMS 2.0 Technical Design Document, Functional Specification, No
 - Use synthetic and deliberately dirty development data until a controlled migration sample is approved.
 - Never hard-delete customers, assets, inspections, or certificates.
 - Never store or display passwords.
-- Every mutation must produce an `AuditEvent` and `SyncChange`.
+- Every mutation must produce an `AuditEvent` and `SyncChange`, as defined in "Audit and sync" below.
 - Frontend apps use React + TypeScript. Staff/admin/customer web use React + Vite.
 - Mobile field app is Ionic React + Capacitor, not Swift/Kotlin native.
 - Use package-backed UI primitives and icon libraries where practical; avoid ad-hoc
   hand-drawn UI that makes the app look prototype-generated.
+
+## Audit and sync
+
+- **AuditEvent**: every mutating API route writes one, through `append_audit_event` or the
+  `record_create` / `record_update` / `soft_delete` helpers. Consent and security-state
+  changes are included: notification preferences, unsubscribe, phone verification, MFA
+  enrolment, sign-in/out and password changes.
+- **SyncChange**: required for the offline sync catalogue (`SYNC_MODELS` in
+  `api/sync_bootstrap.py`), which is what devices download. Server-only data (identity,
+  devices, notification state, jobs) is not in the catalogue and does not get a
+  `SyncChange` of its own; do not add meaningless sync records to satisfy a test. The
+  helpers above write both, so using them is always safe.
+- **Exemptions from AuditEvent** are limited to these routes and nothing else without
+  changing this section and the cap in `backend/tests/test_mutation_audit_coverage.py`:
+  `/api/v1/notifications/me/read-all` and `/api/v1/notifications/{notification_id}/read`
+  (per-user read flags) and `/api/v1/notifications/webhooks/{provider}` (provider delivery
+  receipts).
+- `backend/tests/test_mutation_audit_coverage.py` enforces this for every mutating route.
 
 ## Build Order
 

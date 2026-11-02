@@ -21,6 +21,7 @@ from hms_backend.app.api.schemas import (
     CertificateBatchJobListResponse,
     CertificateBatchJobRead,
 )
+from hms_backend.app.core.audit import append_audit_event
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.rbac import (
     Permission,
@@ -129,6 +130,16 @@ async def bulk_generate_certificates(
         results=[],
     )
     session.add(job)
+    await session.flush()
+    await append_audit_event(
+        session,
+        actor_id=principal.user_id,
+        action="certificate.batch.requested",
+        entity="certificate_batch_job",
+        entity_id=job.id,
+        before=None,
+        after={"total": len(inspection_ids), "inspection_ids": inspection_ids},
+    )
     await session.commit()
 
     # Dispatch off the event loop so eager execution (tests / brokerless local)

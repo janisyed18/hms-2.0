@@ -18,6 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from hms_backend.app.core.config import Settings
 from hms_backend.app.core.config import settings as default_settings
+from hms_backend.app.core.unsubscribe_tokens import (
+    UnsubscribeClaim,
+    create_unsubscribe_token,
+)
 from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.certificates.models import NON_CERTIFIABLE_ASSET_STATUSES
 from hms_backend.app.modules.notifications.channels.base import (
@@ -38,6 +42,7 @@ from hms_backend.app.modules.notifications.enums import (
     NotificationCategory,
     NotificationChannel,
     NotificationStatus,
+    NotificationTier,
 )
 from hms_backend.app.modules.notifications.idempotency import (
     notification_idempotency_key,
@@ -394,13 +399,24 @@ def _unsubscribe_url(
     settings: Settings,
     recipient: ResolvedRecipient,
     category: NotificationCategory,
-) -> str:
-    base = settings.public_base_url.rstrip("/")
-    return (
-        f"{base}/api/v1/notifications/unsubscribe"
-        f"?party_type={recipient.party_type}&party_id={recipient.recipient_id}"
-        f"&category={category.value}"
+) -> str | None:
+    return unsubscribe_url_for(
+        settings, recipient.party_type, recipient.recipient_id, category.value
     )
+
+
+def unsubscribe_url_for(
+    settings: Settings, party_type: str, party_id: str, category: str
+) -> str | None:
+    """A signed, expiring unsubscribe link, or None when no signing key is set."""
+    token = create_unsubscribe_token(
+        UnsubscribeClaim(party_type=party_type, party_id=party_id, category=category),
+        settings,
+    )
+    if token is None:
+        return None
+    base = settings.public_base_url.rstrip("/")
+    return f"{base}/api/v1/notifications/unsubscribe?token={token}"
 
 
 # --- Dispatcher: claim, send, record -----------------------------------------------
@@ -493,6 +509,16 @@ async def _dispatch_one(
             subject=n.subject,
             body_text=n.body,
             body_html=n.body_html,
+            # Minted at send time, so a retried message never carries a link that has
+            # already aged out. Only informational email may be unsubscribed from.
+            unsubscribe_url=(
+                unsubscribe_url_for(
+                    settings, n.recipient_type, n.recipient_id, n.category
+                )
+                if channel is NotificationChannel.EMAIL
+                and n.tier == NotificationTier.INFORMATIONAL.value
+                else None
+            ),
         )
         address_missing = n.recipient_address is None
     adapter = adapters.get(channel)

@@ -18,6 +18,7 @@ from hms_backend.app.core.config import settings
 from hms_backend.app.core.passwords import hash_password, verify_password
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
+from hms_backend.app.models.foundation import AuditEvent
 from hms_backend.app.modules.identity.models import User
 
 _SECRET = "test-hmac-secret"
@@ -100,6 +101,11 @@ async def test_change_own_password(
         assert user is not None and user.password_hash is not None
         assert verify_password(user.password_hash, "brand-new-secret-9")
         assert not verify_password(user.password_hash, _PASSWORD)
+        event = (await session.scalars(select(AuditEvent))).one()
+        assert event.action == "auth.password.changed"
+        assert event.entity_id == users["member"]
+        # The new password is never written to the ledger.
+        assert "brand-new-secret-9" not in str(event.after)
 
 
 @pytest.mark.asyncio
@@ -124,6 +130,11 @@ async def test_admin_set_password(session_factory: SessionFactory) -> None:
         assert user is not None
         assert user.password_hash is not None
         assert verify_password(user.password_hash, "admin-set-secret-1")
+        event = (await session.scalars(select(AuditEvent))).one()
+        assert event.action == "auth.password.admin_set"
+        assert event.entity_id == member_id
+        assert event.actor_id == "a2"
+        assert "admin-set-secret-1" not in str(event.after)
 
 
 @pytest.mark.asyncio

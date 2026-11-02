@@ -11,6 +11,7 @@ from hms_backend.app.core.config import Settings
 from hms_backend.app.modules.notifications.channels.base import (
     DeliveryResult,
     OutgoingMessage,
+    list_unsubscribe_headers,
 )
 from hms_backend.app.modules.notifications.enums import NotificationChannel
 
@@ -27,6 +28,8 @@ def build_email_message(settings: Settings, message: OutgoingMessage) -> EmailMe
     email["Subject"] = message.subject or settings.notification_sender_name
     if settings.notification_ses_configuration_set:
         email["X-SES-CONFIGURATION-SET"] = settings.notification_ses_configuration_set
+    for name, value in list_unsubscribe_headers(message.unsubscribe_url).items():
+        email[name] = value
     email.set_content(message.body_text)
     if message.body_html:
         email.add_alternative(message.body_html, subtype="html")
