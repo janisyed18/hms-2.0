@@ -2486,7 +2486,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       const response = await request<ApiReferenceStandardList>(
         referenceCatalogPath(category),
         {},
-        { include_disabled: includeDisabled }
+        { include_disabled: includeDisabled || undefined }
       );
       return {
         total: response.data.items.length,

@@ -55,7 +55,11 @@ export function Combobox({
   const optionPrefix = `${generated}-opt`;
   const input = useRef<HTMLInputElement>(null);
   const shell = useRef<HTMLDivElement>(null);
-  const selected = options.find((option) => option.value === value) ?? (selectedOption?.value === value ? selectedOption : null);
+  // A server search moves on after a pick, so the chosen option is remembered to keep its label on show.
+  const [picked, setPicked] = useState<ChoiceOption | null>(null);
+  const selected = options.find((option) => option.value === value)
+    ?? (picked?.value === value ? picked : null)
+    ?? (selectedOption?.value === value ? selectedOption : null);
   const [open, setOpen] = useState(false);
   const [text, setText] = useState<string | null>(null); // null: showing the chosen label
   const [active, setActive] = useState(0);
@@ -74,6 +78,7 @@ export function Combobox({
   }
 
   function pick(option: ChoiceOption) {
+    setPicked(option);
     close();
     if (option.value !== value) onChange(option.value);
   }

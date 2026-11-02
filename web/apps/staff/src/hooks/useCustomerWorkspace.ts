@@ -48,19 +48,24 @@ export function useCustomerWorkspace(options: { active?: boolean; onSelectedChan
     return () => clearTimeout(timer);
   }, [query]);
 
+  // The search, filter and page the list on screen answers. A failed re-read of that same list keeps it;
+  // a failure for anything else must not leave the old list standing as if it answered the new question.
+  const shownKey = useRef<string | null>(null);
   useEffect(() => {
     let current = true;
     setLoading(true);
     setError(null);
     const client = createHmsClient();
+    const key = JSON.stringify([debouncedQuery, lifecycle, page, pageSize]);
     void client.listCustomers({ search: debouncedQuery, lifecycle, limit: pageSize, offset: (page - 1) * pageSize, sort: "name" })
       .then((result) => {
         if (!current) return;
+        shownKey.current = key;
         setPageItems(result.items);
         setTotalCount(result.total);
       })
       .catch(() => {
-        if (current) setError("Unable to load customer records from the HMS API.");
+        if (current && shownKey.current !== key) setError("Unable to load customer records from the HMS API.");
       })
       .finally(() => {
         if (current) setLoading(false);
