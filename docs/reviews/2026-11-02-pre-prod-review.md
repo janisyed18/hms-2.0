@@ -11,12 +11,14 @@ Method: bandit, ruff, `npm audit --omit=dev` (staff, portal, inspector), full ba
 - Dockerfile runs as non-root; CI actions are pinned by SHA.
 
 ## Status
-Items 3 (unsigned unsubscribe) and 9 (audit coverage guard) are addressed in the follow-up PR, which also fixed two real audit gaps the guard found: legacy `POST /auth/password`, `POST /auth/users/{id}/password`, and `POST /certificates/bulk-generate` wrote no audit event. Everything else below is open.
+- **#3 unsubscribe: addressed.** Links carry an HMAC-signed token that includes its expiry (default 90 days, `notification_unsubscribe_token_ttl_seconds`); GET only confirms, POST changes; RFC 8058 `List-Unsubscribe` / `List-Unsubscribe-Post` headers are sent for informational email through the message model, SMTP and SES; the change is audited. RFC 8058 needs an HTTPS URL, so a plain-http local `public_base_url` sends no headers.
+- **#9 audit/sync guard: addressed.** `test_mutation_audit_coverage.py` checks AuditEvent and SyncChange separately for all 73 mutating routes against the exception model now written in AGENTS.md ("Audit and sync"). The full per-route matrix is in [2026-11-02-audit-sync-matrix.md](2026-11-02-audit-sync-matrix.md). It proves the writers are reachable, not that each event's content is right.
+- Everything else below is open.
 
 ## Blockers for prod
 1. **No prod or staging infrastructure exists.** `infra/terraform/envs/prod` and `staging` are empty; only `dev` is defined. Prod needs its own state, network, RDS, secrets and domain before launch.
 2. **Dev RDS settings are not prod-safe if copied:** `skip_final_snapshot = true`, `enable_deletion_protection` defaults to false, no `multi_az`, 7-day backup retention, no PITR/restore drill documented. Make these prod variables explicit and default-safe.
-3. **Unauthenticated, unsigned unsubscribe** (`GET /notifications/unsubscribe?party_type&party_id&category`): anyone holding or guessing a party id can opt that person out of non-essential email. It is also a state-changing GET, so mail scanners that prefetch links can trigger it. Use a signed, expiring token (HMAC over party/category) and POST for the change (RFC 8058 one-click uses POST).
+3. **Unauthenticated, unsigned unsubscribe (fixed in #111)** (`GET /notifications/unsubscribe?party_type&party_id&category`): anyone holding or guessing a party id can opt that person out of non-essential email. It is also a state-changing GET, so mail scanners that prefetch links can trigger it. Use a signed, expiring token (HMAC over party/category) and POST for the change (RFC 8058 one-click uses POST).
 
 ## Should fix before or soon after launch
 4. **Generic webhook path** (`/notifications/webhooks/{provider}` for non-Twilio/SNS) relies on a shared secret header; it is open in local/test only, which is correct. Confirm `notification_webhook_secret` is set in every deployed env, or remove the generic provider.

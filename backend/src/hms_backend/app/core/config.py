@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     # Shared secret used only by non-provider-native integrations. Empty = open
     # in local/test only; Twilio and SNS use their signed request contracts.
     notification_webhook_secret: str = ""
+    # How long an unsubscribe link stays valid after it is issued. Recipients open
+    # informational email days or weeks later, so this is long (90 days); a shorter
+    # value only makes old emails fail with "link not valid". The expiry is inside
+    # the signed token, so changing this never revives or invalidates a token's own
+    # stated expiry.
+    notification_unsubscribe_token_ttl_seconds: int = Field(
+        default=90 * 24 * 60 * 60, ge=60
+    )
 
     # Email — only used in "live" mode.
     notification_email_provider: Literal["smtp", "aws_ses"] = "smtp"

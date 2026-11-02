@@ -12,6 +12,7 @@ from hms_backend.app.core.config import Settings
 from hms_backend.app.modules.notifications.channels.base import (
     DeliveryResult,
     OutgoingMessage,
+    list_unsubscribe_headers,
 )
 from hms_backend.app.modules.notifications.enums import NotificationChannel
 
@@ -61,6 +62,12 @@ class AwsSesEmailAdapter:
                 }
             },
         }
+        headers = list_unsubscribe_headers(message.unsubscribe_url)
+        if headers:
+            # SES signs these with the message's DKIM, as RFC 8058 requires.
+            params["Content"]["Simple"]["Headers"] = [
+                {"Name": name, "Value": value} for name, value in headers.items()
+            ]
         if s.notification_ses_configuration_set:
             params["ConfigurationSetName"] = s.notification_ses_configuration_set
 

@@ -13,7 +13,6 @@ import html
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
-from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
@@ -32,6 +31,7 @@ from hms_backend.app.api.schemas import (
     PhoneVerificationConfirm,
     PhoneVerificationRequest,
 )
+from hms_backend.app.core.audit import append_audit_event
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.rbac import (
     Permission,
@@ -39,6 +39,7 @@ from hms_backend.app.core.rbac import (
     is_customer_scoped,
     require_permission,
 )
+from hms_backend.app.core.repository import record_update
 from hms_backend.app.core.unsubscribe_tokens import (
     UnsubscribeClaim,
     read_unsubscribe_token,
@@ -177,7 +178,14 @@ async def update_preference(
     channel = _valid_channel(payload.channel)
     user = await _current_user(session, principal)
     pref = await _upsert_pref(
-        session, _USER, user.id, category, channel, payload.opted_in
+        session,
+        _USER,
+        user.id,
+        category,
+        channel,
+        payload.opted_in,
+        actor_id=principal.user_id,
+        action="notification.preference.updated",
     )
     await session.commit()
     return NotificationPreferenceItem(
@@ -192,7 +200,15 @@ async def _upsert_pref(
     category: str,
     channel: str,
     opted_in: bool,
+    *,
+    actor_id: str,
+    action: str,
 ) -> NotificationPreference:
+    """Set one preference and record who changed it on the audit ledger.
+
+    Preferences are consent. NotificationPreference is not part of the offline sync
+    catalogue, so this writes an AuditEvent and no SyncChange.
+    """
     pref = await session.scalar(
         select(NotificationPreference).where(
             NotificationPreference.party_type == party_type,
@@ -201,6 +217,7 @@ async def _upsert_pref(
             NotificationPreference.channel == channel,
         )
     )
+    before: dict[str, object] | None = None
     if pref is None:
         pref = NotificationPreference(
             party_type=party_type,
@@ -210,8 +227,25 @@ async def _upsert_pref(
             opted_in=opted_in,
         )
         session.add(pref)
+        await session.flush()
     else:
+        before = {"opted_in": pref.opted_in}
         pref.opted_in = opted_in
+    await append_audit_event(
+        session,
+        actor_id=actor_id,
+        action=action,
+        entity="NotificationPreference",
+        entity_id=pref.id,
+        before=before,
+        after={
+            "party_type": party_type,
+            "party_id": party_id,
+            "category": category,
+            "channel": channel,
+            "opted_in": opted_in,
+        },
+    )
     return pref
 
 
@@ -239,27 +273,21 @@ async def unsubscribe_confirmation(token: str) -> HTMLResponse:
         f"<h1>Unsubscribe from {html.escape(claim.category)} emails?</h1>"
         "<p>Essential safety and account messages are still delivered.</p>"
         "<form method=\"post\" action=\"\">"
-        f"<input type=\"hidden\" name=\"token\" value=\"{html.escape(token)}\">"
+        "<input type=\"hidden\" name=\"List-Unsubscribe\" value=\"One-Click\">"
         "<button type=\"submit\">Unsubscribe</button></form></body></html>"
     )
     return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/notifications/unsubscribe", response_model=MessageResponse)
-async def unsubscribe(
-    request: Request,
-    session: SessionDep,
-    token: str | None = None,
-) -> MessageResponse:
-    """One-click unsubscribe from a non-essential category (N-10, RFC 8058).
+async def unsubscribe(session: SessionDep, token: str) -> MessageResponse:
+    """Unsubscribe from one non-essential category (N-10), signed-token only.
 
-    The token is signed, so only a recipient of that email can use it. It may arrive in
-    the query string (mail-client one-click POST) or in the confirmation form body.
+    Accepts the RFC 8058 one-click POST (body ``List-Unsubscribe=One-Click``) and the
+    confirmation page's form post. In both, who is unsubscribed and from what comes only
+    from the signed, unexpired token in the URL; the body is never read.
     """
-    if token is None:
-        form = parse_qs((await request.body()).decode("utf-8", "replace"))
-        token = next(iter(form.get("token", [])), None)
-    claim = _unsubscribe_claim(token or "")
+    claim = _unsubscribe_claim(token)
     await _upsert_pref(
         session,
         claim.party_type,
@@ -267,6 +295,8 @@ async def unsubscribe(
         claim.category,
         NotificationChannel.EMAIL.value,
         opted_in=False,
+        actor_id=f"unsubscribe:{claim.party_type}:{claim.party_id}",
+        action="notification.unsubscribed",
     )
     await session.commit()
     return MessageResponse(
@@ -293,6 +323,7 @@ async def request_phone_verification(
             detail="Phone must be in E.164 format, e.g. +61400000000",
         )
     user = await _current_user(session, principal)
+    before = user.to_audit_dict()
     code = f"{secrets.randbelow(1_000_000):06d}"
     session.add(
         PhoneVerification(
@@ -306,6 +337,13 @@ async def request_phone_verification(
     )
     user.phone_e164 = phone
     user.phone_verified = False
+    await record_update(
+        session,
+        user,
+        actor_id=principal.user_id,
+        action="user.phone.verification_requested",
+        before=before,
+    )
     await session.commit()
     # In console mode the code is logged by the SMS adapter; return it in the
     # response only for non-production convenience.
@@ -350,9 +388,17 @@ async def confirm_phone_verification(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect code."
         )
 
+    before = user.to_audit_dict()
     verification.verified_at = now
     user.phone_e164 = verification.phone_e164
     user.phone_verified = True
+    await record_update(
+        session,
+        user,
+        actor_id=principal.user_id,
+        action="user.phone.verified",
+        before=before,
+    )
     await session.commit()
     return MessageResponse(message="Phone number verified. SMS can now be enabled.")
 
