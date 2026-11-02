@@ -244,6 +244,11 @@ class LocationSchedulingValidation(BaseModel):
 class CustomerLocationWrite(LocationSchedulingValidation):
     id: str | None = None
     name: str = Field(min_length=1, max_length=160)
+    address_1: str | None = None
+    address_2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    country: str | None = None
     site_contact_name: str | None = None
     site_contact_mobile: str | None = None
     site_contact_email: str | None = None

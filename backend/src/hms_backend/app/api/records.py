@@ -777,6 +777,11 @@ async def create_customer(
         location = CustomerLocation(
             customer=customer,
             name=location_payload.name.strip(),
+            address_1=_clean_optional(location_payload.address_1),
+            address_2=_clean_optional(location_payload.address_2),
+            city=_clean_optional(location_payload.city),
+            state=_clean_optional(location_payload.state),
+            country=_clean_optional(location_payload.country),
             site_contact_name=_clean_optional(location_payload.site_contact_name),
             site_contact_mobile=_clean_optional(location_payload.site_contact_mobile),
             site_contact_email=_clean_optional(location_payload.site_contact_email),
@@ -1186,6 +1191,11 @@ async def update_customer(
                 new_location = CustomerLocation(
                     customer=customer,
                     name=location_payload.name.strip(),
+                    address_1=_clean_optional(location_payload.address_1),
+                    address_2=_clean_optional(location_payload.address_2),
+                    city=_clean_optional(location_payload.city),
+                    state=_clean_optional(location_payload.state),
+                    country=_clean_optional(location_payload.country),
                     site_contact_name=_clean_optional(
                         location_payload.site_contact_name
                     ),
@@ -1218,6 +1228,13 @@ async def update_customer(
                 )
             location_before = existing_location.to_audit_dict()
             existing_location.name = location_payload.name.strip()
+            for field in ("address_1", "address_2", "city", "state", "country"):
+                if field in location_payload.model_fields_set:
+                    setattr(
+                        existing_location,
+                        field,
+                        _clean_optional(getattr(location_payload, field)),
+                    )
             existing_location.site_contact_name = _clean_optional(
                 location_payload.site_contact_name
             )

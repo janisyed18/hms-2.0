@@ -108,6 +108,31 @@ async def test_customer_create_rejects_zero_locations(
     assert list(names) == ["One Site"]
 
 
+@pytest.mark.asyncio
+async def test_first_location_keeps_its_address(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Add customer sends the first location's address; it is stored, not refused."""
+    location = {
+        **LOCATION,
+        "address_1": "1 Innovation Drive",
+        "address_2": "Level 2",
+        "city": "Bella Vista",
+        "state": "NSW",
+        "country": "Australia",
+    }
+    async with client_for(session_factory, ADMIN) as client:
+        created = await client.post(
+            "/api/v1/customers", json={"name": "Addressed", "locations": [location]}
+        )
+
+    assert created.status_code == 201
+    stored = created.json()["locations"][0]
+    assert stored["address_1"] == "1 Innovation Drive"
+    assert stored["city"] == "Bella Vista"
+    assert stored["country"] == "Australia"
+
+
 # --- locations ---------------------------------------------------------------
 
 
