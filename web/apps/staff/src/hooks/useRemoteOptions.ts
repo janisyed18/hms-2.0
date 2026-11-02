@@ -20,7 +20,8 @@ export function useRemoteOptions<T>(
     let active = true;
     setLoading(true);
     const timer = setTimeout(() => {
-      latest.current(query)
+      // Started inside a promise, so a fetcher that throws before returning is a failed lookup, not an uncaught error.
+      Promise.resolve().then(() => latest.current(query))
         .then((result) => { if (active) setItems(result); })
         .catch(() => { if (active) setItems([]); })
         .finally(() => { if (active) setLoading(false); });
