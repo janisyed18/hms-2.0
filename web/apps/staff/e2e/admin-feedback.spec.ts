@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 
+import { chooseOption } from "./choose";
 import { clearRateLimits, resetAuthTestAccounts } from "./global-setup";
 import {
   activatedAccounts,
@@ -60,6 +61,7 @@ test.describe("Admin and security interaction feedback", () => {
       await dialog.getByLabel("Email").fill(email);
       await dialog.getByLabel("First name").fill("Feedback");
       await dialog.getByLabel("Last name").fill("Person");
+      await chooseOption(dialog.getByLabel("Role"), "REVIEWER");
       await failOnce(page, /\/api\/v1\/admin\/users$/, "POST", 409, "A user with this email already exists.");
       await dialog.getByRole("button", { name: "Create user" }).click();
       await expect(dialog.getByRole("alert")).toContainText("A user with this email already exists.");

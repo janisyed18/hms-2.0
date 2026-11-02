@@ -157,7 +157,7 @@ test.describe("shared controls and success feedback", () => {
     }
   });
 
-  test("asset form: a searchable Agent list that narrows as you type and chooses with Enter", async ({ browser }) => {
+  test("asset form: a searchable Customer list that narrows as you type and chooses with Enter", async ({ browser }) => {
     test.setTimeout(180_000);
     const admin = await signedInPage(browser, "hms.admin@example.test", permanentPasswords.admin);
     const page = admin.page;
@@ -166,9 +166,9 @@ test.describe("shared controls and success feedback", () => {
       await page.goto("/?view=assets");
       await page.getByRole("button", { name: "Add asset" }).first().click();
       const form = page.getByRole("form", { name: "Add asset" });
-      const agent = form.getByRole("combobox", { name: "Agent" });
+      const agent = form.getByRole("combobox", { name: "Customer" });
       await agent.click();
-      const options = page.getByRole("listbox", { name: "Agent" }).getByRole("option");
+      const options = page.getByRole("listbox", { name: "Customer" }).getByRole("option");
       await expect.poll(() => options.count()).toBeGreaterThan(1);
       await agent.fill("vopa");
       await expect(options).toHaveCount(1);

@@ -95,6 +95,9 @@ test.describe("client feedback: customer counts and asset identity", () => {
       // The detail agrees with the card, and lists the asset by name with its number.
       await refreshedCard.click();
       await expect(page.getByLabel("Customer asset summary")).toContainText(new RegExp(`Assets\\s*${before + 1}`));
+      // Assets are listed under the location they are installed at.
+      await page.getByRole("tab", { name: /Locations/ }).click();
+      await page.getByRole("button", { name: /^View / }).first().click();
       const link = page.getByRole("button", { name: `Open asset ${ASSET_NAME}, ${ASSET_NUMBER}` });
       await expect(link).toBeVisible();
       await expect(link).toContainText(`Asset #${ASSET_NUMBER}`);

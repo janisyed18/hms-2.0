@@ -102,7 +102,12 @@ test.describe("inspection lifecycle", () => {
       await page.goto("/?view=inspections");
       await page.getByRole("button", { name: "Create inspection" }).click();
       const drawer = page.getByRole("heading", { name: "Create inspection" }).locator("xpath=ancestor::form");
+      // The type is not chosen for the person: it starts empty and must be picked.
+      await expect(drawer.getByLabel("Inspection type")).toHaveText("Select an inspection type");
       await chooseOption(drawer.getByLabel("Inspection asset"), { label: "E2E-LIFECYCLE-1" });
+      await drawer.getByRole("button", { name: "Save inspection" }).click();
+      await expect(drawer.getByLabel("Inspection type")).toBeFocused();
+      await chooseOption(drawer.getByLabel("Inspection type"), "SERVICE");
       for (const label of ["Instruction", "Working pressure kPa", "Ohms total", "Certificate result", "Inspection notes"]) {
         await expect(drawer.getByLabel(label)).toHaveCount(0);
       }
