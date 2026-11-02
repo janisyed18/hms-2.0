@@ -36,6 +36,8 @@ from hms_backend.app.api.schemas import (
     AssetWorkflowContextRead,
     AssetWorkflowRead,
     AssetWorkflowRelatedRead,
+    CatalogItemListResponse,
+    CatalogItemRead,
     CertificateCreate,
     CertificateInspectionSummary,
     CertificateListResponse,
@@ -51,6 +53,7 @@ from hms_backend.app.api.schemas import (
     CustomerMetricsRead,
     CustomerRead,
     CustomerSummary,
+    CustomerSummaryRead,
     CustomerUpdate,
     DashboardDueRead,
     DashboardRead,
@@ -463,34 +466,41 @@ def _reference_catalog_or_404(category: str) -> tuple[type[Any], str]:
     return catalog
 
 
-def _reference_lookup_read(record: Any, label_attribute: str) -> LookupRead:
-    return LookupRead(
+def _reference_lookup_read(record: Any, label_attribute: str) -> CatalogItemRead:
+    return CatalogItemRead(
         id=record.id,
         code=record.code,
         name=getattr(record, label_attribute),
+        enabled=record.enabled,
     )
 
 
-@router.get("/reference/catalog/{category}", response_model=LookupListResponse)
+@router.get(
+    "/reference/catalog/{category}", response_model=CatalogItemListResponse
+)
 async def list_reference_catalog(
     category: str,
     session: SessionDep,
     principal: PrincipalDep,
-) -> LookupListResponse:
+    include_disabled: bool = False,
+) -> CatalogItemListResponse:
     _require_asset_read(principal)
+    if include_disabled:
+        # Disabled items stay out of selectors; only catalog administrators manage them.
+        _require_reference_admin(principal)
     model, label_attribute = _reference_catalog_or_404(category)
-    return LookupListResponse(
-        items=await _active_lookup_items(
-            session,
-            model,
-            label_attribute=label_attribute,
-        )
+    statement = select(model).where(model.deleted_at.is_(None))
+    if not include_disabled:
+        statement = statement.where(model.enabled.is_(True))
+    rows = (await session.scalars(statement.order_by(model.code))).all()
+    return CatalogItemListResponse(
+        items=[_reference_lookup_read(row, label_attribute) for row in rows]
     )
 
 
 @router.post(
     "/reference/catalog/{category}",
-    response_model=LookupRead,
+    response_model=CatalogItemRead,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_reference_catalog_item(
@@ -498,7 +508,7 @@ async def create_reference_catalog_item(
     payload: StandardCreate,
     session: SessionDep,
     principal: PrincipalDep,
-) -> LookupRead:
+) -> CatalogItemRead:
     _require_reference_admin(principal)
     model, label_attribute = _reference_catalog_or_404(category)
     attributes = {
@@ -520,7 +530,7 @@ async def create_reference_catalog_item(
 
 @router.patch(
     "/reference/catalog/{category}/{record_id}",
-    response_model=LookupRead,
+    response_model=CatalogItemRead,
 )
 async def update_reference_catalog_item(
     category: str,
@@ -530,7 +540,7 @@ async def update_reference_catalog_item(
     principal: PrincipalDep,
     response: Response,
     if_match: IfMatchHeader = None,
-) -> LookupRead:
+) -> CatalogItemRead:
     _require_reference_admin(principal)
     model, label_attribute = _reference_catalog_or_404(category)
     record = await session.get(model, record_id)
@@ -837,6 +847,51 @@ async def list_customers(
             )
             for customer in customers
         ],
+    )
+
+
+@router.get("/customers/summary", response_model=CustomerSummaryRead)
+async def customers_summary(
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerSummaryRead:
+    _require_customer_read(principal)
+    visible = _apply_customer_scope(
+        select(Customer.id, Customer.archived_at).where(Customer.deleted_at.is_(None)),
+        principal,
+    ).subquery()
+    active = await session.scalar(
+        select(func.count()).select_from(visible).where(visible.c.archived_at.is_(None))
+    )
+    archived = await session.scalar(
+        select(func.count())
+        .select_from(visible)
+        .where(visible.c.archived_at.is_not(None))
+    )
+    locations = await session.scalar(
+        select(func.count())
+        .select_from(CustomerLocation)
+        .where(
+            CustomerLocation.deleted_at.is_(None),
+            CustomerLocation.customer_id.in_(select(visible.c.id)),
+        )
+    )
+    assets = await session.scalar(
+        _apply_asset_scope(
+            select(func.count())
+            .select_from(Asset)
+            .where(
+                Asset.deleted_at.is_(None),
+                Asset.customer_id.in_(select(visible.c.id)),
+            ),
+            principal,
+        )
+    )
+    return CustomerSummaryRead(
+        active_customers=active or 0,
+        archived_customers=archived or 0,
+        locations=locations or 0,
+        assets=assets or 0,
     )
 
 

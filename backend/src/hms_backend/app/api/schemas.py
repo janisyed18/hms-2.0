@@ -42,6 +42,16 @@ class LookupRead(BaseModel):
     name: str
 
 
+class CatalogItemRead(LookupRead):
+    """A catalog row as its administrators see it, with the disabled flag."""
+
+    enabled: bool
+
+
+class CatalogItemListResponse(BaseModel):
+    items: list[CatalogItemRead]
+
+
 class StandardCreate(BaseModel):
     code: str
     name: str
@@ -155,6 +165,15 @@ class CustomerRead(BaseModel):
     locations: list[CustomerLocationRead]
     contacts: list[CustomerContactRead]
     metrics: CustomerMetricsRead
+
+
+class CustomerSummaryRead(BaseModel):
+    """System-wide customer totals for what the caller may see, not a page's worth."""
+
+    active_customers: int
+    archived_customers: int
+    locations: int
+    assets: int
 
 
 class CustomerListResponse(BaseModel):

@@ -509,3 +509,31 @@ async def test_catalog_and_product_deletes_are_super_admin_only_and_guard_use(
     assert product_deleted.status_code == 204
     assert standard_deleted.status_code == 204
     assert material_deleted.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_customer_summary_counts_the_whole_system_not_a_page(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        for index in range(7):
+            customer = Customer(code=f"C{index}", name=f"Customer {index}")
+            session.add(customer)
+            session.add(CustomerLocation(customer=customer, name="Site A"))
+            session.add(CustomerLocation(customer=customer, name="Site B"))
+        session.add(
+            Customer(code="OLD", name="Old", archived_at=utc_now())
+        )
+        await session.commit()
+    async with client_for(session_factory, ADMIN) as client:
+        summary = await client.get("/api/v1/customers/summary")
+        page = await client.get("/api/v1/customers", params={"limit": 2})
+
+    assert page.json()["total"] == 7
+    assert len(page.json()["items"]) == 2
+    assert summary.json() == {
+        "active_customers": 7,
+        "archived_customers": 1,
+        "locations": 14,
+        "assets": 0,
+    }

@@ -248,7 +248,12 @@ async def test_reference_standards_endpoint_returns_enabled_standards_only(
 
     assert response.status_code == 200
     assert catalog_response.status_code == 200
-    assert catalog_response.json() == response.json()
+    # The catalog adds the disabled flag its administrators manage.
+    assert [
+        {key: value for key, value in item.items() if key != "enabled"}
+        for item in catalog_response.json()["items"]
+    ] == response.json()["items"]
+    assert all(item["enabled"] is True for item in catalog_response.json()["items"])
     assert response.json() == {
         "items": [
             {
