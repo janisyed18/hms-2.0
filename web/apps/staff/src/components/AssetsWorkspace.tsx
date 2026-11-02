@@ -68,11 +68,14 @@ function endLabel(asset: AssetRecord) {
 
 export function AssetsWorkspace({
   canWrite,
+  canDelete = false,
   routeAssetId,
   onAssetRouteChange,
   workflowNavigation
 }: {
   canWrite: boolean;
+  /** Only a Super Admin deletes an asset; everyone else edits it or sets its lifecycle to Retired or Condemned. */
+  canDelete?: boolean;
   /** Where the workflow's next action can go in this app. Editing the asset is handled here. */
   workflowNavigation?: { canOpen: (action: AssetWorkflowAction) => boolean; open: (action: AssetWorkflowAction) => void };
   /** The asset the URL names; the URL, not this component, is the record of which asset is open. */
@@ -175,15 +178,17 @@ export function AssetsWorkspace({
           >
             Edit
           </ActionButton>
-          <ActionButton
-            onClick={(event) => {
-              event.stopPropagation();
-              workspace.requestArchive(asset);
-            }}
-            variant="ghost"
-          >
-            Archive
-          </ActionButton>
+          {canDelete ? (
+            <ActionButton
+              onClick={(event) => {
+                event.stopPropagation();
+                workspace.requestDelete(asset);
+              }}
+              variant="ghost"
+            >
+              Delete
+            </ActionButton>
+          ) : null}
         </span>
       )
     } satisfies ModuleColumn<AssetRecord>] : [])
@@ -362,15 +367,15 @@ export function AssetsWorkspace({
         error={workspace.error}
       />
       <ConfirmDialog
-        confirmLabel="Archive asset"
-        error={workspace.archiveError}
-        message="It will no longer appear in the asset register. Its inspection and certificate history is kept."
-        onCancel={workspace.cancelArchive}
-        onConfirm={() => void workspace.confirmArchive()}
-        open={workspace.archiveTarget !== null}
-        pending={workspace.isArchiving}
-        pendingLabel="Archiving…"
-        title={workspace.archiveTarget ? `Archive ${assetLabel(workspace.archiveTarget)}?` : "Archive asset?"}
+        confirmLabel="Delete asset"
+        error={workspace.deleteError}
+        message="It is removed from the asset register and cannot be restored here. An asset with inspection, certificate or retest history cannot be deleted: set it to Retired or Condemned instead."
+        onCancel={workspace.cancelDelete}
+        onConfirm={() => void workspace.confirmDelete()}
+        open={workspace.deleteTarget !== null}
+        pending={workspace.isDeleting}
+        pendingLabel="Deleting…"
+        title={workspace.deleteTarget ? `Delete ${assetLabel(workspace.deleteTarget)}?` : "Delete asset?"}
       />
       {canWrite ? (
         <AssetForm

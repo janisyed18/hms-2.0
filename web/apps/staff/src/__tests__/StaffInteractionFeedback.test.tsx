@@ -16,7 +16,7 @@ const client = vi.hoisted(() => ({
   getAssetConfigurationOptions: vi.fn(),
   createAsset: vi.fn(),
   updateAsset: vi.fn(),
-  archiveAsset: vi.fn(),
+  deleteAsset: vi.fn(),
   createProduct: vi.fn(),
   updateProduct: vi.fn(),
   deleteProduct: vi.fn(),
@@ -187,70 +187,78 @@ describe("Asset form", () => {
   });
 });
 
-describe("Asset archive", () => {
-  const archiveButton = () => screen.getByRole("button", { name: "Archive" });
+describe("Asset delete", () => {
+  const deleteButton = () => screen.getByRole("button", { name: "Delete" });
+
+  it("offers no Delete to anyone but a Super Admin, though they can still edit", async () => {
+    render(<AssetsWorkspace canWrite />);
+    await screen.findByText("Main Pump Hose");
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
+  });
 
   it("asks first, naming the asset by name and HMS number, and does nothing until confirmed", async () => {
     const user = userEvent.setup();
-    render(<AssetsWorkspace canWrite />);
+    render(<AssetsWorkspace canDelete canWrite />);
     await screen.findByText("Main Pump Hose");
-    await user.click(archiveButton());
+    await user.click(deleteButton());
 
-    const dialog = screen.getByRole("alertdialog", { name: "Archive Main Pump Hose — HMS-001842?" });
-    expect(client.archiveAsset).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("alertdialog", { name: "Delete Main Pump Hose — HMS-001842?" });
+    expect(client.deleteAsset).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(client.archiveAsset).not.toHaveBeenCalled();
+    expect(client.deleteAsset).not.toHaveBeenCalled();
     expect(screen.getByText("Main Pump Hose")).toBeInTheDocument();
-    await waitFor(() => expect(archiveButton()).toHaveFocus(), FOCUS_WAIT); // back where the user was
+    await waitFor(() => expect(deleteButton()).toHaveFocus(), FOCUS_WAIT); // back where the user was
   });
 
   it("leaves the asset listed and the dialog open, with the reason, when archiving fails", async () => {
-    client.archiveAsset.mockRejectedValue(api(409, "This asset has an open inspection."));
+    client.deleteAsset.mockRejectedValue(api(409, "This asset has an open inspection."));
     const user = userEvent.setup();
-    render(<AssetsWorkspace canWrite />);
+    render(<AssetsWorkspace canDelete canWrite />);
     await screen.findByText("Main Pump Hose");
-    await user.click(archiveButton());
-    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Archive asset" }));
+    await user.click(deleteButton());
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete asset" }));
 
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByRole("alert")).toHaveTextContent("This asset has an open inspection.");
     expect(screen.getAllByText("Main Pump Hose").length).toBeGreaterThan(0);
-    expect(screen.queryByText(/was archived/)).toBeNull();
+    expect(screen.queryByText(/was deleted/)).toBeNull();
   });
 
-  it("shows Archiving…, then removes the asset and says so only after the server confirms", async () => {
+  it("shows Deleting…, then removes the asset and says so only after the server confirms", async () => {
     const done = deferred();
-    client.archiveAsset.mockReturnValue(done.promise);
+    client.deleteAsset.mockReturnValue(done.promise);
     const user = userEvent.setup();
-    render(<AssetsWorkspace canWrite />);
+    render(<AssetsWorkspace canDelete canWrite />);
     await screen.findByText("Main Pump Hose");
-    await user.click(archiveButton());
-    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Archive asset" }));
+    await user.click(deleteButton());
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete asset" }));
 
-    const busy = await screen.findByRole("button", { name: "Archiving…" });
+    const busy = await screen.findByRole("button", { name: "Deleting…" });
     expect(busy).toBeDisabled();
-    expect(screen.queryByText(/was archived/)).toBeNull();
+    expect(screen.queryByText(/was deleted/)).toBeNull();
     expect(screen.getByText("Main Pump Hose")).toBeInTheDocument();
 
     await act(async () => done.resolve());
-    const notice = (await screen.findByText(/Main Pump Hose — HMS-001842 was archived\./)).closest('[role="status"]');
-    expect(notice).toHaveTextContent("Asset archived.");
+    const notice = (await screen.findByText(/Main Pump Hose — HMS-001842 was deleted\./)).closest('[role="status"]');
+    expect(notice).toHaveTextContent("Asset deleted.");
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(screen.queryByRole("table", { name: "Asset records" })?.textContent ?? "").not.toContain("Main Pump Hose");
-    expect(client.archiveAsset).toHaveBeenCalledTimes(1);
+    expect(client.deleteAsset).toHaveBeenCalledTimes(1);
   });
 
   it("can be cancelled from the keyboard", async () => {
     const user = userEvent.setup();
-    render(<AssetsWorkspace canWrite />);
+    render(<AssetsWorkspace canDelete canWrite />);
     await screen.findByText("Main Pump Hose");
-    archiveButton().focus();
+    deleteButton().focus();
     await user.keyboard("{Enter}");
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(client.archiveAsset).not.toHaveBeenCalled();
+    expect(client.deleteAsset).not.toHaveBeenCalled();
   });
 });
 

@@ -7,7 +7,8 @@ from typing import cast
 import httpx
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
@@ -2633,10 +2634,18 @@ async def test_soft_delete_asset_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
 
+    # Only an asset nothing else points at can be deleted: drop its schedule first.
+    async with session_factory() as session:
+        await session.execute(
+            sa_delete(RetestSchedule).where(
+                RetestSchedule.asset_id == seeded_session["vopak_asset_id"]
+            )
+        )
+        await session.commit()
     async with api_client(session_factory, principal) as client:
         delete_response = await client.delete(
             f"/api/v1/assets/{seeded_session['vopak_asset_id']}"
@@ -4879,3 +4888,92 @@ async def test_certificate_lifecycle_actions_revoke_and_supersede_with_audit(
         assert audit_events[1].after is not None
         assert audit_events[1].after["status"] == CertificateStatus.SUPERSEDED.value
         assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_booking_approval_is_refused_while_the_customer_is_archived(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            User(
+                id="inspector-1",
+                oidc_subject="local:inspector-1",
+                email="inspector@example.test",
+                role=Role.INSPECTOR.value,
+                account_status=AccountStatus.ACTIVE.value,
+            )
+        )
+        await session.commit()
+    customer = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    super_admin = Principal(
+        user_id="super-1",
+        roles=frozenset({Role.SUPER_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, customer) as client:
+        availability = await client.get(
+            "/api/v1/inspection-availability",
+            params={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "local_date": "2027-10-01",
+                "duration_minutes": 60,
+            },
+        )
+        requested = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["vopak_asset_id"]],
+                "availability_quote_id": availability.json()["items"][0]["quote_id"],
+            },
+        )
+    assert requested.status_code == 201
+    booking_id = requested.json()["id"]
+    approve = f"/api/v1/inspection-bookings/{booking_id}/approve"
+    body = {"inspector_user_id": "inspector-1"}
+
+    async with api_client(session_factory, super_admin) as client:
+        archived = await client.post(
+            f"/api/v1/customers/{seeded_session['vopak_id']}/archive"
+        )
+    async with api_client(session_factory, admin) as client:
+        blocked = await client.post(approve, json=body)
+        still_pending = await client.get(f"/api/v1/inspection-bookings/{booking_id}")
+    async with session_factory() as session:
+        drafts_while_blocked = await session.scalar(
+            select(func.count())
+            .select_from(Inspection)
+            .where(Inspection.booking_id == booking_id)
+        )
+    async with api_client(session_factory, super_admin) as client:
+        restored = await client.post(
+            f"/api/v1/customers/{seeded_session['vopak_id']}/restore"
+        )
+    async with api_client(session_factory, admin) as client:
+        approved = await client.post(approve, json=body)
+
+    assert archived.status_code == 200
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == (
+        "This customer is archived. Restore it before adding new work."
+    )
+    assert still_pending.json()["status"] == "PENDING_APPROVAL"
+    assert restored.status_code == 200
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "APPROVED"
+    # The blocked attempt created no work.
+    assert drafts_while_blocked == 0

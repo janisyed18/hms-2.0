@@ -39,9 +39,9 @@ export function useAssetsWorkspace() {
   const formSession = useRef(0);
   const [viewingAsset, setViewingAsset] = useState<AssetRecord | null>(null);
   const { notice, notify, clear: dismissNotice } = useActionNotice();
-  const [archiveTarget, setArchiveTarget] = useState<AssetRecord | null>(null);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
-  const [isArchiving, setArchiving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<AssetRecord | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setDeleting] = useState(false);
 
   // Customers and products are searched on the server as the person types, so neither list stops at a first page.
   const customerSearch = useRemoteOptions((text) => createHmsClient().listCustomers({ search: text, sort: "name", limit: 25 }).then((result) => result.items), true);
@@ -140,25 +140,25 @@ export function useAssetsWorkspace() {
     refreshCounts();
     notify({ kind: "success", message: `${assetLabel(saved)} ${editingAsset ? "saved" : "created"} successfully.`, title: "Asset saved" });
   }
-  function requestArchive(asset: AssetRecord) { setArchiveError(null); setArchiveTarget(asset); }
-  function cancelArchive() { if (!isArchiving) { setArchiveTarget(null); setArchiveError(null); } }
-  async function confirmArchive() {
-    const asset = archiveTarget;
-    if (!asset || isArchiving) return;
-    setArchiving(true); setArchiveError(null);
+  function requestDelete(asset: AssetRecord) { setDeleteError(null); setDeleteTarget(asset); }
+  function cancelDelete() { if (!isDeleting) { setDeleteTarget(null); setDeleteError(null); } }
+  async function confirmDelete() {
+    const asset = deleteTarget;
+    if (!asset || isDeleting) return;
+    setDeleting(true); setDeleteError(null);
     try {
-      await createHmsClient().archiveAsset(asset.id, asset.etag);
+      await createHmsClient().deleteAsset(asset.id, asset.etag);
       setAssets((current) => current.filter((item) => item.id !== asset.id));
       setViewingAsset((current) => current?.id === asset.id ? null : current);
-      setArchiveTarget(null);
+      setDeleteTarget(null);
       refreshCounts();
-      notify({ kind: "success", message: `${assetLabel(asset)} was archived.`, title: "Asset archived" });
+      notify({ kind: "success", message: `${assetLabel(asset)} was deleted.`, title: "Asset deleted" });
     } catch (reason) {
       // Nothing changed on the server, so nothing changes here: the asset stays listed.
-      setArchiveError(friendlyApiError(reason, { fallback: `${assetLabel(asset)} could not be archived. Try again.` }).message);
-    } finally { setArchiving(false); }
+      setDeleteError(friendlyApiError(reason, { fallback: `${assetLabel(asset)} could not be deleted. Try again.` }).message);
+    } finally { setDeleting(false); }
   }
   function clearAssetFilters() { setCustomerFilter("ALL"); setProductFilter("ALL"); setLifecycleFilter("ALL"); setDueFrom(""); setDueTo(""); }
   const activeFilterCount = [customerFilter !== "ALL", productFilter !== "ALL", lifecycleFilter !== "ALL", Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
-  return { serverTotal, activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, notice, requestArchive, assets, clearAssetFilters, closeDetail, copyAsset, counts, customerFilter, customerSearch, filterLabels, isLoadingMore, loadMore, productSearch, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, closeForm, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
+  return { serverTotal, activeFilterCount, deleteError, deleteTarget, cancelDelete, confirmDelete, dismissNotice, isDeleting, notice, requestDelete, assets, clearAssetFilters, closeDetail, copyAsset, counts, customerFilter, customerSearch, filterLabels, isLoadingMore, loadMore, productSearch, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, closeForm, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
 }

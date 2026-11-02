@@ -2739,7 +2739,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       });
     },
 
-    async archiveAsset(id: string, etag?: string | null): Promise<void> {
+    async deleteAsset(id: string, etag?: string | null): Promise<void> {
       await request<void>(`/api/v1/assets/${encodeURIComponent(id)}`, {
         method: "DELETE",
         headers: ifMatchHeader(etag)

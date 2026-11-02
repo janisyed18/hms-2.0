@@ -3745,8 +3745,23 @@ async def delete_asset(
     if_match: IfMatchHeader = None,
 ) -> Response:
     _require_asset_write(principal)
+    # A logical delete hides the asset from ordinary reads and has no undo, so it is
+    # a Delete, not an Archive: Super Admin only, never while history points at it.
+    require_super_admin(principal)
     asset = await _get_visible_asset_or_404(session, asset_id, principal)
     _enforce_if_match(if_match, asset.version)
+    await ensure_not_referenced(
+        session,
+        Asset,
+        asset.id,
+        what="asset",
+        # The asset's own end configuration is part of it, not a record about it.
+        ignore={"asset_end_configurations"},
+        alternative=(
+            "Set its lifecycle to Retired or Condemned instead; "
+            "history keeps its asset."
+        ),
+    )
     await soft_delete(
         session,
         asset,
@@ -4727,6 +4742,8 @@ async def _upsert_retest_schedule(
 ) -> None:
     schedule = asset.retest_schedule
     if schedule is None:
+        # Creating a schedule is new work; an existing one may still be corrected.
+        _require_active_customer(customer)
         schedule = _build_retest_schedule(payload, customer=customer, asset=asset)
         session.add(schedule)
         await record_create(

@@ -12,6 +12,13 @@
   are left out of every new-work selector and list by default (`lifecycle=active`).
 - Users: Delete is a soft delete that revokes sessions and blocks sign-in. A user cannot delete
   themselves, the last active SUPER_ADMIN cannot be deleted, and HMS_ADMIN cannot delete users.
+- Deleting an asset (`DELETE /assets/{id}`) is a logical delete with no Restore, so it is a Delete,
+  not an Archive: it needs the asset-write permission and SUPER_ADMIN (HTTP 403 otherwise). It is
+  refused with 409 while anything still points at the asset: inspections, certificates, booking
+  associations, a retest schedule or any other live foreign key. The asset's own end configuration
+  does not count. History is never cascaded. Everyone else edits the asset, or sets its lifecycle
+  to Retired or Condemned. Staff shows "Delete" to a Super Admin only; there is no "Archive asset".
+  A reversible asset archive would be a separate feature, like Customer Archive and Restore.
 - A disabled product cannot be given to an asset: creating an asset on it, or moving an existing
   asset onto it, is refused (HTTP 409). An asset already on a product that was later disabled still
   loads and can be edited for anything else; history never depends on the product being enabled.
@@ -45,7 +52,9 @@ Archive keeps history and removes the customer from anything that starts new wor
 | `POST /assets`, `PATCH /assets/{id}` to an archived customer | refused, 409 |
 | `POST /assets/{id}/inspections` | refused, 409 |
 | `POST /inspection-bookings` | refused, 409 |
-| `POST /inspection-bookings/{id}/approve` | refused, 409 |
+| `POST /inspection-bookings/{id}/approve` | refused, 409; the booking stays pending, and approval works after Restore |
+| `PATCH /assets/{id}` that would create a retest schedule | refused, 409; no schedule is created, and the same request works after Restore |
+| `PATCH /assets/{id}` for anything else, including correcting a schedule that already exists | allowed (administrative) |
 | `POST /customers/{id}/locations` | refused, 409 |
 | `PATCH /customers/{id}` with `locations` | refused, 422 (field no longer exists) |
 | `GET /assets?new_work_only=true` | leaves the customer's assets out (Add Inspection and the booking form use it) |
@@ -54,6 +63,11 @@ Archive keeps history and removes the customer from anything that starts new wor
 | Contacts and customer-level edits | unchanged (administrative) |
 
 The default `GET /assets` is unchanged; `new_work_only` is an explicit opt-in.
+
+The only code that creates a retest schedule is `_upsert_retest_schedule` (asset create and asset
+update). Asset create is already refused for an archived customer; update now refuses to create a
+schedule there. The dedicated retest-schedule routes and the retest job only change schedules that
+exist, so they are left alone, as is local seed tooling.
 - Catalogue items (products, reference data) are Disabled and Enabled by admins. Delete is
   SUPER_ADMIN only and is refused while anything references the record. The irreversible
   soft-delete is labelled Delete, never Archive.

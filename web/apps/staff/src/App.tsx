@@ -645,6 +645,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                   {renderedActiveModule === "assets" ? (
                     <AssetsWorkspace
                       canWrite={hasPermission(session, "asset:write")}
+                      canDelete={session.roles.includes("SUPER_ADMIN")}
                       onAssetRouteChange={onAssetRouteChange}
                       routeAssetId={route.asset}
                       workflowNavigation={workflowNavigation}

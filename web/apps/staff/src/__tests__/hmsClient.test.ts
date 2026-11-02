@@ -677,7 +677,7 @@ describe("hmsClient", () => {
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
     await client.deleteCustomer("cust-api-1", '"2"');
     await client.deleteProduct("product-api-1", '"3"');
-    await client.archiveAsset("asset-api-1", '"4"');
+    await client.deleteAsset("asset-api-1", '"4"');
     await client.deleteReferenceCatalogItem("standards", "standard-api-1", '"5"');
 
     expect(fetchMock).toHaveBeenNthCalledWith(
