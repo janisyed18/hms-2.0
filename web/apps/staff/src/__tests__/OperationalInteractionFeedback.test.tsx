@@ -16,7 +16,8 @@ const client = vi.hoisted(() => ({
   listReferenceCatalog: vi.fn(),
   createReferenceCatalogItem: vi.fn(),
   updateReferenceCatalogItem: vi.fn(),
-  archiveReferenceCatalogItem: vi.fn(),
+  deleteReferenceCatalogItem: vi.fn(),
+  setReferenceCatalogEnabled: vi.fn(),
   listCertificates: vi.fn(),
   listInspections: vi.fn(),
   listAllAssets: vi.fn(),
@@ -62,7 +63,7 @@ const approvedInspection = {
 
 beforeEach(() => {
   for (const fn of Object.values(client)) fn.mockReset();
-  client.listReferenceCatalog.mockResolvedValue({ total: 1, etag: null, items: [{ id: "std-1", code: "EN853", name: "Hydraulic Standard", etag: "s1" } as ReferenceCatalogRecord] });
+  client.listReferenceCatalog.mockResolvedValue({ total: 1, etag: null, items: [{ id: "std-1", code: "EN853", name: "Hydraulic Standard", enabled: true, etag: "s1" } as ReferenceCatalogRecord] });
   client.listCertificates.mockResolvedValue({ total: 1, etag: null, items: [certificate] });
   client.listInspections.mockResolvedValue({ total: 1, etag: null, items: [approvedInspection] });
   client.listAllAssets.mockResolvedValue({ total: 0, items: [] });
@@ -112,23 +113,42 @@ describe("Reference catalog", () => {
     expect(await screen.findByText("Fuel Standard — EN854 created successfully.")).toBeInTheDocument();
   });
 
-  it("archives only after confirmation and leaves the record listed when it fails", async () => {
-    client.archiveReferenceCatalogItem.mockRejectedValueOnce(api(500, "psycopg.errors.ForeignKeyViolation"));
+  it("deletes only after confirmation and leaves the record listed when it fails", async () => {
+    client.deleteReferenceCatalogItem.mockRejectedValueOnce(api(500, "psycopg.errors.ForeignKeyViolation"));
     const user = userEvent.setup();
-    render(<ReferenceWorkspace canManage />);
+    render(<ReferenceWorkspace canDelete canManage />);
     await screen.findByText("Hydraulic Standard");
-    await user.click(screen.getByRole("button", { name: "Archive" }));
-    const dialog = screen.getByRole("alertdialog", { name: "Archive Hydraulic Standard — EN853?" });
-    expect(client.archiveReferenceCatalogItem).not.toHaveBeenCalled();
-    await user.click(within(dialog).getByRole("button", { name: "Archive standard" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Delete Hydraulic Standard — EN853?" });
+    expect(client.deleteReferenceCatalogItem).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Delete standard" }));
     const failure = await within(await screen.findByRole("alertdialog")).findByRole("alert");
     expect(failure).toHaveTextContent(/service is unavailable/i);
     expect(failure.textContent).not.toMatch(/psycopg|ForeignKey/);
     expect(screen.getByText("Hydraulic Standard")).toBeInTheDocument();
 
-    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Archive standard" }));
-    expect(await screen.findByText("Hydraulic Standard — EN853 was archived.")).toBeInTheDocument();
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete standard" }));
+    expect(await screen.findByText("Hydraulic Standard — EN853 was deleted.")).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("offers Disable to anyone who manages reference data and Delete only to a Super Admin", async () => {
+    render(<ReferenceWorkspace canManage />);
+    await screen.findByText("Hydraulic Standard");
+    expect(screen.getByRole("button", { name: "Disable" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
+  });
+
+  it("disables and re-enables an item without deleting it", async () => {
+    client.setReferenceCatalogEnabled.mockResolvedValueOnce({ id: "std-1", code: "EN853", name: "Hydraulic Standard", enabled: false, etag: "s2" });
+    const user = userEvent.setup();
+    render(<ReferenceWorkspace canManage />);
+    await screen.findByText("Hydraulic Standard");
+    await user.click(screen.getByRole("button", { name: "Disable" }));
+    await waitFor(() => expect(client.setReferenceCatalogEnabled).toHaveBeenCalledWith("standards", "std-1", false, "s1"));
+    expect(await screen.findByRole("button", { name: "Enable" })).toBeVisible();
+    expect(client.deleteReferenceCatalogItem).not.toHaveBeenCalled();
   });
 });
 
@@ -175,6 +195,9 @@ describe("Certificates", () => {
     await user.click(screen.getByRole("button", { name: /Issue Certificate|Add Certificate/ }));
     expect(screen.getByLabelText("Approved inspection")).toBeRequired();
     expect(screen.getByLabelText("Certificate number")).toBeRequired();
+    // Nothing is chosen for the person: the inspection is picked, then the number follows.
+    expect(screen.getByLabelText("Approved inspection")).toHaveValue("");
+    await choose(user, screen.getByLabelText("Approved inspection"), "insp-2");
     expect(screen.getByLabelText("Approved inspection")).toHaveValue("Main Pump Hose — HMS-001842");
 
     await user.click(screen.getByRole("button", { name: "Issue certificate" }));
@@ -191,7 +214,8 @@ describe("Certificates", () => {
   it("requires a certificate number inline before sending", async () => {
     const onSubmit = vi.fn();
     const user = userEvent.setup();
-    render(<CertificateForm inspectionOptions={[approvedInspection]} onClose={vi.fn()} onSubmit={onSubmit} open />);
+    render(<CertificateForm onClose={vi.fn()} onSubmit={onSubmit} open />);
+    await choose(user, screen.getByLabelText("Approved inspection"), "insp-2");
     await user.clear(screen.getByLabelText("Certificate number"));
     await user.click(screen.getByRole("button", { name: "Issue certificate" }));
     expect(screen.getByLabelText("Certificate number")).toHaveFocus();

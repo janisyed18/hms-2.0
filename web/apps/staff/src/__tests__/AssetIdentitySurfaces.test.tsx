@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssetsWorkspace } from "../components/AssetsWorkspace";
+import { customerTableProps } from "../test/customerTableProps";
 import { CustomerDetail } from "../components/CustomerDetail";
 import { CustomerTable } from "../components/CustomerTable";
 import type { AssetRecord, CustomerRecord } from "../domain/types";
@@ -94,7 +95,7 @@ describe("Staff customer detail and cards", () => {
   const customer = {
     id: "cust-1", code: "ORIC", name: "Orica", notes: null, retestEnabled: true, defaultRetestMonths: 12,
     locations: [{ ...location, siteContactName: null, siteContactMobile: null, siteContactEmail: null, ppeRequirements: [], additionalRequirements: [] }],
-    contacts: [], status: "Active", riskLevel: "Low", industry: "", paymentTerms: "", contractStart: "", contractEnd: "", lastActivity: "",
+    contacts: [], status: "Active", archivedAt: null,
     metrics: { assetCount: 2, inServiceCount: 2, inspectionDueCount: null, inspectionDueLabel: "", certificateValidPercent: null, certificateStatusLabel: "", recentInspections: [], activity: [] }
   } as unknown as CustomerRecord;
 
@@ -103,6 +104,7 @@ describe("Staff customer detail and cards", () => {
     const onAssetOpen = vi.fn();
     client.listAssets.mockResolvedValue(list([asset("1", "HMS-373CEBA88", "Main Transfer Hose"), asset("3", "HMS-333", null)]));
     render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onAssetOpen={onAssetOpen} onClose={vi.fn()} onEdit={vi.fn()} onTabChange={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: /^View / }));
     const link = await screen.findByRole("button", { name: "Open asset Main Transfer Hose, HMS-373CEBA88" });
     expect(link).toHaveTextContent("Main Transfer Hose");
     expect(link).toHaveTextContent("Asset #HMS-373CEBA88");
@@ -115,9 +117,7 @@ describe("Staff customer detail and cards", () => {
     const named = (name: string, code: string) => ({ ...customer, id: code, code, name });
     const customers = [named("Xero Stock Private Limited", "XS1"), named("XERO PTY Ltd", "XP1"), named("Momentum", "MO1")];
     render(
-      <CustomerTable allCustomers={customers} canWrite={false} customers={customers} onAddCustomer={() => undefined}
-        onQueryChange={() => undefined} onRiskFilterChange={() => undefined} onSelectCustomer={() => undefined}
-        onStatusFilterChange={() => undefined} query="" riskFilter="All" selectedId={null} statusFilter="All" totalCount={3} />
+      <CustomerTable {...customerTableProps({ canWrite: false, customers })} />
     );
     const avatar = (name: RegExp) => screen.getByRole("button", { name }).querySelector(".customer-avatar") as HTMLElement;
     expect(avatar(/Xero Stock Private Limited/)).toHaveTextContent("XS");

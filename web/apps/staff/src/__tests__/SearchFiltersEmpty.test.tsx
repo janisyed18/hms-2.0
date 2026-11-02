@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CustomerTable } from "../components/CustomerTable";
 import { ModuleTable, activeFilterList, resultSummary } from "../components/ModuleTable";
 import type { CustomerRecord } from "../domain/types";
+import { customerTableProps } from "../test/customerTableProps";
 
 interface Row { id: string; name: string; status: string }
 const ROWS: Row[] = [
@@ -147,22 +148,17 @@ describe("counts never claim more than the page holds", () => {
   });
 });
 
-const customer = (id: string, name: string, status: string, risk: string) => ({
-  id, code: id.toUpperCase(), name, notes: null, locations: [], contacts: [], status, riskLevel: risk,
+const customer = (id: string, name: string) => ({
+  id, code: id.toUpperCase(), name, notes: null, locations: [], contacts: [], status: "Active", archivedAt: null,
   metrics: { assetCount: 0, inServiceCount: 0 }
 }) as unknown as CustomerRecord;
 
 describe("the Customers list", () => {
+  /** A stand-in for the server: it narrows the list by the search the table reports. */
   function Customers({ list, canWrite = true }: { list: CustomerRecord[]; canWrite?: boolean }) {
     const [query, setQuery] = useState("");
-    const [status, setStatus] = useState("All");
-    const [risk, setRisk] = useState("All");
-    const shown = list.filter((item) => (status === "All" || item.status === status) && (risk === "All" || item.riskLevel === risk) && item.name.toLowerCase().includes(query.toLowerCase()));
-    return (
-      <CustomerTable allCustomers={list} canWrite={canWrite} customers={shown} onAddCustomer={() => undefined}
-        onQueryChange={setQuery} onRiskFilterChange={setRisk} onSelectCustomer={() => undefined} onStatusFilterChange={setStatus}
-        query={query} riskFilter={risk} selectedId={null} statusFilter={status} totalCount={list.length} />
-    );
+    const shown = list.filter((item) => item.name.toLowerCase().includes(query.toLowerCase()));
+    return <CustomerTable {...customerTableProps({ canWrite, customers: shown, onQueryChange: setQuery, query, totalCount: shown.length })} />;
   }
 
   it("clears its search, and tells no customers yet from no match", async () => {
@@ -172,7 +168,7 @@ describe("the Customers list", () => {
     expect(screen.getAllByRole("button", { name: "Add customer" })).toHaveLength(1);
     unmount();
 
-    render(<Customers list={[customer("a", "Xero Pty Ltd", "Active", "Low")]} />);
+    render(<Customers list={[customer("a", "Xero Pty Ltd")]} />);
     const box = screen.getByRole("textbox", { name: "Search customers" });
     expect(box).toHaveAttribute("placeholder", "Search customers by name, code or city");
     await user.type(box, "zzz");

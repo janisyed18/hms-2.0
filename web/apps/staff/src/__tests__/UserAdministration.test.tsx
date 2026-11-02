@@ -1,17 +1,30 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OneTimeCredentialDialog } from "../components/OneTimeCredentialDialog";
 import { UserAdminDialog } from "../components/UserAdminDialog";
 import { SystemWorkspace } from "../components/SystemWorkspace";
 import { manageableRoles } from "../components/roleAdmin";
 import { choose, optionLabels } from "../test/choose";
+import { lookups, resetLookups } from "../test/lookupClient";
+
+// Customer assignment searches the server; everything else is the real client over fetch.
+vi.mock("../api/hmsClient", async (original) => {
+  const actual = await original<typeof import("../api/hmsClient")>();
+  const { lookupClient } = await import("../test/lookupClient");
+  return { ...actual, createHmsClient: (options?: Parameters<typeof actual.createHmsClient>[0]) => ({ ...actual.createHmsClient(options), ...lookupClient }) };
+});
 
 const customers = [
   { id: "c1", name: "Vopak" },
   { id: "c2", name: "Orica" }
 ];
+
+beforeEach(() => {
+  resetLookups();
+  lookups.customers = customers;
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -123,8 +136,10 @@ describe("UserAdminDialog", () => {
     expect(screen.getByLabelText("Customers")).toBeRequired();
     expect(screen.getByLabelText("Customers")).toHaveFocus();
     expect(screen.getByLabelText("Customers")).toHaveAccessibleDescription("Select at least one customer for this user.");
-    await user.selectOptions(screen.getByLabelText("Customers"), ["c1", "c2"]);
+    await choose(user, screen.getByLabelText("Customers"), "c1");
+    await choose(user, screen.getByLabelText("Customers"), "c2");
     expect(screen.getByLabelText("Customers")).not.toHaveAttribute("aria-invalid");
+    expect(within(screen.getByRole("list", { name: "Assigned customers" })).getAllByRole("listitem").map((item) => item.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("Vopak"), expect.stringContaining("Orica")]));
     await user.click(submit);
     await waitFor(() => expect(onSubmit).toHaveBeenCalled());
     expect(onSubmit).toHaveBeenCalledWith(
@@ -134,6 +149,40 @@ describe("UserAdminDialog", () => {
         customerIds: ["c1", "c2"]
       })
     );
+  });
+
+  it("reaches a customer far beyond the first page, and can take an assignment back", async () => {
+    lookups.customers = Array.from({ length: 400 }, (_, index) => ({ id: `big-${index}`, name: `Customer ${String(index).padStart(3, "0")}` }));
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<UserAdminDialog open mode="create" actorRoles={["HMS_ADMIN"]} customers={[]} onSubmit={onSubmit} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "scale@example.com" } });
+    fireEvent.change(screen.getByLabelText("First name"), { target: { value: "Sca" } });
+    fireEvent.change(screen.getByLabelText("Last name"), { target: { value: "Le" } });
+    await choose(user, screen.getByLabelText("Role"), "CUSTOMER_USER");
+
+    const box = screen.getByLabelText("Customers");
+    await user.click(box);
+    await user.type(box, "Customer 399");
+    await user.click(await screen.findByRole("option", { name: /Customer 399/ }));
+    expect(screen.getByRole("list", { name: "Assigned customers" })).toHaveTextContent("Customer 399");
+
+    await user.click(screen.getByRole("button", { name: "Remove Customer 399" }));
+    expect(screen.queryByRole("list", { name: "Assigned customers" })).toBeNull();
+    await user.type(box, "Customer 399");
+    await user.click(await screen.findByRole("option", { name: /Customer 399/ }));
+    await user.click(screen.getByRole("button", { name: /create user/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ customerIds: ["big-399"] })));
+    // The old fixed page size never limited the search: the server was asked by name.
+    expect(lookups.calls.some((call) => call.method === "listCustomers" && (call.options as { search?: string }).search === "Customer 399")).toBe(true);
+  });
+
+  it("starts without a role and keeps a persisted role when editing", async () => {
+    const { unmount } = render(<UserAdminDialog open mode="create" actorRoles={["HMS_ADMIN"]} customers={[]} onSubmit={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByLabelText("Role")).toHaveTextContent("Select a role");
+    unmount();
+    render(<UserAdminDialog open mode="edit" recordKey="u1" actorRoles={["HMS_ADMIN"]} customers={[]} initial={{ email: "a@example.com", firstName: "A", lastName: "B", role: "REVIEWER" }} onSubmit={vi.fn()} onClose={vi.fn()} />);
+    expect(screen.getByLabelText("Role")).toHaveTextContent("Reviewer");
   });
 
   it("does not show a customer selector for non-customer roles", async () => {

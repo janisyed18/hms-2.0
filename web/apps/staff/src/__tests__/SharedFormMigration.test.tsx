@@ -14,6 +14,14 @@ import { HmsApiError } from "../api/hmsClient";
 import type { AssetRecord, CustomerRecord, InspectionRecord, ProductRecord, ReferenceCatalogRecord, RetestScheduleRecord } from "../domain/types";
 import { guardNavigation } from "../routing/navigationGuard";
 import { choose } from "../test/choose";
+import { lookups, resetLookups } from "../test/lookupClient";
+
+// Lookups (assets, inspections, standards) come from the stand-in; everything else is the real client over fetch.
+vi.mock("../api/hmsClient", async (original) => {
+  const actual = await original<typeof import("../api/hmsClient")>();
+  const { lookupClient } = await import("../test/lookupClient");
+  return { ...actual, createHmsClient: (options?: Parameters<typeof actual.createHmsClient>[0]) => ({ ...actual.createHmsClient(options), ...lookupClient }) };
+});
 
 type User = ReturnType<typeof userEvent.setup>;
 /** What a person reads in a control: the text of a Select, the value of anything typed into. */
@@ -21,8 +29,8 @@ const shown = (control: HTMLElement) => (control.tagName === "BUTTON" ? (control
 const unsaved = () => screen.queryByText("Unsaved changes");
 const dialog = () => screen.queryByRole("alertdialog", { name: "Discard unsaved changes?" });
 
-const product: ProductRecord = { id: "p1", code: "HOSE-1", name: "Rock hose", category: "Hose", subCategory: null, standardCode: null };
-const standard: ReferenceCatalogRecord = { id: "s1", code: "AS2683", name: "Hose standard" };
+const product: ProductRecord = { id: "p1", code: "HOSE-1", name: "Rock hose", category: "Hose", subCategory: null, standardId: null, standardCode: null, enabled: true };
+const standard: ReferenceCatalogRecord = { id: "s1", code: "AS2683", name: "Hose standard", enabled: true };
 const customer = {
   id: "c1", code: "C1", name: "Vopak", notes: "", status: "ACTIVE",
   locations: [{ id: "l1", name: "Dock", siteContactName: "Sam", siteContactMobile: "0400", siteContactEmail: "sam@x.test", ppeRequirements: [], additionalRequirements: [] }]
@@ -79,29 +87,43 @@ const cases: Case[] = [
     field: "Notes", fieldValue: "note", save: "Save customer",
     complete: async (user) => {
       await user.type(screen.getByLabelText("Name"), "Orica");
-      await user.type(screen.getByLabelText("Location"), "Kooragang");
-      await user.type(screen.getByLabelText("Site contact name"), "Sam");
-      await user.type(screen.getByLabelText("Site contact mobile"), "0400000000");
-      await user.type(screen.getByLabelText("Site contact email"), "sam@example.test");
+      // Editing an existing customer changes only its own fields; a new one needs its first location.
+      if (screen.queryByLabelText("Location name")) {
+        await user.type(screen.getByLabelText("Location name"), "Kooragang");
+        await user.type(screen.getByLabelText("Site contact name"), "Sam");
+        await user.type(screen.getByLabelText("Site contact mobile"), "0400000000");
+        await user.type(screen.getByLabelText("Site contact email"), "sam@example.test");
+        await choose(user, screen.getByLabelText("Timezone"), "Australia/Sydney");
+      }
     },
     firstInvalid: "Name", serverField: { api: "name", label: "Name" }, hasEditMode: true
   },
   {
     name: "Certificate",
-    ui: ({ onClose, onSubmit }) => <CertificateForm inspectionOptions={[inspection]} onClose={onClose} onSubmit={onSubmit} open />,
+    ui: ({ onClose, onSubmit }) => <CertificateForm onClose={onClose} onSubmit={onSubmit} open />,
     edit: async (user) => { await user.type(screen.getByLabelText("Certificate number"), "-B"); },
-    field: "Certificate number", fieldValue: "CERT-A-1-1-B", save: "Issue certificate",
+    field: "Certificate number", fieldValue: "-B", save: "Issue certificate",
+    complete: async (user) => { await choose(user, screen.getByLabelText("Approved inspection"), "i1"); },
     hasEditMode: false
   },
   {
     name: "Inspection (create)",
-    ui: ({ onClose, onSubmit }) => <InspectionForm assetOptions={[asset("1"), asset("2")]} onClose={onClose} onSubmit={onSubmit} open />,
+    ui: ({ onClose, onSubmit }) => <InspectionForm onClose={onClose} onSubmit={onSubmit} open />,
     edit: async (user) => { await choose(user, screen.getByLabelText("Inspection type"), "NEW_ASSET"); },
     field: "Inspection type", fieldValue: "New asset", save: "Save inspection",
-    complete: async (user) => { await choose(user, screen.getByLabelText("Inspection asset"), "1"); },
+    complete: async (user) => {
+      await choose(user, screen.getByLabelText("Inspection asset"), "1");
+      await choose(user, screen.getByLabelText("Inspection type"), "SERVICE");
+    },
     firstInvalid: "Inspection asset", hasEditMode: false
   }
 ];
+
+beforeEach(() => {
+  resetLookups();
+  lookups.assets = [asset("1"), asset("2")].map((item) => ({ ...item, name: item.assetNumber }));
+  lookups.inspections = [{ ...inspection, name: "A-1" }];
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -292,18 +314,39 @@ describe("a failed save for a record that has been left", () => {
   });
 });
 
-describe("Certificate: nothing to issue", () => {
-  it("explains it and offers no save", () => {
-    render(<CertificateForm inspectionOptions={[]} onClose={vi.fn()} onSubmit={vi.fn()} open />);
-    expect(screen.getByText("There are no approved inspections waiting for a certificate.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Issue certificate" })).toBeDisabled();
-  });
-  it("does not overwrite a number being typed when the list of inspections refreshes", async () => {
+describe("Certificate: explicit choice", () => {
+  it("chooses no inspection for the person and offers no number until one is chosen", async () => {
     const user = userEvent.setup();
-    const { rerender } = render(<CertificateForm inspectionOptions={[inspection]} onClose={vi.fn()} onSubmit={vi.fn()} open />);
+    render(<CertificateForm onClose={vi.fn()} onSubmit={vi.fn()} open />);
+    expect(screen.getByLabelText("Approved inspection")).toHaveValue("");
+    expect(screen.getByLabelText("Approved inspection")).toHaveAttribute("placeholder", "Select an approved inspection");
+    expect((screen.getByLabelText("Certificate number") as HTMLInputElement).value).toBe("");
+    await choose(user, screen.getByLabelText("Approved inspection"), "i1");
+    expect((screen.getByLabelText("Certificate number") as HTMLInputElement).value).toBe("CERT-A-1-1");
+  });
+
+  it("says when no approved inspection is waiting", async () => {
+    lookups.inspections = [];
+    const user = userEvent.setup();
+    render(<CertificateForm onClose={vi.fn()} onSubmit={vi.fn()} open />);
+    await user.click(screen.getByLabelText("Approved inspection"));
+    expect(await screen.findByText("No approved inspections match")).toBeInTheDocument();
+  });
+
+  it("does not overwrite a number being typed when the form re-renders", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CertificateForm onClose={vi.fn()} onSubmit={vi.fn()} open />);
+    await choose(user, screen.getByLabelText("Approved inspection"), "i1");
     await user.type(screen.getByLabelText("Certificate number"), "-EDIT");
-    rerender(<CertificateForm inspectionOptions={[{ ...inspection }]} onClose={vi.fn()} onSubmit={vi.fn()} open />);
+    rerender(<CertificateForm issuedInspectionIds={["other"]} onClose={vi.fn()} onSubmit={vi.fn()} open />);
     expect((screen.getByLabelText("Certificate number") as HTMLInputElement).value).toBe("CERT-A-1-1-EDIT");
+  });
+
+  it("does not offer an inspection that already has a certificate", async () => {
+    const user = userEvent.setup();
+    render(<CertificateForm issuedInspectionIds={["i1"]} onClose={vi.fn()} onSubmit={vi.fn()} open />);
+    await user.click(screen.getByLabelText("Approved inspection"));
+    expect(await screen.findByText("No approved inspections match")).toBeInTheDocument();
   });
 });
 

@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
 
 /**
@@ -12,8 +12,12 @@ export async function choose(user: UserEvent, control: HTMLElement, option: stri
   }
   await user.click(control);
   const list = await screen.findByRole("listbox");
-  const byValue = Array.from(list.querySelectorAll<HTMLElement>("[data-value]")).find((el) => el.dataset.value === option);
-  await user.click(byValue ?? within(list).getByRole("option", { name: option }));
+  // Options that come from a server search arrive a moment after the list opens, so wait for the one wanted.
+  const target = await waitFor(() => {
+    const byValue = Array.from(list.querySelectorAll<HTMLElement>("[data-value]")).find((el) => el.dataset.value === option);
+    return byValue ?? within(list).getByRole("option", { name: option });
+  });
+  await user.click(target);
 }
 
 /** The visible labels of every option a Select offers (opens it, reads it, closes it). */

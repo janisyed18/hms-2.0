@@ -1,12 +1,18 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssetForm } from "../components/AssetForm";
 import { UserAdminDialog } from "../components/UserAdminDialog";
 import type { AssetRecord } from "../domain/types";
+import { lookups, resetLookups } from "../test/lookupClient";
 import { guardNavigation } from "../routing/navigationGuard";
 import "../routing/useHmsRoute";
+
+vi.mock("../api/hmsClient", async (original) => {
+  const { lookupClient } = await import("../test/lookupClient");
+  return { ...(await original<typeof import("../api/hmsClient")>()), createHmsClient: () => lookupClient };
+});
 
 const customerA = { id: "c1", code: "AGT1", name: "Vopak" };
 const product = { id: "p1", code: "HOSE", name: "Hose", category: "Hose" };
@@ -27,15 +33,19 @@ function assetForm(overrides: Partial<React.ComponentProps<typeof AssetForm>> = 
   return {
     asset: asset("1", "Hose One"),
     configurationOptions: options,
-    customerOptions: [customerA],
-    locationOptions: [{ customerId: "c1", locations: [{ id: "l1", name: "Dock" } as never] }],
-    productOptions: [product],
     open: true,
     onClose: vi.fn(),
     onSubmit: vi.fn().mockResolvedValue(undefined),
     ...overrides
   } as React.ComponentProps<typeof AssetForm>;
 }
+
+beforeEach(() => {
+  resetLookups();
+  lookups.customers = [customerA];
+  lookups.products = [product];
+  lookups.locations = { c1: [{ id: "l1", name: "Dock" }] };
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -55,11 +65,11 @@ describe("shared form behaviour on the Asset form", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
-  it("does not read late-arriving defaults as unsaved work", () => {
-    const props = assetForm({ asset: null, customerOptions: [], productOptions: [], locationOptions: [] });
-    const { rerender } = render(<AssetForm {...props} />);
-    rerender(<AssetForm {...props} customerOptions={[customerA]} productOptions={[product]} locationOptions={[{ customerId: "c1", locations: [{ id: "l1", name: "Dock" } as never] }]} />);
-    expect(screen.getByLabelText("Agent")).toHaveValue("Vopak");
+  it("chooses nothing for a new asset, so it is not unsaved work and not a silent default", async () => {
+    render(<AssetForm {...assetForm({ asset: null })} />);
+    expect(screen.getByLabelText("Customer")).toHaveValue("");
+    expect(screen.getByLabelText("Location")).toHaveTextContent("Select a customer first");
+    expect(screen.getByLabelText("Product")).toHaveValue("");
     expect(unsavedStatus()).toBeNull();
   });
 
@@ -159,7 +169,9 @@ describe("shared form behaviour on the Asset form", () => {
     expect(name).toHaveAttribute("aria-invalid", "true");
     expect(name.getAttribute("aria-describedby")).toBeTruthy();
     expect(document.getElementById(name.getAttribute("aria-describedby") as string)).toHaveTextContent("Enter an asset name.");
-    expect(name).toHaveFocus();
+    // Nothing is chosen for a new asset, so the customer is the first field that needs attention.
+    expect(screen.getByLabelText("Customer")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Customer")).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "Serial Number" }));
     expect(screen.getByLabelText("Serial Number")).toHaveFocus();
   });
@@ -169,7 +181,7 @@ describe("shared form behaviour on the Asset form", () => {
     const user = userEvent.setup();
     const { rerender } = render(<AssetForm {...props} />);
     await user.type(screen.getByLabelText("Serial Number"), "-TYPED");
-    rerender(<AssetForm {...props} asset={{ ...asset("1", "Hose One"), lifecycleStatus: "ACTIVE", etag: "e2" }} customerOptions={[{ ...customerA }]} />);
+    rerender(<AssetForm {...props} asset={{ ...asset("1", "Hose One"), lifecycleStatus: "ACTIVE", etag: "e2" }}  />);
     expect(screen.getByLabelText("Serial Number")).toHaveValue("SN-1-TYPED");
     expect(unsavedStatus()).not.toBeNull();
   });

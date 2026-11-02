@@ -1,7 +1,7 @@
 import { HmsApiError } from "../api/hmsClient";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InspectionDetail } from "../components/InspectionDetail";
 import { InspectionForm } from "../components/InspectionForm";
@@ -9,6 +9,12 @@ import { CONDITION_CHECKS, blankFormState, buildValues, passAllConditions } from
 import type { InspectionFormState } from "../domain/inspectionForm";
 import type { AssetRecord, InspectionRecord } from "../domain/types";
 import { choose } from "../test/choose";
+import { lookups, resetLookups } from "../test/lookupClient";
+
+vi.mock("../api/hmsClient", async (original) => {
+  const { lookupClient } = await import("../test/lookupClient");
+  return { ...(await original<typeof import("../api/hmsClient")>()), createHmsClient: () => lookupClient };
+});
 
 const rated = {
   id: "asset-rated",
@@ -29,9 +35,15 @@ const other = {
   pressureRating: { workingPressureKpa: 1000, testPressureKpa: 1500 }
 } as unknown as AssetRecord;
 
+beforeEach(() => {
+  resetLookups();
+  // The asset search matches on name or code; an asset's number stands in for both here.
+  lookups.assets = [rated, unrated, other].map((asset) => ({ ...asset, name: asset.assetNumber }));
+});
+
 function renderForm() {
   const onSubmit = vi.fn().mockResolvedValue(undefined);
-  render(<InspectionForm assetOptions={[rated, unrated, other]} onClose={vi.fn()} onSubmit={onSubmit} open />);
+  render(<InspectionForm onClose={vi.fn()} onSubmit={onSubmit} open />);
   return { onSubmit };
 }
 
@@ -64,6 +76,16 @@ describe("new inspection (staff)", () => {
     expect(props.onSubmit).not.toHaveBeenCalled();
   });
 
+  it("chooses no inspection type for the person and asks for one", async () => {
+    const user = userEvent.setup();
+    const props = renderForm();
+    expect(field("Inspection type")).toHaveTextContent("Select an inspection type");
+    await choose(user, field("Inspection asset"), "asset-rated");
+    await user.click(create());
+    expect(field("Inspection type")).toHaveAccessibleDescription("Select the inspection type.");
+    expect(props.onSubmit).not.toHaveBeenCalled();
+  });
+
   it("is pre-work only: no measurements, results or conditions can be entered before Start", async () => {
     const user = userEvent.setup();
     renderForm();
@@ -92,8 +114,9 @@ describe("new inspection (staff)", () => {
   it("reports a create failure", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockRejectedValue(new HmsApiError(422, "validation", "Request validation failed", null));
-    render(<InspectionForm assetOptions={[rated]} onClose={vi.fn()} onSubmit={onSubmit} open />);
+    render(<InspectionForm onClose={vi.fn()} onSubmit={onSubmit} open />);
     await choose(user, field("Inspection asset"), "asset-rated");
+    await choose(user, field("Inspection type"), "SERVICE");
     await user.click(create());
     expect(await screen.findByRole("alert")).toHaveTextContent("Request validation failed");
   });

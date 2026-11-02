@@ -661,11 +661,12 @@ describe("hmsClient", () => {
       id: "standard-api-1",
       code: "AS2683",
       name: "AS 2683",
+      enabled: true,
       etag: '"standards-1"'
     });
   });
 
-  it("archives core records with DELETE and optional If-Match headers", async () => {
+  it("deletes core records with DELETE and optional If-Match headers; archive is a separate POST", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(noContent())
@@ -674,10 +675,10 @@ describe("hmsClient", () => {
       .mockResolvedValueOnce(noContent());
 
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
-    await client.archiveCustomer("cust-api-1", '"2"');
-    await client.archiveProduct("product-api-1", '"3"');
+    await client.deleteCustomer("cust-api-1", '"2"');
+    await client.deleteProduct("product-api-1", '"3"');
     await client.archiveAsset("asset-api-1", '"4"');
-    await client.archiveReferenceCatalogItem("standards", "standard-api-1", '"5"');
+    await client.deleteReferenceCatalogItem("standards", "standard-api-1", '"5"');
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -745,14 +746,14 @@ describe("hmsClient", () => {
       { code: "CARBON_STEEL", name: "Carbon steel alloy" },
       '"materials-1"'
     );
-    await client.archiveReferenceCatalogItem(
+    await client.deleteReferenceCatalogItem(
       "materials",
       "material-api-2",
       '"materials-2"'
     );
 
     expect(materials.items).toEqual([
-      { id: "material-api-1", code: "COMPOSITE", name: "Composite", etag: '"materials-1"' }
+      { id: "material-api-1", code: "COMPOSITE", name: "Composite", enabled: true, etag: '"materials-1"' }
     ]);
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
@@ -800,18 +801,24 @@ describe("hmsClient", () => {
     const created = await client.createCustomer({
       name: "Summit Marine Group",
       notes: "Coordinate access with the terminal team.",
-      locations: [{
+      firstLocation: {
         name: "Newcastle operations yard",
+        address1: "1 Wharf Rd",
+        address2: "",
+        city: "Newcastle",
+        state: "NSW",
+        country: "Australia",
         siteContactName: "Alex Nguyen",
         siteContactMobile: "+61 412 345 678",
         siteContactEmail: "alex.nguyen@example.test",
         ppeRequirements: ["High Vis", "Safety Boots"],
-        additionalRequirements: ["2-way radio"]
-      }, {
-        name: "Kooragang workshop",
-        ppeRequirements: [],
-        additionalRequirements: []
-      }]
+        additionalRequirements: ["2-way radio"],
+        schedulingTimezone: "Australia/Sydney",
+        schedulingOpenTime: "07:00",
+        schedulingCloseTime: "15:30",
+        schedulingWeekdays: [0, 1, 2],
+        schedulingBlackoutDates: ["2026-12-25"]
+      }
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -824,26 +831,21 @@ describe("hmsClient", () => {
           locations: [
             {
               name: "Newcastle operations yard",
+              address_1: "1 Wharf Rd",
+              address_2: null,
+              city: "Newcastle",
+              state: "NSW",
+              country: "Australia",
               site_contact_name: "Alex Nguyen",
               site_contact_mobile: "+61 412 345 678",
               site_contact_email: "alex.nguyen@example.test",
               ppe_requirements: ["High Vis", "Safety Boots"],
               additional_requirements: ["2-way radio"],
-              scheduling_timezone: "UTC",
-              scheduling_open_time: "08:00",
-              scheduling_close_time: "17:00",
-              scheduling_weekdays: [0, 1, 2, 3, 4],
-              scheduling_blackout_dates: []
-            },
-            {
-              name: "Kooragang workshop",
-              ppe_requirements: [],
-              additional_requirements: [],
-              scheduling_timezone: "UTC",
-              scheduling_open_time: "08:00",
-              scheduling_close_time: "17:00",
-              scheduling_weekdays: [0, 1, 2, 3, 4],
-              scheduling_blackout_dates: []
+              scheduling_timezone: "Australia/Sydney",
+              scheduling_open_time: "07:00",
+              scheduling_close_time: "15:30",
+              scheduling_weekdays: [0, 1, 2],
+              scheduling_blackout_dates: ["2026-12-25"]
             }
           ]
         })
@@ -868,13 +870,7 @@ describe("hmsClient", () => {
 
     await client.updateCustomer("customer-api-1", {
       name: "Summit Marine Services",
-      notes: "Confirm the annual service window.",
-      locations: [{
-        id: "location-api-1",
-        name: "Newcastle workshop",
-        ppeRequirements: ["Hard Hat"],
-        additionalRequirements: ["Vehicle Site Approval"]
-      }]
+      notes: "Confirm the annual service window."
     }, '"3"');
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -884,21 +880,66 @@ describe("hmsClient", () => {
         headers: expect.objectContaining({ "If-Match": '"3"' }),
         body: JSON.stringify({
           name: "Summit Marine Services",
-          notes: "Confirm the annual service window.",
-          locations: [{
-            id: "location-api-1",
-            name: "Newcastle workshop",
-            ppe_requirements: ["Hard Hat"],
-            additional_requirements: ["Vehicle Site Approval"],
-            scheduling_timezone: "UTC",
-            scheduling_open_time: "08:00",
-            scheduling_close_time: "17:00",
-            scheduling_weekdays: [0, 1, 2, 3, 4],
-            scheduling_blackout_dates: []
-          }]
+          notes: "Confirm the annual service window."
         })
       })
     );
+  });
+
+  it("archives and restores a customer with POST, which is not a delete", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson({ ...apiCustomer, status: "ARCHIVED", archived_at: "2026-11-02T00:00:00Z" }));
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    const archived = await client.archiveCustomer("customer-api-1");
+    await client.restoreCustomer("customer-api-1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/v1/customers/customer-api-1/archive", expect.objectContaining({ method: "POST" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/v1/customers/customer-api-1/restore", expect.objectContaining({ method: "POST" }));
+    expect(archived.status).toBe("Archived");
+  });
+
+  it("manages locations and contacts on their own endpoints", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(okJson(apiCustomer.locations[0]))
+      .mockResolvedValueOnce(okJson(apiCustomer.locations[0]))
+      .mockResolvedValueOnce(noContent())
+      .mockResolvedValueOnce(okJson({ id: "contact-1", name: "Sam", email: null, phone: null, role: null, receives_retest_reminders: false }))
+      .mockResolvedValueOnce(noContent());
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const location = {
+      name: "Dock", address1: "", address2: "", city: "", state: "", country: "", siteContactName: "",
+      siteContactMobile: "", siteContactEmail: "", ppeRequirements: [], additionalRequirements: [],
+      schedulingTimezone: "Australia/Perth", schedulingOpenTime: "06:00", schedulingCloseTime: "14:00",
+      schedulingWeekdays: [0], schedulingBlackoutDates: []
+    };
+
+    await client.createCustomerLocation("c1", location);
+    await client.updateCustomerLocation("c1", "l1", location);
+    await client.deleteCustomerLocation("c1", "l1");
+    await client.createCustomerContact("c1", { name: "Sam", email: "", phone: "", role: "", receivesRetestReminders: false });
+    await client.deleteCustomerContact("c1", "contact-1");
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/v1/customers/c1/locations", expect.objectContaining({ method: "POST" }));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ scheduling_timezone: "Australia/Perth", scheduling_open_time: "06:00" });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/v1/customers/c1/locations/l1", expect.objectContaining({ method: "PATCH" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, "/api/v1/customers/c1/locations/l1", expect.objectContaining({ method: "DELETE" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(4, "/api/v1/customers/c1/contacts", expect.objectContaining({ method: "POST" }));
+    expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toMatchObject({ receives_retest_reminders: false });
+    expect(fetchMock).toHaveBeenNthCalledWith(5, "/api/v1/customers/c1/contacts/contact-1", expect.objectContaining({ method: "DELETE" }));
+  });
+
+  it("keeps a product's standard when other fields are edited and disables with PATCH enabled", async () => {
+    const apiProduct = { id: "p1", code: "HOSE", name: "Hose", category: "Fuel", sub_category: null, standard_id: "std-1", standard_code: "AS2683", enabled: true };
+    const fetchMock = vi.fn().mockResolvedValue(okJson(apiProduct));
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    const product = await client.createProduct({ code: "HOSE", name: "Hose", category: "Fuel", subCategory: null, standardId: "std-1" });
+    await client.updateProduct("p1", { code: "HOSE", name: "Hose renamed", category: "Fuel", subCategory: null, standardId: product.standardId }, '"1"');
+    await client.setProductEnabled("p1", false, '"2"');
+
+    expect(product.standardId).toBe("std-1");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).standard_id).toBe("std-1");
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toEqual({ enabled: false });
   });
 
   it("sends the asset profile and end configuration payload", async () => {
@@ -1443,7 +1484,7 @@ describe("hmsClient", () => {
       role: "REVIEWER",
       customerId: null
     });
-    await client.archiveAdminUser("user-api-1");
+    await client.deleteAdminUser("user-api-1");
     const devices = await client.listDevices({ search: "tablet", sort: "device_id" });
     const device = await client.updateDevice("field-tablet-01", {
       revoked: true,

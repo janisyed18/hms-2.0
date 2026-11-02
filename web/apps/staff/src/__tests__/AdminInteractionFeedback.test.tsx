@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { HmsApiError } from "../api/hmsClient";
 import { SystemWorkspace } from "../components/SystemWorkspace";
 import type { AdminUserRecord, DeviceRecord } from "../domain/types";
+import { choose } from "../test/choose";
 
 const client = vi.hoisted(() => ({
   listAdminUsers: vi.fn(),
@@ -17,7 +18,10 @@ const client = vi.hoisted(() => ({
   unlockAdminUser: vi.fn(),
   resetAdminUserPassword: vi.fn(),
   resetAdminUserMfa: vi.fn(),
-  updateDevice: vi.fn()
+  updateDevice: vi.fn(),
+  deleteAdminUser: vi.fn(),
+  listCustomers: vi.fn(),
+  getCustomer: vi.fn()
 }));
 
 vi.mock("../api/hmsClient", async (importOriginal) => ({
@@ -60,6 +64,8 @@ async function manage(user: ReturnType<typeof userEvent.setup>, item: string) {
   await user.click(screen.getByRole("menuitem", { name: item }));
 }
 const dialog = () => screen.findByRole("alertdialog");
+const chooseRole = (user: ReturnType<typeof userEvent.setup>, role = "INSPECTOR") =>
+  choose(user, within(screen.getByRole("dialog", { name: "Add user" })).getByLabelText("Role"), role);
 
 describe("User dialog", () => {
   async function openAdd(user: ReturnType<typeof userEvent.setup>) {
@@ -98,6 +104,20 @@ describe("User dialog", () => {
     expect(client.createAdminUser).not.toHaveBeenCalled();
   });
 
+  it("starts with no role chosen and will not create a user until one is picked", async () => {
+    const user = renderUsers();
+    await openAdd(user);
+    const role = within(screen.getByRole("dialog", { name: "Add user" })).getByLabelText("Role");
+    expect(role).toHaveTextContent("Select a role");
+    await user.type(screen.getByLabelText("Email"), "new@example.com");
+    await user.type(screen.getByLabelText("First name"), "New");
+    await user.type(screen.getByLabelText("Last name"), "Person");
+    await user.click(screen.getByRole("button", { name: "Create user" }));
+    expect(role).toHaveAccessibleDescription("Select a role.");
+    expect(role).toHaveFocus();
+    expect(client.createAdminUser).not.toHaveBeenCalled();
+  });
+
   it("clears a name's error as soon as the person starts correcting it", async () => {
     const user = renderUsers();
     await openAdd(user);
@@ -120,6 +140,7 @@ describe("User dialog", () => {
     await user.type(screen.getByLabelText("Email"), "jane@example.com");
     await user.type(screen.getByLabelText("First name"), "Jane");
     await user.type(screen.getByLabelText("Last name"), "Smith");
+    await chooseRole(user);
     await user.click(screen.getByRole("button", { name: "Create user" }));
 
     const alert = await screen.findByRole("alert");
@@ -138,6 +159,7 @@ describe("User dialog", () => {
     await user.type(screen.getByLabelText("Email"), "new@example.com");
     await user.type(screen.getByLabelText("First name"), "New");
     await user.type(screen.getByLabelText("Last name"), "Person");
+    await chooseRole(user);
     await user.click(screen.getByRole("button", { name: "Create user" }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("You do not have permission to do this.");
@@ -152,6 +174,7 @@ describe("User dialog", () => {
     await user.type(screen.getByLabelText("Email"), "new@example.com");
     await user.type(screen.getByLabelText("First name"), "New");
     await user.type(screen.getByLabelText("Last name"), "Person");
+    await chooseRole(user);
     await user.click(screen.getByRole("button", { name: "Create user" }));
     const busy = await screen.findByRole("button", { name: "Creating…" });
     expect(busy).toBeDisabled();
