@@ -258,7 +258,7 @@ async def unsubscribe(
     """
     if token is None:
         form = parse_qs((await request.body()).decode("utf-8", "replace"))
-        token = (form.get("token") or [None])[0]
+        token = next(iter(form.get("token", [])), None)
     claim = _unsubscribe_claim(token or "")
     await _upsert_pref(
         session,

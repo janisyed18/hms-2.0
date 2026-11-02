@@ -15,6 +15,7 @@ import inspect
 import textwrap
 from collections.abc import Iterable, Iterator
 from types import FunctionType
+from typing import Any, cast
 
 from fastapi.routing import APIRoute
 
@@ -62,7 +63,7 @@ EXEMPT: dict[tuple[str, str], str] = {
 }
 
 
-def _routes(routes: Iterable, prefix: str = "") -> Iterator[tuple[str, APIRoute]]:
+def _routes(routes: Iterable[Any], prefix: str = "") -> Iterator[tuple[str, APIRoute]]:
     """Yield (full path, route), looking inside routers added with include_router."""
     for route in routes:
         if isinstance(route, APIRoute):
@@ -79,8 +80,8 @@ def _routes(routes: Iterable, prefix: str = "") -> Iterator[tuple[str, APIRoute]
 def _mutating_handlers() -> dict[tuple[str, str], FunctionType]:
     found: dict[tuple[str, str], FunctionType] = {}
     for path, route in _routes(create_app().routes):
-        for method in sorted(route.methods & MUTATING):
-            found[(method, path)] = route.endpoint
+        for method in sorted((route.methods or set()) & MUTATING):
+            found[(method, path)] = cast(FunctionType, route.endpoint)
     return found
 
 
