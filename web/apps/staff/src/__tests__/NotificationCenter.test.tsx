@@ -326,7 +326,7 @@ describe("one shared notification state", () => {
     const user = userEvent.setup();
     render(<HmsApp session={adminSession} />);
     const page = await screen.findByRole("region", { name: "All notifications" });
-    expect(within(page).getAllByRole("button", { name: /Open unread/ })).toHaveLength(2);
+    expect(await within(page).findAllByRole("button", { name: /Open unread/ })).toHaveLength(2);
     await user.click(await screen.findByRole("button", { name: bellName(2) }));
     await user.click(within(screen.getByRole("dialog", { name: "Notifications" })).getByRole("button", { name: "Mark all read" }));
     await waitFor(() => expect(within(page).queryAllByRole("button", { name: /Open unread/ })).toHaveLength(0));
@@ -339,7 +339,7 @@ describe("one shared notification state", () => {
     const user = userEvent.setup();
     render(<HmsApp session={adminSession} />);
     const page = await screen.findByRole("region", { name: "All notifications" });
-    await user.click(within(page).getByRole("button", { name: "Open unread notification First" }));
+    await user.click(await within(page).findByRole("button", { name: "Open unread notification First" }));
     expect(await screen.findByRole("button", { name: bellName(1) })).toBeInTheDocument();
   });
 
