@@ -1,4 +1,4 @@
-import { Archive, Boxes, Layers3, ShieldCheck } from "lucide-react";
+import { Boxes, Layers3 } from "lucide-react";
 
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
@@ -19,11 +19,9 @@ interface ProductsWorkspaceProps {
 
 export function ProductsWorkspace({ canManage = true, canDelete = false, embedded = false }: ProductsWorkspaceProps) {
   const workspace = useProductsWorkspace();
-  const categoryCount = new Set(workspace.products.map((product) => product.category)).size;
-  const standardCount = new Set(workspace.products.map((product) => product.standardCode).filter(Boolean)).size;
-  const legacyCount = workspace.products.filter(
-    (product) => product.category.toLowerCase() === "legacy catalogue"
-  ).length;
+  // Counts come from the server for the whole catalogue, not from the page loaded here.
+  const total = workspace.serverTotal ?? workspace.products.length;
+  const viewLabel = workspace.statusFilter === "ACTIVE" ? "Enabled" : "Disabled";
   const productColumns: ModuleColumn<ProductRecord>[] = [
     {
       header: "Code",
@@ -72,13 +70,11 @@ export function ProductsWorkspace({ canManage = true, canDelete = false, embedde
           eyebrow="Product catalog"
           title="Product catalog"
           description="Manage hose products, classifications, and standards."
-          context={<><Boxes aria-hidden="true" size={20} /><span><strong>{workspace.products.length} total products</strong><small>Across {categoryCount} categories</small></span></>}
+          context={<><Boxes aria-hidden="true" size={20} /><span><strong>{total} {viewLabel.toLowerCase()} products</strong><small>Across the whole catalogue</small></span></>}
         />
         <ManagementMetricStrip>
-          <ManagementMetric icon={Boxes} label="Total Products" value={workspace.products.length} detail="Available product definitions" />
-          <ManagementMetric icon={Layers3} label="Categories" value={categoryCount} detail="Product classifications" tone="green" />
-          <ManagementMetric icon={ShieldCheck} label="Standards Tracked" value={standardCount} detail="Linked to product records" tone="amber" />
-          <ManagementMetric icon={Archive} label="Legacy Catalogue" value={legacyCount} detail={workspace.products.length ? `${Math.round((legacyCount / workspace.products.length) * 100)}% of total` : "No product records"} tone="violet" />
+          <ManagementMetric icon={Boxes} label={`${viewLabel} products`} value={total} detail="Matching the current view" />
+          <ManagementMetric icon={Layers3} label="Shown" value={workspace.products.length} detail="Loaded for the current search" tone="green" />
         </ManagementMetricStrip>
       </> : null}
       {workspace.notice ? (

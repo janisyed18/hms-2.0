@@ -394,11 +394,18 @@ button:active:not(:disabled) {
 }
 
 .customer-location-grid article > strong {
+  grid-column: 3;
+  grid-row: 1;
   display: grid;
   justify-items: end;
   color: var(--ink);
   font-size: 20px;
   font-variant-numeric: tabular-nums;
+}
+
+.customer-location-grid article > .row-actions,
+.customer-location-grid article > .empty-requirements {
+  grid-column: 2 / -1;
 }
 
 .customer-location-grid article > strong small {

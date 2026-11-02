@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
 import { useActionNotice } from "../components/interaction/ActionNotice";
@@ -22,28 +22,39 @@ export function useProductsWorkspace() {
   const [isDeleting, setDeleting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Category and standard choices seen so far: the server filters by them, so a filtered page alone would
+  // leave only the chosen value to pick from.
+  const [facets, setFacets] = useState<{ categories: string[]; standards: string[] }>({ categories: [], standards: [] });
+
+  // Search, status and the two filters are answered by the server, so they cover every product and the total is real.
   useEffect(() => {
     let active = true;
-    void createHmsClient().listProducts({ sort: "code", enabled: statusFilter === "ACTIVE" }).then((result) => {
-      if (active) { setProducts(result.items); setServerTotal(result.total); }
-    }).catch((reason: unknown) => {
-      if (active) setLoadError(friendlyApiError(reason, { fallback: "Products could not be loaded." }).message);
-    });
-    return () => { active = false; };
-  }, [statusFilter]);
+    const timer = window.setTimeout(() => {
+      void createHmsClient().listProducts({
+        sort: "code",
+        enabled: statusFilter === "ACTIVE",
+        search: query,
+        category: categoryFilter === "ALL" ? undefined : categoryFilter,
+        standardCode: standardFilter === "ALL" ? undefined : standardFilter
+      }).then((result) => {
+        if (!active) return;
+        setProducts(result.items);
+        setServerTotal(result.total);
+        setLoadError(null);
+        setFacets((current) => ({
+          categories: Array.from(new Set([...current.categories, ...result.items.map((product) => product.category)])).sort(),
+          standards: Array.from(new Set([...current.standards, ...result.items.map((product) => product.standardCode).filter(Boolean) as string[]])).sort()
+        }));
+      }).catch((reason: unknown) => {
+        if (active) setLoadError(friendlyApiError(reason, { fallback: "Products could not be loaded." }).message);
+      });
+    }, query ? 250 : 0);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [statusFilter, query, categoryFilter, standardFilter]);
 
-  const visibleProducts = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return products.filter((product) => (
-      (categoryFilter === "ALL" || product.category === categoryFilter) &&
-      (standardFilter === "ALL" || product.standardCode === standardFilter) &&
-      (!normalized || [product.code, product.name, product.category, product.subCategory, product.standardCode]
-        .filter(Boolean).some((value) => value?.toLowerCase().includes(normalized)))
-    ));
-  }, [categoryFilter, products, query, standardFilter]);
-
-  const categoryOptions = useMemo(() => Array.from(new Set(products.map((product) => product.category))).sort(), [products]);
-  const standardOptions = useMemo(() => Array.from(new Set(products.map((product) => product.standardCode).filter(Boolean))).sort() as string[], [products]);
+  const visibleProducts = products;
+  const categoryOptions = facets.categories;
+  const standardOptions = facets.standards;
   const selectedProduct = selectedProductId ? products.find((product) => product.id === selectedProductId) ?? null : null;
 
   function openCreate() { setEditingProduct(null); setFormOpen(true); }
