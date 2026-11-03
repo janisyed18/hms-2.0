@@ -7,7 +7,15 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, ForeignKey, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Date,
+    ForeignKey,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from hms_backend.app.models.base import Base, SyncableMixin
@@ -34,6 +42,13 @@ class AssetLifecycleStatus(StrEnum):
     OVERDUE = "OVERDUE"
     CONDEMNED = "CONDEMNED"
     RETIRED = "RETIRED"
+
+
+class AssetNumberCounter(Base):
+    __tablename__ = "asset_number_counters"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    next_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
 class AssetEnd(StrEnum):

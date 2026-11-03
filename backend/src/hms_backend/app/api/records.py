@@ -47,6 +47,7 @@ from hms_backend.app.api.schemas import (
     CustomerContactUpdate,
     CustomerCreate,
     CustomerListResponse,
+    CustomerLocationContactRead,
     CustomerLocationCreate,
     CustomerLocationRead,
     CustomerLocationUpdate,
@@ -69,6 +70,7 @@ from hms_backend.app.api.schemas import (
     InspectionBookingApproval,
     InspectionBookingCancelRequest,
     InspectionBookingCreate,
+    InspectionBookingInspectorReassignment,
     InspectionBookingListResponse,
     InspectionBookingRead,
     InspectionBookingRejectRequest,
@@ -129,6 +131,7 @@ from hms_backend.app.modules.assets.models import (
     Asset,
     AssetEndConfiguration,
     AssetLifecycleStatus,
+    AssetNumberCounter,
 )
 from hms_backend.app.modules.assets.pressure import rated_pressures
 from hms_backend.app.modules.assets.workflow import (
@@ -159,6 +162,7 @@ from hms_backend.app.modules.customers.models import (
     Customer,
     CustomerContact,
     CustomerLocation,
+    CustomerLocationContact,
 )
 from hms_backend.app.modules.identity.models import AccountStatus, User
 from hms_backend.app.modules.inspections.models import (
@@ -785,6 +789,7 @@ async def create_customer(
             site_contact_name=_clean_optional(location_payload.site_contact_name),
             site_contact_mobile=_clean_optional(location_payload.site_contact_mobile),
             site_contact_email=_clean_optional(location_payload.site_contact_email),
+            notes=_clean_optional(location_payload.notes),
             ppe_requirements=list(location_payload.ppe_requirements or []),
             additional_requirements=list(
                 location_payload.additional_requirements or []
@@ -793,6 +798,13 @@ async def create_customer(
         )
         _validate_location_scheduling(location)
         session.add(location)
+        if location_payload.contacts:
+            await _replace_location_contacts(
+                session,
+                location,
+                location_payload.contacts,
+                actor_id=principal.user_id,
+            )
         await record_create(
             session,
             location,
@@ -925,12 +937,17 @@ async def create_customer_location(
         site_contact_name=_clean_optional(payload.site_contact_name),
         site_contact_mobile=_clean_optional(payload.site_contact_mobile),
         site_contact_email=_clean_optional(payload.site_contact_email),
+        notes=_clean_optional(payload.notes),
         ppe_requirements=list(payload.ppe_requirements),
         additional_requirements=list(payload.additional_requirements),
         **_location_scheduling_values(payload),
     )
     _validate_location_scheduling(location)
     session.add(location)
+    if payload.contacts:
+        await _replace_location_contacts(
+            session, location, payload.contacts, actor_id=principal.user_id
+        )
     await record_create(
         session,
         location,
@@ -979,6 +996,12 @@ async def update_customer_location(
         location.site_contact_mobile = _clean_optional(payload.site_contact_mobile)
     if "site_contact_email" in updates:
         location.site_contact_email = _clean_optional(payload.site_contact_email)
+    if "notes" in updates:
+        location.notes = _clean_optional(payload.notes)
+    if "contacts" in updates and payload.contacts is not None:
+        await _replace_location_contacts(
+            session, location, payload.contacts, actor_id=principal.user_id
+        )
     if "ppe_requirements" in updates and payload.ppe_requirements is not None:
         location.ppe_requirements = list(payload.ppe_requirements)
     if (
@@ -1355,11 +1378,28 @@ async def create_asset(
         payload.location_id,
         customer_id=customer.id,
     )
-    asset_number = (
-        _clean_optional(payload.asset_number) or f"HMS-{uuid4().hex[:10].upper()}"
+    requested_number = _clean_optional(payload.asset_number)
+    if requested_number is None and not payload.generate_asset_number:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Asset Number is required when automatic generation is disabled",
+        )
+    asset_number = requested_number or await _next_asset_number(session)
+    duplicate = await session.scalar(
+        select(Asset.id).where(
+            Asset.asset_number == asset_number,
+            Asset.deleted_at.is_(None),
+        )
     )
+    if duplicate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Asset Number is already in use",
+        )
     next_inspection_date = (
-        payload.next_inspection_date
+        _add_calendar_years(payload.installation_date)
+        if payload.installation_date is not None
+        else payload.next_inspection_date
         if payload.next_inspection_date is not None
         else payload.next_retest_due_at
     )
@@ -1371,7 +1411,7 @@ async def create_asset(
         location=location,
         product=product,
         asset_number=asset_number,
-        asset_name=_clean_optional(payload.asset_name) or asset_number,
+        asset_name=_clean_optional(payload.asset_name),
         customer_serial_no=_clean_optional(
             payload.serial_number
             if payload.serial_number is not None
@@ -1389,6 +1429,7 @@ async def create_asset(
         notes=_clean_optional(description),
     )
     session.add(asset)
+    await _advance_asset_number_counter(session, asset_number)
     await record_create(
         session,
         asset,
@@ -1422,6 +1463,8 @@ async def create_asset(
         actor_id=principal.user_id,
     )
     if payload.retest_schedule is not None:
+        if next_inspection_date is not None:
+            payload.retest_schedule.due_at = next_inspection_date
         schedule = _build_retest_schedule(
             payload.retest_schedule,
             customer=customer,
@@ -2478,6 +2521,159 @@ async def approve_inspection_booking(
         payload=_inspection_booking_event_payload(
             booking, asset_count=len(booking.assets)
         ),
+    )
+    await session.commit()
+    loaded = await _get_visible_inspection_booking_or_404(
+        session, booking.id, principal
+    )
+    return _inspection_booking_read(loaded)
+
+
+@router.post(
+    "/inspection-bookings/{booking_id}/reassign-inspector",
+    response_model=InspectionBookingRead,
+)
+async def reassign_inspection_booking_inspector(
+    booking_id: str,
+    payload: InspectionBookingInspectorReassignment,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> InspectionBookingRead:
+    _require_inspection_booking(principal)
+    if is_customer_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Customer users cannot reassign inspectors",
+        )
+    booking = await _get_visible_inspection_booking_or_404(
+        session, booking_id, principal
+    )
+    appointment = booking.appointment
+    if (
+        booking.status != InspectionBookingStatus.APPROVED.value
+        or appointment is None
+        or appointment.status != InspectionAppointmentStatus.CONFIRMED.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a confirmed inspection booking can be reassigned",
+        )
+    current_revision = next(
+        item
+        for item in appointment.revisions
+        if item.revision_number == appointment.current_revision_number
+    )
+    inspector = await _get_active_inspector_or_422(
+        session, payload.inspector_user_id
+    )
+    if inspector.id == current_revision.inspector_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Choose a different inspector",
+        )
+    mutable_inspections = await session.scalars(
+        select(Inspection).where(
+            Inspection.booking_id == booking.id,
+            Inspection.deleted_at.is_(None),
+            Inspection.status.in_(
+                [InspectionStatus.DRAFT.value, InspectionStatus.IN_PROGRESS.value]
+            ),
+        )
+    )
+    all_inspection_statuses = await session.scalars(
+        select(Inspection.status).where(
+            Inspection.booking_id == booking.id,
+            Inspection.deleted_at.is_(None),
+        )
+    )
+    if any(
+        status_value
+        not in {InspectionStatus.DRAFT.value, InspectionStatus.IN_PROGRESS.value}
+        for status_value in all_inspection_statuses
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Cannot reassign an appointment with submitted or approved "
+                "inspection history"
+            ),
+        )
+    await _assert_booking_resources_available(
+        session,
+        booking,
+        inspector.id,
+        current_revision.starts_at,
+        current_revision.ends_at,
+        exclude_revision_id=current_revision.id,
+    )
+    for allocation in current_revision.allocations:
+        if allocation.state != InspectionAllocationState.CONFIRMED.value:
+            continue
+        allocation_before = allocation.to_audit_dict()
+        allocation.state = InspectionAllocationState.RELEASED.value
+        await record_update(
+            session,
+            allocation,
+            actor_id=principal.user_id,
+            action="inspection_resource_allocation.released",
+            before=allocation_before,
+        )
+    booking_before = booking.to_audit_dict()
+    booking.inspector_user_id = inspector.id
+    await record_update(
+        session,
+        booking,
+        actor_id=principal.user_id,
+        action="inspection_booking.inspector_reassigned",
+        before=booking_before,
+    )
+    for inspection in mutable_inspections:
+        inspection_before = inspection.to_audit_dict()
+        inspection.inspector_user_id = inspector.id
+        await record_update(
+            session,
+            inspection,
+            actor_id=principal.user_id,
+            action="inspection.inspector_reassigned",
+            before=inspection_before,
+        )
+    appointment_before = appointment.to_audit_dict()
+    appointment.current_revision_number += 1
+    await record_update(
+        session,
+        appointment,
+        actor_id=principal.user_id,
+        action="inspection_appointment.inspector_reassigned",
+        before=appointment_before,
+    )
+    revision = InspectionAppointmentRevision(
+        appointment=appointment,
+        revision_number=appointment.current_revision_number,
+        starts_at=current_revision.starts_at,
+        ends_at=current_revision.ends_at,
+        local_start_snapshot=current_revision.local_start_snapshot,
+        local_end_snapshot=current_revision.local_end_snapshot,
+        timezone_id=current_revision.timezone_id,
+        utc_offset_start=current_revision.utc_offset_start,
+        utc_offset_end=current_revision.utc_offset_end,
+        tzdata_version=current_revision.tzdata_version,
+        inspector_user_id=inspector.id,
+        change_reason="Inspector reassigned",
+        created_by_user_id=principal.persisted_user_id,
+    )
+    session.add(revision)
+    await record_create(
+        session,
+        revision,
+        actor_id=principal.user_id,
+        action="inspection_appointment_revision.inspector_reassigned",
+    )
+    await _create_revision_allocations(
+        session,
+        revision,
+        booking=booking,
+        inspector_id=inspector.id,
+        actor_id=principal.user_id,
     )
     await session.commit()
     loaded = await _get_visible_inspection_booking_or_404(
@@ -3638,7 +3834,26 @@ async def update_asset(
                 detail="Asset location must belong to customer",
             )
     if "asset_number" in updates and payload.asset_number is not None:
-        asset.asset_number = payload.asset_number.strip()
+        requested_number = payload.asset_number.strip()
+        if not requested_number:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Asset Number cannot be blank",
+            )
+        duplicate = await session.scalar(
+            select(Asset.id).where(
+                Asset.asset_number == requested_number,
+                Asset.id != asset.id,
+                Asset.deleted_at.is_(None),
+            )
+        )
+        if duplicate is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Asset Number is already in use",
+            )
+        asset.asset_number = requested_number
+        await _advance_asset_number_counter(session, requested_number)
     if "asset_name" in updates:
         asset.asset_name = _clean_optional(payload.asset_name)
     if "customer_serial_no" in updates:
@@ -3657,10 +3872,31 @@ async def update_asset(
         asset.installation_date = payload.installation_date
     if "grave_date" in updates:
         asset.grave_date = payload.grave_date
-    if "next_retest_due_at" in updates:
-        asset.next_retest_due_at = payload.next_retest_due_at
-    if "next_inspection_date" in updates:
-        asset.next_retest_due_at = payload.next_inspection_date
+    if "installation_date" in updates:
+        asset.next_retest_due_at = (
+            _add_calendar_years(asset.installation_date)
+            if asset.installation_date is not None
+            else None
+        )
+        if asset.retest_schedule is not None and asset.next_retest_due_at is not None:
+            schedule_before = asset.retest_schedule.to_audit_dict()
+            asset.retest_schedule.due_at = asset.next_retest_due_at
+            await record_update(
+                session,
+                asset.retest_schedule,
+                actor_id=principal.user_id,
+                action="retest_schedule.updated",
+                before=schedule_before,
+            )
+    elif "next_retest_due_at" in updates or "next_inspection_date" in updates:
+        if asset.installation_date is not None:
+            asset.next_retest_due_at = _add_calendar_years(asset.installation_date)
+        else:
+            asset.next_retest_due_at = (
+                payload.next_inspection_date
+                if "next_inspection_date" in updates
+                else payload.next_retest_due_at
+            )
     if "condemned_at" in updates:
         asset.condemned_at = payload.condemned_at
     if "length_m" in updates:
@@ -4068,6 +4304,18 @@ def _customer_location_read(location: CustomerLocation) -> CustomerLocationRead:
         site_contact_name=location.site_contact_name,
         site_contact_mobile=location.site_contact_mobile,
         site_contact_email=location.site_contact_email,
+        notes=location.notes,
+        contacts=[
+            CustomerLocationContactRead(
+                id=contact.id,
+                name=contact.name,
+                role=contact.role,
+                phone=contact.phone,
+                email=contact.email,
+            )
+            for contact in location.contacts
+            if contact.deleted_at is None
+        ],
         ppe_requirements=cast(list[PpeRequirement], location.ppe_requirements),
         additional_requirements=cast(
             list[AdditionalRequirement], location.additional_requirements
@@ -4093,6 +4341,91 @@ def _location_scheduling_values(payload: Any) -> dict[str, Any]:
             for blackout_date in payload.scheduling_blackout_dates
         ],
     }
+
+
+async def _replace_location_contacts(
+    session: AsyncSession,
+    location: CustomerLocation,
+    contacts: list[Any],
+    *,
+    actor_id: str,
+) -> None:
+    """Replace the normalized location contacts while preserving audit history."""
+    for existing in list(location.contacts):
+        if existing.deleted_at is None:
+            await soft_delete(
+                session,
+                existing,
+                actor_id=actor_id,
+                action="customer_location_contact.deleted",
+            )
+    for contact in contacts:
+        name = contact.name.strip()
+        if not name:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Location contact name is required",
+            )
+        created = CustomerLocationContact(
+            location=location,
+            name=name,
+            role=_clean_optional(contact.role),
+            phone=_clean_optional(contact.phone),
+            email=_clean_optional(contact.email),
+        )
+        session.add(created)
+        await record_create(
+            session,
+            created,
+            actor_id=actor_id,
+            action="customer_location_contact.created",
+        )
+    if contacts:
+        first = contacts[0]
+        location.site_contact_name = first.name.strip()
+        location.site_contact_mobile = _clean_optional(first.phone)
+        location.site_contact_email = _clean_optional(first.email)
+
+
+def _add_calendar_years(value: date, years: int = 1) -> date:
+    try:
+        return value.replace(year=value.year + years)
+    except ValueError:
+        # Calendar-year semantics for 29 February: use the last day of February.
+        return value.replace(year=value.year + years, month=2, day=28)
+
+
+async def _next_asset_number(session: AsyncSession) -> str:
+    counter = await session.scalar(
+        select(AssetNumberCounter)
+        .where(AssetNumberCounter.id == 1)
+        .with_for_update()
+    )
+    if counter is None:
+        counter = AssetNumberCounter(id=1, next_number=1)
+        session.add(counter)
+        await session.flush()
+    number = counter.next_number
+    counter.next_number = number + 1
+    return f"{number:05d}"
+
+
+async def _advance_asset_number_counter(
+    session: AsyncSession, asset_number: str
+) -> None:
+    if not asset_number.isdigit():
+        return
+    value = int(asset_number)
+    counter = await session.scalar(
+        select(AssetNumberCounter)
+        .where(AssetNumberCounter.id == 1)
+        .with_for_update()
+    )
+    if counter is None:
+        counter = AssetNumberCounter(id=1, next_number=value + 1)
+        session.add(counter)
+    elif counter.next_number <= value:
+        counter.next_number = value + 1
 
 
 def _update_location_scheduling(
