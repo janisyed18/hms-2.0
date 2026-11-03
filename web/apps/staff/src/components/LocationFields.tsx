@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { Field } from "./interaction/FormPrimitives";
 import { Combobox } from "./interaction/Combobox";
 import { isBlank, type FieldErrors } from "./interaction/useFormErrors";
-import type { CustomerLocation, LocationFormValues } from "../domain/types";
+import type { CustomerLocation, LocationFormValues, LocationContact } from "../domain/types";
 
 export const PPE_REQUIREMENTS = [
   "High Vis",
@@ -52,6 +52,8 @@ export function emptyLocation(): LocationFormValues {
     siteContactName: "",
     siteContactMobile: "",
     siteContactEmail: "",
+    notes: "",
+    contacts: [],
     ppeRequirements: [],
     additionalRequirements: [],
     schedulingTimezone: "",
@@ -73,6 +75,8 @@ export function locationValuesFor(location: CustomerLocation): LocationFormValue
     siteContactName: location.siteContactName ?? "",
     siteContactMobile: location.siteContactMobile ?? "",
     siteContactEmail: location.siteContactEmail ?? "",
+    notes: location.notes ?? "",
+    contacts: location.contacts ?? [],
     ppeRequirements: location.ppeRequirements,
     additionalRequirements: location.additionalRequirements,
     schedulingTimezone: location.schedulingTimezone ?? "",
@@ -177,6 +181,38 @@ export function LocationFields({
           {(props) => <input {...props} aria-label="Site contact email" type="email" value={value.siteContactEmail} onChange={(event) => set("siteContactEmail", event.target.value, "contactEmail")} />}
         </Field>
       </div>
+      <fieldset className="customer-location-entry">
+        <legend>Additional location contacts</legend>
+        {(value.contacts ?? []).map((contact, index) => (
+          <div className="site-contact-fields" key={contact.id ?? index}>
+            <Field label={`Contact ${index + 1} name`} name={`${prefix}contact-${index}-name`}>
+              {(props) => <input {...props} aria-label={`Contact ${index + 1} name`} value={contact.name} onChange={(event) => {
+                const contacts = [...value.contacts]; contacts[index] = { ...contact, name: event.target.value }; set("contacts", contacts);
+              }} />}
+            </Field>
+            <Field label="Role / title" name={`${prefix}contact-${index}-role`}>
+              {(props) => <input {...props} aria-label={`Contact ${index + 1} role`} value={contact.role} onChange={(event) => {
+                const contacts = [...value.contacts]; contacts[index] = { ...contact, role: event.target.value }; set("contacts", contacts);
+              }} />}
+            </Field>
+            <Field label="Phone" name={`${prefix}contact-${index}-phone`}>
+              {(props) => <input {...props} aria-label={`Contact ${index + 1} phone`} inputMode="tel" value={contact.phone} onChange={(event) => {
+                const contacts = [...value.contacts]; contacts[index] = { ...contact, phone: event.target.value }; set("contacts", contacts);
+              }} />}
+            </Field>
+            <Field label="Email" name={`${prefix}contact-${index}-email`}>
+              {(props) => <input {...props} aria-label={`Contact ${index + 1} email`} type="email" value={contact.email} onChange={(event) => {
+                const contacts = [...value.contacts]; contacts[index] = { ...contact, email: event.target.value }; set("contacts", contacts);
+              }} />}
+            </Field>
+            <button onClick={() => set("contacts", value.contacts.filter((_, itemIndex) => itemIndex !== index))} type="button">Remove contact</button>
+          </div>
+        ))}
+        <button onClick={() => set("contacts", [...value.contacts, { name: "", role: "", phone: "", email: "" } as LocationContact])} type="button">Add contact</button>
+      </fieldset>
+      <Field label="Location Notes" name={`${prefix}locationNotes`}>
+        {(props) => <textarea {...props} aria-label="Location Notes" rows={3} value={value.notes} onChange={(event) => set("notes", event.target.value)} />}
+      </Field>
       <div className="location-requirements-grid">
         <fieldset className="requirements-fieldset">
           <legend>PPE requirements</legend>

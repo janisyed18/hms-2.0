@@ -188,6 +188,8 @@ export interface CustomerLocation {
   siteContactName: string | null;
   siteContactMobile: string | null;
   siteContactEmail: string | null;
+  notes?: string | null;
+  contacts?: LocationContact[];
   ppeRequirements: string[];
   additionalRequirements: string[];
   schedulingTimezone?: string;
@@ -195,6 +197,14 @@ export interface CustomerLocation {
   schedulingCloseTime?: string;
   schedulingWeekdays?: number[];
   schedulingBlackoutDates?: string[];
+}
+
+export interface LocationContact {
+  id?: string;
+  name: string;
+  role: string;
+  phone: string;
+  email: string;
 }
 
 export interface CustomerContact {
@@ -263,6 +273,8 @@ export interface LocationFormValues {
   siteContactName: string;
   siteContactMobile: string;
   siteContactEmail: string;
+  notes?: string;
+  contacts?: LocationContact[];
   ppeRequirements: string[];
   additionalRequirements: string[];
   schedulingTimezone: string;
@@ -473,6 +485,8 @@ export interface AssetFormValues {
   locationId: string | null;
   productId: string;
   assetName: string;
+  assetNumber?: string;
+  generateAssetNumber?: boolean;
   serialNumber: string;
   notes: string;
   purchaseOrderNumber: string;

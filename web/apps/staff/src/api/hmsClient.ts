@@ -73,6 +73,8 @@ interface ApiLocation {
   site_contact_name: string | null;
   site_contact_mobile: string | null;
   site_contact_email: string | null;
+  notes: string | null;
+  contacts: Array<{ id: string; name: string; role: string | null; phone: string | null; email: string | null }>;
   ppe_requirements: string[];
   additional_requirements: string[];
   scheduling_timezone: string;
@@ -873,6 +875,14 @@ function toLocation(location: ApiLocation): CustomerLocation {
     siteContactName: location.site_contact_name,
     siteContactMobile: location.site_contact_mobile,
     siteContactEmail: location.site_contact_email,
+    notes: location.notes,
+    contacts: (location.contacts ?? []).map((contact) => ({
+      id: contact.id,
+      name: contact.name,
+      role: contact.role ?? "",
+      phone: contact.phone ?? "",
+      email: contact.email ?? ""
+    })),
     ppeRequirements: location.ppe_requirements ?? [],
     additionalRequirements: location.additional_requirements ?? [],
     schedulingTimezone: location.scheduling_timezone,
@@ -1471,13 +1481,16 @@ function pressureTestPayload(
 }
 
 function assetEndPayload(end: AssetEndValues): Record<string, string | null> {
-  return {
+  const payload: Record<string, string | null> = {
     fitting: end.fitting.trim() || null,
     size: end.size.trim() || null,
     coupling_id: end.coupling?.id ?? null,
     coupling_add_on_id: end.couplingAddOn?.id ?? null,
     attach_method_id: end.attachMethod?.id ?? null
   };
+  if (end.nominalBore) payload.nominal_bore_id = end.nominalBore.id;
+  if (end.material) payload.material_id = end.material.id;
+  return payload;
 }
 
 function assetPayload(values: AssetFormValues) {
@@ -1485,16 +1498,20 @@ function assetPayload(values: AssetFormValues) {
     customer_id: values.customerId,
     location_id: values.locationId,
     product_id: values.productId,
-    asset_name: values.assetName,
-    serial_number: values.serialNumber,
+    ...(values.assetNumber || values.generateAssetNumber === false
+      ? {
+          asset_number: values.assetNumber || null,
+          generate_asset_number: values.generateAssetNumber ?? false
+        }
+      : {}),
+    asset_name: values.assetName || null,
+    serial_number: values.serialNumber || null,
     notes: values.notes,
     purchase_order_number: values.purchaseOrderNumber || null,
     installation_date: values.installationDate,
     grave_date: values.graveDate,
     next_inspection_date: values.nextInspectionDate,
     length_m: values.lengthM,
-    material_id: values.materialId,
-    nominal_bore_id: values.nominalBoreId,
     retest_schedule: values.nextInspectionDate
       ? {
           due_at: values.nextInspectionDate,
@@ -1595,6 +1612,9 @@ function ifMatchHeader(etag?: string | null): Record<string, string> {
 }
 
 function locationPayload(location: LocationFormValues) {
+  const contacts = (location.contacts ?? []).length
+    ? location.contacts ?? []
+    : [{ name: location.siteContactName, role: "", phone: location.siteContactMobile, email: location.siteContactEmail }];
   return {
     name: location.name.trim(),
     address_1: location.address1.trim() || null,
@@ -1605,6 +1625,13 @@ function locationPayload(location: LocationFormValues) {
     site_contact_name: location.siteContactName.trim() || null,
     site_contact_mobile: location.siteContactMobile.trim() || null,
     site_contact_email: location.siteContactEmail.trim() || null,
+    notes: location.notes?.trim() || null,
+    contacts: contacts.filter((contact) => contact.name.trim()).map((contact) => ({
+      name: contact.name.trim(),
+      role: contact.role.trim() || null,
+      phone: contact.phone.trim() || null,
+      email: contact.email.trim() || null
+    })),
     ppe_requirements: location.ppeRequirements,
     additional_requirements: location.additionalRequirements,
     scheduling_timezone: location.schedulingTimezone,
@@ -2220,6 +2247,17 @@ export function createHmsClient(options: HmsClientOptions = {}) {
     ): Promise<InspectionBookingRecord> {
       const response = await request<ApiInspectionBooking>(
         `/api/v1/inspection-bookings/${encodeURIComponent(id)}/approve`,
+        { method: "POST", body: JSON.stringify({ inspector_user_id: inspectorUserId }) }
+      );
+      return toInspectionBooking(response.data);
+    },
+
+    async reassignInspectionBookingInspector(
+      id: string,
+      inspectorUserId: string
+    ): Promise<InspectionBookingRecord> {
+      const response = await request<ApiInspectionBooking>(
+        `/api/v1/inspection-bookings/${encodeURIComponent(id)}/reassign-inspector`,
         { method: "POST", body: JSON.stringify({ inspector_user_id: inspectorUserId }) }
       );
       return toInspectionBooking(response.data);

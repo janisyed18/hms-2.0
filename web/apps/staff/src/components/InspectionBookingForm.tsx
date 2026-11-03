@@ -79,6 +79,7 @@ export function InspectionBookingForm({
   const [pickedAssets, setPickedAssets] = useState<Record<string, AssetRecord>>({});
   const [assetQuery, setAssetQuery] = useState("");
   const [assetPage, setAssetPage] = useState<{ items: AssetRecord[]; total: number; loading: boolean; error: string | null }>({ items: [], total: 0, loading: false, error: null });
+  const [selectAllLoading, setSelectAllLoading] = useState(false);
   const [bookingDate, setBookingDate] = useState("");
   // Availability is stored with the location and date it was requested for, and only
   // trusted while both still match, so a quote can never outlive the choices it priced.
@@ -214,6 +215,25 @@ export function InspectionBookingForm({
       setAssetPage((current) => ({ items: [...current.items, ...next.items.filter((item) => !current.items.some((known) => known.id === item.id))], total: next.total, loading: false, error: null }));
     } catch {
       setAssetPage((current) => ({ ...current, loading: false, error: "More assets could not be loaded." }));
+    }
+  }
+
+  async function selectAllAssets() {
+    if (!customerId || !locationId || selectAllLoading) return;
+    setSelectAllLoading(true);
+    try {
+      const result = await createHmsClient().listAllAssets({
+        customerId,
+        locationId,
+        newWorkOnly: true,
+        sort: "asset_number"
+      });
+      setAssetIds(result.items.map((asset) => asset.id));
+      setPickedAssets(Object.fromEntries(result.items.map((asset) => [asset.id, asset])));
+    } catch {
+      setAssetPage((current) => ({ ...current, error: "All eligible assets could not be selected." }));
+    } finally {
+      setSelectAllLoading(false);
     }
   }
 
@@ -365,6 +385,14 @@ export function InspectionBookingForm({
                 {assetPage.loading && assetPage.items.length === 0 ? "Loading assets" : assetQuery.trim() ? `${assetPage.total} matching` : `${assetPage.items.length} of ${assetPage.total} assets shown`}
                 {assetIds.length > 0 ? `, ${assetIds.length} selected` : ""}
               </p>
+            ) : null}
+            {locationId && !rescheduleBooking && assetPage.total > 0 ? (
+              <div className="row-actions">
+                <button className="secondary-button" disabled={selectAllLoading} onClick={() => void selectAllAssets()} type="button">
+                  {selectAllLoading ? "Selecting…" : "Select all assets"}
+                </button>
+                {assetIds.length ? <button className="ghost-button" onClick={() => { setAssetIds([]); setPickedAssets({}); }} type="button">Clear selection</button> : null}
+              </div>
             ) : null}
             {assetPage.error ? <p className="field-error" role="alert">{assetPage.error}</p> : null}
             {locationId && !rescheduleBooking && !assetPage.loading && !assetPage.error && assetChoices.length === 0 ? (

@@ -115,7 +115,7 @@ export function CustomerLocationsTab({
                   </a>
                 ) : null}
               </div>
-              <p className="customer-location-contact">{location.siteContactName ? `Site contact: ${location.siteContactName}${location.siteContactMobile ? ` · ${location.siteContactMobile}` : ""}${location.siteContactEmail ? ` · ${location.siteContactEmail}` : ""}` : "Site contact not recorded"}</p>
+              <p className="customer-location-contact">{(location.contacts ?? []).length ? `${(location.contacts ?? []).length} location contact${(location.contacts ?? []).length === 1 ? "" : "s"}` : location.siteContactName ? `Site contact: ${location.siteContactName}` : "Site contact not recorded"}</p>
               <strong>{isLoadingAssets ? "…" : locationAssets.length}<small>{locationAssets.length === 1 ? "asset" : "assets"}</small></strong>
               <span className="row-actions">
                 <ActionButton aria-expanded={isOpen} aria-label={`View ${location.name}`} onClick={() => setExpanded(isOpen ? null : location.id)} variant="ghost">
@@ -133,6 +133,8 @@ export function CustomerLocationsTab({
                   <div><h5>Blackout dates</h5><p>{location.schedulingBlackoutDates?.length ? location.schedulingBlackoutDates.join(", ") : "None"}</p></div>
                   <div><h5>PPE requirements</h5><RequirementList emptyLabel="No PPE requirements." items={location.ppeRequirements} /></div>
                   <div><h5>Additional requirements</h5><RequirementList emptyLabel="No additional requirements." items={location.additionalRequirements} /></div>
+                  <div><h5>Location Notes</h5><p>{location.notes || "No location notes recorded."}</p></div>
+                  <div><h5>Location contacts</h5><ul>{(location.contacts ?? []).map((contact, index) => <li key={contact.id ?? index}>{contact.name}{contact.role ? ` · ${contact.role}` : ""}{contact.phone ? ` · ${contact.phone}` : ""}{contact.email ? ` · ${contact.email}` : ""}</li>)}</ul></div>
                   <ul aria-label={`Assets at ${location.name}`}>
                     {locationAssets.map((asset) => (
                       <li key={asset.id}>

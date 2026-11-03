@@ -41,6 +41,7 @@ export function AppointmentDrawer({
   notice,
   onApprove,
   onApproveReschedule,
+  onReassignInspector,
   onCancel,
   onClose,
   onDecline,
@@ -57,6 +58,7 @@ export function AppointmentDrawer({
   notice: ActionNotice | null;
   onApprove: (bookingId: string, inspectorId: string) => Promise<boolean>;
   onApproveReschedule: (bookingId: string, changeId: string, inspectorId: string) => Promise<boolean>;
+  onReassignInspector: (bookingId: string, inspectorId: string) => Promise<boolean>;
   onCancel: (bookingId: string) => Promise<boolean>;
   onClose: () => void;
   onDecline: (bookingId: string) => Promise<boolean>;
@@ -65,7 +67,7 @@ export function AppointmentDrawer({
   const booking = entry.booking;
   const heading = useRef<HTMLHeadingElement>(null);
   const [inspectorId, setInspectorId] = useState("");
-  const [confirming, setConfirming] = useState<"decline" | "cancel" | null>(null);
+  const [confirming, setConfirming] = useState<"decline" | "cancel" | "reassign" | null>(null);
   const [inspectorError, setInspectorError] = useState<string | null>(null);
   const chooserRef = useRef<HTMLSelectElement>(null);
 
@@ -317,6 +319,22 @@ export function AppointmentDrawer({
 
         {isConfirmed && canBook && !hasOpenChange ? (
           <div className="row-actions">
+            {canApproveBookings ? (
+              confirming === "reassign" ? (
+                <>
+                  <ActionButton disabled={busy} onClick={() => void onReassignInspector(booking.id, inspectorId).then(() => setConfirming(null))} pending={busy && busyKey === "reassign-inspector"} pendingLabel="Reassigning…" variant="secondary">
+                    Confirm reassignment
+                  </ActionButton>
+                  <ActionButton disabled={busy} onClick={() => setConfirming(null)} variant="ghost">
+                    Keep inspector
+                  </ActionButton>
+                </>
+              ) : (
+                <ActionButton disabled={busy} onClick={() => needInspector(() => setConfirming("reassign"))} variant="secondary">
+                  Reassign inspector
+                </ActionButton>
+              )
+            ) : null}
             <ActionButton disabled={busy} onClick={() => onReschedule(booking)} variant="secondary">
               Request reschedule
             </ActionButton>
@@ -337,10 +355,10 @@ export function AppointmentDrawer({
           </div>
         ) : null}
         {isConfirmed && canApproveBookings && !hasOpenChange ? (
-          <p className="schedule-drawer__hint">
-            To change the inspector, request a reschedule and choose another inspector: the
-            new time is checked for availability first.
-          </p>
+          <label className="schedule-drawer__hint">
+            Choose an inspector to reassign; the inspection time will not change. Confirm the change before saving.
+            {chooser}
+          </label>
         ) : null}
         {noActions && !awaitingCustomer ? (
           <p className="schedule-drawer__hint">No further actions are available for this booking.</p>

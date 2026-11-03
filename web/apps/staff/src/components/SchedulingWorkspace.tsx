@@ -435,6 +435,7 @@ export function SchedulingWorkspace({
           notice={workspace.notice}
           onApprove={workspace.approveBooking}
           onApproveReschedule={workspace.approveReschedule}
+          onReassignInspector={workspace.reassignInspector}
           onCancel={workspace.cancelBooking}
           onClose={() => {
             workspace.setSelectedId(null);
