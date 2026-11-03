@@ -59,13 +59,19 @@ describe("customer asset counts on the Customers screen", () => {
     expect(requested.some((path) => path.startsWith("/api/v1/assets"))).toBe(false);
   });
 
-  it("keeps a customer's count when the search or filters hide other customers", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => okJson({
-      total: 2,
-      limit: 50,
-      offset: 0,
-      items: [apiCustomer("TH", "TH Industries", 2, 1), apiCustomer("ONE", "Single Asset Ltd", 1, 1)]
-    })));
+  it("searches on the server and keeps a customer's count when the search hides other customers", async () => {
+    const all = [apiCustomer("TH", "TH Industries", 2, 1), apiCustomer("ONE", "Single Asset Ltd", 1, 1)];
+    const requested: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL | Request) => {
+      const path = String(url);
+      requested.push(path);
+      if (path.startsWith("/api/v1/customers/summary")) {
+        return okJson({ active_customers: 2, archived_customers: 0, locations: 4, assets: 3 });
+      }
+      const search = new URL(path, "http://localhost").searchParams.get("search")?.toLowerCase() ?? "";
+      const items = all.filter((item) => item.name.toLowerCase().includes(search));
+      return okJson({ total: items.length, limit: 10, offset: 0, items });
+    }));
     const { result } = renderHook(() => useCustomerWorkspace());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
@@ -73,6 +79,9 @@ describe("customer asset counts on the Customers screen", () => {
     act(() => result.current.setQuery("th industries"));
     await waitFor(() => expect(result.current.visibleCustomers.map((c) => c.code)).toEqual(["TH"]));
     expect(result.current.visibleCustomers[0].metrics.assetCount).toBe(2);
+    expect(requested.some((path) => path.includes("search=th+industries") || path.includes("search=th%20industries"))).toBe(true);
+    // The headline totals are system-wide: searching does not shrink them.
+    expect(result.current.summary).toMatchObject({ activeCustomers: 2, assets: 3 });
     act(() => result.current.setQuery(""));
     await waitFor(() => expect(result.current.visibleCustomers).toHaveLength(2));
   });
@@ -92,12 +101,7 @@ function record(code: string, assetCount: number, inService: number): CustomerRe
     ] as unknown as CustomerRecord["locations"],
     contacts: [],
     status: "Active",
-    riskLevel: "Low",
-    industry: "",
-    paymentTerms: "",
-    contractStart: "",
-    contractEnd: "",
-    lastActivity: "",
+    archivedAt: null,
     metrics: {
       assetCount,
       inServiceCount: inService,
@@ -116,18 +120,21 @@ describe("customer card and detail", () => {
     const customers = [record("TH", 2, 1), record("NONE", 0, 0), record("ONE", 1, 1)];
     render(
       <CustomerTable
-        allCustomers={customers}
         canWrite={false}
         customers={customers}
+        isLoading={false}
+        lifecycle="active"
         onAddCustomer={() => undefined}
+        onLifecycleChange={() => undefined}
+        onPageChange={() => undefined}
+        onPageSizeChange={() => undefined}
         onQueryChange={() => undefined}
-        onRiskFilterChange={() => undefined}
         onSelectCustomer={() => undefined}
-        onStatusFilterChange={() => undefined}
+        page={1}
+        pageSize={10}
         query=""
-        riskFilter="All"
         selectedId={null}
-        statusFilter="All"
+        summary={{ activeCustomers: 3, archivedCustomers: 0, locations: 6, assets: 3 }}
         totalCount={3}
       />
     );

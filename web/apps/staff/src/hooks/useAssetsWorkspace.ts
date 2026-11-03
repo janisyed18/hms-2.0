@@ -1,30 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
+import { useRemoteOptions } from "./useRemoteOptions";
 import { useActionNotice } from "../components/interaction/ActionNotice";
 import { friendlyApiError } from "../components/interaction/friendlyApiError";
 import { assetLabel } from "../utils/identity";
-import type { AssetConfigurationOptions, AssetProductSummary, AssetFormValues, AssetRecord, CustomerLocation, CustomerRecord, ProductRecord, RecordSummary } from "../domain/types";
+import type { AssetConfigurationOptions, AssetFormValues, AssetRecord } from "../domain/types";
 
 function uniqueById<T extends { id: string }>(items: T[]): T[] {
   return Array.from(new Map(items.map((item) => [item.id, item])).values());
 }
 
 const emptyConfigurationOptions: AssetConfigurationOptions = { materials: [], couplings: [], couplingAddOns: [], attachMethods: [], nominalBores: [] };
-const customerSummary = (customer: CustomerRecord): RecordSummary => ({ id: customer.id, code: customer.code, name: customer.name });
-const productSummary = (product: ProductRecord): AssetProductSummary => ({ id: product.id, code: product.code, name: product.name, category: product.category });
+const PAGE_SIZE = 50;
+interface LifecycleCounts { total: number; due: number; overdue: number; condemned: number }
 
 export function useAssetsWorkspace() {
   const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [serverTotal, setServerTotal] = useState<number | undefined>(undefined);
-  const [customers, setCustomers] = useState<CustomerRecord[]>([]);
-  const [products, setProducts] = useState<AssetProductSummary[]>([]);
+  const [counts, setCounts] = useState<LifecycleCounts | null>(null);
+  const [isLoadingMore, setLoadingMore] = useState(false);
   const [configurationOptions, setConfigurationOptions] = useState<AssetConfigurationOptions>(emptyConfigurationOptions);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [customerFilter, setCustomerFilter] = useState("ALL");
-  const [productFilter, setProductFilter] = useState("ALL");
+  const [customerFilter, setCustomerFilterId] = useState("ALL");
+  const [productFilter, setProductFilterId] = useState("ALL");
+  // What each chosen filter is called, kept from when it was picked: the option lists are searched, not complete.
+  const [filterLabels, setFilterLabels] = useState<{ customer?: string; product?: string }>({});
   const [lifecycleFilter, setLifecycleFilter] = useState("ALL");
   const [dueFrom, setDueFrom] = useState("");
   const [dueTo, setDueTo] = useState("");
@@ -36,50 +39,70 @@ export function useAssetsWorkspace() {
   const formSession = useRef(0);
   const [viewingAsset, setViewingAsset] = useState<AssetRecord | null>(null);
   const { notice, notify, clear: dismissNotice } = useActionNotice();
-  const [archiveTarget, setArchiveTarget] = useState<AssetRecord | null>(null);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
-  const [isArchiving, setArchiving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<AssetRecord | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setDeleting] = useState(false);
 
+  // Customers and products are searched on the server as the person types, so neither list stops at a first page.
+  const customerSearch = useRemoteOptions((text) => createHmsClient().listCustomers({ search: text, sort: "name", limit: 25 }).then((result) => result.items), true);
+  const productSearch = useRemoteOptions((text) => createHmsClient().listProducts({ search: text, sort: "name", limit: 25 }).then((result) => result.items), true);
+
+  // Options for the asset form, loaded once.
   useEffect(() => {
     let active = true;
-    const client = createHmsClient();
-    setIsLoading(true); setError(null);
-    void Promise.all([
-      client.listAssets({ sort: "asset_number" }),
-      client.listCustomers({ sort: "name", limit: 100 }),
-      client.listProducts({ sort: "name", limit: 100 }),
-      client.getAssetConfigurationOptions()
-    ]).then(([assetResult, customerResult, productResult, configurationResult]) => {
-      if (!active) return;
-      setAssets(assetResult.items);
-      setServerTotal(assetResult.total);
-      setCustomers(customerResult.items);
-      setProducts(uniqueById([...productResult.items.map(productSummary), ...assetResult.items.map((asset) => asset.product)]));
-      setConfigurationOptions(configurationResult);
-    }).catch((reason: unknown) => {
-      if (active) setError(reason instanceof Error ? reason.message : "Asset records could not be loaded.");
-    }).finally(() => { if (active) setIsLoading(false); });
+    void createHmsClient().getAssetConfigurationOptions()
+      .then((result) => { if (active) setConfigurationOptions(result); })
+      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Asset options could not be loaded."); });
     return () => { active = false; };
   }, []);
 
-  const visibleAssets = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return assets.filter((asset) => {
-      const dueAt = asset.nextRetestDueAt ?? "";
-      return (
-        (customerFilter === "ALL" || asset.customer.id === customerFilter) &&
-        (productFilter === "ALL" || asset.product.id === productFilter) &&
-        (lifecycleFilter === "ALL" || asset.lifecycleStatus === lifecycleFilter) &&
-        (!dueFrom || (dueAt && dueAt >= dueFrom)) &&
-        (!dueTo || (dueAt && dueAt <= dueTo)) &&
-        (!normalized || [asset.assetNumber, asset.assetName, asset.customerSerialNo, asset.purchaseOrderNumber, asset.tag, asset.lifecycleStatus, asset.customer.code, asset.customer.name, asset.product.code, asset.product.name, asset.location?.name, asset.location?.address1, asset.location?.address2, asset.location?.city, asset.location?.state, asset.location?.country, asset.notes, asset.description].filter(Boolean).some((value) => value?.toLowerCase().includes(normalized)))
-      );
-    });
-  }, [assets, customerFilter, dueFrom, dueTo, lifecycleFilter, productFilter, query]);
+  // The totals above the table count the whole register, never the page on screen.
+  const refreshCounts = useCallback(() => {
+    const client = createHmsClient();
+    const total = (status?: string) => client.listAssets({ status, limit: 1 }).then((result) => result.total);
+    void Promise.all([total(), total("DUE"), total("OVERDUE"), total("CONDEMNED")])
+      .then(([all, due, overdue, condemned]) => setCounts({ total: all, due, overdue, condemned }))
+      .catch(() => setCounts(null));
+  }, []);
+  useEffect(() => { refreshCounts(); }, [refreshCounts]);
 
-  const customerOptions = useMemo(() => customers.length ? customers.map(customerSummary) : uniqueById(assets.map((asset) => asset.customer)), [assets, customers]);
-  const locationOptions = useMemo(() => customers.map((customer) => ({ customerId: customer.id, locations: (customer.locations ?? []).filter((location): location is CustomerLocation => Boolean(location)) })), [customers]);
-  const productOptions = useMemo(() => products.length ? products : uniqueById(assets.map((asset) => asset.product)), [assets, products]);
+  // Search, customer, product, lifecycle and due dates are answered by the server, a page at a time.
+  const filters = useMemo(() => ({
+    search: query,
+    customerId: customerFilter === "ALL" ? undefined : customerFilter,
+    productId: productFilter === "ALL" ? undefined : productFilter,
+    status: lifecycleFilter === "ALL" ? undefined : lifecycleFilter,
+    dueFrom: dueFrom || undefined,
+    dueTo: dueTo || undefined
+  }), [query, customerFilter, productFilter, lifecycleFilter, dueFrom, dueTo]);
+  useEffect(() => {
+    let active = true;
+    // Only the first load replaces the table; a new search or filter keeps the rows until the answer arrives.
+    setError(null);
+    const timer = window.setTimeout(() => {
+      void createHmsClient().listAssets({ ...filters, sort: "asset_number", limit: PAGE_SIZE, offset: 0 })
+        .then((result) => { if (!active) return; setAssets(result.items); setServerTotal(result.total); })
+        .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Asset records could not be loaded."); })
+        .finally(() => { if (active) setIsLoading(false); });
+    }, query ? 250 : 0);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [filters, query]);
+
+  async function loadMore() {
+    if (isLoadingMore) return;
+    setLoadingMore(true);
+    try {
+      const next = await createHmsClient().listAssets({ ...filters, sort: "asset_number", limit: PAGE_SIZE, offset: assets.length });
+      setAssets((current) => uniqueById([...current, ...next.items]));
+      setServerTotal(next.total);
+    } catch (reason) {
+      notify({ kind: "error", message: friendlyApiError(reason, { fallback: "More assets could not be loaded. Try again." }).message, title: "Assets not loaded" });
+    } finally { setLoadingMore(false); }
+  }
+
+  const visibleAssets = assets;
+  function setCustomerFilter(id: string, label?: string) { setCustomerFilterId(id); setFilterLabels((current) => ({ ...current, customer: label })); }
+  function setProductFilter(id: string, label?: string) { setProductFilterId(id); setFilterLabels((current) => ({ ...current, product: label })); }
   function openCreate() { formSession.current += 1; setEditingAsset(null); setFormAsset(null); setIsCopy(false); setFormOpen(true); }
   function openEdit(asset: AssetRecord) { formSession.current += 1; setViewingAsset(null); setEditingAsset(asset); setFormAsset(asset); setIsCopy(false); setFormOpen(true); }
   function copyAsset(asset: AssetRecord) {
@@ -114,26 +137,28 @@ export function useAssetsWorkspace() {
     // The saved record always lands in the register; the form only closes if it is still the one that saved.
     if (session === formSession.current) { formSession.current += 1; setFormOpen(false); setEditingAsset(null); setFormAsset(null); setIsCopy(false); }
     // Only now, with the server's answer in hand, say it worked.
+    refreshCounts();
     notify({ kind: "success", message: `${assetLabel(saved)} ${editingAsset ? "saved" : "created"} successfully.`, title: "Asset saved" });
   }
-  function requestArchive(asset: AssetRecord) { setArchiveError(null); setArchiveTarget(asset); }
-  function cancelArchive() { if (!isArchiving) { setArchiveTarget(null); setArchiveError(null); } }
-  async function confirmArchive() {
-    const asset = archiveTarget;
-    if (!asset || isArchiving) return;
-    setArchiving(true); setArchiveError(null);
+  function requestDelete(asset: AssetRecord) { setDeleteError(null); setDeleteTarget(asset); }
+  function cancelDelete() { if (!isDeleting) { setDeleteTarget(null); setDeleteError(null); } }
+  async function confirmDelete() {
+    const asset = deleteTarget;
+    if (!asset || isDeleting) return;
+    setDeleting(true); setDeleteError(null);
     try {
-      await createHmsClient().archiveAsset(asset.id, asset.etag);
+      await createHmsClient().deleteAsset(asset.id, asset.etag);
       setAssets((current) => current.filter((item) => item.id !== asset.id));
       setViewingAsset((current) => current?.id === asset.id ? null : current);
-      setArchiveTarget(null);
-      notify({ kind: "success", message: `${assetLabel(asset)} was archived.`, title: "Asset archived" });
+      setDeleteTarget(null);
+      refreshCounts();
+      notify({ kind: "success", message: `${assetLabel(asset)} was deleted.`, title: "Asset deleted" });
     } catch (reason) {
       // Nothing changed on the server, so nothing changes here: the asset stays listed.
-      setArchiveError(friendlyApiError(reason, { fallback: `${assetLabel(asset)} could not be archived. Try again.` }).message);
-    } finally { setArchiving(false); }
+      setDeleteError(friendlyApiError(reason, { fallback: `${assetLabel(asset)} could not be deleted. Try again.` }).message);
+    } finally { setDeleting(false); }
   }
   function clearAssetFilters() { setCustomerFilter("ALL"); setProductFilter("ALL"); setLifecycleFilter("ALL"); setDueFrom(""); setDueTo(""); }
   const activeFilterCount = [customerFilter !== "ALL", productFilter !== "ALL", lifecycleFilter !== "ALL", Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
-  return { serverTotal, activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, notice, requestArchive, assets, clearAssetFilters, closeDetail, copyAsset, customerFilter, customerOptions, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, locationOptions, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, productOptions, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, closeForm, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
+  return { serverTotal, activeFilterCount, deleteError, deleteTarget, cancelDelete, confirmDelete, dismissNotice, isDeleting, notice, requestDelete, assets, clearAssetFilters, closeDetail, copyAsset, counts, customerFilter, customerSearch, filterLabels, isLoadingMore, loadMore, productSearch, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, closeForm, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
 }

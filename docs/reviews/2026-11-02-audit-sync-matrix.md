@@ -42,12 +42,14 @@ Exception model (AGENTS.md, "Audit and sync"):
 | `POST /api/v1/customers` | create_customer → record_create | create_customer → record_create |
 | `DELETE /api/v1/customers/{customer_id}` | delete_customer → soft_delete | delete_customer → soft_delete |
 | `PATCH /api/v1/customers/{customer_id}` | update_customer → record_create | update_customer → record_create |
+| `POST /api/v1/customers/{customer_id}/archive` | archive_customer → record_update | archive_customer → record_update |
 | `POST /api/v1/customers/{customer_id}/contacts` | create_customer_contact → record_create | create_customer_contact → record_create |
 | `DELETE /api/v1/customers/{customer_id}/contacts/{contact_id}` | delete_customer_contact → soft_delete | delete_customer_contact → soft_delete |
 | `PATCH /api/v1/customers/{customer_id}/contacts/{contact_id}` | update_customer_contact → record_update | update_customer_contact → record_update |
 | `POST /api/v1/customers/{customer_id}/locations` | create_customer_location → record_create | create_customer_location → record_create |
 | `DELETE /api/v1/customers/{customer_id}/locations/{location_id}` | delete_customer_location → soft_delete | delete_customer_location → soft_delete |
 | `PATCH /api/v1/customers/{customer_id}/locations/{location_id}` | update_customer_location → record_update | update_customer_location → record_update |
+| `POST /api/v1/customers/{customer_id}/restore` | restore_customer → record_update | restore_customer → record_update |
 | `POST /api/v1/inspection-booking-change-requests/{change_id}/approve` | approve_inspection_booking_change_request → _apply_appointment_change → record_create | approve_inspection_booking_change_request → _apply_appointment_change → record_create |
 | `POST /api/v1/inspection-booking-change-requests/{change_id}/confirm` | confirm_inspection_booking_change_request → _apply_appointment_change → record_create | confirm_inspection_booking_change_request → _apply_appointment_change → record_create |
 | `POST /api/v1/inspection-bookings` | create_inspection_booking → record_create | create_inspection_booking → record_create |

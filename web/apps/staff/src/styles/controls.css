@@ -373,7 +373,7 @@ button.choice-control {
 
 .choice-menu {
   position: fixed;
-  z-index: 90;
+  z-index: 100; /* above elevated drawers and dialogs (95), which open over another dialog */
   display: flex;
   flex-direction: column;
   box-sizing: border-box;

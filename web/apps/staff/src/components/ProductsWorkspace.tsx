@@ -1,4 +1,4 @@
-import { Archive, Boxes, Layers3, ShieldCheck } from "lucide-react";
+import { Boxes, Layers3 } from "lucide-react";
 
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
@@ -13,16 +13,15 @@ import type { ProductRecord } from "../domain/types";
 
 interface ProductsWorkspaceProps {
   canManage?: boolean;
+  canDelete?: boolean;
   embedded?: boolean;
 }
 
-export function ProductsWorkspace({ canManage = true, embedded = false }: ProductsWorkspaceProps) {
+export function ProductsWorkspace({ canManage = true, canDelete = false, embedded = false }: ProductsWorkspaceProps) {
   const workspace = useProductsWorkspace();
-  const categoryCount = new Set(workspace.products.map((product) => product.category)).size;
-  const standardCount = new Set(workspace.products.map((product) => product.standardCode).filter(Boolean)).size;
-  const legacyCount = workspace.products.filter(
-    (product) => product.category.toLowerCase() === "legacy catalogue"
-  ).length;
+  // Counts come from the server for the whole catalogue, not from the page loaded here.
+  const total = workspace.serverTotal ?? workspace.products.length;
+  const viewLabel = workspace.statusFilter === "ACTIVE" ? "Enabled" : "Disabled";
   const productColumns: ModuleColumn<ProductRecord>[] = [
     {
       header: "Code",
@@ -51,13 +50,14 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
           <ActionButton onClick={() => workspace.openEdit(product)} variant="secondary">
             Edit
           </ActionButton>
-          <ActionButton
-            aria-label={`Archive ${product.name}`}
-            onClick={() => workspace.requestArchive(product)}
-            variant="ghost"
-          >
-            Archive
+          <ActionButton aria-label={`${workspace.statusFilter === "ACTIVE" ? "Disable" : "Enable"} ${product.name}`} onClick={() => void workspace.toggleEnabled(product)} variant="ghost">
+            {workspace.statusFilter === "ACTIVE" ? "Disable" : "Enable"}
           </ActionButton>
+          {canDelete ? (
+            <ActionButton aria-label={`Delete ${product.name}`} onClick={() => workspace.requestDelete(product)} variant="ghost">
+              Delete
+            </ActionButton>
+          ) : null}
         </span>
       ) : "Read only"
     }
@@ -70,13 +70,11 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
           eyebrow="Product catalog"
           title="Product catalog"
           description="Manage hose products, classifications, and standards."
-          context={<><Boxes aria-hidden="true" size={20} /><span><strong>{workspace.products.length} total products</strong><small>Across {categoryCount} categories</small></span></>}
+          context={<><Boxes aria-hidden="true" size={20} /><span><strong>{total} {viewLabel.toLowerCase()} products</strong><small>Across the whole catalogue</small></span></>}
         />
         <ManagementMetricStrip>
-          <ManagementMetric icon={Boxes} label="Total Products" value={workspace.products.length} detail="Available product definitions" />
-          <ManagementMetric icon={Layers3} label="Categories" value={categoryCount} detail="Product classifications" tone="green" />
-          <ManagementMetric icon={ShieldCheck} label="Standards Tracked" value={standardCount} detail="Linked to product records" tone="amber" />
-          <ManagementMetric icon={Archive} label="Legacy Catalogue" value={legacyCount} detail={workspace.products.length ? `${Math.round((legacyCount / workspace.products.length) * 100)}% of total` : "No product records"} tone="violet" />
+          <ManagementMetric icon={Boxes} label={`${viewLabel} products`} value={total} detail="Matching the current view" />
+          <ManagementMetric icon={Layers3} label="Shown" value={workspace.products.length} detail="Loaded for the current search" tone="green" />
         </ManagementMetricStrip>
       </> : null}
       {workspace.notice ? (
@@ -142,6 +140,13 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
                     ))}
                   </select>
                 </label>
+                <label className="filter-field">
+                  <span>Status</span>
+                  <select aria-label="Product status filter" value={workspace.statusFilter} onChange={(event) => workspace.setStatusFilter(event.target.value as "ACTIVE" | "DISABLED")}>
+                    <option value="ACTIVE">Enabled</option>
+                    <option value="DISABLED">Disabled</option>
+                  </select>
+                </label>
                 <button className="secondary-button filter-clear" type="button" onClick={workspace.clearProductFilters}>
                   Clear product filters
                 </button>
@@ -167,15 +172,15 @@ export function ProductsWorkspace({ canManage = true, embedded = false }: Produc
         ) : null}
       </div>
       <ConfirmDialog
-        confirmLabel="Archive product"
-        error={workspace.archiveError}
-        message="It will no longer appear in the product catalog. Assets already using it are not changed."
-        onCancel={workspace.cancelArchive}
-        onConfirm={() => void workspace.confirmArchive()}
-        open={workspace.archiveTarget !== null}
-        pending={workspace.isArchiving}
-        pendingLabel="Archiving…"
-        title={workspace.archiveTarget ? `Archive ${productLabel(workspace.archiveTarget)}?` : "Archive product?"}
+        confirmLabel="Delete product"
+        error={workspace.deleteError}
+        message="This permanently removes the product from the catalogue. It cannot be deleted while assets use it; disable it instead to stop it being offered."
+        onCancel={workspace.cancelDelete}
+        onConfirm={() => void workspace.confirmDelete()}
+        open={workspace.deleteTarget !== null}
+        pending={workspace.isDeleting}
+        pendingLabel="Deleting…"
+        title={workspace.deleteTarget ? `Delete ${productLabel(workspace.deleteTarget)}?` : "Delete product?"}
       />
       <ProductForm
         open={workspace.isFormOpen}

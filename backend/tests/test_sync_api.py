@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 import httpx
 import pytest
 import pytest_asyncio
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -532,9 +533,24 @@ async def test_sync_changes_returns_monotonic_upserts_and_tombstones(
             f"/api/v1/assets/{seeded_sync_session['vopak_asset_id']}",
             json={"lifecycle_status": AssetLifecycleStatus.DUE.value},
         )
+    # Deleting an asset is a Super Admin action; the tombstone then syncs to devices.
+    super_admin = Principal(
+        user_id="super-1",
+        roles=frozenset({Role.SUPER_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with session_factory() as session:
+        await session.execute(
+            sa_delete(RetestSchedule).where(
+                RetestSchedule.asset_id == seeded_sync_session["orica_asset_id"]
+            )
+        )
+        await session.commit()
+    async with api_client(session_factory, super_admin) as client:
         delete_response = await client.delete(
             f"/api/v1/assets/{seeded_sync_session['orica_asset_id']}"
         )
+    async with api_client(session_factory, principal) as client:
         changes_response = await client.get(
             "/api/v1/sync/changes",
             params={"since": 0},

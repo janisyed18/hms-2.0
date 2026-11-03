@@ -7,6 +7,7 @@ import { AssetsWorkspace } from "../components/AssetsWorkspace";
 import { CustomerForm } from "../components/CustomerForm";
 import { ProductsWorkspace } from "../components/ProductsWorkspace";
 import type { AssetRecord, ProductRecord } from "../domain/types";
+import { choose } from "../test/choose";
 
 const client = vi.hoisted(() => ({
   listAssets: vi.fn(),
@@ -15,10 +16,13 @@ const client = vi.hoisted(() => ({
   getAssetConfigurationOptions: vi.fn(),
   createAsset: vi.fn(),
   updateAsset: vi.fn(),
-  archiveAsset: vi.fn(),
+  deleteAsset: vi.fn(),
   createProduct: vi.fn(),
   updateProduct: vi.fn(),
-  archiveProduct: vi.fn()
+  deleteProduct: vi.fn(),
+  setProductEnabled: vi.fn(),
+  getCustomer: vi.fn(),
+  listReferenceCatalog: vi.fn()
 }));
 
 vi.mock("../api/hmsClient", async (importOriginal) => ({
@@ -57,6 +61,8 @@ beforeEach(() => {
   client.listAssets.mockResolvedValue({ total: 1, etag: null, items: [asset] });
   client.listCustomers.mockResolvedValue({ total: 1, etag: null, items: [customer] });
   client.listProducts.mockResolvedValue({ total: 1, etag: null, items: [product] });
+  client.getCustomer.mockResolvedValue(customer);
+  client.listReferenceCatalog.mockResolvedValue({ total: 0, etag: null, items: [] });
   client.getAssetConfigurationOptions.mockResolvedValue({ materials: [], couplings: [], couplingAddOns: [], attachMethods: [], nominalBores: [] });
 });
 afterEach(() => vi.useRealTimers());
@@ -70,15 +76,22 @@ async function openAddAsset() {
   return user;
 }
 
+async function chooseRelationships(user: ReturnType<typeof userEvent.setup>) {
+  await choose(user, screen.getByLabelText("Customer"), "cust-1");
+  await choose(user, screen.getByLabelText("Location"), "loc-1");
+  await choose(user, screen.getByLabelText("Product"), "prod-1");
+}
+
 async function fillAsset(user: ReturnType<typeof userEvent.setup>) {
+  await chooseRelationships(user);
   await user.type(screen.getByLabelText("Asset Name"), "Boom Hose");
   await user.type(screen.getByLabelText("Serial Number"), "SN-77");
 }
 
 describe("Asset form", () => {
-  it("marks Agent, Location, Asset Name, Serial Number and Product as required, visibly and semantically, and nothing else", async () => {
+  it("marks Customer, Location, Asset Name, Serial Number and Product as required, visibly and semantically, and nothing else", async () => {
     await openAddAsset();
-    for (const name of ["Agent", "Location", "Asset Name", "Serial Number", "Product"]) {
+    for (const name of ["Customer", "Location", "Asset Name", "Serial Number", "Product"]) {
       const field = screen.getByLabelText(name);
       expect(field).toBeRequired();
       expect(field).toHaveAttribute("aria-required", "true");
@@ -91,6 +104,7 @@ describe("Asset form", () => {
 
   it("shows each missing field inline, focuses the first, keeps the other values and sends nothing", async () => {
     const user = await openAddAsset();
+    await chooseRelationships(user);
     await user.type(screen.getByLabelText("Serial Number"), "SN-77");
     await user.click(screen.getByRole("button", { name: "Save asset" }));
 
@@ -173,70 +187,94 @@ describe("Asset form", () => {
   });
 });
 
-describe("Asset archive", () => {
-  const archiveButton = () => screen.getByRole("button", { name: "Archive" });
+describe("Asset delete", () => {
+  const deleteButton = () => screen.getByRole("button", { name: "Delete" });
+
+  it("offers no Delete to anyone but a Super Admin, though they can still edit", async () => {
+    render(<AssetsWorkspace canWrite />);
+    await screen.findByText("Main Pump Hose");
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
+  });
 
   it("asks first, naming the asset by name and HMS number, and does nothing until confirmed", async () => {
     const user = userEvent.setup();
-    render(<AssetsWorkspace canWrite />);
+    render(<AssetsWorkspace canDelete canWrite />);
     await screen.findByText("Main Pump Hose");
-    await user.click(archiveButton());
+    await user.click(deleteButton());
 
-    const dialog = screen.getByRole("alertdialog", { name: "Archive Main Pump Hose — HMS-001842?" });
-    expect(client.archiveAsset).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("alertdialog", { name: "Delete Main Pump Hose — HMS-001842?" });
+    expect(client.deleteAsset).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(client.archiveAsset).not.toHaveBeenCalled();
+    expect(client.deleteAsset).not.toHaveBeenCalled();
     expect(screen.getByText("Main Pump Hose")).toBeInTheDocument();
-    await waitFor(() => expect(archiveButton()).toHaveFocus(), FOCUS_WAIT); // back where the user was
+    await waitFor(() => expect(deleteButton()).toHaveFocus(), FOCUS_WAIT); // back where the user was
   });
 
   it("leaves the asset listed and the dialog open, with the reason, when archiving fails", async () => {
-    client.archiveAsset.mockRejectedValue(api(409, "This asset has an open inspection."));
+    client.deleteAsset.mockRejectedValue(api(409, "This asset has an open inspection."));
     const user = userEvent.setup();
-    render(<AssetsWorkspace canWrite />);
+    render(<AssetsWorkspace canDelete canWrite />);
     await screen.findByText("Main Pump Hose");
-    await user.click(archiveButton());
-    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Archive asset" }));
+    await user.click(deleteButton());
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete asset" }));
 
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByRole("alert")).toHaveTextContent("This asset has an open inspection.");
     expect(screen.getAllByText("Main Pump Hose").length).toBeGreaterThan(0);
-    expect(screen.queryByText(/was archived/)).toBeNull();
+    expect(screen.queryByText(/was deleted/)).toBeNull();
   });
 
-  it("shows Archiving…, then removes the asset and says so only after the server confirms", async () => {
+  it("shows Deleting…, then removes the asset and says so only after the server confirms", async () => {
     const done = deferred();
-    client.archiveAsset.mockReturnValue(done.promise);
+    client.deleteAsset.mockReturnValue(done.promise);
     const user = userEvent.setup();
-    render(<AssetsWorkspace canWrite />);
+    render(<AssetsWorkspace canDelete canWrite />);
     await screen.findByText("Main Pump Hose");
-    await user.click(archiveButton());
-    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Archive asset" }));
+    await user.click(deleteButton());
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete asset" }));
 
-    const busy = await screen.findByRole("button", { name: "Archiving…" });
+    const busy = await screen.findByRole("button", { name: "Deleting…" });
     expect(busy).toBeDisabled();
-    expect(screen.queryByText(/was archived/)).toBeNull();
+    expect(screen.queryByText(/was deleted/)).toBeNull();
     expect(screen.getByText("Main Pump Hose")).toBeInTheDocument();
 
     await act(async () => done.resolve());
-    const notice = (await screen.findByText(/Main Pump Hose — HMS-001842 was archived\./)).closest('[role="status"]');
-    expect(notice).toHaveTextContent("Asset archived.");
+    const notice = (await screen.findByText(/Main Pump Hose — HMS-001842 was deleted\./)).closest('[role="status"]');
+    expect(notice).toHaveTextContent("Asset deleted.");
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(screen.queryByRole("table", { name: "Asset records" })?.textContent ?? "").not.toContain("Main Pump Hose");
-    expect(client.archiveAsset).toHaveBeenCalledTimes(1);
+    expect(client.deleteAsset).toHaveBeenCalledTimes(1);
   });
 
   it("can be cancelled from the keyboard", async () => {
     const user = userEvent.setup();
-    render(<AssetsWorkspace canWrite />);
+    render(<AssetsWorkspace canDelete canWrite />);
     await screen.findByText("Main Pump Hose");
-    archiveButton().focus();
+    deleteButton().focus();
     await user.keyboard("{Enter}");
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(client.archiveAsset).not.toHaveBeenCalled();
+    expect(client.deleteAsset).not.toHaveBeenCalled();
+  });
+});
+
+describe("Product catalogue search", () => {
+  it("asks the server to search and reports its total, instead of filtering the first page", async () => {
+    const user = userEvent.setup();
+    render(<ProductsWorkspace canManage />);
+    await screen.findByText("Hydraulic Hose");
+    client.listProducts.mockClear();
+    client.listProducts.mockResolvedValue({ total: 157, items: [{ ...product, id: "prod-far", code: "FAR-101", name: "Far Product 101" }] });
+
+    await user.type(screen.getByLabelText("Search products"), "FAR-101");
+
+    expect(await screen.findByText("Far Product 101")).toBeInTheDocument();
+    expect(client.listProducts).toHaveBeenLastCalledWith(expect.objectContaining({ search: "FAR-101", enabled: true }));
+    expect(screen.getByText(/157 enabled products/)).toBeInTheDocument();
   });
 });
 
@@ -289,17 +327,37 @@ describe("Product form and archive (same contract)", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Suction Hose — PROD-020 created successfully.");
   });
 
-  it("archives only after confirmation, names the product by name and code, and survives a failure", async () => {
-    client.archiveProduct.mockRejectedValueOnce(api(404, "Not found"));
+  it("deletes only after confirmation, names the product by name and code, and survives a failure", async () => {
+    client.deleteProduct.mockRejectedValueOnce(api(404, "Not found"));
+    const user = userEvent.setup();
+    render(<ProductsWorkspace canDelete canManage />);
+    await screen.findByText("Hydraulic Hose");
+    await user.click(screen.getByRole("button", { name: "Delete Hydraulic Hose" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Delete Hydraulic Hose — PROD-014?" });
+    expect(client.deleteProduct).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Delete product" }));
+    expect(await within(await screen.findByRole("alertdialog")).findByRole("alert")).toHaveTextContent(/no longer exists/i);
+    expect(screen.getByText("Hydraulic Hose")).toBeInTheDocument();
+  });
+});
+
+describe("Product lifecycle", () => {
+  it("offers Disable to anyone who manages products but Delete only to a Super Admin", async () => {
+    render(<ProductsWorkspace canManage />);
+    await screen.findByText("Hydraulic Hose");
+    expect(screen.getByRole("button", { name: "Disable Hydraulic Hose" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Delete / })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Archive / })).toBeNull();
+  });
+
+  it("disables with one reversible request and takes the product off the enabled list", async () => {
+    client.setProductEnabled.mockResolvedValue({ ...product, enabled: false });
     const user = userEvent.setup();
     render(<ProductsWorkspace canManage />);
     await screen.findByText("Hydraulic Hose");
-    await user.click(screen.getByRole("button", { name: "Archive Hydraulic Hose" }));
-    const dialog = screen.getByRole("alertdialog", { name: "Archive Hydraulic Hose — PROD-014?" });
-    expect(client.archiveProduct).not.toHaveBeenCalled();
-    await user.click(within(dialog).getByRole("button", { name: "Archive product" }));
-    expect(await within(await screen.findByRole("alertdialog")).findByRole("alert")).toHaveTextContent(/no longer exists/i);
-    expect(screen.getByText("Hydraulic Hose")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Disable Hydraulic Hose" }));
+    await waitFor(() => expect(client.setProductEnabled).toHaveBeenCalledWith("prod-1", false, "p1"));
+    expect(await screen.findByText(/was disabled/)).toBeVisible();
   });
 });
 
@@ -308,12 +366,12 @@ describe("Customer form (same contract)", () => {
     const onSubmit = vi.fn();
     const user = userEvent.setup();
     render(<CustomerForm customer={null} onClose={vi.fn()} onSubmit={onSubmit} open />);
-    for (const name of ["Name", "Location", "Site contact name", "Site contact mobile", "Site contact email"]) {
+    for (const name of ["Name", "Location name", "Site contact name", "Site contact mobile", "Site contact email"]) {
       expect(screen.getByLabelText(name)).toBeRequired();
       expect(screen.getByLabelText(name).closest("label")!.querySelector(".required-mark")).not.toBeNull();
     }
     expect(screen.getByLabelText("Notes")).not.toBeRequired();
-    await user.type(screen.getByLabelText("Location"), "Kooragang");
+    await user.type(screen.getByLabelText("Location name"), "Kooragang");
     await user.click(screen.getByRole("button", { name: "Save customer" }));
 
     await waitFor(() => expect(screen.getByLabelText("Name")).toHaveFocus(), FOCUS_WAIT);
@@ -336,10 +394,11 @@ describe("Customer form (same contract)", () => {
     const user = userEvent.setup();
     render(<CustomerForm customer={null} onClose={vi.fn()} onSubmit={onSubmit} open />);
     await user.type(screen.getByLabelText("Name"), "Orica");
-    await user.type(screen.getByLabelText("Location"), "Kooragang");
+    await user.type(screen.getByLabelText("Location name"), "Kooragang");
     await user.type(screen.getByLabelText("Site contact name"), "Sam");
     await user.type(screen.getByLabelText("Site contact mobile"), "0400000000");
     await user.type(screen.getByLabelText("Site contact email"), "sam@example.com");
+    await choose(user, screen.getByLabelText("Timezone"), "Australia/Sydney");
     await user.click(screen.getByRole("button", { name: "Save customer" }));
     const busy = await screen.findByRole("button", { name: "Saving…" });
     await user.click(busy);

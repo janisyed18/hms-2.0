@@ -46,6 +46,11 @@ interface ModuleTableProps<TItem> {
   /** How many records exist on the server, when the API said, and how many of them this list holds: together they let the count be honest about a partial list. */
   totalCount?: number;
   loadedCount?: number;
+  /** Fetches the next page from the server; the button shows while the server holds more than is loaded. */
+  onLoadMore?: () => void;
+  loadingMore?: boolean;
+  /** The server already applied the search and filters, so its total is the number of matches. */
+  serverFiltered?: boolean;
   /** What an empty list means, and what to do (shown when nothing has been added yet). */
   emptyHint?: string;
   error?: string | null;
@@ -105,6 +110,9 @@ export function ModuleTable<TItem>({
   noun,
   totalCount,
   loadedCount,
+  onLoadMore,
+  loadingMore = false,
+  serverFiltered = false,
   emptyHint,
   error = null,
   filtersInitiallyOpen = false,
@@ -126,7 +134,7 @@ export function ModuleTable<TItem>({
   const exportData = [columns.map((column) => column.header), ...items.map(exportRows)];
   const chips = activeFilters ?? [];
   const narrowed = query.trim().length > 0 || chips.length > 0 || activeFilterCount > 0;
-  const summary = noun ? resultSummary({ narrowed, noun, shown: items.length, totalCount, loadedCount, fallback: countLabel }) : countLabel;
+  const summary = noun ? resultSummary({ narrowed, noun, shown: items.length, totalCount, loadedCount, serverFiltered, fallback: countLabel }) : countLabel;
   function clearView() {
     onQueryChange("");
     onClearFilters?.();
@@ -298,6 +306,13 @@ export function ModuleTable<TItem>({
           </table>
         )}
       </div>
+      {onLoadMore && totalCount !== undefined && loadedCount !== undefined && totalCount > loadedCount ? (
+        <div className="table-load-more">
+          <ActionButton disabled={loadingMore} onClick={onLoadMore} variant="secondary">
+            {loadingMore ? "Loading…" : `Load more (${loadedCount} of ${totalCount})`}
+          </ActionButton>
+        </div>
+      ) : null}
       <PaginationControls
         label={tableLabel}
         onPageChange={pagination.setPage}
@@ -318,6 +333,7 @@ export function resultSummary({
   loadedCount,
   narrowed,
   noun,
+  serverFiltered = false,
   shown,
   totalCount
 }: {
@@ -325,9 +341,11 @@ export function resultSummary({
   loadedCount?: number;
   narrowed: boolean;
   noun: string;
+  serverFiltered?: boolean;
   shown: number;
   totalCount?: number;
 }): string {
+  if (serverFiltered && narrowed) return `${totalCount ?? shown} matching ${noun}`;
   const partial = totalCount !== undefined && loadedCount !== undefined && totalCount > loadedCount;
   if (narrowed) return partial ? `${shown} matching ${noun} (searching the ${loadedCount} of ${totalCount} loaded)` : `${shown} matching ${noun}`;
   if (partial) return `${loadedCount} of ${totalCount} ${noun} loaded`;

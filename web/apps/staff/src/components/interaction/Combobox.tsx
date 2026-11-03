@@ -23,8 +23,10 @@ export function Combobox({
   emptyText = "No matches",
   loading = false,
   onChange,
+  onSearch,
   options,
   placeholder = "Search…",
+  selectedOption = null,
   value,
   ...aria
 }: {
@@ -33,8 +35,12 @@ export function Combobox({
   emptyText?: string;
   loading?: boolean;
   onChange: (value: string) => void;
+  /** When given, the options come from the server for what was typed, so they are not filtered here. */
+  onSearch?: (text: string) => void;
   options: ChoiceOption[];
   placeholder?: string;
+  /** Label to show for the chosen value when it is not among the current options (a server search moved on). */
+  selectedOption?: ChoiceOption | null;
   value: string;
   id?: string;
   "aria-label"?: string;
@@ -49,22 +55,30 @@ export function Combobox({
   const optionPrefix = `${generated}-opt`;
   const input = useRef<HTMLInputElement>(null);
   const shell = useRef<HTMLDivElement>(null);
-  const selected = options.find((option) => option.value === value) ?? null;
+  // A server search moves on after a pick, so the chosen option is remembered to keep its label on show.
+  const [picked, setPicked] = useState<ChoiceOption | null>(null);
+  const selected = options.find((option) => option.value === value)
+    ?? (picked?.value === value ? picked : null)
+    ?? (selectedOption?.value === value ? selectedOption : null);
   const [open, setOpen] = useState(false);
   const [text, setText] = useState<string | null>(null); // null: showing the chosen label
   const [active, setActive] = useState(0);
   const { required, ...rest } = aria;
 
   const query = (text ?? "").trim().toLowerCase();
-  const shown = useMemo(() => options.filter((option) => matches(option, query)), [options, query]);
+  const shown = useMemo(() => (onSearch ? options : options.filter((option) => matches(option, query))), [onSearch, options, query]);
   const shownActive = Math.min(active, Math.max(shown.length - 1, 0));
 
+  const searchRef = useRef(onSearch);
+  useEffect(() => { searchRef.current = onSearch; });
   function close() {
     setOpen(false);
     setText(null);
+    searchRef.current?.("");
   }
 
   function pick(option: ChoiceOption) {
+    setPicked(option);
     close();
     if (option.value !== value) onChange(option.value);
   }
@@ -90,6 +104,7 @@ export function Combobox({
 
   function onInput(event: ChangeEvent<HTMLInputElement>) {
     setText(event.target.value);
+    onSearch?.(event.target.value.trim());
     setActive(0);
     setOpen(true);
   }

@@ -129,7 +129,7 @@ async def test_principal_rejects_deleted_user_and_forbids_customer_user(
 async def test_admin_user_crud_writes_audit_events(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    await seed_user(session_factory)
+    await seed_user(session_factory, role=Role.SUPER_ADMIN)
     async with session_factory() as session:
         customer = Customer(code="VOPA", name="Vopak")
         session.add(customer)

@@ -3,7 +3,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createHmsClient } from "../api/hmsClient";
 import { friendlyApiError } from "../components/interaction/friendlyApiError";
 import type {
-  AssetRecord,
   InspectionBookingCreateValues,
   InspectionBookingRecord,
   ScheduleInspector
@@ -106,7 +105,6 @@ export function useSchedulingWorkspace({
     else setNotice({ kind: "success", message });
   }
   const [form, setForm] = useState<FormState>({ open: false, reschedule: null, initialDate: "" });
-  const [assets, setAssets] = useState<AssetRecord[]>([]);
   const [reloadToken, setReloadToken] = useState(0);
   // Filter choices accumulate as the user browses, so choosing one never removes the
   // others from the list.
@@ -385,22 +383,11 @@ export function useSchedulingWorkspace({
       createHmsClient().approveInspectionBookingReschedule(changeId, inspectorUserId),
     { key: "approve-reschedule", fallback: "The reschedule could not be approved. Try again.", availability: true });
 
-  async function ensureAssets() {
-    if (assets.length > 0) return;
-    try {
-      setAssets((await createHmsClient().listAllAssets({ sort: "asset_number" })).items);
-    } catch (reason) {
-      setNotice({ kind: "error", message: friendlyApiError(reason, { fallback: "Assets could not be loaded." }).message });
-    }
-  }
-
   /** "Book inspection": the existing flow, with the viewed date offered as its date. */
   async function openBooking(date?: string) {
-    await ensureAssets();
     setForm({ open: true, reschedule: null, initialDate: date ?? (mode === "day" ? anchor : "") });
   }
   async function openReschedule(booking: InspectionBookingRecord) {
-    await ensureAssets();
     setForm({ open: true, reschedule: booking, initialDate: "" });
   }
   function closeForm() {
@@ -438,7 +425,6 @@ export function useSchedulingWorkspace({
     anchor,
     approveBooking,
     approveReschedule,
-    assets,
     busy,
     busyKey,
     cancelBooking,

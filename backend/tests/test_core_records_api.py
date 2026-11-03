@@ -7,7 +7,8 @@ from typing import cast
 import httpx
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
@@ -18,7 +19,7 @@ from hms_backend.app.api.records import (
 from hms_backend.app.core.audit import verify_audit_chain
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
-from hms_backend.app.models.base import Base
+from hms_backend.app.models.base import Base, utc_now
 from hms_backend.app.models.foundation import AuditEvent, SyncChange
 from hms_backend.app.modules.assets.models import (
     Asset,
@@ -248,7 +249,12 @@ async def test_reference_standards_endpoint_returns_enabled_standards_only(
 
     assert response.status_code == 200
     assert catalog_response.status_code == 200
-    assert catalog_response.json() == response.json()
+    # The catalog adds the disabled flag its administrators manage.
+    assert [
+        {key: value for key, value in item.items() if key != "enabled"}
+        for item in catalog_response.json()["items"]
+    ] == response.json()["items"]
+    assert all(item["enabled"] is True for item in catalog_response.json()["items"])
     assert response.json() == {
         "items": [
             {
@@ -267,7 +273,7 @@ async def test_reference_catalog_material_lifecycle_writes_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
 
@@ -1245,7 +1251,11 @@ async def test_customer_user_cannot_create_customer(
     async with api_client(session_factory, principal) as client:
         response = await client.post(
             "/api/v1/customers",
-            json={"code": "NEWC", "name": "New Customer"},
+            json={
+                "code": "NEWC",
+                "name": "New Customer",
+                "locations": [{"name": "Head office"}],
+            },
         )
 
     assert response.status_code == 403
@@ -1270,6 +1280,7 @@ async def test_create_customer_writes_sync_change_and_audit_event(
                 "notes": "Preferred contact before scheduling retests.",
                 "retest_enabled": True,
                 "default_retest_months": 6,
+                "locations": [{"name": "Head office"}],
             },
         )
 
@@ -1280,15 +1291,23 @@ async def test_create_customer_writes_sync_change_and_audit_event(
     assert body["notes"] == "Preferred contact before scheduling retests."
     assert body["retest_enabled"] is True
     assert body["default_retest_months"] == 6
-    assert body["locations"] == []
+    assert [item["name"] for item in body["locations"]] == ["Head office"]
     assert body["contacts"] == []
 
     async with session_factory() as session:
         customer = (
             await session.scalars(select(Customer).where(Customer.code == "ACME"))
         ).one()
-        sync_change = (await session.scalars(select(SyncChange))).one()
-        audit_event = (await session.scalars(select(AuditEvent))).one()
+        sync_change = (
+            await session.scalars(
+                select(SyncChange).where(SyncChange.entity == "Customer")
+            )
+        ).one()
+        audit_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "customer.created")
+            )
+        ).one()
 
         assert customer.version == 1
         assert customer.name == "ACME Mining"
@@ -1357,22 +1376,32 @@ async def test_customer_profile_create_and_update_keeps_requirements_per_locatio
         ]
 
         location_id = created["locations"][0]["id"]
+        rename_response = await client.patch(
+            f"/api/v1/customers/{created['id']}/locations/{location_id}",
+            json={"name": "Kooragang service workshop"},
+        )
+        add_response = await client.post(
+            f"/api/v1/customers/{created['id']}/locations",
+            json={
+                "name": "Port of Newcastle berth",
+                "ppe_requirements": ["Safety Glasses"],
+                "additional_requirements": ["Vehicle Site Approval"],
+            },
+        )
         update_response = await client.patch(
             f"/api/v1/customers/{created['id']}",
             headers={"If-Match": '"1"'},
-            json={
-                "name": "Summit Marine Services",
-                "locations": [
-                    {"id": location_id, "name": "Kooragang service workshop"},
-                    {
-                        "name": "Port of Newcastle berth",
-                        "ppe_requirements": ["Safety Glasses"],
-                        "additional_requirements": ["Vehicle Site Approval"],
-                    },
-                ],
-            },
+            json={"name": "Summit Marine Services"},
+        )
+        nested_response = await client.patch(
+            f"/api/v1/customers/{created['id']}",
+            json={"locations": [{"name": "Sneaked in"}]},
         )
 
+    assert rename_response.status_code == 200
+    assert add_response.status_code == 201
+    # Locations change through their own endpoints only: one path, one set of rules.
+    assert nested_response.status_code == 422
     assert update_response.status_code == 200
     updated = update_response.json()
     assert updated["name"] == "Summit Marine Services"
@@ -1528,23 +1557,28 @@ async def test_soft_delete_customer_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
+    async with session_factory() as session:
+        temporary = Customer(code="TEMP", name="Temporary", archived_at=utc_now())
+        session.add(temporary)
+        await session.commit()
+        temporary_id = temporary.id
 
     async with api_client(session_factory, principal) as client:
-        delete_response = await client.delete(
-            f"/api/v1/customers/{seeded_session['vopak_id']}"
-        )
+        delete_response = await client.delete(f"/api/v1/customers/{temporary_id}")
         list_response = await client.get("/api/v1/customers")
 
     assert delete_response.status_code == 204
     assert list_response.status_code == 200
-    assert list_response.json()["total"] == 1
-    assert {item["code"] for item in list_response.json()["items"]} == {"ORIC"}
+    assert {item["code"] for item in list_response.json()["items"]} == {
+        "VOPA",
+        "ORIC",
+    }
 
     async with session_factory() as session:
-        customer = await session.get(Customer, seeded_session["vopak_id"])
+        customer = await session.get(Customer, temporary_id)
         sync_change = (await session.scalars(select(SyncChange))).one()
         audit_event = (await session.scalars(select(AuditEvent))).one()
 
@@ -1559,7 +1593,7 @@ async def test_soft_delete_customer_writes_tombstone_sync_and_audit(
         assert audit_event.entity == "Customer"
         assert audit_event.entity_id == customer.id
         assert audit_event.before is not None
-        assert audit_event.before["name"] == "Vopak"
+        assert audit_event.before["name"] == "Temporary"
         assert audit_event.after is not None
         assert audit_event.after["deleted_at"] is not None
         assert await verify_audit_chain(session)
@@ -1675,26 +1709,18 @@ async def test_customer_location_returns_site_contact_details(
 
     async with api_client(session_factory, principal) as client:
         update_response = await client.patch(
-            f"/api/v1/customers/{seeded_session['vopak_id']}",
+            f"/api/v1/customers/{seeded_session['vopak_id']}/locations/"
+            f"{response.json()['id']}",
             json={
-                "locations": [
-                    {
-                        "id": response.json()["id"],
-                        "name": "Newcastle Depot",
-                        "site_contact_name": "Morgan Lee",
-                        "site_contact_mobile": "+61 401 222 333",
-                        "site_contact_email": "morgan.lee@example.test",
-                    }
-                ],
+                "name": "Newcastle Depot",
+                "site_contact_name": "Morgan Lee",
+                "site_contact_mobile": "+61 401 222 333",
+                "site_contact_email": "morgan.lee@example.test",
             },
         )
 
     assert update_response.status_code == 200
-    updated_location = next(
-        location
-        for location in update_response.json()["locations"]
-        if location["id"] == response.json()["id"]
-    )
+    updated_location = update_response.json()
     assert updated_location["site_contact_name"] == "Morgan Lee"
 
 
@@ -1751,15 +1777,20 @@ async def test_soft_delete_customer_location_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
+
+    async with session_factory() as session:
+        spare = CustomerLocation(customer_id=seeded_session["vopak_id"], name="Site B")
+        session.add(spare)
+        await session.commit()
+        spare_id = spare.id
 
     async with api_client(session_factory, principal) as client:
         delete_response = await client.delete(
             "/api/v1/customers/"
-            f"{seeded_session['vopak_id']}/locations/"
-            f"{seeded_session['vopak_location_id']}"
+            f"{seeded_session['vopak_id']}/locations/{spare_id}"
         )
         customer_response = await client.get(
             f"/api/v1/customers/{seeded_session['vopak_id']}"
@@ -1767,13 +1798,12 @@ async def test_soft_delete_customer_location_writes_tombstone_sync_and_audit(
 
     assert delete_response.status_code == 204
     assert customer_response.status_code == 200
-    assert customer_response.json()["locations"] == []
+    assert [item["name"] for item in customer_response.json()["locations"]] == [
+        "Site A"
+    ]
 
     async with session_factory() as session:
-        location = await session.get(
-            CustomerLocation,
-            seeded_session["vopak_location_id"],
-        )
+        location = await session.get(CustomerLocation, spare_id)
         sync_change = (await session.scalars(select(SyncChange))).one()
         audit_event = (await session.scalars(select(AuditEvent))).one()
 
@@ -1786,7 +1816,7 @@ async def test_soft_delete_customer_location_writes_tombstone_sync_and_audit(
         assert sync_change.version == 2
         assert audit_event.action == "customer_location.deleted"
         assert audit_event.before is not None
-        assert audit_event.before["name"] == "Site A"
+        assert audit_event.before["name"] == "Site B"
         assert audit_event.after is not None
         assert audit_event.after["deleted_at"] is not None
         assert await verify_audit_chain(session)
@@ -1861,7 +1891,7 @@ async def test_soft_delete_customer_contact_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
 
@@ -1991,13 +2021,18 @@ async def test_soft_delete_reference_standard_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
     async with session_factory() as session:
         standard_id = (
             await session.scalars(select(Standard.id).where(Standard.code == "AS2683"))
         ).one()
+
+    async with session_factory() as session:
+        for product in (await session.scalars(select(Product))).all():
+            product.deleted_at = utc_now()
+        await session.commit()
 
     async with api_client(session_factory, principal) as client:
         delete_response = await client.delete(
@@ -2140,9 +2175,15 @@ async def test_soft_delete_product_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
+
+    async with session_factory() as session:
+        asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        assert asset is not None
+        asset.deleted_at = utc_now()
+        await session.commit()
 
     async with api_client(session_factory, principal) as client:
         delete_response = await client.delete(
@@ -2593,10 +2634,18 @@ async def test_soft_delete_asset_writes_tombstone_sync_and_audit(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
 
+    # Only an asset nothing else points at can be deleted: drop its schedule first.
+    async with session_factory() as session:
+        await session.execute(
+            sa_delete(RetestSchedule).where(
+                RetestSchedule.asset_id == seeded_session["vopak_asset_id"]
+            )
+        )
+        await session.commit()
     async with api_client(session_factory, principal) as client:
         delete_response = await client.delete(
             f"/api/v1/assets/{seeded_session['vopak_asset_id']}"
@@ -2700,7 +2749,7 @@ async def test_delete_routes_enforce_if_match_when_supplied(
 ) -> None:
     principal = Principal(
         user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
+        roles=frozenset({Role.SUPER_ADMIN}),
         customer_ids=frozenset(),
     )
     async with session_factory() as session:
@@ -4839,3 +4888,92 @@ async def test_certificate_lifecycle_actions_revoke_and_supersede_with_audit(
         assert audit_events[1].after is not None
         assert audit_events[1].after["status"] == CertificateStatus.SUPERSEDED.value
         assert await verify_audit_chain(session)
+
+
+@pytest.mark.asyncio
+async def test_booking_approval_is_refused_while_the_customer_is_archived(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            User(
+                id="inspector-1",
+                oidc_subject="local:inspector-1",
+                email="inspector@example.test",
+                role=Role.INSPECTOR.value,
+                account_status=AccountStatus.ACTIVE.value,
+            )
+        )
+        await session.commit()
+    customer = Principal(
+        user_id="customer-user-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({seeded_session["vopak_id"]}),
+    )
+    super_admin = Principal(
+        user_id="super-1",
+        roles=frozenset({Role.SUPER_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    admin = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with api_client(session_factory, customer) as client:
+        availability = await client.get(
+            "/api/v1/inspection-availability",
+            params={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "local_date": "2027-10-01",
+                "duration_minutes": 60,
+            },
+        )
+        requested = await client.post(
+            "/api/v1/inspection-bookings",
+            json={
+                "customer_id": seeded_session["vopak_id"],
+                "location_id": seeded_session["vopak_location_id"],
+                "asset_ids": [seeded_session["vopak_asset_id"]],
+                "availability_quote_id": availability.json()["items"][0]["quote_id"],
+            },
+        )
+    assert requested.status_code == 201
+    booking_id = requested.json()["id"]
+    approve = f"/api/v1/inspection-bookings/{booking_id}/approve"
+    body = {"inspector_user_id": "inspector-1"}
+
+    async with api_client(session_factory, super_admin) as client:
+        archived = await client.post(
+            f"/api/v1/customers/{seeded_session['vopak_id']}/archive"
+        )
+    async with api_client(session_factory, admin) as client:
+        blocked = await client.post(approve, json=body)
+        still_pending = await client.get(f"/api/v1/inspection-bookings/{booking_id}")
+    async with session_factory() as session:
+        drafts_while_blocked = await session.scalar(
+            select(func.count())
+            .select_from(Inspection)
+            .where(Inspection.booking_id == booking_id)
+        )
+    async with api_client(session_factory, super_admin) as client:
+        restored = await client.post(
+            f"/api/v1/customers/{seeded_session['vopak_id']}/restore"
+        )
+    async with api_client(session_factory, admin) as client:
+        approved = await client.post(approve, json=body)
+
+    assert archived.status_code == 200
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == (
+        "This customer is archived. Restore it before adding new work."
+    )
+    assert still_pending.json()["status"] == "PENDING_APPROVAL"
+    assert restored.status_code == 200
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "APPROVED"
+    # The blocked attempt created no work.
+    assert drafts_while_blocked == 0

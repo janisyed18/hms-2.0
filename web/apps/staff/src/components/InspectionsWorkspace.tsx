@@ -322,13 +322,12 @@ export function InspectionsWorkspace({
       </div>
 
       <div className={`inspection-layout${workspace.selectedInspection ? " detail-open" : " detail-closed"}`}>
-        {workspace.selectedInspection ? (
+        {workspace.selectedInspection && workspace.ratingReady ? (
           <InspectionDetail
             canApprove={canApprove}
             canWrite={canWrite}
             inspection={workspace.selectedInspection}
-            ratingFor={(assetId) =>
-              workspace.assetOptions.find((asset) => asset.id === assetId)?.pressureRating ?? null}
+            ratingFor={workspace.ratingFor}
             onApprove={workspace.approveInspection}
             onBeginRework={workspace.beginInspectionRework}
             onClose={workspace.closeDetail}
@@ -438,7 +437,6 @@ export function InspectionsWorkspace({
       />
       {canWrite ? (
         <InspectionForm
-          assetOptions={workspace.assetOptions}
           open={workspace.isFormOpen}
           onClose={() => workspace.setFormOpen(false)}
           onSubmit={workspace.saveInspection}
@@ -446,7 +444,6 @@ export function InspectionsWorkspace({
       ) : null}
       {canBook ? (
         <InspectionBookingForm
-          assetOptions={workspace.assetOptions}
           open={workspace.isBookingFormOpen}
           rescheduleBooking={workspace.rescheduleBooking}
           inspectors={workspace.inspectors}

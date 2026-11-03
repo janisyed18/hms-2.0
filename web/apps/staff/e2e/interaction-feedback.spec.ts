@@ -43,9 +43,9 @@ test.describe("Staff interaction feedback", () => {
     clearRateLimits();
   });
 
-  test("asset: validation, server failure keeps the work, success, then archive failure and success", async ({ browser }) => {
+  test("asset: validation, server failure keeps the work, success, then delete failure and success", async ({ browser }) => {
     test.setTimeout(240_000);
-    const admin = await signedInPage(browser, "hms.admin@example.test", permanentPasswords.admin);
+    const admin = await signedInPage(browser, "super.admin@example.test", permanentPasswords.admin);
     const page = admin.page;
     const name = `E2E Feedback Hose ${Date.now()}`;
     try {
@@ -55,9 +55,15 @@ test.describe("Staff interaction feedback", () => {
 
       // Required fields are marked, and an empty save explains itself and focuses the first gap.
       await expect(page.getByText("* Required fields")).toBeVisible();
-      // Choose an agent that has a site, so the first gap is the asset name.
-      await chooseOption(page.getByLabel("Agent"), { label: "Vopak" });
-      await expect(page.getByLabel("Location")).not.toHaveText("Select location");
+      // Nothing is chosen for the person: the location waits for a customer, and no product is preselected.
+      await expect(page.getByLabel("Location")).toHaveText("Select a customer first");
+      await expect(page.getByRole("combobox", { name: "Product" })).toHaveValue("");
+      await chooseOption(page.getByRole("combobox", { name: "Customer" }), { label: "Vopak" });
+      await expect(page.getByLabel("Location")).toHaveText("Select a location");
+      await page.getByRole("button", { name: "Save asset" }).click();
+      await expect(page.getByLabel("Location")).toBeFocused();
+      await chooseOption(page.getByLabel("Location"), { first: true });
+      await chooseOption(page.getByRole("combobox", { name: "Product" }), { first: true });
       await page.getByRole("button", { name: "Save asset" }).click();
       await expect(page.getByLabel("Asset Name")).toBeFocused();
       await expect(page.getByLabel("Asset Name")).toHaveAttribute("aria-invalid", "true");
@@ -80,22 +86,22 @@ test.describe("Staff interaction feedback", () => {
       await expect(success).toContainText(name);
       await expect(page.getByRole("heading", { name: "Add asset" })).toHaveCount(0);
 
-      // Archiving asks first, by name and HMS number; a failed archive leaves everything in place.
+      // Deleting asks first, by name and HMS number; a failed delete leaves everything in place.
       await page.getByLabel("Search assets", { exact: true }).fill(name);
       const row = page.getByRole("row", { name: new RegExp(name) });
       await expect(row).toBeVisible();
-      await row.getByRole("button", { name: "Archive" }).click();
-      const dialog = page.getByRole("alertdialog", { name: new RegExp(`Archive ${name} — .+\\?`) });
+      await row.getByRole("button", { name: "Delete" }).click();
+      const dialog = page.getByRole("alertdialog", { name: new RegExp(`Delete ${name} — .+\\?`) });
       await expect(dialog).toBeVisible();
       await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
       await failOnce(page, /\/api\/v1\/assets\/[^/]+$/, "DELETE", 500, { error: { code: "internal", message: "Internal server error", details: null } });
-      await dialog.getByRole("button", { name: "Archive asset" }).click();
+      await dialog.getByRole("button", { name: "Delete asset" }).click();
       await expect(dialog.getByRole("alert")).toContainText(/service is unavailable/i);
       await expect(dialog).toBeVisible();
       await expect(row).toBeVisible();
 
-      await dialog.getByRole("button", { name: "Archive asset" }).click();
-      await expect(page.getByRole("status").filter({ hasText: "was archived" })).toContainText(name);
+      await dialog.getByRole("button", { name: "Delete asset" }).click();
+      await expect(page.getByRole("status").filter({ hasText: "was deleted" })).toContainText(name);
       await expect(page.getByRole("alertdialog")).toHaveCount(0);
       await expect(row).toHaveCount(0);
     } finally {
@@ -129,13 +135,10 @@ test.describe("Staff interaction feedback", () => {
       await page.getByRole("button", { name: "Save product" }).click();
       await expect(page.getByRole("status").filter({ hasText: "created successfully" })).toContainText("E2E Feedback Product");
 
-      await page.getByRole("button", { name: "Archive E2E Feedback Product" }).click();
-      const dialog = page.getByRole("alertdialog", { name: /Archive E2E Feedback Product — /i });
-      await dialog.getByRole("button", { name: "Cancel" }).click();
-      await expect(page.getByRole("alertdialog")).toHaveCount(0);
-      await page.getByRole("button", { name: "Archive E2E Feedback Product" }).click();
-      await page.getByRole("alertdialog").getByRole("button", { name: "Archive product" }).click();
-      await expect(page.getByRole("status").filter({ hasText: "was archived" })).toBeVisible();
+      // A product admin disables a product (reversible); Delete is for a Super Admin only and is not offered here.
+      await expect(page.getByRole("button", { name: "Delete E2E Feedback Product" })).toHaveCount(0);
+      await page.getByRole("button", { name: "Disable E2E Feedback Product" }).click();
+      await expect(page.getByRole("status").filter({ hasText: "was disabled" })).toBeVisible();
     } finally {
       await admin.context.close();
     }

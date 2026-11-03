@@ -162,7 +162,9 @@ test.describe("shared Staff form system", () => {
       await page.getByRole("button", { name: "Add asset" }).click();
       const form = page.getByRole("form", { name: "Add asset" });
       await expect(form).toBeVisible();
-      await chooseOption(form.getByLabel("Agent"), { label: "Vopak" });
+      await chooseOption(form.getByLabel("Customer"), { label: "Vopak" });
+      await chooseOption(form.getByLabel("Location"), { first: true });
+      await chooseOption(form.getByRole("combobox", { name: "Product" }), { first: true });
       await form.getByRole("button", { name: "Save asset" }).click();
       await expect(form.getByLabel("Asset Name")).toBeFocused();
       await form.getByRole("button", { name: "Serial Number" }).click();
@@ -200,7 +202,7 @@ test.describe("shared Staff form system", () => {
       await edit.focus();
       await page.keyboard.press("Enter");
       const form = page.getByRole("form", { name: "Edit asset" });
-      await expect(form.getByLabel("Agent")).toBeFocused(); // focus moved into the form
+      await expect(form.getByLabel("Customer")).toBeFocused(); // focus moved into the form
       await page.keyboard.press("Tab");
       await expect(form.getByLabel("Location")).toBeFocused();
       await page.keyboard.press("Tab");
@@ -252,6 +254,10 @@ test.describe("shared Staff form system", () => {
       await create.getByLabel("Email").fill(email);
       await create.getByLabel("First name").fill("Formy");
       await create.getByLabel("Last name").fill("Person");
+      await expect(create.getByLabel("Role")).toHaveText("Select a role");
+      await create.getByRole("button", { name: "Create user" }).click();
+      await expect(create.getByLabel("Role")).toBeFocused();
+      await chooseOption(create.getByLabel("Role"), "REVIEWER");
       await create.getByRole("button", { name: "Create user" }).click();
       await expect(page.getByTestId("credential-value")).toBeVisible();
       await page.getByRole("button", { name: "Done" }).click();

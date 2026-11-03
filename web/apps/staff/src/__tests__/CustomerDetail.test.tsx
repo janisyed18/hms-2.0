@@ -23,7 +23,12 @@ const location = {
   siteContactMobile: "+61 412 275 772",
   siteContactEmail: "faria@example.test",
   ppeRequirements: ["High Vis", "Safety Boots"],
-  additionalRequirements: ["2-way radio"]
+  additionalRequirements: ["2-way radio"],
+  schedulingTimezone: "Australia/Sydney",
+  schedulingOpenTime: "07:00",
+  schedulingCloseTime: "15:00",
+  schedulingWeekdays: [0, 1, 2, 3, 4],
+  schedulingBlackoutDates: []
 };
 
 const asset: AssetRecord = {
@@ -62,12 +67,7 @@ const customer: CustomerRecord = {
   locations: [location],
   contacts: [],
   status: "Active",
-  riskLevel: "Low",
-  industry: "",
-  paymentTerms: "",
-  contractStart: "",
-  contractEnd: "",
-  lastActivity: "",
+  archivedAt: null,
   metrics: {
     assetCount: 1,
     inServiceCount: 1,
@@ -109,9 +109,10 @@ describe("CustomerDetail locations", () => {
     );
     expect(mapsLink).toHaveAttribute("target", "_blank");
     expect(mapsLink).toHaveAttribute("rel", "noopener noreferrer");
+    await user.click(screen.getByRole("button", { name: "View Norwest" }));
     expect(screen.getByText("PPE requirements")).toBeVisible();
     expect(screen.getByText("High Vis")).toBeVisible();
-    expect(screen.queryByRole("tab", { name: "Overview" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Locations (1)", "Contacts (0)"]);
 
     await user.click(screen.getByRole("button", { name: "Open asset HMS-798BBD74CE" }));
     expect(onClose).toHaveBeenCalledOnce();

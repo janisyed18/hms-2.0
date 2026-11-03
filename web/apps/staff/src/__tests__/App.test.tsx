@@ -849,9 +849,9 @@ describe("App", () => {
     ).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByText("Customer selected")).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: /Locations/i }));
-    expect(screen.getByText("Asset locations")).toBeInTheDocument();
-    expect(await screen.findByText("API Terminal")).toBeVisible();
-    expect(screen.getByText("API-777")).toBeVisible();
+    expect(await screen.findByRole("heading", { level: 4, name: "API Terminal" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "View API Terminal" }));
+    expect(await screen.findByText("API-777")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Close customer detail" }));
     expect(screen.queryByRole("dialog", { name: /Vopak API/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Select customer Vopak API/i }));
@@ -1158,7 +1158,8 @@ describe("App", () => {
     expect(await screen.findByRole("row", { name: /API-777/i })).toBeVisible();
     const assetSummary = screen.getByRole("region", { name: "Asset register summary" });
     expect(assetSummary).toHaveTextContent("Total assets1");
-    expect(assetSummary).toHaveTextContent("Customers with assets1");
+    // Every figure is a whole-register total from the server, not a count of the rows on screen.
+    expect(assetSummary).toHaveTextContent("Overdue1");
 
     await user.click(screen.getByRole("button", { name: "Retest Schedule" }));
     expect(await screen.findByRole("row", { name: /API-777/i })).toHaveTextContent(
@@ -1199,7 +1200,7 @@ describe("App", () => {
     expect(screen.getByLabelText("Serial Number")).toHaveValue("");
   });
 
-  it("uses full backend customer and product lists when adding assets", async () => {
+  it("searches the backend for customers and products when adding assets, choosing neither for the person", async () => {
     vi.stubGlobal("fetch", routeFetch());
     const user = userEvent.setup();
 
@@ -1208,14 +1209,17 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: "Assets" }));
     await user.click(screen.getByRole("button", { name: "Add asset" }));
 
-    const agents = await openList(user, screen.getByLabelText("Agent"));
-    expect(within(agents).getByRole("option", { name: /E2E API Customer.*E2EAPI/ })).toBeVisible();
+    expect(screen.getByLabelText("Customer")).toHaveValue("");
+    expect(screen.getByLabelText("Product")).toHaveValue("");
+    expect(screen.getByLabelText("Location")).toHaveTextContent("Select a customer first");
+    const customers = await openList(user, screen.getByLabelText("Customer"));
+    expect(await within(customers).findByRole("option", { name: /E2E API Customer.*E2EAPI/ })).toBeVisible();
     await user.keyboard("{Escape}");
     const products = await openList(user, screen.getByLabelText("Product"));
-    expect(within(products).getByRole("option", { name: /API Spare Hose.*API-2000/ })).toBeVisible();
+    expect(await within(products).findByRole("option", { name: /API Spare Hose.*API-2000/ })).toBeVisible();
   });
 
-  it("preserves typed asset form values when option lists finish loading", async () => {
+  it("preserves typed asset form values when the customer and product searches finish late", async () => {
     const customers = deferredJson();
     const products = deferredJson();
     const fallbackFetch = routeFetch();
@@ -1223,10 +1227,10 @@ describe("App", () => {
       "fetch",
       vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const path = String(url);
-        if (path.startsWith("/api/v1/customers?limit=100")) {
+        if (path.startsWith("/api/v1/customers?") && path.includes("limit=25")) {
           return customers.promise;
         }
-        if (path.startsWith("/api/v1/products?limit=100")) {
+        if (path.startsWith("/api/v1/products?") && path.includes("limit=25")) {
           return products.promise;
         }
         return fallbackFetch(url, init);
@@ -1259,7 +1263,7 @@ describe("App", () => {
     );
 
     await waitFor(async () => {
-      const agents = await openList(user, screen.getByLabelText("Agent"));
+      const agents = await openList(user, screen.getByLabelText("Customer"));
       expect(within(agents).getByRole("option", { name: /E2E API Customer.*E2EAPI/ })).toBeVisible();
     });
     await user.keyboard("{Escape}");
@@ -1272,7 +1276,7 @@ describe("App", () => {
     expect(screen.getByLabelText("Serial Number")).toHaveValue("SERIAL-ASYNC");
   });
 
-  it("confirms archive actions and calls soft-delete endpoints", async () => {
+  it("confirms product deletion and calls the soft-delete endpoint", async () => {
     const fetchMock = routeFetch();
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
@@ -1280,14 +1284,16 @@ describe("App", () => {
     render(<App initialSession={adminSession} />);
 
     await user.click(await screen.findByRole("button", { name: "Products" }));
-    await user.click(await screen.findByRole("button", { name: "Archive API Fuel Hose" }));
-    // Nothing is archived until the dialog is confirmed.
-    const dialog = await screen.findByRole("alertdialog", { name: /Archive API Fuel Hose/ });
+    expect(await screen.findByRole("button", { name: "Disable API Fuel Hose" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Archive / })).toBeNull();
+    await user.click(await screen.findByRole("button", { name: "Delete API Fuel Hose" }));
+    // Nothing is deleted until the dialog is confirmed.
+    const dialog = await screen.findByRole("alertdialog", { name: /Delete API Fuel Hose/ });
     expect(fetchMock).not.toHaveBeenCalledWith(
       "/api/v1/products/product-api-1",
       expect.objectContaining({ method: "DELETE" })
     );
-    await user.click(within(dialog).getByRole("button", { name: "Archive product" }));
+    await user.click(within(dialog).getByRole("button", { name: "Delete product" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -1582,10 +1588,10 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: "Customers" }));
     await user.click(screen.getByRole("button", { name: "More Filters" }));
     expect(screen.getByRole("status", { name: "Customer filter summary" })).toHaveTextContent(
-      "Status"
+      "Active view"
     );
 
-    await user.click(screen.getByRole("button", { name: "Download customer list" }));
+    await user.click(screen.getByRole("button", { name: "Download this page of customers" }));
     expect(createObjectURL).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole("button", { name: "Certificates" }));

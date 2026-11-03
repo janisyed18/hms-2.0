@@ -1,0 +1,860 @@
+"""Customer, location, contact, user and catalog lifecycle rules.
+
+Destructive Delete is Super Admin only; a customer always keeps one location; a
+customer is archived (reversible) before it can be deleted.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from datetime import timedelta
+
+import httpx
+import pytest
+import pytest_asyncio
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from hms_backend.app.api.dependencies import get_current_principal, get_session
+from hms_backend.app.core.rbac import Principal, Role
+from hms_backend.app.main import create_app
+from hms_backend.app.models.base import Base, utc_now
+from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
+from hms_backend.app.modules.customers.models import (
+    Customer,
+    CustomerContact,
+    CustomerLocation,
+)
+from hms_backend.app.modules.identity.models import (
+    BrowserRefreshSession,
+    User,
+)
+from hms_backend.app.modules.inspections.models import Inspection
+from hms_backend.app.modules.products.models import Product
+from hms_backend.app.modules.reference.models import Material, Standard
+from hms_backend.app.modules.scheduling.models import RetestSchedule
+
+ADMIN = Principal(
+    user_id="admin-1", roles=frozenset({Role.HMS_ADMIN}), customer_ids=frozenset()
+)
+SUPER = Principal(
+    user_id="super-1", roles=frozenset({Role.SUPER_ADMIN}), customer_ids=frozenset()
+)
+LOCATION = {"name": "Head office"}
+
+
+@pytest_asyncio.fixture
+async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
+@asynccontextmanager
+async def client_for(
+    session_factory: async_sessionmaker[AsyncSession], principal: Principal
+) -> AsyncGenerator[httpx.AsyncClient]:
+    app = create_app()
+
+    async def override_session() -> AsyncGenerator[AsyncSession]:
+        async with session_factory() as session:
+            yield session
+
+    async def override_principal() -> Principal:
+        return principal
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_current_principal] = override_principal
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        yield client
+
+
+async def _customer_with_locations(
+    session_factory: async_sessionmaker[AsyncSession], *names: str
+) -> tuple[str, list[str]]:
+    async with session_factory() as session:
+        customer = Customer(code="ACME", name="Acme")
+        locations = [CustomerLocation(customer=customer, name=n) for n in names]
+        session.add_all([customer, *locations])
+        await session.commit()
+        return customer.id, [location.id for location in locations]
+
+
+# --- customer creation needs a location --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_customer_create_rejects_zero_locations(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with client_for(session_factory, ADMIN) as client:
+        missing = await client.post("/api/v1/customers", json={"name": "No Site"})
+        empty = await client.post(
+            "/api/v1/customers", json={"name": "No Site", "locations": []}
+        )
+        created = await client.post(
+            "/api/v1/customers", json={"name": "One Site", "locations": [LOCATION]}
+        )
+
+    assert missing.status_code == 422
+    assert empty.status_code == 422
+    assert created.status_code == 201
+    assert [item["name"] for item in created.json()["locations"]] == ["Head office"]
+    async with session_factory() as session:
+        names = (await session.scalars(select(Customer.name))).all()
+    assert list(names) == ["One Site"]
+
+
+@pytest.mark.asyncio
+async def test_first_location_keeps_its_address(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Add customer sends the first location's address; it is stored, not refused."""
+    location = {
+        **LOCATION,
+        "address_1": "1 Innovation Drive",
+        "address_2": "Level 2",
+        "city": "Bella Vista",
+        "state": "NSW",
+        "country": "Australia",
+    }
+    async with client_for(session_factory, ADMIN) as client:
+        created = await client.post(
+            "/api/v1/customers", json={"name": "Addressed", "locations": [location]}
+        )
+
+    assert created.status_code == 201
+    stored = created.json()["locations"][0]
+    assert stored["address_1"] == "1 Innovation Drive"
+    assert stored["city"] == "Bella Vista"
+    assert stored["country"] == "Australia"
+
+
+# --- locations ---------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_final_location_cannot_be_deleted_even_by_super_admin(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (only,) = await _customer_with_locations(session_factory, "Only")
+    async with client_for(session_factory, SUPER) as client:
+        response = await client.delete(
+            f"/api/v1/customers/{customer_id}/locations/{only}"
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "A customer must have at least one location. "
+        "Add another location before deleting this one."
+    )
+
+
+@pytest.mark.asyncio
+async def test_only_super_admin_deletes_an_eligible_location(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (first, second) = await _customer_with_locations(
+        session_factory, "Alpha", "Beta"
+    )
+    url = f"/api/v1/customers/{customer_id}/locations/{second}"
+    async with client_for(session_factory, ADMIN) as client:
+        forbidden = await client.delete(url)
+    async with client_for(session_factory, SUPER) as client:
+        deleted = await client.delete(url)
+        customer = await client.get(f"/api/v1/customers/{customer_id}")
+
+    assert forbidden.status_code == 403
+    assert deleted.status_code == 204
+    assert [item["id"] for item in customer.json()["locations"]] == [first]
+
+
+@pytest.mark.asyncio
+async def test_location_in_use_is_not_deleted_and_history_survives(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (used, spare) = await _customer_with_locations(
+        session_factory, "Used", "Spare"
+    )
+    async with session_factory() as session:
+        product = Product(category="Hose", code="P1", name="P1")
+        session.add(product)
+        session.add(
+            Asset(
+                customer_id=customer_id,
+                location_id=used,
+                product=product,
+                asset_number="A-1",
+                customer_serial_no="SN-1",
+                tag="HMS-A-1",
+                lifecycle_status=AssetLifecycleStatus.IN_SERVICE.value,
+            )
+        )
+        await session.commit()
+
+    async with client_for(session_factory, SUPER) as client:
+        blocked = await client.delete(
+            f"/api/v1/customers/{customer_id}/locations/{used}"
+        )
+
+    assert blocked.status_code == 409
+    assert "1 assets" in blocked.json()["detail"]
+    async with session_factory() as session:
+        location = await session.get(CustomerLocation, used)
+        assert location is not None
+        assert location.deleted_at is None
+        assert spare
+
+
+@pytest.mark.asyncio
+async def test_location_add_edit_and_scheduling_round_trip(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, _ = await _customer_with_locations(session_factory, "Alpha")
+    async with client_for(session_factory, ADMIN) as client:
+        created = await client.post(
+            f"/api/v1/customers/{customer_id}/locations",
+            json={
+                "name": "Port",
+                "address_1": "1 Quay St",
+                "city": "Sydney",
+                "state": "NSW",
+                "country": "AU",
+                "scheduling_timezone": "Australia/Sydney",
+                "scheduling_open_time": "07:00",
+                "scheduling_close_time": "15:30",
+                "scheduling_weekdays": [0, 1, 2],
+                "scheduling_blackout_dates": ["2027-01-26"],
+            },
+        )
+        bad_zone = await client.post(
+            f"/api/v1/customers/{customer_id}/locations",
+            json={"name": "Bad", "scheduling_timezone": "Mars/Phobos"},
+        )
+        edited = await client.patch(
+            f"/api/v1/customers/{customer_id}/locations/{created.json()['id']}",
+            json={"city": "Newcastle"},
+        )
+
+    assert created.status_code == 201
+    assert bad_zone.status_code == 422
+    assert edited.json()["city"] == "Newcastle"
+    assert edited.json()["scheduling_timezone"] == "Australia/Sydney"
+    assert edited.json()["scheduling_close_time"] == "15:30"
+
+
+# --- contacts ----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_contact_crud_with_super_admin_only_delete(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, _ = await _customer_with_locations(session_factory, "Alpha")
+    async with client_for(session_factory, ADMIN) as client:
+        created = await client.post(
+            f"/api/v1/customers/{customer_id}/contacts",
+            json={
+                "name": "Pat",
+                "email": "pat@example.com",
+                "receives_retest_reminders": False,
+            },
+        )
+        contact_id = created.json()["id"]
+        edited = await client.patch(
+            f"/api/v1/customers/{customer_id}/contacts/{contact_id}",
+            json={"receives_retest_reminders": True},
+        )
+        forbidden = await client.delete(
+            f"/api/v1/customers/{customer_id}/contacts/{contact_id}"
+        )
+    async with client_for(session_factory, SUPER) as client:
+        deleted = await client.delete(
+            f"/api/v1/customers/{customer_id}/contacts/{contact_id}"
+        )
+
+    assert created.status_code == 201
+    assert created.json()["receives_retest_reminders"] is False
+    assert edited.json()["receives_retest_reminders"] is True
+    assert forbidden.status_code == 403
+    assert deleted.status_code == 204
+    async with session_factory() as session:
+        contact = await session.get(CustomerContact, contact_id)
+    assert contact is not None
+    assert contact.deleted_at is not None
+
+
+# --- customer archive / restore / delete -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_customer_archive_restore_delete_lifecycle(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(
+        session_factory, "Alpha"
+    )
+    async with client_for(session_factory, ADMIN) as client:
+        admin_archive = await client.post(f"/api/v1/customers/{customer_id}/archive")
+        admin_delete = await client.delete(f"/api/v1/customers/{customer_id}")
+    async with client_for(session_factory, SUPER) as client:
+        early_delete = await client.delete(f"/api/v1/customers/{customer_id}")
+        archived = await client.post(f"/api/v1/customers/{customer_id}/archive")
+        archived_twice = await client.post(f"/api/v1/customers/{customer_id}/archive")
+        active_list = await client.get("/api/v1/customers")
+        archived_list = await client.get(
+            "/api/v1/customers", params={"lifecycle": "archived"}
+        )
+        new_location = await client.post(
+            f"/api/v1/customers/{customer_id}/locations", json={"name": "Extra"}
+        )
+        restored = await client.post(f"/api/v1/customers/{customer_id}/restore")
+        restored_twice = await client.post(f"/api/v1/customers/{customer_id}/restore")
+        back_in_list = await client.get("/api/v1/customers")
+        archived_again = await client.post(f"/api/v1/customers/{customer_id}/archive")
+        deleted = await client.delete(f"/api/v1/customers/{customer_id}")
+
+    assert admin_archive.status_code == 403
+    assert admin_delete.status_code == 403
+    assert early_delete.status_code == 409
+    assert early_delete.json()["detail"] == "Archive the customer before deleting it."
+    assert archived.status_code == 200
+    assert archived.json()["status"] == "ARCHIVED"
+    assert archived_twice.status_code == 409
+    assert active_list.json()["total"] == 0
+    assert [item["id"] for item in archived_list.json()["items"]] == [customer_id]
+    assert new_location.status_code == 409
+    assert restored.json()["status"] == "ACTIVE"
+    assert restored.json()["archived_at"] is None
+    assert restored_twice.status_code == 409
+    assert back_in_list.json()["total"] == 1
+    assert archived_again.status_code == 200
+    assert deleted.status_code == 204
+    async with session_factory() as session:
+        customer = await session.get(Customer, customer_id)
+        location = await session.get(CustomerLocation, location_id)
+    assert customer is not None and customer.deleted_at is not None
+    # History is never cascaded away.
+    assert location is not None and location.deleted_at is None
+
+
+@pytest.mark.asyncio
+async def test_customer_with_assets_cannot_be_deleted_only_archived(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(
+        session_factory, "Alpha"
+    )
+    async with session_factory() as session:
+        product = Product(category="Hose", code="P1", name="P1")
+        session.add(product)
+        session.add(
+            Asset(
+                customer_id=customer_id,
+                location_id=location_id,
+                product=product,
+                asset_number="A-1",
+                customer_serial_no="SN-1",
+                tag="HMS-A-1",
+                lifecycle_status=AssetLifecycleStatus.IN_SERVICE.value,
+            )
+        )
+        await session.commit()
+    async with client_for(session_factory, SUPER) as client:
+        await client.post(f"/api/v1/customers/{customer_id}/archive")
+        blocked = await client.delete(f"/api/v1/customers/{customer_id}")
+        new_asset = await client.post(
+            "/api/v1/assets",
+            json={
+                "customer_id": customer_id,
+                "location_id": location_id,
+                "product_id": product.id,
+                "asset_name": "Hose",
+                "customer_serial_no": "SN-2",
+            },
+        )
+
+    assert blocked.status_code == 409
+    assert "1 assets" in blocked.json()["detail"]
+    assert new_asset.status_code == 409
+    assert "archived" in new_asset.json()["detail"]
+
+
+# --- users -------------------------------------------------------------------
+
+
+async def _user(
+    session_factory: async_sessionmaker[AsyncSession], subject: str, role: Role
+) -> User:
+    async with session_factory() as session:
+        user = User(
+            oidc_subject=subject, email=f"{subject}@example.com", role=role.value
+        )
+        session.add(user)
+        await session.commit()
+        return user
+
+
+@pytest.mark.asyncio
+async def test_user_delete_is_super_admin_only_and_ends_sessions(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    actor = await _user(session_factory, "super-1", Role.SUPER_ADMIN)
+    target = await _user(session_factory, "inspector-1", Role.INSPECTOR)
+    async with session_factory() as session:
+        session.add(
+            BrowserRefreshSession(
+                user_id=target.id,
+                family_id="family-1",
+                token_hash="0" * 64,
+                expires_at=utc_now() + timedelta(days=1),
+                idle_expires_at=utc_now() + timedelta(hours=1),
+            )
+        )
+        await session.commit()
+    as_admin = Principal(
+        user_id="staff-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    as_super = Principal(
+        user_id="super-1",
+        roles=frozenset({Role.SUPER_ADMIN}),
+        customer_ids=frozenset(),
+        record_user_id=actor.id,
+    )
+    async with client_for(session_factory, as_admin) as client:
+        forbidden = await client.delete(f"/api/v1/admin/users/{target.id}")
+    async with client_for(session_factory, as_super) as client:
+        deleted = await client.delete(f"/api/v1/admin/users/{target.id}")
+
+    assert forbidden.status_code == 403
+    assert deleted.status_code == 204
+    async with session_factory() as session:
+        user = await session.get(User, target.id)
+        sessions = (await session.scalars(select(BrowserRefreshSession))).all()
+    assert user is not None
+    assert user.deleted_at is not None
+    assert user.account_status == "DISABLED"
+    assert all(item.revoked_at is not None for item in sessions)
+
+
+@pytest.mark.asyncio
+async def test_super_admin_cannot_delete_self_or_the_last_super_admin(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    me = await _user(session_factory, "super-1", Role.SUPER_ADMIN)
+    other = await _user(session_factory, "super-2", Role.SUPER_ADMIN)
+    as_me = Principal(
+        user_id="super-1",
+        roles=frozenset({Role.SUPER_ADMIN}),
+        customer_ids=frozenset(),
+        record_user_id=me.id,
+    )
+    async with client_for(session_factory, as_me) as client:
+        self_delete = await client.delete(f"/api/v1/admin/users/{me.id}")
+        delete_other = await client.delete(f"/api/v1/admin/users/{other.id}")
+    # Only one active Super Admin is left, and it is somebody else's session.
+    as_other = Principal(
+        user_id="someone-else",
+        roles=frozenset({Role.SUPER_ADMIN}),
+        customer_ids=frozenset(),
+        record_user_id="unrelated-id",
+    )
+    async with client_for(session_factory, as_other) as client:
+        last = await client.delete(f"/api/v1/admin/users/{me.id}")
+
+    assert self_delete.status_code == 409
+    assert "own account" in self_delete.json()["detail"]
+    assert delete_other.status_code == 204
+    assert last.status_code == 409
+    assert "last active Super Admin" in last.json()["detail"]
+
+
+# --- products and reference data ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_product_read_exposes_standard_and_survives_other_edits(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        standard = Standard(code="AS2683", name="AS2683")
+        product = Product(category="Hose", code="P1", name="P1", standard=standard)
+        session.add_all([standard, product])
+        await session.commit()
+        standard_id, product_id = standard.id, product.id
+    async with client_for(session_factory, ADMIN) as client:
+        before = await client.get("/api/v1/products")
+        edited = await client.patch(
+            f"/api/v1/products/{product_id}", json={"name": "Renamed"}
+        )
+        after = await client.get("/api/v1/products")
+
+    assert before.json()["items"][0]["standard_id"] == standard_id
+    assert edited.json()["standard_id"] == standard_id
+    assert after.json()["items"][0]["standard_code"] == "AS2683"
+    assert after.json()["items"][0]["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_catalog_and_product_deletes_are_super_admin_only_and_guard_use(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        standard = Standard(code="AS2683", name="AS2683")
+        product = Product(category="Hose", code="P1", name="P1", standard=standard)
+        material = Material(code="STEEL", name="Steel")
+        session.add_all([standard, product, material])
+        await session.commit()
+        ids = (standard.id, product.id, material.id)
+    standard_id, product_id, material_id = ids
+    async with client_for(session_factory, ADMIN) as client:
+        forbidden = [
+            await client.delete(f"/api/v1/reference/standards/{standard_id}"),
+            await client.delete(f"/api/v1/products/{product_id}"),
+            await client.delete(f"/api/v1/reference/catalog/materials/{material_id}"),
+        ]
+    async with client_for(session_factory, SUPER) as client:
+        in_use = await client.delete(f"/api/v1/reference/standards/{standard_id}")
+        product_deleted = await client.delete(f"/api/v1/products/{product_id}")
+        standard_deleted = await client.delete(
+            f"/api/v1/reference/standards/{standard_id}"
+        )
+        material_deleted = await client.delete(
+            f"/api/v1/reference/catalog/materials/{material_id}"
+        )
+
+    assert [item.status_code for item in forbidden] == [403, 403, 403]
+    assert in_use.status_code == 409
+    assert "1 products" in in_use.json()["detail"]
+    assert product_deleted.status_code == 204
+    assert standard_deleted.status_code == 204
+    assert material_deleted.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_customer_summary_counts_the_whole_system_not_a_page(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        for index in range(7):
+            customer = Customer(code=f"C{index}", name=f"Customer {index}")
+            session.add(customer)
+            session.add(CustomerLocation(customer=customer, name="Site A"))
+            session.add(CustomerLocation(customer=customer, name="Site B"))
+        session.add(Customer(code="OLD", name="Old", archived_at=utc_now()))
+        await session.commit()
+    async with client_for(session_factory, ADMIN) as client:
+        summary = await client.get("/api/v1/customers/summary")
+        page = await client.get("/api/v1/customers", params={"limit": 2})
+
+    assert page.json()["total"] == 7
+    assert len(page.json()["items"]) == 2
+    assert summary.json() == {
+        "active_customers": 7,
+        "archived_customers": 1,
+        "locations": 14,
+        "assets": 0,
+    }
+
+
+# --- archived customers get no new work, disabled products no new assets -----
+
+
+async def _asset_for(
+    session_factory: async_sessionmaker[AsyncSession],
+    customer_id: str,
+    location_id: str,
+    product: Product,
+    number: str,
+) -> str:
+    async with session_factory() as session:
+        asset = Asset(
+            customer_id=customer_id,
+            location_id=location_id,
+            product_id=product.id,
+            asset_number=number,
+            customer_serial_no=f"SN-{number}",
+            tag=f"HMS-{number}",
+            lifecycle_status=AssetLifecycleStatus.IN_SERVICE.value,
+        )
+        session.add(asset)
+        await session.commit()
+        return asset.id
+
+
+async def _product(
+    session_factory: async_sessionmaker[AsyncSession], code: str, *, enabled: bool
+) -> Product:
+    async with session_factory() as session:
+        product = Product(category="Hose", code=code, name=code, enabled=enabled)
+        session.add(product)
+        await session.commit()
+        return product
+
+
+@pytest.mark.asyncio
+async def test_archived_customer_keeps_history_but_gets_no_new_inspection(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(
+        session_factory, "Alpha"
+    )
+    product = await _product(session_factory, "P1", enabled=True)
+    asset_id = await _asset_for(
+        session_factory, customer_id, location_id, product, "A-1"
+    )
+    body = {"inspection_type": "SERVICE"}
+    async with client_for(session_factory, SUPER) as client:
+        first = await client.post(f"/api/v1/assets/{asset_id}/inspections", json=body)
+        await client.post(f"/api/v1/customers/{customer_id}/archive")
+        blocked = await client.post(f"/api/v1/assets/{asset_id}/inspections", json=body)
+        everything = await client.get("/api/v1/assets")
+        for_new_work = await client.get("/api/v1/assets?new_work_only=true")
+        detail = await client.get(f"/api/v1/assets/{asset_id}")
+        history = await client.get("/api/v1/inspections")
+        certificates = await client.get("/api/v1/certificates")
+        await client.post(f"/api/v1/customers/{customer_id}/restore")
+        restored = await client.get("/api/v1/assets?new_work_only=true")
+        again = await client.post(f"/api/v1/assets/{asset_id}/inspections", json=body)
+
+    assert first.status_code == 201
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == (
+        "This customer is archived. Restore it before adding new work."
+    )
+    # The register, detail, inspections and certificates keep showing history.
+    assert [item["id"] for item in everything.json()["items"]] == [asset_id]
+    assert for_new_work.json()["items"] == []
+    assert for_new_work.json()["total"] == 0
+    assert detail.status_code == 200
+    assert history.status_code == 200 and history.json()["total"] == 1
+    assert certificates.status_code == 200
+    assert [item["id"] for item in restored.json()["items"]] == [asset_id]
+    assert again.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_archived_customer_cannot_receive_a_location_by_any_route(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(
+        session_factory, "Alpha"
+    )
+    async with client_for(session_factory, SUPER) as client:
+        await client.post(f"/api/v1/customers/{customer_id}/archive")
+        dedicated = await client.post(
+            f"/api/v1/customers/{customer_id}/locations", json={"name": "Second"}
+        )
+        nested = await client.patch(
+            f"/api/v1/customers/{customer_id}",
+            json={"locations": [{"name": "Second"}]},
+        )
+
+    assert dedicated.status_code == 409
+    # The old nested path is gone, so it cannot carry different rules.
+    assert nested.status_code == 422
+    async with session_factory() as session:
+        names = (
+            await session.scalars(
+                select(CustomerLocation.name).where(
+                    CustomerLocation.customer_id == customer_id
+                )
+            )
+        ).all()
+    assert list(names) == ["Alpha"]
+    assert location_id
+
+
+@pytest.mark.asyncio
+async def test_disabled_product_cannot_be_assigned_but_existing_assets_still_work(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(
+        session_factory, "Alpha"
+    )
+    old = await _product(session_factory, "OLD", enabled=True)
+    other = await _product(session_factory, "OTHER", enabled=True)
+    on_old = await _asset_for(session_factory, customer_id, location_id, old, "A-1")
+    on_other = await _asset_for(session_factory, customer_id, location_id, other, "A-2")
+    new_asset = {
+        "customer_id": customer_id,
+        "location_id": location_id,
+        "product_id": old.id,
+        "asset_name": "Hose",
+        "customer_serial_no": "SN-NEW",
+    }
+    async with client_for(session_factory, ADMIN) as client:
+        disable = await client.patch(
+            f"/api/v1/products/{old.id}", json={"enabled": False}
+        )
+        create = await client.post("/api/v1/assets", json=new_asset)
+        reassign = await client.patch(
+            f"/api/v1/assets/{on_other}", json={"product_id": old.id}
+        )
+        unrelated = await client.patch(
+            f"/api/v1/assets/{on_old}", json={"notes": "Checked on site"}
+        )
+        still_there = await client.get(f"/api/v1/assets/{on_old}")
+        enable = await client.patch(
+            f"/api/v1/products/{old.id}", json={"enabled": True}
+        )
+        create_again = await client.post("/api/v1/assets", json=new_asset)
+        reassign_again = await client.patch(
+            f"/api/v1/assets/{on_other}", json={"product_id": old.id}
+        )
+
+    assert disable.status_code == 200
+    assert create.status_code == 409
+    assert "disabled" in create.json()["detail"]
+    assert reassign.status_code == 409
+    assert unrelated.status_code == 200
+    assert still_there.status_code == 200
+    assert still_there.json()["product"]["id"] == old.id
+    assert enable.status_code == 200
+    assert create_again.status_code == 201
+    assert reassign_again.status_code == 200
+
+
+# --- deleting an asset is a Super Admin action and never erases history ------
+
+
+@pytest.mark.asyncio
+async def test_only_super_admin_deletes_an_unreferenced_asset(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(session_factory, "A")
+    product = await _product(session_factory, "P1", enabled=True)
+    asset_id = await _asset_for(
+        session_factory, customer_id, location_id, product, "A-1"
+    )
+    roles = {
+        "hms_admin": Role.HMS_ADMIN,
+        "assembly": Role.ASSEMBLY,
+        "inspector": Role.INSPECTOR,
+        "customer_user": Role.CUSTOMER_USER,
+    }
+    refused = {}
+    for name, role in roles.items():
+        principal = Principal(
+            user_id=name,
+            roles=frozenset({role}),
+            customer_ids=frozenset({customer_id}),
+        )
+        async with client_for(session_factory, principal) as client:
+            refused[name] = (
+                await client.delete(f"/api/v1/assets/{asset_id}")
+            ).status_code
+    async with client_for(session_factory, SUPER) as client:
+        deleted = await client.delete(f"/api/v1/assets/{asset_id}")
+        gone = await client.get(f"/api/v1/assets/{asset_id}")
+
+    assert refused == {name: 403 for name in roles}
+    assert deleted.status_code == 204
+    assert gone.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_asset_with_history_cannot_be_deleted_and_stays_whole(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(session_factory, "A")
+    product = await _product(session_factory, "P1", enabled=True)
+    with_inspection = await _asset_for(
+        session_factory, customer_id, location_id, product, "A-1"
+    )
+    with_schedule = await _asset_for(
+        session_factory, customer_id, location_id, product, "A-2"
+    )
+    async with session_factory() as session:
+        session.add(
+            Inspection(
+                asset_id=with_inspection,
+                inspection_type="SERVICE",
+                status="SUBMITTED",
+                result="PASS",
+                inspector_user_id="inspector-1",
+            )
+        )
+        session.add(
+            RetestSchedule(
+                customer_id=customer_id, asset_id=with_schedule, due_at=utc_now().date()
+            )
+        )
+        await session.commit()
+    async with client_for(session_factory, SUPER) as client:
+        by_inspection = await client.delete(f"/api/v1/assets/{with_inspection}")
+        by_schedule = await client.delete(f"/api/v1/assets/{with_schedule}")
+        kept = await client.get(f"/api/v1/assets/{with_inspection}")
+        inspections = await client.get("/api/v1/inspections")
+        # Ordinary lifecycle editing is the sanctioned alternative, and still works.
+        retired = await client.patch(
+            f"/api/v1/assets/{with_inspection}", json={"lifecycle_status": "RETIRED"}
+        )
+
+    assert by_inspection.status_code == 409
+    assert "inspections" in by_inspection.json()["detail"]
+    assert "Retired or Condemned" in by_inspection.json()["detail"]
+    assert by_schedule.status_code == 409
+    assert "retest schedules" in by_schedule.json()["detail"]
+    assert kept.status_code == 200
+    assert inspections.json()["total"] == 1
+    assert retired.status_code == 200
+    assert retired.json()["lifecycle_status"] == "RETIRED"
+    async with session_factory() as session:
+        live = await session.scalars(select(Asset.id).where(Asset.deleted_at.is_(None)))
+        assert {with_inspection, with_schedule} <= set(live.all())
+
+
+@pytest.mark.asyncio
+async def test_archived_customer_cannot_gain_a_retest_schedule_but_keeps_history(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(session_factory, "A")
+    product = await _product(session_factory, "P1", enabled=True)
+    asset_id = await _asset_for(
+        session_factory, customer_id, location_id, product, "A-1"
+    )
+    schedule = {
+        "retest_schedule": {"due_at": "2030-01-01", "status": "UPCOMING"},
+    }
+
+    async def schedules() -> int:
+        async with session_factory() as session:
+            return (
+                await session.scalar(select(func.count()).select_from(RetestSchedule))
+                or 0
+            )
+
+    async with client_for(session_factory, SUPER) as client:
+        await client.post(f"/api/v1/customers/{customer_id}/archive")
+        unrelated = await client.patch(
+            f"/api/v1/assets/{asset_id}", json={"notes": "Corrected note"}
+        )
+        blocked = await client.patch(f"/api/v1/assets/{asset_id}", json=schedule)
+        created_while_archived = await schedules()
+        await client.post(f"/api/v1/customers/{customer_id}/restore")
+        created = await client.patch(f"/api/v1/assets/{asset_id}", json=schedule)
+        await client.post(f"/api/v1/customers/{customer_id}/archive")
+        # A schedule that already exists may still be corrected while archived.
+        corrected = await client.patch(
+            f"/api/v1/assets/{asset_id}",
+            json={"retest_schedule": {"due_at": "2031-01-01", "status": "UPCOMING"}},
+        )
+
+    assert unrelated.status_code == 200
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == (
+        "This customer is archived. Restore it before adding new work."
+    )
+    assert created_while_archived == 0
+    assert created.status_code == 200
+    assert await schedules() == 1
+    assert corrected.status_code == 200
+    assert corrected.json()["retest_schedule"]["due_at"] == "2031-01-01"

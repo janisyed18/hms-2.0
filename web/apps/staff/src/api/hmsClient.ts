@@ -21,8 +21,12 @@ import type {
   CertificateIssueValues,
   CertificateRecord,
   CertificateStatus,
+  ContactFormValues,
   CustomerContact,
   CustomerFormValues,
+  CustomerSummary,
+  CustomerUpdateValues,
+  LocationFormValues,
   CustomerLocation,
   CustomerRecord,
   DashboardRecord,
@@ -94,6 +98,8 @@ interface ApiCustomer {
   notes: string | null;
   retest_enabled: boolean;
   default_retest_months: number | null;
+  status: "ACTIVE" | "ARCHIVED";
+  archived_at: string | null;
   locations: ApiLocation[];
   contacts: ApiContact[];
   metrics: { asset_count: number; in_service_count: number };
@@ -215,6 +221,7 @@ interface ApiReferenceStandard {
   id: string;
   code: string;
   name: string;
+  enabled?: boolean;
 }
 
 interface ApiReferenceStandardList {
@@ -227,7 +234,9 @@ interface ApiProduct {
   name: string;
   category: string;
   sub_category: string | null;
+  standard_id: string | null;
   standard_code: string | null;
+  enabled: boolean;
 }
 
 interface ApiProductList {
@@ -657,6 +666,8 @@ interface ApiAuthSession {
 
 interface ListCustomerOptions {
   search?: string;
+  /** "active" (default) hides archived customers; "all" includes them. */
+  lifecycle?: "active" | "archived" | "all";
   sort?: string;
   limit?: number;
   offset?: number;
@@ -686,6 +697,8 @@ interface ListAssetOptions {
   locationId?: string;
   dueFrom?: string;
   dueTo?: string;
+  /** Only assets that can take new work (an archived customer's are left out). History keeps the default. */
+  newWorkOnly?: boolean;
   sort?: string;
   limit?: number;
   offset?: number;
@@ -1024,13 +1037,8 @@ function toCustomer(customer: ApiCustomer, etag: string | null = null): Customer
         defaultRetestMonths: customer.default_retest_months,
         locations: customer.locations.map(toLocation),
         contacts: customer.contacts.map(toContact),
-        status: "Active",
-        riskLevel: "Low",
-        industry: "Marine Operations",
-        paymentTerms: "Net 30",
-        contractStart: "Not set",
-        contractEnd: "Not set",
-        lastActivity: "Synced",
+        status: customer.status === "ARCHIVED" ? "Archived" : "Active",
+        archivedAt: customer.archived_at,
         metrics: {
           assetCount: customer.metrics.asset_count,
           inServiceCount: customer.metrics.in_service_count,
@@ -1054,7 +1062,8 @@ function toReferenceCatalog(
     {
       id: standard.id,
       code: standard.code,
-      name: standard.name
+      name: standard.name,
+      enabled: standard.enabled ?? true
     },
     etag
   );
@@ -1072,7 +1081,9 @@ function toProduct(product: ApiProduct, etag: string | null = null): ProductReco
       name: product.name,
       category: product.category,
       subCategory: product.sub_category,
-      standardCode: product.standard_code
+      standardId: product.standard_id,
+      standardCode: product.standard_code,
+      enabled: product.enabled
     },
     etag
   );
@@ -1583,24 +1594,34 @@ function ifMatchHeader(etag?: string | null): Record<string, string> {
   return etag ? { "If-Match": etag } : {};
 }
 
-function customerPayload(values: CustomerFormValues) {
+function locationPayload(location: LocationFormValues) {
+  return {
+    name: location.name.trim(),
+    address_1: location.address1.trim() || null,
+    address_2: location.address2.trim() || null,
+    city: location.city.trim() || null,
+    state: location.state.trim() || null,
+    country: location.country.trim() || null,
+    site_contact_name: location.siteContactName.trim() || null,
+    site_contact_mobile: location.siteContactMobile.trim() || null,
+    site_contact_email: location.siteContactEmail.trim() || null,
+    ppe_requirements: location.ppeRequirements,
+    additional_requirements: location.additionalRequirements,
+    scheduling_timezone: location.schedulingTimezone,
+    scheduling_open_time: location.schedulingOpenTime,
+    scheduling_close_time: location.schedulingCloseTime,
+    scheduling_weekdays: location.schedulingWeekdays,
+    scheduling_blackout_dates: location.schedulingBlackoutDates
+  };
+}
+
+function contactPayload(values: ContactFormValues) {
   return {
     name: values.name.trim(),
-    notes: values.notes.trim() || null,
-    locations: values.locations.map((location) => ({
-      ...(location.id ? { id: location.id } : {}),
-      name: location.name.trim(),
-      ...(location.siteContactName ? { site_contact_name: location.siteContactName.trim() } : {}),
-      ...(location.siteContactMobile ? { site_contact_mobile: location.siteContactMobile.trim() } : {}),
-      ...(location.siteContactEmail ? { site_contact_email: location.siteContactEmail.trim() } : {}),
-      ppe_requirements: location.ppeRequirements,
-      additional_requirements: location.additionalRequirements,
-      scheduling_timezone: location.schedulingTimezone ?? "UTC",
-      scheduling_open_time: location.schedulingOpenTime ?? "08:00",
-      scheduling_close_time: location.schedulingCloseTime ?? "17:00",
-      scheduling_weekdays: location.schedulingWeekdays ?? [0, 1, 2, 3, 4],
-      scheduling_blackout_dates: location.schedulingBlackoutDates ?? []
-    })),
+    email: values.email.trim() || null,
+    phone: values.phone.trim() || null,
+    role: values.role.trim() || null,
+    receives_retest_reminders: values.receivesRetestReminders
   };
 }
 
@@ -1765,6 +1786,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         limit: listOptions.limit ?? 50,
         offset: listOptions.offset ?? 0,
         search: listOptions.search?.trim() || undefined,
+        lifecycle: listOptions.lifecycle,
         sort: listOptions.sort
       });
       return {
@@ -1787,15 +1809,20 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         "/api/v1/customers",
         {
           method: "POST",
-          body: JSON.stringify(customerPayload(values))
+          body: JSON.stringify({
+            name: values.name.trim(),
+            notes: values.notes.trim() || null,
+            locations: [locationPayload(values.firstLocation)]
+          })
         }
       );
       return toCustomer(response.data, response.etag);
     },
 
+    /** Customer fields only: locations and contacts are managed from Customer Details. */
     async updateCustomer(
       id: string,
-      values: CustomerFormValues,
+      values: CustomerUpdateValues,
       etag?: string | null
     ): Promise<CustomerRecord> {
       const response = await request<ApiCustomer>(
@@ -1803,10 +1830,82 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         {
           method: "PATCH",
           headers: ifMatchHeader(etag),
-          body: JSON.stringify(customerPayload(values))
+          body: JSON.stringify({ name: values.name.trim(), notes: values.notes.trim() || null })
         }
       );
       return toCustomer(response.data, response.etag);
+    },
+
+    /** System-wide totals for what the caller may see (not the loaded page). */
+    async getCustomerSummary(): Promise<CustomerSummary> {
+      const response = await request<{
+        active_customers: number;
+        archived_customers: number;
+        locations: number;
+        assets: number;
+      }>("/api/v1/customers/summary");
+      return {
+        activeCustomers: response.data.active_customers,
+        archivedCustomers: response.data.archived_customers,
+        locations: response.data.locations,
+        assets: response.data.assets
+      };
+    },
+
+    async archiveCustomer(id: string): Promise<CustomerRecord> {
+      const response = await request<ApiCustomer>(`/api/v1/customers/${encodeURIComponent(id)}/archive`, { method: "POST" });
+      return toCustomer(response.data, response.etag);
+    },
+
+    async restoreCustomer(id: string): Promise<CustomerRecord> {
+      const response = await request<ApiCustomer>(`/api/v1/customers/${encodeURIComponent(id)}/restore`, { method: "POST" });
+      return toCustomer(response.data, response.etag);
+    },
+
+    async createCustomerLocation(customerId: string, values: LocationFormValues): Promise<CustomerLocation> {
+      const response = await request<ApiLocation>(
+        `/api/v1/customers/${encodeURIComponent(customerId)}/locations`,
+        { method: "POST", body: JSON.stringify(locationPayload(values)) }
+      );
+      return toLocation(response.data);
+    },
+
+    async updateCustomerLocation(customerId: string, locationId: string, values: LocationFormValues): Promise<CustomerLocation> {
+      const response = await request<ApiLocation>(
+        `/api/v1/customers/${encodeURIComponent(customerId)}/locations/${encodeURIComponent(locationId)}`,
+        { method: "PATCH", body: JSON.stringify(locationPayload(values)) }
+      );
+      return toLocation(response.data);
+    },
+
+    async deleteCustomerLocation(customerId: string, locationId: string): Promise<void> {
+      await request<void>(
+        `/api/v1/customers/${encodeURIComponent(customerId)}/locations/${encodeURIComponent(locationId)}`,
+        { method: "DELETE" }
+      );
+    },
+
+    async createCustomerContact(customerId: string, values: ContactFormValues): Promise<CustomerContact> {
+      const response = await request<ApiContact>(
+        `/api/v1/customers/${encodeURIComponent(customerId)}/contacts`,
+        { method: "POST", body: JSON.stringify(contactPayload(values)) }
+      );
+      return toContact(response.data);
+    },
+
+    async updateCustomerContact(customerId: string, contactId: string, values: ContactFormValues): Promise<CustomerContact> {
+      const response = await request<ApiContact>(
+        `/api/v1/customers/${encodeURIComponent(customerId)}/contacts/${encodeURIComponent(contactId)}`,
+        { method: "PATCH", body: JSON.stringify(contactPayload(values)) }
+      );
+      return toContact(response.data);
+    },
+
+    async deleteCustomerContact(customerId: string, contactId: string): Promise<void> {
+      await request<void>(
+        `/api/v1/customers/${encodeURIComponent(customerId)}/contacts/${encodeURIComponent(contactId)}`,
+        { method: "DELETE" }
+      );
     },
 
     async listProducts(
@@ -1848,6 +1947,15 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toProduct(response.data, response.etag);
     },
 
+    async setProductEnabled(id: string, enabled: boolean, etag?: string | null): Promise<ProductRecord> {
+      const response = await request<ApiProduct>(`/api/v1/products/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: ifMatchHeader(etag),
+        body: JSON.stringify({ enabled })
+      });
+      return toProduct(response.data, response.etag);
+    },
+
     async updateProduct(
       id: string,
       values: ProductFormValues,
@@ -1863,8 +1971,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
             sub_category: values.subCategory,
             code: values.code,
             name: values.name,
-            standard_id: values.standardId,
-            enabled: true
+            standard_id: values.standardId
           })
         }
       );
@@ -1884,6 +1991,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         location_id: listOptions.locationId,
         due_from: listOptions.dueFrom,
         due_to: listOptions.dueTo,
+        new_work_only: listOptions.newWorkOnly ? true : undefined,
         sort: listOptions.sort
       });
       return {
@@ -2375,10 +2483,13 @@ export function createHmsClient(options: HmsClientOptions = {}) {
     },
 
     async listReferenceCatalog(
-      category: ReferenceCatalogKey
+      category: ReferenceCatalogKey,
+      includeDisabled = false
     ): Promise<ApiListResult<ReferenceCatalogRecord>> {
       const response = await request<ApiReferenceStandardList>(
-        referenceCatalogPath(category)
+        referenceCatalogPath(category),
+        {},
+        { include_disabled: includeDisabled || undefined }
       );
       return {
         total: response.data.items.length,
@@ -2422,7 +2533,20 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toReferenceCatalog(response.data, response.etag);
     },
 
-    async archiveReferenceCatalogItem(
+    async setReferenceCatalogEnabled(
+      category: ReferenceCatalogKey,
+      id: string,
+      enabled: boolean,
+      etag?: string | null
+    ): Promise<ReferenceCatalogRecord> {
+      const response = await request<ApiReferenceStandard>(
+        `${referenceCatalogPath(category)}/${encodeURIComponent(id)}`,
+        { method: "PATCH", headers: ifMatchHeader(etag), body: JSON.stringify({ enabled }) }
+      );
+      return toReferenceCatalog(response.data, response.etag);
+    },
+
+    async deleteReferenceCatalogItem(
       category: ReferenceCatalogKey,
       id: string,
       etag?: string | null
@@ -2499,7 +2623,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toAdminUser(response.data, response.etag);
     },
 
-    async archiveAdminUser(id: string): Promise<void> {
+    async deleteAdminUser(id: string): Promise<void> {
       await request<void>(`/api/v1/admin/users/${encodeURIComponent(id)}`, {
         method: "DELETE"
       });
@@ -2601,21 +2725,21 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       };
     },
 
-    async archiveCustomer(id: string, etag?: string | null): Promise<void> {
+    async deleteCustomer(id: string, etag?: string | null): Promise<void> {
       await request<void>(`/api/v1/customers/${encodeURIComponent(id)}`, {
         method: "DELETE",
         headers: ifMatchHeader(etag)
       });
     },
 
-    async archiveProduct(id: string, etag?: string | null): Promise<void> {
+    async deleteProduct(id: string, etag?: string | null): Promise<void> {
       await request<void>(`/api/v1/products/${encodeURIComponent(id)}`, {
         method: "DELETE",
         headers: ifMatchHeader(etag)
       });
     },
 
-    async archiveAsset(id: string, etag?: string | null): Promise<void> {
+    async deleteAsset(id: string, etag?: string | null): Promise<void> {
       await request<void>(`/api/v1/assets/${encodeURIComponent(id)}`, {
         method: "DELETE",
         headers: ifMatchHeader(etag)

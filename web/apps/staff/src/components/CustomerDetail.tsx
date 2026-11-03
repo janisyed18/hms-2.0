@@ -1,53 +1,35 @@
-import { Building2, Edit3, ExternalLink, MapPin, Package, ShieldCheck, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Building2, Edit3, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 
 import { createHmsClient } from "../api/hmsClient";
 import type { AssetRecord, CustomerRecord } from "../domain/types";
 import { motionTokens } from "../motion/motionTokens";
-import { assetAccessibleName } from "../utils/identity";
-import { AssetIdentity } from "./AssetIdentity";
+import { ActionNotice } from "./interaction/ActionNotice";
+import { CustomerContactsTab } from "./CustomerContactsTab";
+import { CustomerLocationsTab } from "./CustomerLocationsTab";
+import type { CustomerLifecycleAction } from "../hooks/useCustomerWorkspace";
 
 interface CustomerDetailProps {
   activeTab: string;
   canWrite: boolean;
+  /** Super Admin: the only role that may archive, restore or delete, and delete locations and contacts. */
+  canDelete?: boolean;
   customer: CustomerRecord | null;
   onAssetOpen: (assetId: string) => void;
+  /** Called with the customer as the server now has it, after a location or contact changed. */
+  onCustomerChange?: (customer: CustomerRecord) => void;
   onClose: () => void;
   onEdit: () => void;
+  onLifecycle?: (action: CustomerLifecycleAction, customer: CustomerRecord) => void;
   onTabChange: (tab: string) => void;
 }
 
-const tabs = ["Locations"];
+const tabs = ["Overview", "Locations", "Contacts"] as const;
 
 interface CustomerAssets {
   items: AssetRecord[];
   total: number;
-}
-
-function googleMapsUrl(location: CustomerRecord["locations"][number]) {
-  const address = [
-    location.name,
-    location.address1,
-    location.address2,
-    location.city,
-    location.state,
-    location.country
-  ]
-    .filter((value): value is string => Boolean(value?.trim()))
-    .join(", ");
-
-  const hasRecordedAddress = [
-    location.address1,
-    location.address2,
-    location.city,
-    location.state,
-    location.country
-  ].some((value) => Boolean(value?.trim()));
-
-  return hasRecordedAddress
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
-    : null;
 }
 
 async function loadCustomerAssets(customerId: string): Promise<CustomerAssets> {
@@ -73,23 +55,16 @@ async function loadCustomerAssets(customerId: string): Promise<CustomerAssets> {
   };
 }
 
-function RequirementList({ items, emptyLabel }: { items?: string[]; emptyLabel: string }) {
-  const requirements = items ?? [];
-
-  return requirements.length ? (
-    <ul className="requirement-list">
-      {requirements.map((item) => <li key={item}><ShieldCheck aria-hidden="true" size={15} />{item}</li>)}
-    </ul>
-  ) : <p className="empty-requirements">{emptyLabel}</p>;
-}
-
 export function CustomerDetail({
   activeTab,
   canWrite,
+  canDelete = false,
   customer,
   onAssetOpen,
+  onCustomerChange,
   onClose,
   onEdit,
+  onLifecycle,
   onTabChange
 }: CustomerDetailProps) {
   const reducedMotion = useReducedMotion();
@@ -99,6 +74,7 @@ export function CustomerDetail({
   const [assetTotal, setAssetTotal] = useState(0);
   const [assetsError, setAssetsError] = useState<string | null>(null);
   const [isLoadingAssets, setLoadingAssets] = useState(false);
+  const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
 
   useEffect(() => {
     if (!customer) {
@@ -126,19 +102,13 @@ export function CustomerDetail({
     };
   }, [customer]);
 
+  const customerId = customer?.id;
   useEffect(() => {
-    if (customer) {
+    if (customerId) {
       closeButtonRef.current?.focus();
+      setNotice(null);
     }
-  }, [customer]);
-
-  const locationGroups = useMemo(() => (customer?.locations ?? [])
-    .map((location) => ({
-      location,
-      assets: assets.filter((asset) => asset.location?.id === location.id)
-    }))
-    .sort((left, right) => left.location.name.localeCompare(right.location.name)), [assets, customer]);
-  const unassignedAssets = assets.filter((asset) => !asset.location).length;
+  }, [customerId]);
 
   return (
     <AnimatePresence initial={false}>
@@ -208,7 +178,7 @@ export function CustomerDetail({
 
             <div className="customer-profile-metrics" aria-label="Customer asset summary">
               <article><span>Assets</span><strong>{isLoadingAssets ? "…" : assetTotal}</strong><small>Assigned to this customer</small></article>
-              <article><span>Active locations</span><strong>{isLoadingAssets ? "…" : locationGroups.length}</strong><small>Derived from asset assignments</small></article>
+              <article><span>Locations</span><strong>{customer.locations.length}</strong><small>Registered for this customer</small></article>
               <article><span>Needs attention</span><strong className={customer.metrics.inspectionDueCount === null ? undefined : customer.metrics.inspectionDueCount ? "danger-text" : "success-text"}>{customer.metrics.inspectionDueCount ?? "—"}</strong><small>{customer.metrics.inspectionDueLabel}</small></article>
               <article><span>Certificate coverage</span><strong>{customer.metrics.certificateValidPercent === null ? "—" : `${customer.metrics.certificateValidPercent}%`}</strong><small>{customer.metrics.certificateStatusLabel}</small></article>
             </div>
@@ -223,83 +193,62 @@ export function CustomerDetail({
                   type="button"
                   onClick={() => onTabChange(tab)}
                 >
-                  {tab} ({isLoadingAssets ? "…" : locationGroups.length})
+                  {tab}{tab === "Locations" ? ` (${customer.locations.length})` : tab === "Contacts" ? ` (${customer.contacts.length})` : ""}
                 </button>
               ))}
             </div>
 
-            {activeTab === "Locations" ? (
-              <section className="customer-location-section">
-                <div className="customer-location-section-heading">
-                  <div>
-                    <h3>Asset locations</h3>
-                  <p>Locations include their nominated site contact and assigned assets.</p>
-                  </div>
-                  {unassignedAssets ? <span className="mini-status due-soon">{unassignedAssets} unassigned</span> : null}
+            {notice ? <ActionNotice kind="success" onDismiss={() => setNotice(null)} title={notice.title}>{notice.message}</ActionNotice> : null}
+
+            {activeTab === "Overview" ? (
+              <section className="customer-location-section" aria-label="Customer overview">
+                <div className="inspection-facts">
+                  <div><span>Status</span><strong>{customer.status}</strong></div>
+                  <div><span>Retest reminders</span><strong>{customer.retestEnabled ? `Every ${customer.defaultRetestMonths ?? "—"} months` : "Not enabled"}</strong></div>
+                  <div><span>Locations</span><strong>{customer.locations.length}</strong></div>
+                  <div><span>Contacts</span><strong>{customer.contacts.length}</strong></div>
                 </div>
-                {isLoadingAssets ? <p className="customer-location-loading">Loading asset locations…</p> : null}
-                {assetsError ? <p className="form-error" role="alert">{assetsError}</p> : null}
-                {!isLoadingAssets && !assetsError && locationGroups.length === 0 ? (
-                  <div className="customer-location-empty">
-                    <Package aria-hidden="true" size={20} />
-                    <p>No assets with a location are assigned to this customer.</p>
+                <div><h4>Notes</h4><p>{customer.notes || "No notes recorded."}</p></div>
+                {canDelete && onLifecycle ? (
+                  <div className="row-actions" role="group" aria-label="Customer lifecycle">
+                    {customer.status === "Active" ? (
+                      <button className="secondary-button compact-action" onClick={() => onLifecycle("archive", customer)} type="button">Archive customer</button>
+                    ) : (
+                      <>
+                        <button className="secondary-button compact-action" onClick={() => onLifecycle("restore", customer)} type="button">Restore customer</button>
+                        <button className="secondary-button compact-action" onClick={() => onLifecycle("delete", customer)} type="button">Delete customer</button>
+                      </>
+                    )}
                   </div>
                 ) : null}
-                <div className="customer-location-grid">
-                  {locationGroups.map(({ location, assets: locationAssets }) => {
-                    const mapUrl = googleMapsUrl(location);
-                    return (
-                      <article key={location.id}>
-                        <span className="customer-location-icon"><MapPin aria-hidden="true" size={18} /></span>
-                        <div>
-                          <h4>{location.name}</h4>
-                          <p>{[location.address1, location.address2, location.city, location.state, location.country].filter(Boolean).join(", ") || "Location details not recorded"}</p>
-                          {mapUrl ? (
-                            <a
-                              aria-label={`Open ${location.name} in Google Maps`}
-                              className="customer-location-map-link"
-                              href={mapUrl}
-                              rel="noopener noreferrer"
-                              target="_blank"
-                            >
-                              View in Google Maps <ExternalLink aria-hidden="true" size={13} />
-                            </a>
-                          ) : null}
-                        </div>
-                        <p className="customer-location-contact">{location.siteContactName ? `Site contact: ${location.siteContactName}${location.siteContactMobile ? ` · ${location.siteContactMobile}` : ""}${location.siteContactEmail ? ` · ${location.siteContactEmail}` : ""}` : "Site contact not recorded"}</p>
-                        <div className="customer-location-requirements">
-                          <div>
-                            <h5>PPE requirements</h5>
-                            <RequirementList emptyLabel="No PPE requirements." items={location.ppeRequirements} />
-                          </div>
-                          <div>
-                            <h5>Additional requirements</h5>
-                            <RequirementList emptyLabel="No additional requirements." items={location.additionalRequirements} />
-                          </div>
-                        </div>
-                        <strong>{locationAssets.length}<small>{locationAssets.length === 1 ? "asset" : "assets"}</small></strong>
-                        <ul aria-label={`Assets at ${location.name}`}>
-                          {locationAssets.map((asset) => (
-                            <li key={asset.id}>
-                              <button
-                                aria-label={`Open asset ${assetAccessibleName(asset)}`}
-                                className="customer-location-asset-link"
-                                onClick={() => {
-                                  onClose();
-                                  onAssetOpen(asset.id);
-                                }}
-                                type="button"
-                              >
-                                <AssetIdentity asset={asset} />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </article>
-                    );
-                  })}
-                </div>
+                {customer.status === "Archived" ? (
+                  <p className="empty-requirements">This customer is archived. It and its history are kept, and it is left out of new work until it is restored.</p>
+                ) : null}
               </section>
+            ) : null}
+
+            {activeTab === "Locations" ? (
+              <CustomerLocationsTab
+                assets={assets}
+                assetsError={assetsError}
+                canDelete={canDelete}
+                canWrite={canWrite && customer.status === "Active"}
+                customer={customer}
+                isLoadingAssets={isLoadingAssets}
+                onAssetOpen={(assetId) => { onClose(); onAssetOpen(assetId); }}
+                onChanged={(fresh) => onCustomerChange?.(fresh)}
+                onNotice={(title, message) => setNotice({ title, message })}
+              />
+            ) : null}
+
+            {activeTab === "Contacts" ? (
+              <CustomerContactsTab
+                canDelete={canDelete}
+                canWrite={canWrite}
+                customer={customer}
+                onChanged={(fresh) => onCustomerChange?.(fresh)}
+                onNotice={(title, message) => setNotice({ title, message })}
+              />
             ) : null}
           </m.section>
         </m.div>

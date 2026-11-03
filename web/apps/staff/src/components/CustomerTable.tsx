@@ -3,26 +3,33 @@ import { useState } from "react";
 import { m, useReducedMotion } from "motion/react";
 
 import { motionTokens } from "../motion/motionTokens";
-import { PaginationControls, usePagination } from "./Pagination";
+import { PaginationControls } from "./Pagination";
 import { WorkspaceState } from "./WorkspaceState";
 import { ManagementHeader, ManagementMetric, ManagementMetricStrip } from "./ManagementPrimitives";
-import type { CustomerRecord } from "../domain/types";
+import type { CustomerRecord, CustomerSummary } from "../domain/types";
+import type { CustomerLifecycleFilter } from "../hooks/useCustomerWorkspace";
 import { initialsOf } from "../utils/identity";
 import { ActionButton } from "./interaction/ActionButton";
 import { FilterChips, activeFilterList, resultSummary } from "./ModuleTable";
 
 interface CustomerTableProps {
   canWrite: boolean;
+  /** The current page, already searched and filtered by the server. */
   customers: CustomerRecord[];
-  allCustomers: CustomerRecord[];
+  /** How many customers match the search and filter across every page. */
   totalCount: number;
+  /** System-wide totals, independent of the search, filter and page. */
+  summary: CustomerSummary | null;
   selectedId: string | null;
   query: string;
-  riskFilter: string;
-  statusFilter: string;
+  lifecycle: CustomerLifecycleFilter;
+  page: number;
+  pageSize: number;
+  isLoading: boolean;
   onQueryChange: (value: string) => void;
-  onRiskFilterChange: (value: string) => void;
-  onStatusFilterChange: (value: string) => void;
+  onLifecycleChange: (value: CustomerLifecycleFilter) => void;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
   onSelectCustomer: (id: string) => void;
   onAddCustomer: () => void;
 }
@@ -33,10 +40,6 @@ function locationLabel(customer: CustomerRecord) {
     return "No location";
   }
   return [primary.city, primary.country].filter(Boolean).join(", ");
-}
-
-function riskClass(risk: string) {
-  return `status-pill risk-${risk.toLowerCase()}`;
 }
 
 function csvCell(value: string) {
@@ -54,46 +57,40 @@ function downloadCsv(filename: string, rows: string[][]) {
   URL.revokeObjectURL(url);
 }
 
+const LIFECYCLE_LABELS: Record<CustomerLifecycleFilter, string> = { active: "Active", archived: "Archived", all: "All customers" };
+
 export function CustomerTable({
   canWrite,
   customers,
-  allCustomers,
   totalCount,
+  summary,
   selectedId,
   query,
-  riskFilter,
-  statusFilter,
+  lifecycle,
+  page,
+  pageSize,
+  isLoading,
   onQueryChange,
-  onRiskFilterChange,
-  onStatusFilterChange,
+  onLifecycleChange,
+  onPageChange,
+  onPageSizeChange,
   onSelectCustomer,
   onAddCustomer
 }: CustomerTableProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const reducedMotion = useReducedMotion();
-  const pagination = usePagination(customers);
-  const narrowed = query.trim().length > 0 || statusFilter !== "All" || riskFilter !== "All";
-  const activeCustomers = allCustomers.filter((customer) => customer.status === "Active").length;
-  const totalSites = allCustomers.reduce((total, customer) => total + customer.locations.length, 0);
-  const totalAssets = allCustomers.reduce((total, customer) => total + customer.metrics.assetCount, 0);
+  const narrowed = query.trim().length > 0 || lifecycle !== "active";
+  const pageCount = Math.max(1, Math.ceil(totalCount / pageSize));
   const exportRows = [
-    [
-      "Customer Name",
-      "Location",
-      "Assets",
-      "Inspection Due",
-      "Certificate Status",
-      "Risk Level",
-      "Last Activity"
-    ],
+    ["Customer Name", "Code", "Location", "Sites", "Assets", "In service", "Status"],
     ...customers.map((customer) => [
       customer.name,
+      customer.code,
       locationLabel(customer),
+      String(customer.locations.length),
       String(customer.metrics.assetCount),
-      customer.metrics.inspectionDueLabel,
-      customer.metrics.certificateStatusLabel,
-      customer.riskLevel,
-      customer.lastActivity
+      String(customer.metrics.inServiceCount),
+      customer.status
     ])
   ];
 
@@ -103,13 +100,13 @@ export function CustomerTable({
         eyebrow="Customer management"
         title="Customers"
         description="Manage customer accounts, locations, and fleet health at a glance."
-        context={<><Boxes aria-hidden="true" size={20} /><span><strong>{totalAssets} total assets</strong><small>Across customer fleets</small></span></>}
+        context={<><Boxes aria-hidden="true" size={20} /><span><strong>{summary ? summary.assets : "…"} total assets</strong><small>Across customer fleets</small></span></>}
       />
       <ManagementMetricStrip>
-        <ManagementMetric icon={UsersRound} label="Total Customers" value={totalCount} detail="All registered customers" />
-        <ManagementMetric icon={CheckCircle2} label="Active Customers" value={activeCustomers} detail={`${totalCount ? Math.round((activeCustomers / totalCount) * 100) : 0}% active`} tone="green" />
-        <ManagementMetric icon={MapPin} label="Total Sites" value={totalSites} detail="Across all customers" tone="violet" />
-        <ManagementMetric icon={Boxes} label="Total Assets" value={totalAssets} detail="In customer fleets" tone="amber" />
+        <ManagementMetric icon={CheckCircle2} label="Active Customers" value={summary ? summary.activeCustomers : "…"} detail="Across the whole system" tone="green" />
+        <ManagementMetric icon={UsersRound} label="Archived Customers" value={summary ? summary.archivedCustomers : "…"} detail="Kept with their history" />
+        <ManagementMetric icon={MapPin} label="Total Sites" value={summary ? summary.locations : "…"} detail="Across all customers" tone="violet" />
+        <ManagementMetric icon={Boxes} label="Total Assets" value={summary ? summary.assets : "…"} detail="In customer fleets" tone="amber" />
       </ManagementMetricStrip>
       <div className="customer-console-toolbar">
         <label className="field search-field">
@@ -138,7 +135,7 @@ export function CustomerTable({
         </button>
         <button
           className="icon-button light"
-          aria-label="Download customer list"
+          aria-label="Download this page of customers"
           onClick={() => downloadCsv("customers.csv", exportRows)}
           type="button"
         >
@@ -156,27 +153,15 @@ export function CustomerTable({
         <div className="filter-summary customer-filter-summary" role="status" aria-label="Customer filter summary">
           <strong>Active view</strong>
           <label className="field select-field">
-            <span>Status</span>
+            <span>Show</span>
             <select
-              value={statusFilter}
-              onChange={(event) => onStatusFilterChange(event.target.value)}
+              aria-label="Customer status filter"
+              value={lifecycle}
+              onChange={(event) => onLifecycleChange(event.target.value as CustomerLifecycleFilter)}
             >
-              <option>All</option>
-              <option>Active</option>
-              <option>Review</option>
-              <option>Paused</option>
-            </select>
-          </label>
-          <label className="field select-field">
-            <span>Risk</span>
-            <select
-              value={riskFilter}
-              onChange={(event) => onRiskFilterChange(event.target.value)}
-            >
-              <option>All</option>
-              <option>High</option>
-              <option>Medium</option>
-              <option>Low</option>
+              {(Object.keys(LIFECYCLE_LABELS) as CustomerLifecycleFilter[]).map((value) => (
+                <option key={value} value={value}>{LIFECYCLE_LABELS[value]}</option>
+              ))}
             </select>
           </label>
           <span>Search: {query.trim() || "All customers"}</span>
@@ -185,18 +170,17 @@ export function CustomerTable({
 
       <FilterChips
         chips={activeFilterList([
-          { id: "status", label: "Status", value: statusFilter !== "All" && statusFilter, onRemove: () => onStatusFilterChange("All") },
-          { id: "risk", label: "Risk", value: riskFilter !== "All" && riskFilter, onRemove: () => onRiskFilterChange("All") }
+          { id: "status", label: "Show", value: lifecycle !== "active" && LIFECYCLE_LABELS[lifecycle], onRemove: () => onLifecycleChange("active") }
         ])}
-        onClearAll={() => { onStatusFilterChange("All"); onRiskFilterChange("All"); }}
+        onClearAll={() => onLifecycleChange("active")}
       />
 
       <div className="customer-count-row">
-        <span aria-live="polite">{resultSummary({ fallback: `${totalCount} customers`, loadedCount: allCustomers.length, narrowed, noun: "customers", shown: customers.length, totalCount })}</span>
+        <span aria-live="polite">{resultSummary({ fallback: `${totalCount} customers`, loadedCount: totalCount, narrowed, noun: "customers", shown: totalCount, totalCount })}</span>
       </div>
 
-      <div className="customer-card-grid">
-        {pagination.items.map((customer) => {
+      <div aria-busy={isLoading} className="customer-card-grid">
+        {customers.map((customer) => {
           const isSelected = customer.id === selectedId;
 
           return (
@@ -252,28 +236,27 @@ export function CustomerTable({
                   <small>{customer.locations.length === 1 ? "Site" : "Sites"}</small>
                 </span>
               </span>
-              <span className={riskClass(customer.riskLevel)}>{customer.riskLevel} Risk</span>
             </m.button>
           );
         })}
       </div>
       <PaginationControls
         label="Customer records"
-        onPageChange={pagination.setPage}
-        onPageSizeChange={pagination.setPageSize}
-        page={pagination.page}
-        pageCount={pagination.pageCount}
-        pageSize={pagination.pageSize}
-        start={pagination.start}
-        total={pagination.total}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+        page={Math.min(page, pageCount)}
+        pageCount={pageCount}
+        pageSize={pageSize}
+        start={(page - 1) * pageSize}
+        total={totalCount}
       />
-      {customers.length === 0 ? (
+      {customers.length === 0 && !isLoading ? (
         narrowed ? (
           <WorkspaceState
-            action={<ActionButton onClick={() => { onQueryChange(""); onStatusFilterChange("All"); onRiskFilterChange("All"); }} variant="secondary">Clear filters</ActionButton>}
+            action={<ActionButton onClick={() => { onQueryChange(""); onLifecycleChange("active"); }} variant="secondary">Clear filters</ActionButton>}
             title="No matching customers"
           >
-            {statusFilter !== "All" || riskFilter !== "All" ? "Try changing your search or clearing one of the active filters." : "Try a different search."}
+            {lifecycle !== "active" ? "Try changing your search or showing active customers." : "Try a different search."}
           </WorkspaceState>
         ) : (
           <WorkspaceState title="No customers yet">

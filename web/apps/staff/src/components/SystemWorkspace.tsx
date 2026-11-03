@@ -11,6 +11,7 @@ import {
   ServerCog,
   ShieldCheck,
   ShieldOff,
+  Trash2,
   Smartphone,
   UserCheck,
   UserX,
@@ -146,18 +147,22 @@ export function SystemWorkspace({
     directory.replaceUser(updated);
   }
 
-  type UserAction = "disable" | "enable" | "unlock" | "password" | "mfa";
+  type UserAction = "disable" | "enable" | "unlock" | "password" | "mfa" | "delete";
   const actionCopy: Record<UserAction, { title: string; message: string; confirm: string; pending: string; done: string }> = {
     disable: { title: "Disable", message: "They will be signed out and unable to sign in until the account is enabled again.", confirm: "Disable account", pending: "Disabling…", done: "was disabled" },
     enable: { title: "Enable", message: "They will be able to sign in again.", confirm: "Enable account", pending: "Enabling…", done: "was enabled" },
     unlock: { title: "Unlock", message: "Failed sign-in attempts are cleared and they can try again.", confirm: "Unlock account", pending: "Unlocking…", done: "was unlocked" },
     password: { title: "Reset the password for", message: "A new temporary password is issued and shown once. The current password stops working.", confirm: "Reset password", pending: "Resetting…", done: "had their password reset" },
-    mfa: { title: "Reset MFA for", message: "They must enrol a new authenticator at their next sign-in. Their recovery codes stop working.", confirm: "Reset MFA", pending: "Resetting…", done: "had MFA reset" }
+    mfa: { title: "Reset MFA for", message: "They must enrol a new authenticator at their next sign-in. Their recovery codes stop working.", confirm: "Reset MFA", pending: "Resetting…", done: "had MFA reset" },
+    delete: { title: "Delete", message: "They are signed out everywhere and can no longer sign in. Their past activity stays in the audit trail under their name. You cannot delete your own account or the last active Super Admin.", confirm: "Delete user", pending: "Deleting…", done: "was deleted" }
   };
   const userAction = useConfirmedAction<{ user: AdminUserRecord; action: UserAction }>(
     async ({ user, action }) => {
       const client = createHmsClient();
-      if (action === "password") {
+      if (action === "delete") {
+        await client.deleteAdminUser(user.id);
+        directory.reload();
+      } else if (action === "password") {
         const result = await client.resetAdminUserPassword(user.id);
         replaceUser({ ...user, mustChangePassword: true });
         setCredential({ title: "Password reset", label: "Temporary password", value: result.temporaryPassword });
@@ -392,7 +397,7 @@ function UserTable({
   onManage: (id: string | null) => void;
   onUserAction: (
     user: AdminUserRecord,
-    action: "disable" | "enable" | "unlock" | "password" | "mfa"
+    action: "disable" | "enable" | "unlock" | "password" | "mfa" | "delete"
   ) => void;
 }) {
   const { users, total, page, pageSize, status } = directory;
@@ -537,6 +542,11 @@ function UserTable({
                           <button type="button" role="menuitem" onClick={() => onUserAction(user, "mfa")}>
                             <ShieldOff aria-hidden="true" size={15} /> Reset MFA
                           </button>
+                          {actorRoles.includes("SUPER_ADMIN") ? (
+                            <button type="button" role="menuitem" onClick={() => onUserAction(user, "delete")}>
+                              <Trash2 aria-hidden="true" size={15} /> Delete user
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>

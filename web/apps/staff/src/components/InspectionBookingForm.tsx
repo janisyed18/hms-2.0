@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
+import { useRemoteOptions } from "../hooks/useRemoteOptions";
 import type {
   AssetRecord,
   AdminUserRecord,
+  CustomerLocation,
   InspectionAvailabilitySlot,
   InspectionBookingCreateValues,
   InspectionBookingRecord
@@ -14,13 +16,15 @@ import { FormShell } from "./forms/FormShell";
 import { useDirtyTracker } from "./forms/useDirtyTracker";
 import { useFormSeed } from "./forms/useFormSeed";
 import { useFormSubmit } from "./forms/useFormSubmit";
+import { Combobox } from "./interaction/Combobox";
 import { Field, RequiredMark } from "./interaction/FormPrimitives";
 import { Select } from "./interaction/Select";
 
 const ERROR_OPTIONS = { conflictNeedsRefresh: true };
 
+const ASSET_PAGE_SIZE = 25;
+
 interface InspectionBookingFormProps {
-  assetOptions: AssetRecord[];
   open: boolean;
   rescheduleBooking?: InspectionBookingRecord | null;
   inspectors?: Array<Pick<AdminUserRecord, "id" | "displayName">>;
@@ -40,7 +44,6 @@ interface InspectionBookingFormProps {
 }
 
 export function InspectionBookingForm({
-  assetOptions,
   open,
   rescheduleBooking = null,
   inspectors = [],
@@ -50,29 +53,32 @@ export function InspectionBookingForm({
   onSubmit,
   onReschedule
 }: InspectionBookingFormProps) {
+  const [customerId, setCustomerId] = useState("");
+  const [chosenCustomer, setChosenCustomer] = useState<{ value: string; label: string; description?: string } | null>(null);
+  const [customerLocations, setCustomerLocations] = useState<CustomerLocation[]>([]);
+  // Customers are searched on the server, so one past the first page can still be booked for.
+  const customerSearch = useRemoteOptions(
+    (text) => createHmsClient().listCustomers({ search: text, sort: "name", limit: 25 }).then((result) => result.items),
+    open && !rescheduleBooking
+  );
   const locations = useMemo(() => {
-    const entries = new Map<string, { id: string; label: string; timezone: string }>();
-    assetOptions.forEach((asset) => {
-      if (!asset.location) return;
-      entries.set(asset.location.id, {
-        id: asset.location.id,
-        label: `${asset.customer.name} - ${asset.location.name}`,
-        timezone: asset.location.schedulingTimezone ?? "UTC"
-      });
-    });
-    if (rescheduleBooking && !entries.has(rescheduleBooking.location.id)) {
-      entries.set(rescheduleBooking.location.id, {
+    if (rescheduleBooking) {
+      return [{
         id: rescheduleBooking.location.id,
         label: `${rescheduleBooking.customer.name} - ${rescheduleBooking.location.name}`,
         timezone: rescheduleBooking.location.schedulingTimezone ?? "UTC"
-      });
+      }];
     }
-    return Array.from(entries.values()).sort((left, right) =>
-      left.label.localeCompare(right.label)
-    );
-  }, [assetOptions, rescheduleBooking]);
+    return customerLocations
+      .map((location) => ({ id: location.id, label: location.name, timezone: location.schedulingTimezone ?? "UTC" }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [customerLocations, rescheduleBooking]);
   const [locationId, setLocationId] = useState("");
   const [assetIds, setAssetIds] = useState<string[]>([]);
+  // What was ticked, kept apart from the page on screen so a search or a later page never loses a choice.
+  const [pickedAssets, setPickedAssets] = useState<Record<string, AssetRecord>>({});
+  const [assetQuery, setAssetQuery] = useState("");
+  const [assetPage, setAssetPage] = useState<{ items: AssetRecord[]; total: number; loading: boolean; error: string | null }>({ items: [], total: 0, loading: false, error: null });
   const [bookingDate, setBookingDate] = useState("");
   // Availability is stored with the location and date it was requested for, and only
   // trusted while both still match, so a quote can never outlive the choices it priced.
@@ -86,15 +92,11 @@ export function InspectionBookingForm({
   const [availabilityError, setAvailabilityError] = useState<string | null>(null);
   const [additionalInformation, setAdditionalInformation] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
-  const availableAssets = useMemo(
-    () => assetOptions.filter((asset) => asset.location?.id === locationId),
-    [assetOptions, locationId]
-  );
-  const customerId = rescheduleBooking?.customer.id ?? availableAssets[0]?.customer.id;
-  // A reschedule shows the booking's own assets, which need not be in the loaded list.
+  const bookingCustomerId = rescheduleBooking?.customer.id ?? customerId;
+  // A reschedule shows the booking's own assets, which need not be on any page.
   const assetChoices = rescheduleBooking
     ? rescheduleBooking.assets.map((asset) => ({ id: asset.id, assetNumber: asset.assetNumber, assetName: asset.assetName ?? null }))
-    : availableAssets;
+    : assetPage.items;
   const schedulingTimezone = locations.find((location) => location.id === locationId)?.timezone ?? "UTC";
   const availabilityKey = locationId && bookingDate ? `${locationId}|${bookingDate}` : "";
   const availableSlots = availability.key === availabilityKey ? availability.slots : [];
@@ -115,8 +117,14 @@ export function InspectionBookingForm({
     seed: () => {
       // A new booking starts blank: the user must choose the location and the assets.
       // A reschedule keeps the booking's own location and assets.
+      setCustomerId("");
+      setChosenCustomer(null);
+      setCustomerLocations([]);
       setLocationId(rescheduleBooking ? rescheduleBooking.location.id : "");
       setAssetIds(rescheduleBooking ? rescheduleBooking.assets.map((asset) => asset.id) : []);
+      setPickedAssets({});
+      setAssetQuery("");
+      setAssetPage({ items: [], total: 0, loading: false, error: null });
       setBookingDate(rescheduleBooking ? "" : initialDate);
       setAvailability({ key: "", slots: [] });
       setChosenQuoteId("");
@@ -138,7 +146,7 @@ export function InspectionBookingForm({
   });
 
   useEffect(() => {
-    if (!open || !bookingDate || !customerId || !locationId) return;
+    if (!open || !bookingDate || !bookingCustomerId || !locationId) return;
     const requestKey = `${locationId}|${bookingDate}`;
     let active = true;
     setLoadingAvailability(true);
@@ -146,7 +154,7 @@ export function InspectionBookingForm({
     setChosenQuoteId("");
     void createHmsClient()
       .listInspectionAvailability({
-        customerId,
+        customerId: bookingCustomerId,
         locationId,
         localDate: bookingDate,
         durationMinutes: 60
@@ -169,15 +177,61 @@ export function InspectionBookingForm({
     return () => {
       active = false;
     };
-  }, [bookingDate, customerId, locationId, open]);
+  }, [bookingDate, bookingCustomerId, locationId, open]);
+
+  // The chosen customer's locations, read from that customer and never guessed.
+  useEffect(() => {
+    if (!open || rescheduleBooking || !customerId) { setCustomerLocations([]); return; }
+    let active = true;
+    createHmsClient().getCustomer(customerId)
+      .then((customer) => { if (active) setCustomerLocations((customer.locations ?? []).filter((location): location is CustomerLocation => Boolean(location))); })
+      .catch(() => { if (active) setCustomerLocations([]); });
+    return () => { active = false; };
+  }, [open, rescheduleBooking, customerId]);
+
+  // The assets at the chosen location are searched and paged on the server. Only assets that can take new
+  // work are offered: an archived customer's are not.
+  function fetchAssets(offset: number) {
+    return createHmsClient().listAssets({
+      customerId, locationId, search: assetQuery, newWorkOnly: true, sort: "asset_number", limit: ASSET_PAGE_SIZE, offset
+    });
+  }
+  useEffect(() => {
+    if (!open || rescheduleBooking || !customerId || !locationId) { setAssetPage({ items: [], total: 0, loading: false, error: null }); return; }
+    let active = true;
+    setAssetPage((current) => ({ ...current, loading: true, error: null }));
+    const timer = window.setTimeout(() => {
+      createHmsClient().listAssets({ customerId, locationId, search: assetQuery, newWorkOnly: true, sort: "asset_number", limit: ASSET_PAGE_SIZE, offset: 0 })
+        .then((result) => { if (active) setAssetPage({ items: result.items, total: result.total, loading: false, error: null }); })
+        .catch(() => { if (active) setAssetPage({ items: [], total: 0, loading: false, error: "Assets could not be loaded." }); });
+    }, assetQuery ? 250 : 0);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [open, rescheduleBooking, customerId, locationId, assetQuery]);
+  async function loadMoreAssets() {
+    setAssetPage((current) => ({ ...current, loading: true, error: null }));
+    try {
+      const next = await fetchAssets(assetPage.items.length);
+      setAssetPage((current) => ({ items: [...current.items, ...next.items.filter((item) => !current.items.some((known) => known.id === item.id))], total: next.total, loading: false, error: null }));
+    } catch {
+      setAssetPage((current) => ({ ...current, loading: false, error: "More assets could not be loaded." }));
+    }
+  }
 
   if (!open) return null;
+
+  function updateCustomer(nextCustomerId: string) {
+    setCustomerId(nextCustomerId);
+    setCustomerLocations([]);
+    updateLocation("");
+  }
 
   function updateLocation(nextLocationId: string) {
     // Everything that depended on the previous location is dropped, including the
     // assets: the user picks them again for the new location.
     setLocationId(nextLocationId);
     setAssetIds([]);
+    setPickedAssets({});
+    setAssetQuery("");
     setBookingDate("");
     setAvailability({ key: "", slots: [] });
     setChosenQuoteId("");
@@ -185,19 +239,26 @@ export function InspectionBookingForm({
     setLoadingAvailability(false);
   }
 
-  function toggleAsset(assetId: string) {
+  function toggleAsset(asset: { id: string } & Partial<AssetRecord>) {
     setAssetIds((current) =>
-      current.includes(assetId)
-        ? current.filter((id) => id !== assetId)
-        : [...current, assetId]
+      current.includes(asset.id)
+        ? current.filter((id) => id !== asset.id)
+        : [...current, asset.id]
     );
+    setPickedAssets((current) => {
+      if (current[asset.id]) {
+        const { [asset.id]: _removed, ...rest } = current;
+        return rest;
+      }
+      return "assetNumber" in asset ? { ...current, [asset.id]: asset as AssetRecord } : current;
+    });
   }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     // The submit button is not available until the choices are complete; a form submitted by the
     // keyboard before then does nothing.
-    if (!customerId || !locationId || assetIds.length === 0 || !availabilityQuoteId) return;
+    if (!bookingCustomerId || !locationId || assetIds.length === 0 || !availabilityQuoteId) return;
     await submission.run(
       async () => {
         if (rescheduleBooking && onReschedule) {
@@ -208,7 +269,7 @@ export function InspectionBookingForm({
           });
         } else {
           await onSubmit({
-            customerId,
+            customerId: bookingCustomerId,
             locationId,
             assetIds,
             availabilityQuoteId,
@@ -249,16 +310,39 @@ export function InspectionBookingForm({
         title={rescheduleBooking ? "Request reschedule" : "Book inspection"}
       >
         <FormSection title="Where">
+          {rescheduleBooking ? null : (
+            <Field label="Customer" name="customerId" required>
+              {(props) => (
+                <Combobox
+                  {...props}
+                  aria-label="Booking customer"
+                  emptyText="No customers match"
+                  loading={customerSearch.loading}
+                  onChange={(next) => {
+                    const found = customerSearch.items.find((option) => option.id === next);
+                    setChosenCustomer(found ? { value: found.id, label: found.name, description: found.code ?? undefined } : null);
+                    updateCustomer(next);
+                    touch();
+                  }}
+                  onSearch={customerSearch.search}
+                  options={customerSearch.items.map((customer) => ({ value: customer.id, label: customer.name, description: customer.code ?? undefined, searchText: `${customer.code ?? ""} ${customer.name}` }))}
+                  placeholder="Select a customer"
+                  selectedOption={chosenCustomer}
+                  value={customerId}
+                />
+              )}
+            </Field>
+          )}
           <Field label="Location" name="locationId" required>
             {(props) => (
               <Select
                 {...props}
                 aria-label="Booking location"
-                disabled={Boolean(rescheduleBooking)}
+                disabled={Boolean(rescheduleBooking) || !customerId}
                 onChange={(next) => { updateLocation(next); touch(); }}
-                emptyLabel={rescheduleBooking ? undefined : "Choose the location"}
+                emptyLabel={rescheduleBooking ? undefined : customerId ? "Choose the location" : "Choose a customer first"}
                 options={locations.map((location) => ({ value: location.id, label: location.label }))}
-                placeholder="Choose the location"
+                placeholder={customerId || rescheduleBooking ? "Choose the location" : "Choose a customer first"}
                 value={locationId}
               />
             )}
@@ -266,19 +350,52 @@ export function InspectionBookingForm({
           <fieldset className="booking-asset-list" disabled={Boolean(rescheduleBooking)}>
             <legend>Assets<RequiredMark /></legend>
             {!locationId ? <p className="field-hint">Choose a location to see its assets.</p> : null}
-            {locationId && assetChoices.length === 0 ? (
-              <p className="field-hint">No assets are assigned to this location.</p>
+            {locationId && !rescheduleBooking ? (
+              <input
+                aria-label="Search assets"
+                className="booking-asset-search"
+                onChange={(event) => setAssetQuery(event.target.value)}
+                placeholder="Search assets"
+                type="search"
+                value={assetQuery}
+              />
             ) : null}
-            {assetChoices.map((asset) => (
+            {locationId && !rescheduleBooking ? (
+              <p className="field-hint" role="status">
+                {assetPage.loading && assetPage.items.length === 0 ? "Loading assets" : assetQuery.trim() ? `${assetPage.total} matching` : `${assetPage.items.length} of ${assetPage.total} assets shown`}
+                {assetIds.length > 0 ? `, ${assetIds.length} selected` : ""}
+              </p>
+            ) : null}
+            {assetPage.error ? <p className="field-error" role="alert">{assetPage.error}</p> : null}
+            {locationId && !rescheduleBooking && !assetPage.loading && !assetPage.error && assetChoices.length === 0 ? (
+              <p className="field-hint">{assetQuery.trim() ? "No assets match this search." : "No assets are assigned to this location."}</p>
+            ) : null}
+            {rescheduleBooking ? assetChoices.map((asset) => (
               <label key={asset.id} className="checkbox-field">
-                <input
-                  checked={assetIds.includes(asset.id)}
-                  onChange={() => toggleAsset(asset.id)}
-                  type="checkbox"
-                />
+                <input checked={assetIds.includes(asset.id)} onChange={() => toggleAsset(asset)} type="checkbox" />
                 <span>{assetLabel(asset)}</span>
               </label>
-            ))}
+            )) : (
+              <>
+                {Object.values(pickedAssets).filter((picked) => !assetPage.items.some((item) => item.id === picked.id)).map((asset) => (
+                  <label key={asset.id} className="checkbox-field">
+                    <input checked={assetIds.includes(asset.id)} onChange={() => toggleAsset(asset)} type="checkbox" />
+                    <span>{assetLabel(asset)}</span>
+                  </label>
+                ))}
+                {assetPage.items.map((asset) => (
+                  <label key={asset.id} className="checkbox-field">
+                    <input checked={assetIds.includes(asset.id)} onChange={() => toggleAsset(asset)} type="checkbox" />
+                    <span>{assetLabel(asset)}</span>
+                  </label>
+                ))}
+                {assetPage.items.length < assetPage.total ? (
+                  <button className="secondary-button" disabled={assetPage.loading} onClick={() => void loadMoreAssets()} type="button">
+                    {assetPage.loading ? "Loading…" : "Show more assets"}
+                  </button>
+                ) : null}
+              </>
+            )}
           </fieldset>
         </FormSection>
         <FormSection title="When">

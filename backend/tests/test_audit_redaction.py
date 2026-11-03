@@ -59,13 +59,16 @@ async def admin_client(
         yield client
 
 
-async def _seed_admin(session_factory: async_sessionmaker[AsyncSession]) -> None:
+async def _seed_admin(
+    session_factory: async_sessionmaker[AsyncSession],
+    role: Role = Role.HMS_ADMIN,
+) -> None:
     async with session_factory() as session:
         session.add(
             User(
                 oidc_subject="staff-ui-dev",
                 email="staff@example.com",
-                role=Role.HMS_ADMIN.value,
+                role=role.value,
             )
         )
         await session.commit()
@@ -120,7 +123,7 @@ def test_absent_credential_stays_none_and_input_is_not_mutated() -> None:
 async def test_user_lifecycle_audit_events_contain_no_credentials(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    await _seed_admin(session_factory)
+    await _seed_admin(session_factory, role=Role.SUPER_ADMIN)
     async with admin_client(session_factory) as client:
         created = await client.post(
             "/api/v1/admin/users",

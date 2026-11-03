@@ -36,6 +36,8 @@ from hms_backend.app.api.schemas import (
     AssetWorkflowContextRead,
     AssetWorkflowRead,
     AssetWorkflowRelatedRead,
+    CatalogItemListResponse,
+    CatalogItemRead,
     CertificateCreate,
     CertificateInspectionSummary,
     CertificateListResponse,
@@ -51,6 +53,7 @@ from hms_backend.app.api.schemas import (
     CustomerMetricsRead,
     CustomerRead,
     CustomerSummary,
+    CustomerSummaryRead,
     CustomerUpdate,
     DashboardDueRead,
     DashboardRead,
@@ -112,6 +115,7 @@ from hms_backend.app.core.inspector_access import (
     is_inspector_scoped,
     lock_assigned_bookings,
 )
+from hms_backend.app.core.lifecycle import ensure_not_referenced, require_super_admin
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
@@ -462,34 +466,41 @@ def _reference_catalog_or_404(category: str) -> tuple[type[Any], str]:
     return catalog
 
 
-def _reference_lookup_read(record: Any, label_attribute: str) -> LookupRead:
-    return LookupRead(
+def _reference_lookup_read(record: Any, label_attribute: str) -> CatalogItemRead:
+    return CatalogItemRead(
         id=record.id,
         code=record.code,
         name=getattr(record, label_attribute),
+        enabled=record.enabled,
     )
 
 
-@router.get("/reference/catalog/{category}", response_model=LookupListResponse)
+@router.get(
+    "/reference/catalog/{category}", response_model=CatalogItemListResponse
+)
 async def list_reference_catalog(
     category: str,
     session: SessionDep,
     principal: PrincipalDep,
-) -> LookupListResponse:
+    include_disabled: bool = False,
+) -> CatalogItemListResponse:
     _require_asset_read(principal)
+    if include_disabled:
+        # Disabled items stay out of selectors; only catalog administrators manage them.
+        _require_reference_admin(principal)
     model, label_attribute = _reference_catalog_or_404(category)
-    return LookupListResponse(
-        items=await _active_lookup_items(
-            session,
-            model,
-            label_attribute=label_attribute,
-        )
+    statement = select(model).where(model.deleted_at.is_(None))
+    if not include_disabled:
+        statement = statement.where(model.enabled.is_(True))
+    rows = (await session.scalars(statement.order_by(model.code))).all()
+    return CatalogItemListResponse(
+        items=[_reference_lookup_read(row, label_attribute) for row in rows]
     )
 
 
 @router.post(
     "/reference/catalog/{category}",
-    response_model=LookupRead,
+    response_model=CatalogItemRead,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_reference_catalog_item(
@@ -497,7 +508,7 @@ async def create_reference_catalog_item(
     payload: StandardCreate,
     session: SessionDep,
     principal: PrincipalDep,
-) -> LookupRead:
+) -> CatalogItemRead:
     _require_reference_admin(principal)
     model, label_attribute = _reference_catalog_or_404(category)
     attributes = {
@@ -519,7 +530,7 @@ async def create_reference_catalog_item(
 
 @router.patch(
     "/reference/catalog/{category}/{record_id}",
-    response_model=LookupRead,
+    response_model=CatalogItemRead,
 )
 async def update_reference_catalog_item(
     category: str,
@@ -529,7 +540,7 @@ async def update_reference_catalog_item(
     principal: PrincipalDep,
     response: Response,
     if_match: IfMatchHeader = None,
-) -> LookupRead:
+) -> CatalogItemRead:
     _require_reference_admin(principal)
     model, label_attribute = _reference_catalog_or_404(category)
     record = await session.get(model, record_id)
@@ -573,6 +584,7 @@ async def delete_reference_catalog_item(
     if_match: IfMatchHeader = None,
 ) -> Response:
     _require_reference_admin(principal)
+    require_super_admin(principal)
     model, _ = _reference_catalog_or_404(category)
     record = await session.get(model, record_id)
     if record is None or record.deleted_at is not None:
@@ -581,6 +593,13 @@ async def delete_reference_catalog_item(
             detail="Reference catalog item not found",
         )
     _enforce_if_match(if_match, record.version)
+    await ensure_not_referenced(
+        session,
+        model,
+        record.id,
+        what="reference item",
+        alternative="Disable it instead; history keeps its reference.",
+    )
     await soft_delete(
         session,
         record,
@@ -702,6 +721,7 @@ async def delete_standard(
     if_match: IfMatchHeader = None,
 ) -> Response:
     _require_reference_admin(principal)
+    require_super_admin(principal)
     standard = await _get_standard_or_404(session, standard_id)
     if standard is None:
         raise HTTPException(
@@ -709,6 +729,13 @@ async def delete_standard(
             detail="Standard not found",
         )
     _enforce_if_match(if_match, standard.version)
+    await ensure_not_referenced(
+        session,
+        Standard,
+        standard.id,
+        what="standard",
+        alternative="Disable it instead; history keeps its reference.",
+    )
 
     await soft_delete(
         session,
@@ -750,6 +777,11 @@ async def create_customer(
         location = CustomerLocation(
             customer=customer,
             name=location_payload.name.strip(),
+            address_1=_clean_optional(location_payload.address_1),
+            address_2=_clean_optional(location_payload.address_2),
+            city=_clean_optional(location_payload.city),
+            state=_clean_optional(location_payload.state),
+            country=_clean_optional(location_payload.country),
             site_contact_name=_clean_optional(location_payload.site_contact_name),
             site_contact_mobile=_clean_optional(location_payload.site_contact_mobile),
             site_contact_email=_clean_optional(location_payload.site_contact_email),
@@ -777,12 +809,17 @@ async def list_customers(
     session: SessionDep,
     principal: PrincipalDep,
     search: str | None = None,
+    lifecycle: Annotated[str, Query(pattern="^(active|archived|all)$")] = "active",
     sort: str | None = None,
     limit: LimitParam = 50,
     offset: OffsetParam = 0,
 ) -> CustomerListResponse:
     _require_customer_read(principal)
     statement = _customer_statement().where(Customer.deleted_at.is_(None))
+    if lifecycle == "active":
+        statement = statement.where(Customer.archived_at.is_(None))
+    elif lifecycle == "archived":
+        statement = statement.where(Customer.archived_at.is_not(None))
     statement = _apply_customer_scope(statement, principal)
     if search:
         search_pattern = f"%{search.lower()}%"
@@ -818,6 +855,51 @@ async def list_customers(
     )
 
 
+@router.get("/customers/summary", response_model=CustomerSummaryRead)
+async def customers_summary(
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerSummaryRead:
+    _require_customer_read(principal)
+    visible = _apply_customer_scope(
+        select(Customer.id, Customer.archived_at).where(Customer.deleted_at.is_(None)),
+        principal,
+    ).subquery()
+    active = await session.scalar(
+        select(func.count()).select_from(visible).where(visible.c.archived_at.is_(None))
+    )
+    archived = await session.scalar(
+        select(func.count())
+        .select_from(visible)
+        .where(visible.c.archived_at.is_not(None))
+    )
+    locations = await session.scalar(
+        select(func.count())
+        .select_from(CustomerLocation)
+        .where(
+            CustomerLocation.deleted_at.is_(None),
+            CustomerLocation.customer_id.in_(select(visible.c.id)),
+        )
+    )
+    assets = await session.scalar(
+        _apply_asset_scope(
+            select(func.count())
+            .select_from(Asset)
+            .where(
+                Asset.deleted_at.is_(None),
+                Asset.customer_id.in_(select(visible.c.id)),
+            ),
+            principal,
+        )
+    )
+    return CustomerSummaryRead(
+        active_customers=active or 0,
+        archived_customers=archived or 0,
+        locations=locations or 0,
+        assets=assets or 0,
+    )
+
+
 @router.post(
     "/customers/{customer_id}/locations",
     response_model=CustomerLocationRead,
@@ -831,6 +913,7 @@ async def create_customer_location(
 ) -> CustomerLocationRead:
     _require_customer_write(principal)
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    _require_active_customer(customer)
     location = CustomerLocation(
         customer=customer,
         name=payload.name.strip(),
@@ -927,11 +1010,48 @@ async def delete_customer_location(
     principal: PrincipalDep,
 ) -> Response:
     _require_customer_write(principal)
+    require_super_admin(principal)
     location = await _get_visible_customer_location_or_404(
         session,
         customer_id,
         location_id,
         principal,
+    )
+    # Serialise deletes per customer: the count below must not be read while another
+    # delete of this customer's locations is uncommitted, or two could both see two.
+    await session.execute(
+        select(Customer.id).where(Customer.id == customer_id).with_for_update()
+    )
+    remaining = await session.scalar(
+        select(func.count())
+        .select_from(CustomerLocation)
+        .where(
+            CustomerLocation.customer_id == customer_id,
+            CustomerLocation.deleted_at.is_(None),
+        )
+        .execution_options(populate_existing=True)
+    )
+    await session.refresh(location)
+    if location.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Location not found",
+        )
+    if (remaining or 0) <= 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "A customer must have at least one location. "
+                "Add another location before deleting this one."
+            ),
+        )
+    await ensure_not_referenced(
+        session,
+        CustomerLocation,
+        location.id,
+        what="location",
+        ignore={"inspection_availability_quotes"},
+        alternative="Move or retire that work before deleting the location.",
     )
     await soft_delete(
         session,
@@ -1031,6 +1151,7 @@ async def delete_customer_contact(
     principal: PrincipalDep,
 ) -> Response:
     _require_customer_write(principal)
+    require_super_admin(principal)
     contact = await _get_visible_customer_contact_or_404(
         session,
         customer_id,
@@ -1078,80 +1199,62 @@ async def update_customer(
         action="customer.updated",
         before=before,
     )
-    if payload.locations is not None:
-        visible_locations = {
-            location.id: location
-            for location in customer.locations
-            if location.deleted_at is None
-        }
-        for location_payload in payload.locations:
-            if location_payload.id is None:
-                new_location = CustomerLocation(
-                    customer=customer,
-                    name=location_payload.name.strip(),
-                    site_contact_name=_clean_optional(
-                        location_payload.site_contact_name
-                    ),
-                    site_contact_mobile=_clean_optional(
-                        location_payload.site_contact_mobile
-                    ),
-                    site_contact_email=_clean_optional(
-                        location_payload.site_contact_email
-                    ),
-                    ppe_requirements=list(location_payload.ppe_requirements or []),
-                    additional_requirements=list(
-                        location_payload.additional_requirements or []
-                    ),
-                    **_location_scheduling_values(location_payload),
-                )
-                _validate_location_scheduling(new_location)
-                session.add(new_location)
-                await record_create(
-                    session,
-                    new_location,
-                    actor_id=principal.user_id,
-                    action="customer_location.created",
-                )
-                continue
-            existing_location = visible_locations.get(location_payload.id)
-            if existing_location is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Location not found",
-                )
-            location_before = existing_location.to_audit_dict()
-            existing_location.name = location_payload.name.strip()
-            existing_location.site_contact_name = _clean_optional(
-                location_payload.site_contact_name
-            )
-            existing_location.site_contact_mobile = _clean_optional(
-                location_payload.site_contact_mobile
-            )
-            existing_location.site_contact_email = _clean_optional(
-                location_payload.site_contact_email
-            )
-            if location_payload.ppe_requirements is not None:
-                existing_location.ppe_requirements = list(
-                    location_payload.ppe_requirements
-                )
-            if location_payload.additional_requirements is not None:
-                existing_location.additional_requirements = list(
-                    location_payload.additional_requirements
-                )
-            _update_location_scheduling(
-                existing_location,
-                location_payload,
-                location_payload.model_fields_set,
-            )
-            await record_update(
-                session,
-                existing_location,
-                actor_id=principal.user_id,
-                action="customer_location.updated",
-                before=location_before,
-            )
     await session.commit()
     _set_etag(response, customer.version)
+    return await _customer_read_for_principal(session, customer, principal)
+
+
+@router.post("/customers/{customer_id}/archive", response_model=CustomerRead)
+async def archive_customer(
+    customer_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerRead:
+    _require_customer_write(principal)
+    require_super_admin(principal, "archive")
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    if customer.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This customer is already archived.",
+        )
+    before = customer.to_audit_dict()
+    customer.archived_at = utc_now()
+    await record_update(
+        session,
+        customer,
+        actor_id=principal.user_id,
+        action="customer.archived",
+        before=before,
+    )
+    await session.commit()
+    return await _customer_read_for_principal(session, customer, principal)
+
+
+@router.post("/customers/{customer_id}/restore", response_model=CustomerRead)
+async def restore_customer(
+    customer_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> CustomerRead:
+    _require_customer_write(principal)
+    require_super_admin(principal, "restore")
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    if customer.archived_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This customer is not archived.",
+        )
+    before = customer.to_audit_dict()
+    customer.archived_at = None
+    await record_update(
+        session,
+        customer,
+        actor_id=principal.user_id,
+        action="customer.restored",
+        before=before,
+    )
+    await session.commit()
     return await _customer_read_for_principal(session, customer, principal)
 
 
@@ -1163,8 +1266,22 @@ async def delete_customer(
     if_match: IfMatchHeader = None,
 ) -> Response:
     _require_customer_write(principal)
+    require_super_admin(principal)
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
     _enforce_if_match(if_match, customer.version)
+    if customer.archived_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Archive the customer before deleting it.",
+        )
+    await ensure_not_referenced(
+        session,
+        Customer,
+        customer.id,
+        what="customer",
+        ignore={"customer_locations", "customer_contacts"},
+        alternative="History is kept, so an in-use customer stays archived.",
+    )
     await soft_delete(
         session,
         customer,
@@ -1231,7 +1348,8 @@ async def create_asset(
 ) -> AssetRead:
     _require_asset_write(principal)
     customer = await _get_customer_or_404(session, payload.customer_id)
-    product = await _get_product_or_404(session, payload.product_id)
+    _require_active_customer(customer)
+    product = await _get_product_for_new_work_or_409(session, payload.product_id)
     location = await _get_location_or_400(
         session,
         payload.location_id,
@@ -2211,6 +2329,7 @@ async def create_inspection_booking(
     customer = await _get_visible_customer_or_404(
         session, payload.customer_id, principal
     )
+    _require_active_customer(customer)
     location = await _get_visible_customer_location_or_404(
         session, customer.id, payload.location_id, principal
     )
@@ -2326,6 +2445,8 @@ async def approve_inspection_booking(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only pending inspection bookings can be approved",
         )
+    # Approving confirms an appointment, which is new operational work.
+    _require_active_customer(await _get_customer_or_404(session, booking.customer_id))
     inspector = await _get_active_inspector_or_422(session, payload.inspector_user_id)
     await _require_booking_inspector_candidate(booking, inspector.id)
     before = booking.to_audit_dict()
@@ -2712,6 +2833,7 @@ async def create_inspection(
     _require_inspection_write(principal)
     await lock_assigned_bookings(session, principal)
     asset = await _get_visible_asset_or_404(session, asset_id, principal)
+    _require_active_customer(asset.customer)
     booking_id = None
     if is_inspector_scoped(principal):
         booking_ids = (await session.scalars(
@@ -3364,8 +3486,17 @@ async def delete_product(
     if_match: IfMatchHeader = None,
 ) -> Response:
     _require_reference_admin(principal)
+    require_super_admin(principal)
     product = await _get_product_or_404(session, product_id)
     _enforce_if_match(if_match, product.version)
+    await ensure_not_referenced(
+        session,
+        Product,
+        product.id,
+        what="product",
+        ignore={"product_pressure_ratings"},
+        alternative="Disable the product instead; history keeps its reference.",
+    )
     await soft_delete(
         session,
         product,
@@ -3387,6 +3518,7 @@ async def list_assets(
     location_id: str | None = None,
     due_from: date | None = None,
     due_to: date | None = None,
+    new_work_only: bool = False,
     sort: str | None = None,
     limit: LimitParam = 50,
     offset: OffsetParam = 0,
@@ -3397,6 +3529,9 @@ async def list_assets(
     )
     statement = _apply_asset_scope(statement, principal)
 
+    if new_work_only:
+        # Assets that can receive new work; the default list keeps history readable.
+        statement = statement.where(Customer.archived_at.is_(None))
     if customer_id:
         statement = statement.where(Asset.customer_id == customer_id)
     if product_id:
@@ -3417,8 +3552,17 @@ async def list_assets(
                 func.lower(Asset.asset_name).like(search_pattern),
                 func.lower(Asset.customer_serial_no).like(search_pattern),
                 func.lower(Asset.tag).like(search_pattern),
+                func.lower(Asset.purchase_order_number).like(search_pattern),
                 func.lower(Customer.code).like(search_pattern),
                 func.lower(Customer.name).like(search_pattern),
+                Asset.product_id.in_(
+                    select(Product.id).where(
+                        or_(
+                            func.lower(Product.code).like(search_pattern),
+                            func.lower(Product.name).like(search_pattern),
+                        )
+                    )
+                ),
             )
         )
 
@@ -3468,9 +3612,19 @@ async def update_asset(
     target_customer = asset.customer
     if "customer_id" in updates and payload.customer_id is not None:
         target_customer = await _get_customer_or_404(session, payload.customer_id)
+        if target_customer.id != asset.customer_id:
+            _require_active_customer(target_customer)
         asset.customer = target_customer
-    if "product_id" in updates and payload.product_id is not None:
-        asset.product = await _get_product_or_404(session, payload.product_id)
+    if (
+        "product_id" in updates
+        and payload.product_id is not None
+        and payload.product_id != asset.product_id
+    ):
+        # Keeping the product an asset already has is not new work, even if it was
+        # disabled since.
+        asset.product = await _get_product_for_new_work_or_409(
+            session, payload.product_id
+        )
     if "location_id" in updates:
         asset.location = await _get_location_or_400(
             session,
@@ -3591,8 +3745,23 @@ async def delete_asset(
     if_match: IfMatchHeader = None,
 ) -> Response:
     _require_asset_write(principal)
+    # A logical delete hides the asset from ordinary reads and has no undo, so it is
+    # a Delete, not an Archive: Super Admin only, never while history points at it.
+    require_super_admin(principal)
     asset = await _get_visible_asset_or_404(session, asset_id, principal)
     _enforce_if_match(if_match, asset.version)
+    await ensure_not_referenced(
+        session,
+        Asset,
+        asset.id,
+        what="asset",
+        # The asset's own end configuration is part of it, not a record about it.
+        ignore={"asset_end_configurations"},
+        alternative=(
+            "Set its lifecycle to Retired or Condemned instead; "
+            "history keeps its asset."
+        ),
+    )
     await soft_delete(
         session,
         asset,
@@ -4086,6 +4255,8 @@ def _customer_read(customer: Customer, metrics: CustomerMetricsRead) -> Customer
         notes=customer.notes,
         retest_enabled=customer.retest_enabled,
         default_retest_months=customer.default_retest_months,
+        status="ARCHIVED" if customer.archived_at is not None else "ACTIVE",
+        archived_at=customer.archived_at,
         locations=[_customer_location_read(location) for location in locations],
         contacts=[_customer_contact_read(contact) for contact in contacts],
         metrics=metrics,
@@ -4167,7 +4338,9 @@ def _product_read(product: Product) -> ProductRead:
         name=product.name,
         category=product.category,
         sub_category=product.sub_category,
+        standard_id=product.standard_id,
         standard_code=standard_code,
+        enabled=product.enabled,
     )
 
 
@@ -4184,6 +4357,14 @@ async def _get_standard_or_404(
             detail="Standard not found",
         )
     return standard
+
+
+def _require_active_customer(customer: Customer) -> None:
+    if customer.archived_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This customer is archived. Restore it before adding new work.",
+        )
 
 
 async def _get_customer_or_404(session: AsyncSession, customer_id: str) -> Customer:
@@ -4278,6 +4459,22 @@ async def _get_product_or_404(session: AsyncSession, product_id: str) -> Product
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found",
+        )
+    return product
+
+
+async def _get_product_for_new_work_or_409(
+    session: AsyncSession, product_id: str
+) -> Product:
+    """A product chosen for an asset now; existing links use ``_get_product_or_404``."""
+    product = await _get_product_or_404(session, product_id)
+    if not product.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This product is disabled. "
+                "Enable it before assigning it to an asset."
+            ),
         )
     return product
 
@@ -4545,6 +4742,8 @@ async def _upsert_retest_schedule(
 ) -> None:
     schedule = asset.retest_schedule
     if schedule is None:
+        # Creating a schedule is new work; an existing one may still be corrected.
+        _require_active_customer(customer)
         schedule = _build_retest_schedule(payload, customer=customer, asset=asset)
         session.add(schedule)
         await record_create(

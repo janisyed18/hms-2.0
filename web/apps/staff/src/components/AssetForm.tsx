@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { AssetEndEditor } from "./AssetEndEditor";
 import { FormGrid, FormSection } from "./forms/FormLayout";
@@ -8,14 +8,14 @@ import { Field } from "./interaction/FormPrimitives";
 import { friendlyApiError } from "./interaction/friendlyApiError";
 import { focusFirstInvalid, isBlank, useFormErrors, type FieldErrors } from "./interaction/useFormErrors";
 import { customerLabel, productLabel } from "../utils/identity";
+import { createHmsClient } from "../api/hmsClient";
+import { useRemoteOptions } from "../hooks/useRemoteOptions";
 import type {
   AssetConfigurationOptions,
   AssetEndValues,
   AssetFormValues,
-  AssetProductSummary,
   AssetRecord,
-  CustomerLocation,
-  RecordSummary
+  CustomerLocation
 } from "../domain/types";
 import { useFocusAfterRender } from "./forms/useFocusAfterRender";
 import { Combobox } from "./interaction/Combobox";
@@ -24,12 +24,6 @@ import { Select } from "./interaction/Select";
 interface AssetFormProps {
   asset: AssetRecord | null;
   configurationOptions: AssetConfigurationOptions;
-  customerOptions: RecordSummary[];
-  locationOptions: Array<{
-    customerId: string;
-    locations: CustomerLocation[];
-  }>;
-  productOptions: AssetProductSummary[];
   open: boolean;
   isCopy?: boolean;
   onClose: () => void;
@@ -40,7 +34,7 @@ interface AssetFormProps {
 const REQUIRED_ORDER = ["customerId", "locationId", "assetName", "serialNumber", "productId"];
 
 const FIELD_LABELS: Record<string, string> = {
-  customerId: "Agent",
+  customerId: "Customer",
   locationId: "Location",
   assetName: "Asset Name",
   serialNumber: "Serial Number",
@@ -69,9 +63,6 @@ const blankEnd: AssetEndValues = {
 export function AssetForm({
   asset,
   configurationOptions,
-  customerOptions,
-  locationOptions,
-  productOptions,
   open,
   isCopy = false,
   onClose,
@@ -144,33 +135,33 @@ export function AssetForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceKey, sourceSignature]);
 
-  useEffect(() => {
-    if (open && !asset?.customer.id) {
-      setCustomerId((current) => current || customerOptions[0]?.id || "");
-    }
-  }, [asset?.customer.id, customerOptions, open]);
-
-  useEffect(() => {
-    if (open && !asset?.product.id) {
-      setProductId((current) => current || productOptions[0]?.id || "");
-    }
-  }, [asset?.product.id, productOptions, open]);
-
-  const customerLocations = useMemo(
-    () => locationOptions.find((group) => group.customerId === customerId)?.locations ?? [],
-    [customerId, locationOptions]
+  // Customers and products are searched on the server as the person types, so neither list is cut off
+  // at a first page. Nothing is chosen for them: a relationship only exists once somebody picks it.
+  const customerSearch = useRemoteOptions(
+    (text) => createHmsClient().listCustomers({ search: text, sort: "name", limit: 25 }).then((result) => result.items),
+    open
+  );
+  const productSearch = useRemoteOptions(
+    (text) => createHmsClient().listProducts({ search: text, sort: "name", limit: 25 }).then((result) => result.items),
+    open
   );
 
+  // Locations belong to the chosen customer and are read from that customer, never guessed.
+  const [customerLocations, setCustomerLocations] = useState<CustomerLocation[]>([]);
+  const [locationsLoading, setLocationsLoading] = useState(false);
   useEffect(() => {
-    if (!open) {
+    if (!open || !customerId) {
+      setCustomerLocations([]);
       return;
     }
-    setLocationId((current) => (
-      customerLocations.some((location) => location.id === current)
-        ? current
-        : customerLocations[0]?.id ?? ""
-    ));
-  }, [customerLocations, open]);
+    let active = true;
+    setLocationsLoading(true);
+    createHmsClient().getCustomer(customerId)
+      .then((customer) => { if (active) setCustomerLocations((customer.locations ?? []).filter((location): location is CustomerLocation => Boolean(location))); })
+      .catch(() => { if (active) setCustomerLocations([]); })
+      .finally(() => { if (active) setLocationsLoading(false); });
+    return () => { active = false; };
+  }, [customerId, open]);
 
   // Defaults can arrive after a first validation (option lists load late): an error about a
   // field that now has a value would be stale.
@@ -186,7 +177,7 @@ export function AssetForm({
 
   function validate(): FieldErrors {
     const found: FieldErrors = {};
-    if (!customerId) found.customerId = "Select an agent.";
+    if (!customerId) found.customerId = "Select a customer.";
     if (!locationId) found.locationId = "Select a location.";
     if (isBlank(assetName)) found.assetName = "Enter an asset name.";
     if (isBlank(serialNumber)) found.serialNumber = "Enter a serial number.";
@@ -268,15 +259,24 @@ export function AssetForm({
       >
         <FormSection title="Ownership">
           <FormGrid>
-            <Field error={errors.customerId} label="Agent" name="customerId" required>
+            <Field error={errors.customerId} label="Customer" name="customerId" required>
               {(props) => (
                 <Combobox
                   {...props}
-                  aria-label="Agent"
-                  emptyText="No agents match"
-                  onChange={(next) => { setCustomerId(next); clearError("customerId"); touch(); }}
-                  options={customerOptions.map((customer) => ({ value: customer.id, label: customer.name, description: customer.code ?? undefined, searchText: customerLabel(customer) }))}
-                  placeholder="Search agents"
+                  aria-label="Customer"
+                  emptyText="No customers match"
+                  loading={customerSearch.loading}
+                  onChange={(next) => {
+                    // A location belongs to one customer, so changing the customer clears it and never picks another.
+                    if (next !== customerId) setLocationId("");
+                    setCustomerId(next);
+                    clearError("customerId");
+                    touch();
+                  }}
+                  onSearch={customerSearch.search}
+                  options={customerSearch.items.map((customer) => ({ value: customer.id, label: customer.name, description: customer.code ?? undefined, searchText: customerLabel(customer) }))}
+                  placeholder="Select a customer"
+                  selectedOption={asset && asset.customer.id === customerId ? { value: asset.customer.id, label: asset.customer.name, description: asset.customer.code ?? undefined } : null}
                   value={customerId}
                 />
               )}
@@ -286,9 +286,10 @@ export function AssetForm({
                 <Select
                   {...props}
                   aria-label="Location"
+                  disabled={!customerId}
                   onChange={(next) => { setLocationId(next); clearError("locationId"); touch(); }}
                   options={customerLocations.map((location) => ({ value: location.id, label: location.name }))}
-                  placeholder="Select location"
+                  placeholder={!customerId ? "Select a customer first" : locationsLoading ? "Loading locations…" : "Select a location"}
                   value={locationId}
                 />
               )}
@@ -332,9 +333,12 @@ export function AssetForm({
                   {...props}
                   aria-label="Product"
                   emptyText="No products match"
+                  loading={productSearch.loading}
                   onChange={(next) => { setProductId(next); clearError("productId"); touch(); }}
-                  options={productOptions.map((product) => ({ value: product.id, label: product.name, description: product.code, searchText: productLabel(product) }))}
-                  placeholder="Search products"
+                  onSearch={productSearch.search}
+                  options={productSearch.items.map((product) => ({ value: product.id, label: product.name, description: product.code, searchText: productLabel(product) }))}
+                  placeholder="Select a product"
+                  selectedOption={asset && asset.product.id === productId ? { value: asset.product.id, label: asset.product.name, description: asset.product.code } : null}
                   value={productId}
                 />
               )}

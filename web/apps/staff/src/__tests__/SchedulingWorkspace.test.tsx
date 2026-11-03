@@ -10,7 +10,8 @@ const client = vi.hoisted(() => ({
   listInspectionSchedule: vi.fn(),
   listInspectionBookings: vi.fn(),
   listAdminUsers: vi.fn(),
-  listAllAssets: vi.fn(),
+  listCustomers: vi.fn(),
+  listAssets: vi.fn(),
   listInspectionAvailability: vi.fn(),
   approveInspectionBooking: vi.fn(),
   rejectInspectionBooking: vi.fn(),
@@ -207,7 +208,8 @@ beforeEach(() => {
       accountStatus: "ACTIVE"
     }))
   });
-  client.listAllAssets.mockResolvedValue({ total: 0, items: [] });
+  client.listCustomers.mockResolvedValue({ total: 0, items: [] });
+  client.listAssets.mockResolvedValue({ total: 0, items: [] });
   client.getInspectionBooking.mockImplementation(async (id: string) =>
     everything.find((item) => item.id === id)
   );
@@ -644,17 +646,6 @@ describe("actions go through the existing validated endpoints", () => {
   });
 
   it("never reschedules directly: it opens the availability flow, and only a chosen quote is sent", async () => {
-    client.listAllAssets.mockResolvedValue({
-      total: 1,
-      items: [
-        {
-          id: "b3-a0",
-          assetNumber: "HOS-1",
-          customer: { id: "cust-orica", code: "O", name: "Orica" },
-          location: { id: "loc-kwinana", name: "Kwinana", schedulingTimezone: PERTH }
-        }
-      ]
-    });
     client.listInspectionAvailability.mockResolvedValue([
       { quoteId: "quote-1", startsAt: "2027-03-08T01:00:00Z", endsAt: "2027-03-08T02:00:00Z", expiresAt: "2027-03-01T05:00:00Z" }
     ]);
@@ -693,7 +684,18 @@ describe("actions go through the existing validated endpoints", () => {
     await ready();
     await user.click(screen.getByRole("button", { name: "Book inspection" }));
     const form = (await screen.findByRole("heading", { name: "Book inspection", level: 2 })).closest("form") as HTMLElement;
-    expect(within(form).getByLabelText("Preferred inspection date")).toHaveValue(MONDAY);
+    // The form is seeded in an effect right after it opens, so wait for the settled value rather than the first paint.
+    await waitFor(() => expect(within(form).getByLabelText("Preferred inspection date")).toHaveValue(MONDAY));
+  });
+
+  it("opens the booking form on the day navigated to, not the day first shown", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await ready();
+    await user.click(screen.getByRole("button", { name: "Next day" }));
+    await user.click(screen.getByRole("button", { name: "Book inspection" }));
+    const form = (await screen.findByRole("heading", { name: "Book inspection", level: 2 })).closest("form") as HTMLElement;
+    await waitFor(() => expect(within(form).getByLabelText("Preferred inspection date")).toHaveValue("2027-03-02"));
   });
 
   it("explains a conflict, refreshes the booking and keeps the user where they were", async () => {
@@ -1030,17 +1032,6 @@ describe("the inspector roster beyond one page", () => {
   it("offers an inspector from a later page for assignment and for reschedule", async () => {
     serveUsers(130);
     client.approveInspectionBooking.mockResolvedValue(undefined);
-    client.listAllAssets.mockResolvedValue({
-      total: 1,
-      items: [
-        {
-          id: "b3-a0",
-          assetNumber: "HOS-1",
-          customer: { id: "cust-orica", code: "O", name: "Orica" },
-          location: { id: "loc-kwinana", name: "Kwinana", schedulingTimezone: PERTH }
-        }
-      ]
-    });
     client.listInspectionAvailability.mockResolvedValue([
       { quoteId: "quote-1", startsAt: "2027-03-08T01:00:00Z", endsAt: "2027-03-08T02:00:00Z", expiresAt: "2027-03-01T05:00:00Z" }
     ]);

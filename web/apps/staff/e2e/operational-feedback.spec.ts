@@ -87,17 +87,12 @@ test.describe("Operational interaction feedback", () => {
       await page.getByRole("button", { name: "Save standard" }).click();
       await expect(page.getByRole("status").filter({ hasText: "E2E Feedback Standard" })).toContainText("created successfully");
 
-      // Archiving asks first and, on failure, keeps both the dialog and the record.
+      // An admin disables a standard (reversible); Delete is for a Super Admin and is not offered here.
       await page.getByPlaceholder(/Search standards/).fill(code);
       const row = page.getByRole("row", { name: new RegExp(code) });
-      await row.getByRole("button", { name: "Archive" }).click();
-      const dialog = page.getByRole("alertdialog", { name: new RegExp(`Archive E2E Feedback Standard — ${code}\\?`) });
-      await failOnce(page, /\/api\/v1\/reference\/catalog\/standards\/[^/]+$/, "DELETE", 500, apiError("Internal server error"));
-      await dialog.getByRole("button", { name: "Archive standard" }).click();
-      await expect(dialog.getByRole("alert")).toContainText(/service is unavailable/i);
-      await expect(row).toBeVisible();
-      await dialog.getByRole("button", { name: "Archive standard" }).click();
-      await expect(page.getByRole("status").filter({ hasText: "was archived" })).toBeVisible();
+      await expect(row.getByRole("button", { name: "Delete" })).toHaveCount(0);
+      await row.getByRole("button", { name: "Disable" }).click();
+      await expect(page.getByRole("status").filter({ hasText: "was disabled" })).toBeVisible();
 
       // Retest schedule: inline validation, a stale-version failure keeps the typed values, then success.
       await nav(page, "Retest Schedule");

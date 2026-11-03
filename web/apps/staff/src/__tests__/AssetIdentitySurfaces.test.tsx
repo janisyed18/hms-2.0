@@ -1,8 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AssetsWorkspace } from "../components/AssetsWorkspace";
+import { customerTableProps } from "../test/customerTableProps";
 import { CustomerDetail } from "../components/CustomerDetail";
 import { CustomerTable } from "../components/CustomerTable";
 import type { AssetRecord, CustomerRecord } from "../domain/types";
@@ -65,13 +66,20 @@ describe("Staff asset register", () => {
     render(<AssetsWorkspace canWrite onAssetRouteChange={vi.fn()} routeAssetId={null} />);
     await screen.findByText("Main Transfer Hose");
     const search = screen.getByLabelText("Search assets");
+    // The server does the searching; the stand-in answers like it does, on number and name.
+    client.listAssets.mockImplementation(async (options: { search?: string } = {}) => {
+      const needle = (options.search ?? "").toLowerCase();
+      return list([asset("1", "HMS-373CEBA88", "Main Transfer Hose"), asset("2", "HMS-222", LONG), asset("3", "HMS-333", null)]
+        .filter((item) => !needle || `${item.assetNumber} ${item.assetName ?? ""}`.toLowerCase().includes(needle)));
+    });
     await user.type(search, "hms-373ceba88");
+    await waitFor(() => expect(screen.queryByText(LONG)).toBeNull());
     expect(screen.getByText("Main Transfer Hose")).toBeInTheDocument();
-    expect(screen.queryByText(LONG)).toBeNull();
+    expect(client.listAssets).toHaveBeenLastCalledWith(expect.objectContaining({ search: "hms-373ceba88" }));
     await user.clear(search);
     await user.type(search, "chemical transfer");
+    await waitFor(() => expect(screen.queryByText("Main Transfer Hose")).toBeNull());
     expect(screen.getByText(LONG)).toBeInTheDocument();
-    expect(screen.queryByText("Main Transfer Hose")).toBeNull();
   });
 
   it("titles the detail with the name and lists the number among the facts", async () => {
@@ -94,7 +102,7 @@ describe("Staff customer detail and cards", () => {
   const customer = {
     id: "cust-1", code: "ORIC", name: "Orica", notes: null, retestEnabled: true, defaultRetestMonths: 12,
     locations: [{ ...location, siteContactName: null, siteContactMobile: null, siteContactEmail: null, ppeRequirements: [], additionalRequirements: [] }],
-    contacts: [], status: "Active", riskLevel: "Low", industry: "", paymentTerms: "", contractStart: "", contractEnd: "", lastActivity: "",
+    contacts: [], status: "Active", archivedAt: null,
     metrics: { assetCount: 2, inServiceCount: 2, inspectionDueCount: null, inspectionDueLabel: "", certificateValidPercent: null, certificateStatusLabel: "", recentInspections: [], activity: [] }
   } as unknown as CustomerRecord;
 
@@ -103,6 +111,7 @@ describe("Staff customer detail and cards", () => {
     const onAssetOpen = vi.fn();
     client.listAssets.mockResolvedValue(list([asset("1", "HMS-373CEBA88", "Main Transfer Hose"), asset("3", "HMS-333", null)]));
     render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onAssetOpen={onAssetOpen} onClose={vi.fn()} onEdit={vi.fn()} onTabChange={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: /^View / }));
     const link = await screen.findByRole("button", { name: "Open asset Main Transfer Hose, HMS-373CEBA88" });
     expect(link).toHaveTextContent("Main Transfer Hose");
     expect(link).toHaveTextContent("Asset #HMS-373CEBA88");
@@ -115,9 +124,7 @@ describe("Staff customer detail and cards", () => {
     const named = (name: string, code: string) => ({ ...customer, id: code, code, name });
     const customers = [named("Xero Stock Private Limited", "XS1"), named("XERO PTY Ltd", "XP1"), named("Momentum", "MO1")];
     render(
-      <CustomerTable allCustomers={customers} canWrite={false} customers={customers} onAddCustomer={() => undefined}
-        onQueryChange={() => undefined} onRiskFilterChange={() => undefined} onSelectCustomer={() => undefined}
-        onStatusFilterChange={() => undefined} query="" riskFilter="All" selectedId={null} statusFilter="All" totalCount={3} />
+      <CustomerTable {...customerTableProps({ canWrite: false, customers })} />
     );
     const avatar = (name: RegExp) => screen.getByRole("button", { name }).querySelector(".customer-avatar") as HTMLElement;
     expect(avatar(/Xero Stock Private Limited/)).toHaveTextContent("XS");

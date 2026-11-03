@@ -7,14 +7,15 @@ import { useCustomerWorkspace } from "../hooks/useCustomerWorkspace";
 import { assetDisplayName, assetHasDistinctName, initialsOf } from "../utils/identity";
 
 const listCustomers = vi.hoisted(() => vi.fn());
+const getCustomerSummary = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/hmsClient", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/hmsClient")>()),
-  createHmsClient: () => ({ listCustomers })
+  createHmsClient: () => ({ listCustomers, getCustomerSummary })
 }));
 
 const customer = (id: string, name: string, assetCount: number) => ({
-  id, code: id.toUpperCase(), name, notes: null, locations: [], contacts: [], status: "Active", riskLevel: "Low",
+  id, code: id.toUpperCase(), name, notes: null, locations: [], contacts: [], status: "Active", archivedAt: null,
   metrics: { assetCount, inServiceCount: assetCount }
 }) as unknown as CustomerRecord;
 
@@ -87,7 +88,11 @@ describe("asset identity", () => {
 });
 
 describe("customer asset counts follow the server, not the first read", () => {
-  beforeEach(() => listCustomers.mockReset());
+  beforeEach(() => {
+    listCustomers.mockReset();
+    getCustomerSummary.mockReset();
+    getCustomerSummary.mockResolvedValue({ activeCustomers: 1, archivedCustomers: 0, locations: 0, assets: 0 });
+  });
 
   it("shows the new count when Customers is entered after an asset was created elsewhere", async () => {
     listCustomers.mockResolvedValueOnce({ total: 1, items: [customer("c1", "Xero Pty Ltd", 0)] });

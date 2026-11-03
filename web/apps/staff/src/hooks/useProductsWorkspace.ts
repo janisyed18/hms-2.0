@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
 import { useActionNotice } from "../components/interaction/ActionNotice";
@@ -10,39 +10,51 @@ export function useProductsWorkspace() {
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [serverTotal, setServerTotal] = useState<number | undefined>(undefined);
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"ACTIVE" | "DISABLED">("ACTIVE");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [standardFilter, setStandardFilter] = useState("ALL");
   const [editingProduct, setEditingProduct] = useState<ProductRecord | null>(null);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
   const { notice, notify, clear: dismissNotice } = useActionNotice();
-  const [archiveTarget, setArchiveTarget] = useState<ProductRecord | null>(null);
-  const [archiveError, setArchiveError] = useState<string | null>(null);
-  const [isArchiving, setArchiving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ProductRecord | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setDeleting] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Category and standard choices seen so far: the server filters by them, so a filtered page alone would
+  // leave only the chosen value to pick from.
+  const [facets, setFacets] = useState<{ categories: string[]; standards: string[] }>({ categories: [], standards: [] });
+
+  // Search, status and the two filters are answered by the server, so they cover every product and the total is real.
   useEffect(() => {
     let active = true;
-    void createHmsClient().listProducts({ sort: "code" }).then((result) => {
-      if (active) { setProducts(result.items); setServerTotal(result.total); }
-    }).catch((reason: unknown) => {
-      if (active) setLoadError(friendlyApiError(reason, { fallback: "Products could not be loaded." }).message);
-    });
-    return () => { active = false; };
-  }, []);
+    const timer = window.setTimeout(() => {
+      void createHmsClient().listProducts({
+        sort: "code",
+        enabled: statusFilter === "ACTIVE",
+        search: query,
+        category: categoryFilter === "ALL" ? undefined : categoryFilter,
+        standardCode: standardFilter === "ALL" ? undefined : standardFilter
+      }).then((result) => {
+        if (!active) return;
+        setProducts(result.items);
+        setServerTotal(result.total);
+        setLoadError(null);
+        setFacets((current) => ({
+          categories: Array.from(new Set([...current.categories, ...result.items.map((product) => product.category)])).sort(),
+          standards: Array.from(new Set([...current.standards, ...result.items.map((product) => product.standardCode).filter(Boolean) as string[]])).sort()
+        }));
+      }).catch((reason: unknown) => {
+        if (active) setLoadError(friendlyApiError(reason, { fallback: "Products could not be loaded." }).message);
+      });
+    }, query ? 250 : 0);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [statusFilter, query, categoryFilter, standardFilter]);
 
-  const visibleProducts = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return products.filter((product) => (
-      (categoryFilter === "ALL" || product.category === categoryFilter) &&
-      (standardFilter === "ALL" || product.standardCode === standardFilter) &&
-      (!normalized || [product.code, product.name, product.category, product.subCategory, product.standardCode]
-        .filter(Boolean).some((value) => value?.toLowerCase().includes(normalized)))
-    ));
-  }, [categoryFilter, products, query, standardFilter]);
-
-  const categoryOptions = useMemo(() => Array.from(new Set(products.map((product) => product.category))).sort(), [products]);
-  const standardOptions = useMemo(() => Array.from(new Set(products.map((product) => product.standardCode).filter(Boolean))).sort() as string[], [products]);
+  const visibleProducts = products;
+  const categoryOptions = facets.categories;
+  const standardOptions = facets.standards;
   const selectedProduct = selectedProductId ? products.find((product) => product.id === selectedProductId) ?? null : null;
 
   function openCreate() { setEditingProduct(null); setFormOpen(true); }
@@ -56,23 +68,34 @@ export function useProductsWorkspace() {
     setSelectedProductId(saved.id); setFormOpen(false); setEditingProduct(null);
     notify({ kind: "success", message: `${productLabel(saved)} ${editingProduct ? "saved" : "created"} successfully.`, title: "Product saved" });
   }
-  function requestArchive(product: ProductRecord) { setArchiveError(null); setArchiveTarget(product); }
-  function cancelArchive() { if (!isArchiving) { setArchiveTarget(null); setArchiveError(null); } }
-  async function confirmArchive() {
-    const product = archiveTarget;
-    if (!product || isArchiving) return;
-    setArchiving(true); setArchiveError(null);
+  async function toggleEnabled(product: ProductRecord) {
+    const enable = statusFilter === "DISABLED";
     try {
-      await createHmsClient().archiveProduct(product.id, product.etag);
+      await createHmsClient().setProductEnabled(product.id, enable, product.etag);
       setProducts((current) => current.filter((item) => item.id !== product.id));
       if (selectedProductId === product.id) setSelectedProductId(null);
-      setArchiveTarget(null);
-      notify({ kind: "success", message: `${productLabel(product)} was archived.`, title: "Product archived" });
+      notify({ kind: "success", message: `${productLabel(product)} was ${enable ? "enabled" : "disabled"}. It can be ${enable ? "disabled" : "enabled"} again at any time.`, title: enable ? "Product enabled" : "Product disabled" });
     } catch (reason) {
-      setArchiveError(friendlyApiError(reason, { fallback: `${productLabel(product)} could not be archived. Try again.` }).message);
-    } finally { setArchiving(false); }
+      notify({ kind: "error", message: friendlyApiError(reason, { fallback: `${productLabel(product)} could not be ${enable ? "enabled" : "disabled"}. Try again.` }).message, title: "Product not changed" });
+    }
+  }
+  function requestDelete(product: ProductRecord) { setDeleteError(null); setDeleteTarget(product); }
+  function cancelDelete() { if (!isDeleting) { setDeleteTarget(null); setDeleteError(null); } }
+  async function confirmDelete() {
+    const product = deleteTarget;
+    if (!product || isDeleting) return;
+    setDeleting(true); setDeleteError(null);
+    try {
+      await createHmsClient().deleteProduct(product.id, product.etag);
+      setProducts((current) => current.filter((item) => item.id !== product.id));
+      if (selectedProductId === product.id) setSelectedProductId(null);
+      setDeleteTarget(null);
+      notify({ kind: "success", message: `${productLabel(product)} was deleted.`, title: "Product deleted" });
+    } catch (reason) {
+      setDeleteError(friendlyApiError(reason, { fallback: `${productLabel(product)} could not be deleted. Try again.` }).message);
+    } finally { setDeleting(false); }
   }
   function clearProductFilters() { setCategoryFilter("ALL"); setStandardFilter("ALL"); }
   const activeFilterCount = [categoryFilter !== "ALL", standardFilter !== "ALL"].filter(Boolean).length;
-  return { serverTotal, activeFilterCount, archiveError, archiveTarget, cancelArchive, confirmArchive, dismissNotice, isArchiving, loadError, notice, requestArchive, categoryFilter, categoryOptions, closeDetail, clearProductFilters, editingProduct, isFormOpen, openCreate, openDetail, openEdit, products, query, saveProduct, selectedProduct, setCategoryFilter, setFormOpen, setQuery, setStandardFilter, standardFilter, standardOptions, visibleProducts };
+  return { serverTotal, activeFilterCount, deleteError, deleteTarget, cancelDelete, confirmDelete, dismissNotice, isDeleting, loadError, notice, requestDelete, toggleEnabled, statusFilter, setStatusFilter, categoryFilter, categoryOptions, closeDetail, clearProductFilters, editingProduct, isFormOpen, openCreate, openDetail, openEdit, products, query, saveProduct, selectedProduct, setCategoryFilter, setFormOpen, setQuery, setStandardFilter, standardFilter, standardOptions, visibleProducts };
 }

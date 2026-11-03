@@ -326,7 +326,7 @@ test.describe("scheduling release workflow", () => {
       await expect(create).toBeDisabled();
 
       // Choosing the location again does not bring the old asset back.
-      await chooseOption(customer.page.getByLabel("Booking location"), { label: "Vopak - Port Botany" });
+      await chooseOption(customer.page.getByLabel("Booking location"), { label: "Port Botany" });
       await expect(customer.page.getByRole("checkbox", { name: "980636" })).not.toBeChecked();
       await expect(create).toBeDisabled();
     } finally {

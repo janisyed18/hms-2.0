@@ -189,14 +189,16 @@ export async function refreshInspectionsWorkspace(page: Page) {
   await openInspections(page);
 }
 
-// A new booking starts with nothing chosen: the customer picks the location, then the
+// A new booking starts with nothing chosen: the customer, then the location, then the
 // assets. (A reschedule keeps the booking's own location and assets.)
 export async function chooseBookingLocationAndAsset(page: Page) {
   const location = page.getByLabel("Booking location");
-  await expect(location).toHaveText("Choose the location");
+  await expect(location).toHaveText("Choose a customer first");
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await expect(page.locator("form.inspection-booking-form").getByRole("button", { name: "Create booking" })).toBeDisabled();
-  await chooseOption(location, { label: "Vopak - Port Botany" });
+  await chooseOption(page.getByRole("combobox", { name: "Booking customer" }), { label: "Vopak" });
+  await expect(location).toHaveText("Choose the location");
+  await chooseOption(location, { label: "Port Botany" });
   const asset = page.getByRole("checkbox", { name: "980636" });
   await expect(asset).not.toBeChecked();
   await asset.check();

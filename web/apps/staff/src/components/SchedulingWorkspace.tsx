@@ -447,7 +447,6 @@ export function SchedulingWorkspace({
 
       {canBook ? (
         <InspectionBookingForm
-          assetOptions={workspace.assets}
           initialDate={workspace.form.initialDate}
           inspectors={workspace.inspectors.map((inspector) => ({
             id: inspector.id,

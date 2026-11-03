@@ -6,6 +6,7 @@ import { AssetForm } from "./AssetForm";
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
+import { Combobox } from "./interaction/Combobox";
 import { ModuleTable, activeFilterList, type ModuleColumn } from "./ModuleTable";
 import { assetDisplayName, assetLabel } from "../utils/identity";
 import { AssetIdentity } from "./AssetIdentity";
@@ -67,11 +68,14 @@ function endLabel(asset: AssetRecord) {
 
 export function AssetsWorkspace({
   canWrite,
+  canDelete = false,
   routeAssetId,
   onAssetRouteChange,
   workflowNavigation
 }: {
   canWrite: boolean;
+  /** Only a Super Admin deletes an asset; everyone else edits it or sets its lifecycle to Retired or Condemned. */
+  canDelete?: boolean;
   /** Where the workflow's next action can go in this app. Editing the asset is handled here. */
   workflowNavigation?: { canOpen: (action: AssetWorkflowAction) => boolean; open: (action: AssetWorkflowAction) => void };
   /** The asset the URL names; the URL, not this component, is the record of which asset is open. */
@@ -87,12 +91,8 @@ export function AssetsWorkspace({
     live.current = { routeAssetId, viewingId, resolveAsset, openDetail, reportOpenFailure, closeDetail, onAssetRouteChange };
   });
   const previousViewing = useRef(viewingId);
-  const assetStats = {
-    total: workspace.assets.length,
-    overdue: workspace.assets.filter((asset) => asset.lifecycleStatus === "OVERDUE").length,
-    condemned: workspace.assets.filter((asset) => asset.lifecycleStatus === "CONDEMNED").length,
-    customers: new Set(workspace.assets.map((asset) => asset.customer.id)).size
-  };
+  // Whole-register totals from the server; blank until they arrive, never a count of the page on screen.
+  const assetStats = workspace.counts;
 
   // URL to screen: a link, or Back/Forward, opens or closes the detail. Finding an asset can take a
   // request, so what comes back is shown only if the URL still asks for that asset: a slow answer for an
@@ -178,15 +178,17 @@ export function AssetsWorkspace({
           >
             Edit
           </ActionButton>
-          <ActionButton
-            onClick={(event) => {
-              event.stopPropagation();
-              workspace.requestArchive(asset);
-            }}
-            variant="ghost"
-          >
-            Archive
-          </ActionButton>
+          {canDelete ? (
+            <ActionButton
+              onClick={(event) => {
+                event.stopPropagation();
+                workspace.requestDelete(asset);
+              }}
+              variant="ghost"
+            >
+              Delete
+            </ActionButton>
+          ) : null}
         </span>
       )
     } satisfies ModuleColumn<AssetRecord>] : [])
@@ -223,18 +225,18 @@ export function AssetsWorkspace({
         <div className="asset-register-context" aria-label="Current asset register scope">
           <Boxes aria-hidden="true" size={23} />
           <span>
-            <strong>{assetStats.total} total assets</strong>
-            <small>{workspace.visibleAssets.length} matching the current view</small>
+            <strong>{assetStats ? `${assetStats.total} total assets` : "Total assets"}</strong>
+            <small>{workspace.serverTotal ?? workspace.visibleAssets.length} matching the current view</small>
           </span>
         </div>
       </header>
 
       <section aria-label="Asset register summary">
         <StaggerGroup className="asset-register-metrics">
-          <AssetMetric icon={Boxes} label="Total assets" value={assetStats.total} detail="Registered in the current workspace" tone="blue" />
-          <AssetMetric icon={BadgeAlert} label="Overdue" value={assetStats.overdue} detail="Require retest attention" tone="red" />
-          <AssetMetric icon={CircleOff} label="Condemned" value={assetStats.condemned} detail="Removed from service" tone="amber" />
-          <AssetMetric icon={UsersRound} label="Customers with assets" value={assetStats.customers} detail="Active asset ownership" tone="green" />
+          <AssetMetric icon={Boxes} label="Total assets" value={assetStats?.total ?? "-"} detail="Registered in the current workspace" tone="blue" />
+          <AssetMetric icon={UsersRound} label="Due for retest" value={assetStats?.due ?? "-"} detail="Retest coming up" tone="green" />
+          <AssetMetric icon={BadgeAlert} label="Overdue" value={assetStats?.overdue ?? "-"} detail="Require retest attention" tone="red" />
+          <AssetMetric icon={CircleOff} label="Condemned" value={assetStats?.condemned ?? "-"} detail="Removed from service" tone="amber" />
         </StaggerGroup>
       </section>
 
@@ -250,8 +252,8 @@ export function AssetsWorkspace({
         className="asset-register-table"
         columns={assetColumns}
         activeFilters={activeFilterList([
-          { id: "customer", label: "Customer", value: workspace.customerFilter !== "ALL" && (workspace.customerOptions.find((option) => option.id === workspace.customerFilter)?.name ?? "Selected customer"), onRemove: () => workspace.setCustomerFilter("ALL") },
-          { id: "product", label: "Product", value: workspace.productFilter !== "ALL" && (workspace.productOptions.find((option) => option.id === workspace.productFilter)?.name ?? "Selected product"), onRemove: () => workspace.setProductFilter("ALL") },
+          { id: "customer", label: "Customer", value: workspace.customerFilter !== "ALL" && (workspace.filterLabels.customer ?? "Selected customer"), onRemove: () => workspace.setCustomerFilter("ALL") },
+          { id: "product", label: "Product", value: workspace.productFilter !== "ALL" && (workspace.filterLabels.product ?? "Selected product"), onRemove: () => workspace.setProductFilter("ALL") },
           { id: "lifecycle", label: "Lifecycle", value: workspace.lifecycleFilter !== "ALL" && (lifecycleStatusLabel(workspace.lifecycleFilter)), onRemove: () => workspace.setLifecycleFilter("ALL") },
           { id: "dueFrom", label: "Due from", value: workspace.dueFrom, onRemove: () => workspace.setDueFrom("") },
           { id: "dueTo", label: "Due to", value: workspace.dueTo, onRemove: () => workspace.setDueTo("") }
@@ -263,6 +265,9 @@ export function AssetsWorkspace({
         noun="assets"
         onClearFilters={workspace.clearAssetFilters}
         totalCount={workspace.serverTotal}
+        onLoadMore={() => void workspace.loadMore()}
+        loadingMore={workspace.isLoadingMore}
+        serverFiltered
         exportRows={(asset) => [
           assetDisplayName(asset),
           asset.customer.name,
@@ -279,33 +284,37 @@ export function AssetsWorkspace({
           <>
             <label className="filter-field">
               <span>Customer</span>
-              <select
+              <Combobox
                 aria-label="Asset customer filter"
-                value={workspace.customerFilter}
-                onChange={(event) => workspace.setCustomerFilter(event.target.value)}
-              >
-                <option value="ALL">All customers</option>
-                {workspace.customerOptions.map((customer) => (
-                  <option key={customer.id} value={customer.id}>
-                    {customer.name}
-                  </option>
-                ))}
-              </select>
+                emptyText="No customers match"
+                loading={workspace.customerSearch.loading}
+                onChange={(next) => {
+                  const found = workspace.customerSearch.items.find((option) => option.id === next);
+                  workspace.setCustomerFilter(next || "ALL", found?.name);
+                }}
+                onSearch={workspace.customerSearch.search}
+                options={workspace.customerSearch.items.map((customer) => ({ value: customer.id, label: customer.name, description: customer.code ?? undefined, searchText: `${customer.code ?? ""} ${customer.name}` }))}
+                placeholder="All customers"
+                selectedOption={workspace.customerFilter !== "ALL" ? { value: workspace.customerFilter, label: workspace.filterLabels.customer ?? "Selected customer" } : null}
+                value={workspace.customerFilter === "ALL" ? "" : workspace.customerFilter}
+              />
             </label>
             <label className="filter-field">
               <span>Product</span>
-              <select
+              <Combobox
                 aria-label="Asset product filter"
-                value={workspace.productFilter}
-                onChange={(event) => workspace.setProductFilter(event.target.value)}
-              >
-                <option value="ALL">All products</option>
-                {workspace.productOptions.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.name}
-                  </option>
-                ))}
-              </select>
+                emptyText="No products match"
+                loading={workspace.productSearch.loading}
+                onChange={(next) => {
+                  const found = workspace.productSearch.items.find((option) => option.id === next);
+                  workspace.setProductFilter(next || "ALL", found?.name);
+                }}
+                onSearch={workspace.productSearch.search}
+                options={workspace.productSearch.items.map((product) => ({ value: product.id, label: product.name, description: product.code, searchText: `${product.code} ${product.name}` }))}
+                placeholder="All products"
+                selectedOption={workspace.productFilter !== "ALL" ? { value: workspace.productFilter, label: workspace.filterLabels.product ?? "Selected product" } : null}
+                value={workspace.productFilter === "ALL" ? "" : workspace.productFilter}
+              />
             </label>
             <label className="filter-field">
               <span>Lifecycle</span>
@@ -358,24 +367,21 @@ export function AssetsWorkspace({
         error={workspace.error}
       />
       <ConfirmDialog
-        confirmLabel="Archive asset"
-        error={workspace.archiveError}
-        message="It will no longer appear in the asset register. Its inspection and certificate history is kept."
-        onCancel={workspace.cancelArchive}
-        onConfirm={() => void workspace.confirmArchive()}
-        open={workspace.archiveTarget !== null}
-        pending={workspace.isArchiving}
-        pendingLabel="Archiving…"
-        title={workspace.archiveTarget ? `Archive ${assetLabel(workspace.archiveTarget)}?` : "Archive asset?"}
+        confirmLabel="Delete asset"
+        error={workspace.deleteError}
+        message="It is removed from the asset register and cannot be restored here. An asset with inspection, certificate or retest history cannot be deleted: set it to Retired or Condemned instead."
+        onCancel={workspace.cancelDelete}
+        onConfirm={() => void workspace.confirmDelete()}
+        open={workspace.deleteTarget !== null}
+        pending={workspace.isDeleting}
+        pendingLabel="Deleting…"
+        title={workspace.deleteTarget ? `Delete ${assetLabel(workspace.deleteTarget)}?` : "Delete asset?"}
       />
       {canWrite ? (
         <AssetForm
           asset={workspace.formAsset}
           isCopy={workspace.isCopy}
           configurationOptions={workspace.configurationOptions}
-          customerOptions={workspace.customerOptions}
-          locationOptions={workspace.locationOptions}
-          productOptions={workspace.productOptions}
           open={workspace.isFormOpen}
           onClose={workspace.closeForm}
           onSubmit={workspace.saveAsset}
@@ -396,7 +402,7 @@ function AssetMetric({
   icon: typeof Boxes;
   label: string;
   tone: "amber" | "blue" | "green" | "red";
-  value: number;
+  value: number | string;
 }) {
   return (
     <StaggerItem className={`asset-register-metric tone-${tone}`}>
