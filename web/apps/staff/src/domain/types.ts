@@ -494,8 +494,8 @@ export interface AssetFormValues {
   graveDate: string | null;
   nextInspectionDate: string | null;
   lengthM: string | null;
-  materialId: string | null;
-  nominalBoreId: string | null;
+  materialId?: string | null;
+  nominalBoreId?: string | null;
   aEnd: AssetEndValues;
   bEnd: AssetEndValues;
 }

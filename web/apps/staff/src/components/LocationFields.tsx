@@ -106,10 +106,6 @@ export function locationFieldLabels(prefix: string, label: string): Record<strin
 export function validateLocation(value: LocationFormValues, prefix = ""): FieldErrors {
   const found: FieldErrors = {};
   if (isBlank(value.name)) found[`${prefix}name`] = "Enter the location name.";
-  if (isBlank(value.siteContactName)) found[`${prefix}contactName`] = "Enter the site contact's name.";
-  if (isBlank(value.siteContactMobile)) found[`${prefix}contactMobile`] = "Enter the site contact's mobile number.";
-  if (isBlank(value.siteContactEmail)) found[`${prefix}contactEmail`] = "Enter the site contact's email address.";
-  else if (!/^\S+@\S+\.\S+$/.test(value.siteContactEmail.trim())) found[`${prefix}contactEmail`] = "Enter a valid email address.";
   if (!value.schedulingTimezone) found[`${prefix}timezone`] = "Select the timezone this location is in.";
   else if (!timeZoneNames().includes(value.schedulingTimezone)) found[`${prefix}timezone`] = "Select a valid timezone.";
   if (!value.schedulingOpenTime || !value.schedulingCloseTime) found[`${prefix}hours`] = "Enter the opening and closing times.";
@@ -170,19 +166,8 @@ export function LocationFields({
           {(props) => <input {...props} aria-label="Country" value={value.country} onChange={(event) => set("country", event.target.value)} />}
         </Field>
       </fieldset>
-      <div className="site-contact-fields">
-        <Field error={errors[`${prefix}contactName`]} label="Site contact name" name={`${prefix}contactName`} required>
-          {(props) => <input {...props} aria-label="Site contact name" value={value.siteContactName} onChange={(event) => set("siteContactName", event.target.value, "contactName")} />}
-        </Field>
-        <Field error={errors[`${prefix}contactMobile`]} label="Site contact mobile" name={`${prefix}contactMobile`} required>
-          {(props) => <input {...props} aria-label="Site contact mobile" inputMode="tel" type="tel" value={value.siteContactMobile} onChange={(event) => set("siteContactMobile", event.target.value, "contactMobile")} />}
-        </Field>
-        <Field error={errors[`${prefix}contactEmail`]} label="Site contact email" name={`${prefix}contactEmail`} required>
-          {(props) => <input {...props} aria-label="Site contact email" type="email" value={value.siteContactEmail} onChange={(event) => set("siteContactEmail", event.target.value, "contactEmail")} />}
-        </Field>
-      </div>
       <fieldset className="customer-location-entry">
-        <legend>Additional location contacts</legend>
+        <legend>Location contacts</legend>
         {(value.contacts ?? []).map((contact, index) => (
           <div className="site-contact-fields" key={contact.id ?? index}>
             <Field label={`Contact ${index + 1} name`} name={`${prefix}contact-${index}-name`}>

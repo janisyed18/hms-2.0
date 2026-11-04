@@ -1512,8 +1512,6 @@ function assetPayload(values: AssetFormValues) {
     grave_date: values.graveDate,
     next_inspection_date: values.nextInspectionDate,
     length_m: values.lengthM,
-    ...(values.materialId ? { material_id: values.materialId } : {}),
-    ...(values.nominalBoreId ? { nominal_bore_id: values.nominalBoreId } : {}),
     retest_schedule: values.nextInspectionDate
       ? {
           due_at: values.nextInspectionDate,
@@ -1614,9 +1612,8 @@ function ifMatchHeader(etag?: string | null): Record<string, string> {
 }
 
 function locationPayload(location: LocationFormValues) {
-  const contacts = (location.contacts ?? []).length
-    ? location.contacts ?? []
-    : [{ name: location.siteContactName, role: "", phone: location.siteContactMobile, email: location.siteContactEmail }];
+  const contacts = location.contacts ?? [];
+  const primary = contacts[0];
   return {
     name: location.name.trim(),
     address_1: location.address1.trim() || null,
@@ -1624,9 +1621,9 @@ function locationPayload(location: LocationFormValues) {
     city: location.city.trim() || null,
     state: location.state.trim() || null,
     country: location.country.trim() || null,
-    site_contact_name: location.siteContactName.trim() || null,
-    site_contact_mobile: location.siteContactMobile.trim() || null,
-    site_contact_email: location.siteContactEmail.trim() || null,
+    site_contact_name: primary?.name.trim() || null,
+    site_contact_mobile: primary?.phone.trim() || null,
+    site_contact_email: primary?.email.trim() || null,
     ppe_requirements: location.ppeRequirements,
     additional_requirements: location.additionalRequirements,
     scheduling_timezone: location.schedulingTimezone,

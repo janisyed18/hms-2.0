@@ -229,8 +229,6 @@ export function AssetForm({
         graveDate: graveDate || null,
         nextInspectionDate: nextInspectionDate || null,
         lengthM: lengthM || null,
-        materialId: materialId || null,
-        nominalBoreId: nominalBoreId || null,
         aEnd,
         bEnd
       });

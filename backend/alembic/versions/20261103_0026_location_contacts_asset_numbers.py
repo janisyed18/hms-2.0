@@ -23,24 +23,6 @@ def upgrade() -> None:
         sa.Column("phone", sa.String(80), nullable=True),
         sa.Column("email", sa.String(320), nullable=True),
         sa.Column("id", sa.String(36), primary_key=True, nullable=False),
-        sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.func.now(),
-        ),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.func.now(),
-        ),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("legacy_system", sa.String(80), nullable=True),
-        sa.Column("legacy_table", sa.String(80), nullable=True),
-        sa.Column("legacy_id", sa.String(120), nullable=True),
-        sa.Column("legacy_payload", sa.JSON(), nullable=True),
         sa.ForeignKeyConstraint(["location_id"], ["customer_locations.id"]),
     )
     op.create_index(

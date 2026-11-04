@@ -3908,7 +3908,6 @@ async def update_asset(
             select(Asset.id).where(
                 Asset.asset_number == requested_number,
                 Asset.id != asset.id,
-                Asset.deleted_at.is_(None),
             )
         )
         if duplicate is not None:
