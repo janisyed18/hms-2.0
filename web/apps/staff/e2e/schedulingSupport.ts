@@ -200,12 +200,29 @@ export async function chooseBookingLocationAndAsset(page: Page) {
   await chooseOption(page.getByRole("combobox", { name: "Booking customer" }), { label: "Vopak" });
   await expect(location).toHaveText("Choose the location");
   await chooseOption(location, { label: "Port Botany" });
-  const asset = page.getByRole("checkbox").first();
-  const assetLabel = await asset.getAttribute("aria-label");
-  expect(assetLabel).toBeTruthy();
-  selectedBookingAssets.set(page, assetLabel!);
+  const assetLabel = await page.evaluate(async () => {
+    const refresh = await fetch("/api/v1/auth/browser/refresh", { method: "POST" });
+    const { access_token: token } = await refresh.json() as { access_token: string };
+    const headers = { authorization: `Bearer ${token}` };
+    const customers = await (await fetch("/api/v1/customers?search=Vopak&limit=100", { headers })).json() as {
+      items: Array<{ id: string; name: string; locations: Array<{ id: string; name: string }> }>;
+    };
+    const customer = customers.items.find((item) => item.name === "Vopak");
+    const locationRecord = customer?.locations.find((item) => item.name === "Port Botany");
+    if (!locationRecord) throw new Error("The seeded Vopak / Port Botany fixture is unavailable.");
+    const assets = await (await fetch(
+      `/api/v1/assets?customer_id=${encodeURIComponent(customer.id)}&location_id=${encodeURIComponent(locationRecord.id)}&new_work_only=true&sort=asset_number&limit=50`,
+      { headers }
+    )).json() as { items: Array<{ asset_name?: string | null; asset_number: string }> };
+    const asset = assets.items[0];
+    if (!asset) throw new Error("The seeded Port Botany asset fixture is unavailable.");
+    return asset.asset_name ? `${asset.asset_name} — ${asset.asset_number}` : asset.asset_number;
+  });
+  selectedBookingAssets.set(page, assetLabel);
+  const asset = page.getByRole("checkbox", { name: assetLabel, exact: true });
+  await expect(asset).toBeVisible();
   await expect(asset).not.toBeChecked();
-  await page.getByRole("checkbox", { name: assetLabel! }).check();
+  await asset.check();
 }
 
 export async function selectFirstAvailableTime(page: Page, localDate = schedulingDate) {
