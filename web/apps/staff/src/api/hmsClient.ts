@@ -1512,6 +1512,8 @@ function assetPayload(values: AssetFormValues) {
     grave_date: values.graveDate,
     next_inspection_date: values.nextInspectionDate,
     length_m: values.lengthM,
+    ...(values.materialId ? { material_id: values.materialId } : {}),
+    ...(values.nominalBoreId ? { nominal_bore_id: values.nominalBoreId } : {}),
     retest_schedule: values.nextInspectionDate
       ? {
           due_at: values.nextInspectionDate,
@@ -1625,20 +1627,24 @@ function locationPayload(location: LocationFormValues) {
     site_contact_name: location.siteContactName.trim() || null,
     site_contact_mobile: location.siteContactMobile.trim() || null,
     site_contact_email: location.siteContactEmail.trim() || null,
-    notes: location.notes?.trim() || null,
-    contacts: contacts.filter((contact) => contact.name.trim()).map((contact) => ({
-      name: contact.name.trim(),
-      role: contact.role.trim() || null,
-      phone: contact.phone.trim() || null,
-      email: contact.email.trim() || null
-    })),
     ppe_requirements: location.ppeRequirements,
     additional_requirements: location.additionalRequirements,
     scheduling_timezone: location.schedulingTimezone,
     scheduling_open_time: location.schedulingOpenTime,
     scheduling_close_time: location.schedulingCloseTime,
     scheduling_weekdays: location.schedulingWeekdays,
-    scheduling_blackout_dates: location.schedulingBlackoutDates
+    scheduling_blackout_dates: location.schedulingBlackoutDates,
+    ...(location.notes !== undefined || location.contacts !== undefined
+      ? {
+          notes: location.notes?.trim() || null,
+          contacts: contacts.filter((contact) => contact.name.trim()).map((contact) => ({
+            name: contact.name.trim(),
+            role: contact.role.trim() || null,
+            phone: contact.phone.trim() || null,
+            email: contact.email.trim() || null
+          }))
+        }
+      : {})
   };
 }
 

@@ -325,8 +325,8 @@ export function AssetForm({
               {generateAssetNumber && !asset ? <small>Generated when saved</small> : <input aria-label="Asset Number" value={assetNumber} onChange={(event) => { setAssetNumber(event.target.value); clearError("assetNumber"); }} />}
               {errors.assetNumber ? <small className="field-error">{errors.assetNumber}</small> : null}
             </fieldset>
-            <Field label="Asset Name / Description" name="assetName">
-              {(props) => <input {...props} aria-label="Asset Name / Description" value={assetName} onChange={(event) => { setAssetName(event.target.value); }} />}
+            <Field label="Asset Name" name="assetName">
+              {(props) => <input {...props} aria-label="Asset Name" value={assetName} onChange={(event) => { setAssetName(event.target.value); }} />}
             </Field>
             <Field label="Serial Number" name="serialNumber">
               {(props) => <input {...props} aria-label="Serial Number" value={serialNumber} onChange={(event) => { setSerialNumber(event.target.value); clearError("serialNumber"); }} />}

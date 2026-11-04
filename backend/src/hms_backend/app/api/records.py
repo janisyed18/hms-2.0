@@ -48,6 +48,7 @@ from hms_backend.app.api.schemas import (
     CustomerCreate,
     CustomerListResponse,
     CustomerLocationContactRead,
+    CustomerLocationContactWrite,
     CustomerLocationCreate,
     CustomerLocationRead,
     CustomerLocationUpdate,
@@ -798,11 +799,20 @@ async def create_customer(
         )
         _validate_location_scheduling(location)
         session.add(location)
-        if location_payload.contacts:
+        contacts = location_payload.contacts
+        if not contacts and location_payload.site_contact_name:
+            contacts = [
+                CustomerLocationContactWrite(
+                    name=location_payload.site_contact_name,
+                    phone=location_payload.site_contact_mobile,
+                    email=location_payload.site_contact_email,
+                )
+            ]
+        if contacts:
             await _replace_location_contacts(
                 session,
                 location,
-                location_payload.contacts,
+                contacts,
                 actor_id=principal.user_id,
             )
         await record_create(
@@ -944,9 +954,18 @@ async def create_customer_location(
     )
     _validate_location_scheduling(location)
     session.add(location)
-    if payload.contacts:
+    contacts = payload.contacts
+    if not contacts and payload.site_contact_name:
+        contacts = [
+            CustomerLocationContactWrite(
+                name=payload.site_contact_name,
+                phone=payload.site_contact_mobile,
+                email=payload.site_contact_email,
+            )
+        ]
+    if contacts:
         await _replace_location_contacts(
-            session, location, payload.contacts, actor_id=principal.user_id
+            session, location, contacts, actor_id=principal.user_id
         )
     await record_create(
         session,
@@ -955,6 +974,7 @@ async def create_customer_location(
         action="customer_location.created",
     )
     await session.commit()
+    await session.refresh(location, attribute_names=["contacts"])
     return _customer_location_read(location)
 
 
@@ -1019,6 +1039,7 @@ async def update_customer_location(
         before=before,
     )
     await session.commit()
+    await session.refresh(location, attribute_names=["contacts"])
     return _customer_location_read(location)
 
 
@@ -2548,6 +2569,11 @@ async def reassign_inspection_booking_inspector(
     booking = await _get_visible_inspection_booking_or_404(
         session, booking_id, principal
     )
+    booking = await session.scalar(
+        _inspection_booking_statement()
+        .where(InspectionBooking.id == booking.id)
+        .with_for_update(of=InspectionBooking)
+    ) or booking
     appointment = booking.appointment
     if (
         booking.status != InspectionBookingStatus.APPROVED.value
@@ -2750,6 +2776,11 @@ async def cancel_inspection_booking(
     booking = await _get_visible_inspection_booking_or_404(
         session, booking_id, principal
     )
+    booking = await session.scalar(
+        _inspection_booking_statement()
+        .where(InspectionBooking.id == booking.id)
+        .with_for_update(of=InspectionBooking)
+    ) or booking
     if booking.status not in {
         InspectionBookingStatus.PENDING_APPROVAL.value,
         InspectionBookingStatus.APPROVED.value,
@@ -4385,6 +4416,10 @@ async def _replace_location_contacts(
         location.site_contact_name = first.name.strip()
         location.site_contact_mobile = _clean_optional(first.phone)
         location.site_contact_email = _clean_optional(first.email)
+    else:
+        location.site_contact_name = None
+        location.site_contact_mobile = None
+        location.site_contact_email = None
 
 
 def _add_calendar_years(value: date, years: int = 1) -> date:

@@ -187,28 +187,28 @@ export function LocationFields({
           <div className="site-contact-fields" key={contact.id ?? index}>
             <Field label={`Contact ${index + 1} name`} name={`${prefix}contact-${index}-name`}>
               {(props) => <input {...props} aria-label={`Contact ${index + 1} name`} value={contact.name} onChange={(event) => {
-                const contacts = [...value.contacts]; contacts[index] = { ...contact, name: event.target.value }; set("contacts", contacts);
+                const contacts = [...(value.contacts ?? [])]; contacts[index] = { ...contact, name: event.target.value }; set("contacts", contacts);
               }} />}
             </Field>
             <Field label="Role / title" name={`${prefix}contact-${index}-role`}>
               {(props) => <input {...props} aria-label={`Contact ${index + 1} role`} value={contact.role} onChange={(event) => {
-                const contacts = [...value.contacts]; contacts[index] = { ...contact, role: event.target.value }; set("contacts", contacts);
+                const contacts = [...(value.contacts ?? [])]; contacts[index] = { ...contact, role: event.target.value }; set("contacts", contacts);
               }} />}
             </Field>
             <Field label="Phone" name={`${prefix}contact-${index}-phone`}>
               {(props) => <input {...props} aria-label={`Contact ${index + 1} phone`} inputMode="tel" value={contact.phone} onChange={(event) => {
-                const contacts = [...value.contacts]; contacts[index] = { ...contact, phone: event.target.value }; set("contacts", contacts);
+                const contacts = [...(value.contacts ?? [])]; contacts[index] = { ...contact, phone: event.target.value }; set("contacts", contacts);
               }} />}
             </Field>
             <Field label="Email" name={`${prefix}contact-${index}-email`}>
               {(props) => <input {...props} aria-label={`Contact ${index + 1} email`} type="email" value={contact.email} onChange={(event) => {
-                const contacts = [...value.contacts]; contacts[index] = { ...contact, email: event.target.value }; set("contacts", contacts);
+                const contacts = [...(value.contacts ?? [])]; contacts[index] = { ...contact, email: event.target.value }; set("contacts", contacts);
               }} />}
             </Field>
-            <button onClick={() => set("contacts", value.contacts.filter((_, itemIndex) => itemIndex !== index))} type="button">Remove contact</button>
+            <button onClick={() => set("contacts", (value.contacts ?? []).filter((_, itemIndex) => itemIndex !== index))} type="button">Remove contact</button>
           </div>
         ))}
-        <button onClick={() => set("contacts", [...value.contacts, { name: "", role: "", phone: "", email: "" } as LocationContact])} type="button">Add contact</button>
+        <button onClick={() => set("contacts", [...(value.contacts ?? []), { name: "", role: "", phone: "", email: "" } as LocationContact])} type="button">Add contact</button>
       </fieldset>
       <Field label="Location Notes" name={`${prefix}locationNotes`}>
         {(props) => <textarea {...props} aria-label="Location Notes" rows={3} value={value.notes} onChange={(event) => set("notes", event.target.value)} />}

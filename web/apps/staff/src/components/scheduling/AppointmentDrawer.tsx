@@ -354,7 +354,7 @@ export function AppointmentDrawer({
             )}
           </div>
         ) : null}
-        {isConfirmed && canApproveBookings && !hasOpenChange ? (
+        {isConfirmed && canApproveBookings && !hasOpenChange && confirming === "reassign" ? (
           <label className="schedule-drawer__hint">
             Choose an inspector to reassign; the inspection time will not change. Confirm the change before saving.
             {chooser}

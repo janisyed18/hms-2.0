@@ -385,7 +385,7 @@ async def test_asset_profile_uses_customer_location_and_reference_configuration(
     assert body["purchase_order_number"] == "PO-100"
     assert body["installation_date"] == "2026-01-15"
     assert body["grave_date"] == "2031-01-15"
-    assert body["next_retest_due_at"] == "2026-07-15"
+    assert body["next_retest_due_at"] == "2027-01-15"
     assert body["a_end"]["material"]["name"] == "Composite"
     assert body["a_end"]["nominal_bore"]["name"] == "2 inch"
     assert body["b_end"]["coupling"]["name"] == "Camlock"
