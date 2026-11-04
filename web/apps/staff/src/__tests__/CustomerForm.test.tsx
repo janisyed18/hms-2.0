@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CustomerForm } from "../components/CustomerForm";
 import { choose } from "../test/choose";
@@ -30,6 +30,7 @@ const customer: CustomerRecord = {
 };
 
 describe("CustomerForm", () => {
+  afterEach(cleanup);
   it("edits only the customer's own fields; locations and contacts live in Customer Details", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);

@@ -1442,7 +1442,6 @@ async def create_asset(
     duplicate = await session.scalar(
         select(Asset.id).where(
             Asset.asset_number == asset_number,
-            Asset.deleted_at.is_(None),
         )
     )
     if duplicate is not None:
