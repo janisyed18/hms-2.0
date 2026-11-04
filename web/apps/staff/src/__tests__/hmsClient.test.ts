@@ -808,9 +808,10 @@ describe("hmsClient", () => {
         city: "Newcastle",
         state: "NSW",
         country: "Australia",
-        siteContactName: "Alex Nguyen",
-        siteContactMobile: "+61 412 345 678",
-        siteContactEmail: "alex.nguyen@example.test",
+        siteContactName: "",
+        siteContactMobile: "",
+        siteContactEmail: "",
+        contacts: [{ name: "Alex Nguyen", role: "Supervisor", phone: "+61 412 345 678", email: "alex.nguyen@example.test" }],
         ppeRequirements: ["High Vis", "Safety Boots"],
         additionalRequirements: ["2-way radio"],
         schedulingTimezone: "Australia/Sydney",
@@ -845,7 +846,9 @@ describe("hmsClient", () => {
               scheduling_open_time: "07:00",
               scheduling_close_time: "15:30",
               scheduling_weekdays: [0, 1, 2],
-              scheduling_blackout_dates: ["2026-12-25"]
+              scheduling_blackout_dates: ["2026-12-25"],
+              notes: null,
+              contacts: [{ name: "Alex Nguyen", role: "Supervisor", phone: "+61 412 345 678", email: "alex.nguyen@example.test" }]
             }
           ]
         })
@@ -991,13 +994,11 @@ describe("hmsClient", () => {
       graveDate: "2031-01-15",
       nextInspectionDate: "2026-09-15",
       lengthM: "6.100",
-      materialId: "material-api-1",
-      nominalBoreId: "bore-api-1",
       aEnd: {
         fitting: "",
         size: "",
-        nominalBore: null,
-        material: null,
+        nominalBore: { id: "bore-api-1", code: "2IN", name: "2 inch" },
+        material: { id: "material-api-1", code: "COMPOSITE", name: "Composite" },
         coupling: { id: "coupling-api-1", code: "CAMLOCK", name: "Camlock" },
         couplingAddOn: null,
         attachMethod: { id: "attach-api-1", code: "CRIMP", name: "Crimp" }
@@ -1005,8 +1006,8 @@ describe("hmsClient", () => {
       bEnd: {
         fitting: "",
         size: "",
-        nominalBore: null,
-        material: null,
+        nominalBore: { id: "bore-api-2", code: "3IN", name: "3 inch" },
+        material: { id: "material-api-2", code: "RUBBER", name: "Rubber" },
         coupling: { id: "coupling-api-1", code: "CAMLOCK", name: "Camlock" },
         couplingAddOn: null,
         attachMethod: { id: "attach-api-1", code: "CRIMP", name: "Crimp" }
@@ -1029,8 +1030,6 @@ describe("hmsClient", () => {
           grave_date: "2031-01-15",
           next_inspection_date: "2026-09-15",
           length_m: "6.100",
-          material_id: "material-api-1",
-          nominal_bore_id: "bore-api-1",
           retest_schedule: {
             due_at: "2026-09-15",
             status: "UPCOMING"
@@ -1040,14 +1039,18 @@ describe("hmsClient", () => {
             size: null,
             coupling_id: "coupling-api-1",
             coupling_add_on_id: null,
-            attach_method_id: "attach-api-1"
+            attach_method_id: "attach-api-1",
+            nominal_bore_id: "bore-api-1",
+            material_id: "material-api-1"
           },
           b_end: {
             fitting: null,
             size: null,
             coupling_id: "coupling-api-1",
             coupling_add_on_id: null,
-            attach_method_id: "attach-api-1"
+            attach_method_id: "attach-api-1",
+            nominal_bore_id: "bore-api-2",
+            material_id: "material-api-2"
           }
         })
       })
