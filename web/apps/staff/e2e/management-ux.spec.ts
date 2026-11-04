@@ -76,16 +76,18 @@ async function api(page: Page, method: string, path: string, body?: unknown): Pr
   return first.status === 401 ? call(await accessToken(page, token)) : first;
 }
 
-/** The site contact and the timezone are required for every location; no timezone is assumed. */
+/** A location chooses its timezone and uses the normalized repeatable contacts editor. */
 async function fillSiteContact(page: Page, scope: ReturnType<Page["getByRole"]>) {
   const zone = scope.getByLabel("Timezone");
   await expect(zone).toHaveValue("");
   await zone.click();
   await zone.fill("Australia/Sydney");
   await page.getByRole("listbox").getByRole("option", { name: "Australia/Sydney", exact: true }).click();
-  await scope.getByLabel("Site contact name").fill("Site Person");
-  await scope.getByLabel("Site contact mobile").fill("+61 400 000 000");
-  await scope.getByLabel("Site contact email").fill("site.person@example.test");
+  await scope.getByRole("button", { name: "Add contact" }).click();
+  const contact = scope.getByRole("group", { name: "Location contacts" }).last();
+  await contact.getByLabel("Contact 1 name").fill("Site Person");
+  await contact.getByLabel("Contact 1 phone").fill("+61 400 000 000");
+  await contact.getByLabel("Contact 1 email").fill("site.person@example.test");
 }
 
 const location = (name: string) => ({
@@ -134,6 +136,7 @@ test.describe("management UX and data correctness", () => {
     try {
       sql(`
         DELETE FROM products WHERE code LIKE '${PREFIX}%';
+        DELETE FROM customer_location_contacts WHERE location_id IN (SELECT id FROM customer_locations WHERE customer_id IN (SELECT id FROM customers WHERE name LIKE '${PREFIX}%'));
         DELETE FROM customer_contacts WHERE customer_id IN (SELECT id FROM customers WHERE name LIKE '${PREFIX}%');
         DELETE FROM customer_locations WHERE customer_id IN (SELECT id FROM customers WHERE name LIKE '${PREFIX}%');
         DELETE FROM customers WHERE name LIKE '${PREFIX}%';

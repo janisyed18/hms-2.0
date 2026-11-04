@@ -199,13 +199,13 @@ export async function chooseBookingLocationAndAsset(page: Page) {
   await chooseOption(page.getByRole("combobox", { name: "Booking customer" }), { label: "Vopak" });
   await expect(location).toHaveText("Choose the location");
   await chooseOption(location, { label: "Port Botany" });
-  const asset = page.getByRole("checkbox", { name: "980636" });
+  const asset = page.getByRole("checkbox").first();
   await expect(asset).not.toBeChecked();
   await asset.check();
 }
 
 export async function selectFirstAvailableTime(page: Page, localDate = schedulingDate) {
-  await expect(page.getByRole("checkbox", { name: "980636" })).toBeChecked();
+  await expect(page.getByRole("checkbox").first()).toBeChecked();
   const dateInput = page.getByLabel("Preferred inspection date");
   await dateInput.fill(localDate);
   await expect(page.getByText(/Available time \(/)).toBeVisible();

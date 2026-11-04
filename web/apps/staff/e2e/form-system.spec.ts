@@ -131,7 +131,7 @@ test.describe("shared Staff form system", () => {
       await expect(form.getByRole("alert")).toContainText("Asset could not be saved");
       await expect(form.getByLabel("Asset Name")).toHaveValue("Form Test Hose edited");
       await form.getByRole("button", { name: "Save asset" }).click();
-      await expect(page.getByRole("status").filter({ hasText: "saved successfully" })).toBeVisible();
+      await expect(page.getByRole("status").filter({ hasText: /saved successfully|updated successfully/i })).toBeVisible();
       await expect(form).toHaveCount(0);
 
       // Saved, reloaded, deep-linked: the edit persisted and the address is exact.

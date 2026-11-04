@@ -3942,12 +3942,24 @@ async def update_asset(
         )
         if asset.retest_schedule is not None:
             schedule_before = asset.retest_schedule.to_audit_dict()
-            asset.retest_schedule.due_at = asset.next_retest_due_at
+            if asset.installation_date is None:
+                # A schedule due date is historical data and is non-nullable. Suspend
+                # and soft-delete it when its source installation date is cleared so
+                # no active schedule can retain a contradictory current due date.
+                asset.retest_schedule.status = RetestScheduleStatus.SUSPENDED.value
+                asset.retest_schedule.deleted_at = utc_now()
+                schedule_action = "retest_schedule.suspended"
+            else:
+                assert asset.installation_date is not None
+                asset.retest_schedule.due_at = _add_calendar_years(
+                    asset.installation_date
+                )
+                schedule_action = "retest_schedule.updated"
             await record_update(
                 session,
                 asset.retest_schedule,
                 actor_id=principal.user_id,
-                action="retest_schedule.updated",
+                action=schedule_action,
                 before=schedule_before,
             )
     elif "next_retest_due_at" in updates or "next_inspection_date" in updates:

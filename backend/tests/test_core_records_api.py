@@ -2448,6 +2448,63 @@ async def test_update_asset_and_retest_schedule_writes_audit_and_sync(
 
 
 @pytest.mark.asyncio
+async def test_clearing_installation_date_suspends_existing_retest_schedule(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    async with session_factory() as session:
+        schedule = (
+            await session.scalars(
+                select(RetestSchedule).where(
+                    RetestSchedule.asset_id == seeded_session["vopak_asset_id"]
+                )
+            )
+        ).one()
+        original_due_at = schedule.due_at
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/assets/{seeded_session['vopak_asset_id']}",
+            json={"installation_date": None},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["installation_date"] is None
+    assert response.json()["next_retest_due_at"] is None
+
+    async with session_factory() as session:
+        asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        schedule = (
+            await session.scalars(
+                select(RetestSchedule).where(
+                    RetestSchedule.asset_id == seeded_session["vopak_asset_id"]
+                )
+            )
+        ).one()
+        events = (
+            await session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.entity_id == schedule.id)
+                .order_by(AuditEvent.sequence.desc())
+            )
+        ).all()
+
+        assert asset is not None
+        assert asset.installation_date is None
+        assert asset.next_retest_due_at is None
+        assert schedule.due_at == original_due_at
+        assert schedule.status == RetestScheduleStatus.SUSPENDED.value
+        assert schedule.deleted_at is not None
+        assert events[0].action == "retest_schedule.suspended"
+
+
+@pytest.mark.asyncio
 async def test_retest_schedules_endpoint_lists_with_asset_customer_context(
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
