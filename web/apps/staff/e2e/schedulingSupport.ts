@@ -19,6 +19,7 @@ export const permanentPasswords = {
 export const activatedAccounts = new Set<string>();
 export const activePasswords = new Map<string, string>();
 export const authenticatorSecrets = new Map<string, string>();
+const selectedBookingAssets = new WeakMap<Page, string>();
 
 export type SchedulingFixture = {
   blackoutDates?: string[];
@@ -200,12 +201,17 @@ export async function chooseBookingLocationAndAsset(page: Page) {
   await expect(location).toHaveText("Choose the location");
   await chooseOption(location, { label: "Port Botany" });
   const asset = page.getByRole("checkbox").first();
+  const assetLabel = await asset.getAttribute("aria-label");
+  expect(assetLabel).toBeTruthy();
+  selectedBookingAssets.set(page, assetLabel!);
   await expect(asset).not.toBeChecked();
-  await asset.check();
+  await page.getByRole("checkbox", { name: assetLabel! }).check();
 }
 
 export async function selectFirstAvailableTime(page: Page, localDate = schedulingDate) {
-  await expect(page.getByRole("checkbox").first()).toBeChecked();
+  const assetLabel = selectedBookingAssets.get(page);
+  expect(assetLabel).toBeTruthy();
+  await expect(page.getByRole("checkbox", { name: assetLabel! })).toBeChecked();
   const dateInput = page.getByLabel("Preferred inspection date");
   await dateInput.fill(localDate);
   await expect(page.getByText(/Available time \(/)).toBeVisible();
