@@ -132,6 +132,7 @@ export function useAssetsWorkspace() {
     const client = createHmsClient();
     const session = formSession.current;
     const saved = editingAsset ? await client.updateAsset(editingAsset.id, values, editingAsset.etag) : await client.createAsset(values);
+    if (!saved) return;
     setAssets((current) => editingAsset ? current.map((asset) => asset.id === editingAsset.id ? saved : asset) : [saved, ...current]);
     setViewingAsset((current) => current?.id === saved.id ? saved : current);
     // The saved record always lands in the register; the form only closes if it is still the one that saved.

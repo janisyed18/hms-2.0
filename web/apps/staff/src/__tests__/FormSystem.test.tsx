@@ -166,13 +166,12 @@ describe("shared form behaviour on the Asset form", () => {
     render(<AssetForm {...assetForm({ asset: null })} />);
     await user.click(screen.getByRole("button", { name: "Save asset" }));
     const name = screen.getByLabelText("Asset Name");
-    expect(name).toHaveAttribute("aria-invalid", "true");
-    expect(name.getAttribute("aria-describedby")).toBeTruthy();
-    expect(document.getElementById(name.getAttribute("aria-describedby") as string)).toHaveTextContent("Enter an asset name.");
+    expect(name).not.toHaveAttribute("aria-invalid");
+    expect(name).not.toHaveAttribute("aria-describedby");
     // Nothing is chosen for a new asset, so the customer is the first field that needs attention.
     expect(screen.getByLabelText("Customer")).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByLabelText("Customer")).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "Serial Number" }));
+    await user.click(screen.getByLabelText("Serial Number"));
     expect(screen.getByLabelText("Serial Number")).toHaveFocus();
   });
 

@@ -120,11 +120,11 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
           </FormSection>
         )}
         <FormSection title="Global Customer Notes">
-          <Field label="Global Customer Notes" name="notes">
+          <Field label="Notes" name="notes">
             {(props) => (
               <textarea
                 {...props}
-                aria-label="Global Customer Notes"
+                aria-label="Notes"
                 rows={3}
                 value={values.notes}
                 onChange={(event) => setValues((current) => ({ ...current, notes: event.target.value }))}
