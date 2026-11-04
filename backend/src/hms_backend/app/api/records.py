@@ -1022,6 +1022,39 @@ async def update_customer_location(
         await _replace_location_contacts(
             session, location, payload.contacts, actor_id=principal.user_id
         )
+    elif any(
+        field in updates
+        for field in ("site_contact_name", "site_contact_mobile", "site_contact_email")
+    ):
+        active_contact = next(
+            (contact for contact in location.contacts if contact.deleted_at is None),
+            None,
+        )
+        if active_contact is None and location.site_contact_name:
+            await _replace_location_contacts(
+                session,
+                location,
+                [
+                    CustomerLocationContactWrite(
+                        name=location.site_contact_name,
+                        phone=location.site_contact_mobile,
+                        email=location.site_contact_email,
+                    )
+                ],
+                actor_id=principal.user_id,
+            )
+        elif active_contact is not None:
+            contact_before = active_contact.to_audit_dict()
+            active_contact.name = location.site_contact_name or active_contact.name
+            active_contact.phone = location.site_contact_mobile
+            active_contact.email = location.site_contact_email
+            await record_update(
+                session,
+                active_contact,
+                actor_id=principal.user_id,
+                action="customer_location_contact.updated",
+                before=contact_before,
+            )
     if "ppe_requirements" in updates and payload.ppe_requirements is not None:
         location.ppe_requirements = list(payload.ppe_requirements)
     if (
@@ -3963,6 +3996,12 @@ async def update_asset(
             },
         )
     if "retest_schedule" in updates and payload.retest_schedule is not None:
+        if (
+            "installation_date" in updates
+            and asset.installation_date is not None
+            and asset.next_retest_due_at is not None
+        ):
+            payload.retest_schedule.due_at = asset.next_retest_due_at
         await _upsert_retest_schedule(
             session,
             payload.retest_schedule,
@@ -4798,6 +4837,7 @@ async def _get_visible_customer_location_or_404(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Location not found",
         )
+    await session.refresh(location, attribute_names=["contacts"])
     return location
 
 
