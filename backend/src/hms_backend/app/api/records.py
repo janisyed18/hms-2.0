@@ -3940,7 +3940,7 @@ async def update_asset(
             if asset.installation_date is not None
             else None
         )
-        if asset.retest_schedule is not None and asset.next_retest_due_at is not None:
+        if asset.retest_schedule is not None:
             schedule_before = asset.retest_schedule.to_audit_dict()
             asset.retest_schedule.due_at = asset.next_retest_due_at
             await record_update(
