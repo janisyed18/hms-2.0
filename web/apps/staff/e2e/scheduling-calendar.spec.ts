@@ -199,7 +199,7 @@ test.describe("staff scheduling and dispatch calendar", () => {
       await expect(drawer).toBeVisible();
       await expect(drawer).toContainText(INSPECTOR_EMAIL);
       await expect(drawer).toContainText("Australia/Sydney");
-      await expect(drawer).toContainText("980636");
+      await expect(drawer).toContainText(String(s.adminContext.assetNumber));
       await expect(drawer).toContainText("revision 1");
       await s.admin.page.keyboard.press("Escape");
       await expect(drawer).toBeHidden();

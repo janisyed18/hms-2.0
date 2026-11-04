@@ -259,10 +259,10 @@ export async function bookingApiContext(page: Page) {
       headers: { authorization: `Bearer ${accessToken}` }
     });
     if (!response.ok) throw new Error(`Could not load assets (${response.status}).`);
-    const data = await response.json() as { items: Array<{ customer: { id: string }; id: string; location: { id: string } | null }> };
+    const data = await response.json() as { items: Array<{ asset_number: string; customer: { id: string }; id: string; location: { id: string } | null }> };
     const asset = data.items.find((item) => item.location !== null);
     if (!asset?.location) throw new Error("Expected a location-bound asset.");
-    return { accessToken, assetId: asset.id, customerId: asset.customer.id, locationId: asset.location.id };
+    return { accessToken, assetId: asset.id, assetNumber: asset.asset_number, customerId: asset.customer.id, locationId: asset.location.id };
   });
 }
 

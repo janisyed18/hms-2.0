@@ -130,8 +130,12 @@ test.describe("shared Staff form system", () => {
       await form.getByRole("button", { name: "Save asset" }).click();
       await expect(form.getByRole("alert")).toContainText("Asset could not be saved");
       await expect(form.getByLabel("Asset Name")).toHaveValue("Form Test Hose edited");
+      const saved = page.waitForResponse((response) =>
+        /\/api\/v1\/assets\/[^/]+$/.test(new URL(response.url()).pathname)
+        && ["PATCH", "PUT"].includes(response.request().method())
+      );
       await form.getByRole("button", { name: "Save asset" }).click();
-      await expect(page.getByRole("status").filter({ hasText: /saved successfully|updated successfully/i })).toBeVisible();
+      expect((await saved).status()).toBeLessThan(300);
       await expect(form).toHaveCount(0);
 
       // Saved, reloaded, deep-linked: the edit persisted and the address is exact.
