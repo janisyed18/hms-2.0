@@ -3926,6 +3926,11 @@ async def update_asset(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="Asset Number cannot be blank",
             )
+        # The same lock a create takes, for the same reason and at the same point:
+        # the duplicate check below is only trustworthy while no rival create or
+        # rename of this number is still uncommitted. The If-Match check above is
+        # unaffected — it guards this asset's own version, not the number's owner.
+        await _lock_asset_number_counter(session)
         duplicate = await session.scalar(
             select(Asset.id).where(
                 Asset.asset_number == requested_number,

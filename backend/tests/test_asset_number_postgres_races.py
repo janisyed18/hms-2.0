@@ -167,6 +167,26 @@ async def _set_counter(
         await session.commit()
 
 
+async def _make_asset(
+    factory: async_sessionmaker[AsyncSession],
+    place: tuple[str, str, str],
+    asset_number: str,
+) -> tuple[str, int]:
+    """An existing asset to rename, with the version its ETag will carry."""
+    customer_id, location_id, product_id = place
+    async with factory() as session:
+        asset = Asset(
+            customer_id=customer_id,
+            location_id=location_id,
+            product_id=product_id,
+            asset_number=asset_number,
+            lifecycle_status="IN_SERVICE",
+        )
+        session.add(asset)
+        await session.commit()
+        return asset.id, asset.version
+
+
 @pytest.mark.asyncio
 async def test_two_generated_numbers_never_collide(
     database: async_sessionmaker[AsyncSession],
@@ -237,3 +257,95 @@ async def test_the_same_manual_number_twice_is_refused_not_duplicated(
     refused = next(r for r in results if r.status_code == 409)
     assert "already in use" in refused.json()["detail"]
     assert await _numbers(database, place[0]) == ["A-40200"]
+
+
+@pytest.mark.asyncio
+async def test_two_renames_to_the_same_free_number_give_one_409(
+    database: async_sessionmaker[AsyncSession],
+    place: tuple[str, str, str],
+) -> None:
+    """Two assets renamed at once to one unused number: the loser must get a 409.
+
+    The rename reads the table to check the number is free and then writes it. Without
+    the allocator lock both reads see it free, both write, and the unique index turns
+    the loser into a 500 instead of a conflict.
+    """
+    first_id, first_version = await _make_asset(database, place, "R-1")
+    second_id, second_version = await _make_asset(database, place, "R-2")
+
+    async with (
+        client_for(database, _super("someone-a")) as one,
+        client_for(database, _super("someone-b")) as two,
+    ):
+        results = await asyncio.gather(
+            one.patch(
+                f"/api/v1/assets/{first_id}",
+                json={"asset_number": "R-FREE"},
+                headers={"If-Match": f'"{first_version}"'},
+            ),
+            two.patch(
+                f"/api/v1/assets/{second_id}",
+                json={"asset_number": "R-FREE"},
+                headers={"If-Match": f'"{second_version}"'},
+            ),
+        )
+
+    statuses = sorted(response.status_code for response in results)
+    assert statuses == [200, 409], [
+        (response.status_code, response.text) for response in results
+    ]
+    refused = next(r for r in results if r.status_code == 409)
+    assert "already in use" in refused.json()["detail"]
+
+    stored = await _numbers(database, place[0])
+    assert len(stored) == len(set(stored)), f"the same number twice: {stored}"
+    assert stored == sorted(["R-FREE", "R-1" if "R-1" in stored else "R-2"])
+
+    async with database() as session:
+        winner_count = 0
+        both = ((first_id, first_version), (second_id, second_version))
+        for asset_id, started in both:
+            asset = await session.get(Asset, asset_id)
+            assert asset is not None
+            assert asset.deleted_at is None
+            if asset.asset_number == "R-FREE":
+                winner_count += 1
+                # The winner moved on by exactly one version, so its ETag stays usable.
+                assert asset.version == started + 1
+            else:
+                # The loser's transaction rolled back whole: nothing moved.
+                assert asset.version == started
+        assert winner_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_create_and_a_rename_cannot_take_the_same_number(
+    database: async_sessionmaker[AsyncSession],
+    place: tuple[str, str, str],
+) -> None:
+    """The two paths must serialise against each other, not only among themselves."""
+    existing_id, existing_version = await _make_asset(database, place, "R-3")
+
+    async with (
+        client_for(database, _super("someone-a")) as one,
+        client_for(database, _super("someone-b")) as two,
+    ):
+        results = await asyncio.gather(
+            one.post(
+                "/api/v1/assets",
+                json=_body(place, asset_number="R-SHARED", generate_asset_number=False),
+            ),
+            two.patch(
+                f"/api/v1/assets/{existing_id}",
+                json={"asset_number": "R-SHARED"},
+                headers={"If-Match": f'"{existing_version}"'},
+            ),
+        )
+
+    statuses = sorted(response.status_code for response in results)
+    assert statuses in ([200, 409], [201, 409]), [
+        (response.status_code, response.text) for response in results
+    ]
+    stored = await _numbers(database, place[0])
+    assert stored.count("R-SHARED") == 1
+    assert len(stored) == len(set(stored)), f"the same number twice: {stored}"
