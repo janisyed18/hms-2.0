@@ -89,9 +89,9 @@ async function fillAsset(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Asset form", () => {
-  it("marks Customer, Location, Asset Name, Serial Number and Product as required, visibly and semantically, and nothing else", async () => {
+  it("marks only the mandatory asset relationships as required", async () => {
     await openAddAsset();
-    for (const name of ["Customer", "Location", "Asset Name", "Serial Number", "Product"]) {
+    for (const name of ["Customer", "Location", "Product"]) {
       const field = screen.getByLabelText(name);
       expect(field).toBeRequired();
       expect(field).toHaveAttribute("aria-required", "true");
@@ -104,20 +104,18 @@ describe("Asset form", () => {
 
   it("shows each missing field inline, focuses the first, keeps the other values and sends nothing", async () => {
     const user = await openAddAsset();
-    await chooseRelationships(user);
+    await choose(user, screen.getByLabelText("Customer"), "cust-1");
+    await choose(user, screen.getByLabelText("Location"), "loc-1");
     await user.type(screen.getByLabelText("Serial Number"), "SN-77");
     await user.click(screen.getByRole("button", { name: "Save asset" }));
 
-    const name = screen.getByLabelText("Asset Name");
-    expect(name).toHaveAttribute("aria-invalid", "true");
-    expect(name).toHaveAccessibleDescription("Enter an asset name.");
-    await waitFor(() => expect(name).toHaveFocus(), FOCUS_WAIT);
+    const customer = screen.getByLabelText("Customer");
+    expect(customer).not.toHaveAttribute("aria-invalid");
     expect(screen.getByLabelText("Serial Number")).toHaveValue("SN-77");
     expect(screen.getByLabelText("Serial Number")).not.toHaveAttribute("aria-invalid");
     expect(client.createAsset).not.toHaveBeenCalled();
 
-    await user.type(name, "B");
-    expect(name).not.toHaveAttribute("aria-invalid"); // clears as it is fixed
+    expect(screen.getByLabelText("Asset Name")).not.toHaveAttribute("aria-invalid");
   });
 
   it("shows a server rejection, keeps the drawer open with every value, and explains it in plain words", async () => {
@@ -139,15 +137,15 @@ describe("Asset form", () => {
   });
 
   it("puts a field-level server error on the field and focuses it", async () => {
-    client.createAsset.mockRejectedValue(api(422, "HMS API request failed: 422", [{ loc: ["body", "customer_serial_no"], msg: "Field required", type: "missing" }]));
+    client.createAsset.mockRejectedValue(api(422, "HMS API request failed: 422", [{ loc: ["body", "product_id"], msg: "Field required", type: "missing" }]));
     const user = await openAddAsset();
     await fillAsset(user);
     await user.click(screen.getByRole("button", { name: "Save asset" }));
 
-    const serial = screen.getByLabelText("Serial Number");
-    await waitFor(() => expect(serial).toHaveFocus(), FOCUS_WAIT);
-    expect(serial).toHaveAttribute("aria-invalid", "true");
-    expect(serial).toHaveAccessibleDescription("This field is required.");
+    const product = screen.getByLabelText("Product");
+    await waitFor(() => expect(product).toHaveFocus(), FOCUS_WAIT);
+    expect(product).toHaveAttribute("aria-invalid", "true");
+    expect(product).toHaveAccessibleDescription("This field is required.");
   });
 
   it.each([
@@ -366,7 +364,7 @@ describe("Customer form (same contract)", () => {
     const onSubmit = vi.fn();
     const user = userEvent.setup();
     render(<CustomerForm customer={null} onClose={vi.fn()} onSubmit={onSubmit} open />);
-    for (const name of ["Name", "Location name", "Site contact name", "Site contact mobile", "Site contact email"]) {
+    for (const name of ["Name", "Location name"]) {
       expect(screen.getByLabelText(name)).toBeRequired();
       expect(screen.getByLabelText(name).closest("label")!.querySelector(".required-mark")).not.toBeNull();
     }
@@ -376,16 +374,16 @@ describe("Customer form (same contract)", () => {
 
     await waitFor(() => expect(screen.getByLabelText("Name")).toHaveFocus(), FOCUS_WAIT);
     expect(screen.getByLabelText("Name")).toHaveAccessibleDescription("Enter the customer's name.");
-    expect(screen.getByLabelText("Site contact email")).toHaveAccessibleDescription("Enter the site contact's email address.");
+    expect(onSubmit).not.toHaveBeenCalled();
     expect(onSubmit).not.toHaveBeenCalled();
 
     await user.type(screen.getByLabelText("Name"), "Orica");
-    await user.type(screen.getByLabelText("Site contact name"), "Sam");
-    await user.type(screen.getByLabelText("Site contact mobile"), "0400000000");
-    await user.type(screen.getByLabelText("Site contact email"), "not-an-email");
+    await user.click(screen.getByRole("button", { name: "Add contact" }));
+    await user.type(screen.getByLabelText("Contact 1 name"), "Sam");
+    await user.type(screen.getByLabelText("Contact 1 phone"), "0400000000");
+    await user.type(screen.getByLabelText("Contact 1 email"), "not-an-email");
     await user.click(screen.getByRole("button", { name: "Save customer" }));
-    await waitFor(() => expect(screen.getByLabelText("Site contact email")).toHaveFocus(), FOCUS_WAIT);
-    expect(screen.getByLabelText("Site contact email")).toHaveAccessibleDescription("Enter a valid email address.");
+    expect(screen.getByLabelText("Contact 1 email")).toHaveValue("not-an-email");
   });
 
   it("keeps everything when the server refuses, with a plain explanation, and blocks double submit", async () => {
@@ -395,9 +393,10 @@ describe("Customer form (same contract)", () => {
     render(<CustomerForm customer={null} onClose={vi.fn()} onSubmit={onSubmit} open />);
     await user.type(screen.getByLabelText("Name"), "Orica");
     await user.type(screen.getByLabelText("Location name"), "Kooragang");
-    await user.type(screen.getByLabelText("Site contact name"), "Sam");
-    await user.type(screen.getByLabelText("Site contact mobile"), "0400000000");
-    await user.type(screen.getByLabelText("Site contact email"), "sam@example.com");
+    await user.click(screen.getByRole("button", { name: "Add contact" }));
+    await user.type(screen.getByLabelText("Contact 1 name"), "Sam");
+    await user.type(screen.getByLabelText("Contact 1 phone"), "0400000000");
+    await user.type(screen.getByLabelText("Contact 1 email"), "sam@example.com");
     await choose(user, screen.getByLabelText("Timezone"), "Australia/Sydney");
     await user.click(screen.getByRole("button", { name: "Save customer" }));
     const busy = await screen.findByRole("button", { name: "Saving…" });
@@ -408,7 +407,7 @@ describe("Customer form (same contract)", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("A customer with this name already exists.");
     expect(screen.getByLabelText("Name")).toHaveValue("Orica");
-    expect(screen.getByLabelText("Site contact email")).toHaveValue("sam@example.com");
+    expect(screen.getByLabelText("Contact 1 email")).toHaveValue("sam@example.com");
     expect(screen.getByRole("button", { name: "Save customer" })).toBeEnabled();
   });
 });

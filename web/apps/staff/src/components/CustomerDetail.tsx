@@ -208,7 +208,7 @@ export function CustomerDetail({
                   <div><span>Locations</span><strong>{customer.locations.length}</strong></div>
                   <div><span>Contacts</span><strong>{customer.contacts.length}</strong></div>
                 </div>
-                <div><h4>Notes</h4><p>{customer.notes || "No notes recorded."}</p></div>
+                <div><h4>Global Customer Notes</h4><p>{customer.notes || "No global customer notes recorded."}</p></div>
                 {canDelete && onLifecycle ? (
                   <div className="row-actions" role="group" aria-label="Customer lifecycle">
                     {customer.status === "Active" ? (

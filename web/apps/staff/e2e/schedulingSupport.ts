@@ -19,6 +19,7 @@ export const permanentPasswords = {
 export const activatedAccounts = new Set<string>();
 export const activePasswords = new Map<string, string>();
 export const authenticatorSecrets = new Map<string, string>();
+const selectedBookingAssets = new WeakMap<Page, string>();
 
 export type SchedulingFixture = {
   blackoutDates?: string[];
@@ -199,19 +200,70 @@ export async function chooseBookingLocationAndAsset(page: Page) {
   await chooseOption(page.getByRole("combobox", { name: "Booking customer" }), { label: "Vopak" });
   await expect(location).toHaveText("Choose the location");
   await chooseOption(location, { label: "Port Botany" });
-  const asset = page.getByRole("checkbox", { name: "980636" });
+  const assetLabel = await page.evaluate(async () => {
+    const refresh = await fetch("/api/v1/auth/browser/refresh", { method: "POST" });
+    const { access_token: token } = await refresh.json() as { access_token: string };
+    const headers = { authorization: `Bearer ${token}` };
+    const customers = await (await fetch("/api/v1/customers?search=Vopak&limit=100", { headers })).json() as {
+      items: Array<{ id: string; name: string; locations: Array<{ id: string; name: string }> }>;
+    };
+    const customer = customers.items.find((item) => item.name === "Vopak");
+    const locationRecord = customer?.locations.find((item) => item.name === "Port Botany");
+    if (!locationRecord) throw new Error("The seeded Vopak / Port Botany fixture is unavailable.");
+    const assets = await (await fetch(
+      `/api/v1/assets?customer_id=${encodeURIComponent(customer.id)}&location_id=${encodeURIComponent(locationRecord.id)}&new_work_only=true&sort=asset_number&limit=50`,
+      { headers }
+    )).json() as { items: Array<{ asset_name?: string | null; asset_number: string }> };
+    const asset = assets.items[0];
+    if (!asset) throw new Error("The seeded Port Botany asset fixture is unavailable.");
+    return asset.asset_name ? `${asset.asset_name} — ${asset.asset_number}` : asset.asset_number;
+  });
+  selectedBookingAssets.set(page, assetLabel);
+  const asset = page.getByRole("checkbox", { name: assetLabel, exact: true });
+  await expect(asset).toBeVisible();
   await expect(asset).not.toBeChecked();
   await asset.check();
 }
 
+/** Every asset checkbox the booking form offers; the fieldset holds no other checkbox. */
+function bookingAssetCheckboxes(page: Page) {
+  return page.locator("form.inspection-booking-form fieldset.booking-asset-list input[type=checkbox]");
+}
+
+/** The labels of the assets currently ticked, so a selection can be compared before and after. */
+async function checkedBookingAssets(page: Page): Promise<string[]> {
+  return bookingAssetCheckboxes(page).evaluateAll((inputs) =>
+    inputs
+      .filter((input) => (input as HTMLInputElement).checked)
+      .map((input) => input.closest("label")?.textContent?.trim() ?? "")
+      .sort()
+  );
+}
+
 export async function selectFirstAvailableTime(page: Page, localDate = schedulingDate) {
-  await expect(page.getByRole("checkbox", { name: "980636" })).toBeChecked();
+  const form = page.locator("form.inspection-booking-form");
+  // Two ways in, and they carry their assets differently. A new booking ticked one asset
+  // itself, so hold the form to that identity. A reschedule opens on the booking's own
+  // assets, already ticked and locked, and never recorded one here.
+  const rescheduling = (await form.getByRole("button", { name: "Request reschedule" }).count()) > 0;
+  if (rescheduling) {
+    await expect(bookingAssetCheckboxes(page).first()).toBeDisabled();
+  } else {
+    const assetLabel = selectedBookingAssets.get(page);
+    expect(assetLabel, "a new booking must choose its asset before its time").toBeTruthy();
+    await expect(form.getByRole("checkbox", { name: assetLabel!, exact: true })).toBeChecked();
+  }
+  const selectedBefore = await checkedBookingAssets(page);
+  expect(selectedBefore.length).toBeGreaterThan(0);
+
   const dateInput = page.getByLabel("Preferred inspection date");
   await dateInput.fill(localDate);
   await expect(page.getByText(/Available time \(/)).toBeVisible();
   const timeSelect = page.getByLabel("Available inspection time");
   await expect(timeSelect).toBeEnabled();
   await chooseOption(timeSelect, { first: true });
+  // Picking a date and a time says nothing about which assets the visit covers.
+  expect(await checkedBookingAssets(page)).toEqual(selectedBefore);
 }
 
 export async function submitBookingForm(
@@ -253,10 +305,10 @@ export async function bookingApiContext(page: Page) {
       headers: { authorization: `Bearer ${accessToken}` }
     });
     if (!response.ok) throw new Error(`Could not load assets (${response.status}).`);
-    const data = await response.json() as { items: Array<{ customer: { id: string }; id: string; location: { id: string } | null }> };
+    const data = await response.json() as { items: Array<{ asset_number: string; customer: { id: string }; id: string; location: { id: string } | null }> };
     const asset = data.items.find((item) => item.location !== null);
     if (!asset?.location) throw new Error("Expected a location-bound asset.");
-    return { accessToken, assetId: asset.id, customerId: asset.customer.id, locationId: asset.location.id };
+    return { accessToken, assetId: asset.id, assetNumber: asset.asset_number, customerId: asset.customer.id, locationId: asset.location.id };
   });
 }
 

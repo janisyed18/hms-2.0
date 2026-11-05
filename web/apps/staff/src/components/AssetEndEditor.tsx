@@ -3,6 +3,8 @@ import type { AssetEndValues, RecordSummary } from "../domain/types";
 interface AssetEndEditorProps {
   label: "A" | "B";
   attachMethods: RecordSummary[];
+  materials: RecordSummary[];
+  nominalBores: RecordSummary[];
   couplingAddOns: RecordSummary[];
   couplings: RecordSummary[];
   values: AssetEndValues;
@@ -19,6 +21,8 @@ function updateSelection(
 export function AssetEndEditor({
   label,
   attachMethods,
+  materials,
+  nominalBores,
   couplingAddOns,
   couplings,
   values,
@@ -26,6 +30,20 @@ export function AssetEndEditor({
 }: AssetEndEditorProps) {
   return (
     <>
+      <label>
+        <span>Material ({label})</span>
+        <select aria-label={`Material (${label})`} value={values.material?.id ?? ""} onChange={(event) => onChange({ ...values, material: updateSelection(materials, event.target.value) })}>
+          <option value="">Not specified</option>
+          {materials.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+        </select>
+      </label>
+      <label>
+        <span>Nominal Bore ({label})</span>
+        <select aria-label={`Nominal Bore (${label})`} value={values.nominalBore?.id ?? ""} onChange={(event) => onChange({ ...values, nominalBore: updateSelection(nominalBores, event.target.value) })}>
+          <option value="">Not specified</option>
+          {nominalBores.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+        </select>
+      </label>
       <label>
         <span>Coupling ({label})</span>
         <select

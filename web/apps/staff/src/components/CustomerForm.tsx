@@ -119,7 +119,7 @@ export function CustomerForm({ customer, open, onClose, onSubmit }: CustomerForm
             </div>
           </FormSection>
         )}
-        <FormSection title="Customer notes">
+        <FormSection title="Global Customer Notes">
           <Field label="Notes" name="notes">
             {(props) => (
               <textarea

@@ -31,13 +31,12 @@ interface AssetFormProps {
 }
 
 /** Form order of the required fields, for focusing the first one that needs attention. */
-const REQUIRED_ORDER = ["customerId", "locationId", "assetName", "serialNumber", "productId"];
+const REQUIRED_ORDER = ["customerId", "locationId", "assetNumber", "productId"];
 
 const FIELD_LABELS: Record<string, string> = {
   customerId: "Customer",
   locationId: "Location",
-  assetName: "Asset Name",
-  serialNumber: "Serial Number",
+  assetNumber: "Asset Number",
   productId: "Product"
 };
 
@@ -69,6 +68,8 @@ export function AssetForm({
   onSubmit
 }: AssetFormProps) {
   const [assetName, setAssetName] = useState("");
+  const [assetNumber, setAssetNumber] = useState("");
+  const [generateAssetNumber, setGenerateAssetNumber] = useState(true);
   const [serialNumber, setSerialNumber] = useState("");
   const [notes, setNotes] = useState("");
   const [purchaseOrderNumber, setPurchaseOrderNumber] = useState("");
@@ -90,7 +91,7 @@ export function AssetForm({
   const submitLock = useRef(false);
   const focusAfterRender = useFocusAfterRender();
   const { dirty, markClean, touch } = useDirtyTracker(JSON.stringify([
-    customerId, locationId, assetName, serialNumber, notes, purchaseOrderNumber, installationDate, graveDate,
+    customerId, locationId, assetName, assetNumber, generateAssetNumber, serialNumber, notes, purchaseOrderNumber, installationDate, graveDate,
     nextInspectionDate, lengthM, productId, materialId, nominalBoreId, aEnd, bEnd
   ]));
   useEffect(() => { dirtyRef.current = dirty; });
@@ -101,6 +102,7 @@ export function AssetForm({
   const sourceKey = open ? `${asset?.id ?? "new"}:${isCopy ? "copy" : "edit"}` : null;
   const sourceSignature = JSON.stringify(asset ?? null);
   const dirtyRef = useRef(false);
+  const installationTouched = useRef(false);
   const seededKey = useRef<string | null>(null);
   const session = useRef(0);
 
@@ -117,6 +119,8 @@ export function AssetForm({
     setSubmitError(null);
     clearAll();
     setAssetName(asset?.assetName ?? asset?.assetNumber ?? "");
+    setAssetNumber(isCopy ? "" : asset?.assetNumber ?? "");
+    setGenerateAssetNumber(isCopy || !asset);
     setSerialNumber(asset?.customerSerialNo ?? "");
     setNotes(asset?.notes ?? asset?.description ?? "");
     setPurchaseOrderNumber(asset?.purchaseOrderNumber ?? "");
@@ -131,9 +135,24 @@ export function AssetForm({
     setNominalBoreId(asset?.aEnd.nominalBore?.id ?? asset?.bEnd.nominalBore?.id ?? "");
     setAEnd(asset?.aEnd ?? blankEnd);
     setBEnd(asset?.bEnd ?? blankEnd);
+    installationTouched.current = false;
     markClean();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceKey, sourceSignature]);
+
+  useEffect(() => {
+    // An existing asset keeps the due date it has, which may have been moved since it was installed.
+    // It is derived again only once the person edits the installation date.
+    if (asset && !installationTouched.current) return;
+    if (!installationDate) {
+      setNextInspectionDate("");
+      return;
+    }
+    const [year, month, day] = installationDate.split("-").map(Number);
+    const nextYear = year + 1;
+    const nextDay = month === 2 && day === 29 ? 28 : day;
+    setNextInspectionDate(`${nextYear.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${nextDay.toString().padStart(2, "0")}`);
+  }, [asset, installationDate]);
 
   // Customers and products are searched on the server as the person types, so neither list is cut off
   // at a first page. Nothing is chosen for them: a relationship only exists once somebody picks it.
@@ -179,8 +198,7 @@ export function AssetForm({
     const found: FieldErrors = {};
     if (!customerId) found.customerId = "Select a customer.";
     if (!locationId) found.locationId = "Select a location.";
-    if (isBlank(assetName)) found.assetName = "Enter an asset name.";
-    if (isBlank(serialNumber)) found.serialNumber = "Enter a serial number.";
+    if (!generateAssetNumber && isBlank(assetNumber)) found.assetNumber = "Enter an asset number.";
     if (!productId) found.productId = "Select a product.";
     return found;
   }
@@ -203,6 +221,8 @@ export function AssetForm({
         customerId,
         locationId: locationId || null,
         productId,
+        assetNumber: assetNumber.trim(),
+        generateAssetNumber,
         assetName: assetName.trim(),
         serialNumber: serialNumber.trim(),
         notes: notes.trim(),
@@ -211,8 +231,6 @@ export function AssetForm({
         graveDate: graveDate || null,
         nextInspectionDate: nextInspectionDate || null,
         lengthM: lengthM || null,
-        materialId: materialId || null,
-        nominalBoreId: nominalBoreId || null,
         aEnd,
         bEnd
       });
@@ -298,10 +316,19 @@ export function AssetForm({
         </FormSection>
         <FormSection title="Identity">
           <FormGrid>
-            <Field error={errors.assetName} label="Asset Name" name="assetName" required>
-              {(props) => <input {...props} aria-label="Asset Name" value={assetName} onChange={(event) => { setAssetName(event.target.value); clearError("assetName"); }} />}
+            <fieldset className="asset-number-mode">
+              <legend>Asset Number</legend>
+              {asset ? null : <>
+                <label><input checked={generateAssetNumber} name="asset-number-mode" type="radio" onChange={() => setGenerateAssetNumber(true)} /> Generate automatically</label>
+                <label><input checked={!generateAssetNumber} name="asset-number-mode" type="radio" onChange={() => setGenerateAssetNumber(false)} /> Enter manually</label>
+              </>}
+              {generateAssetNumber && !asset ? <small>Generated when saved</small> : <input aria-label="Asset Number" value={assetNumber} onChange={(event) => { setAssetNumber(event.target.value); clearError("assetNumber"); }} />}
+              {errors.assetNumber ? <small className="field-error">{errors.assetNumber}</small> : null}
+            </fieldset>
+            <Field label="Asset Name" name="assetName">
+              {(props) => <input {...props} aria-label="Asset Name" value={assetName} onChange={(event) => { setAssetName(event.target.value); }} />}
             </Field>
-            <Field error={errors.serialNumber} label="Serial Number" name="serialNumber" required>
+            <Field label="Serial Number" name="serialNumber">
               {(props) => <input {...props} aria-label="Serial Number" value={serialNumber} onChange={(event) => { setSerialNumber(event.target.value); clearError("serialNumber"); }} />}
             </Field>
             <Field label="Purchase Order Number" name="purchaseOrderNumber">
@@ -315,13 +342,13 @@ export function AssetForm({
         <FormSection title="Dates">
           <FormGrid>
             <Field label="Installation Date" name="installationDate">
-              {(props) => <input {...props} aria-label="Installation Date" type="date" value={installationDate} onChange={(event) => setInstallationDate(event.target.value)} />}
+              {(props) => <input {...props} aria-label="Installation Date" type="date" value={installationDate} onChange={(event) => { installationTouched.current = true; setInstallationDate(event.target.value); }} />}
             </Field>
             <Field label="Grave Date" name="graveDate">
               {(props) => <input {...props} aria-label="Grave Date" type="date" value={graveDate} onChange={(event) => setGraveDate(event.target.value)} />}
             </Field>
             <Field label="Next Inspection Date" name="nextInspectionDate">
-              {(props) => <input {...props} aria-label="Next Inspection Date" type="date" value={nextInspectionDate} onChange={(event) => setNextInspectionDate(event.target.value)} />}
+              {(props) => <input {...props} aria-label="Next Inspection Date" readOnly type="date" value={nextInspectionDate} />}
             </Field>
           </FormGrid>
         </FormSection>
@@ -346,30 +373,6 @@ export function AssetForm({
             <Field label="Length (m)" name="lengthM">
               {(props) => <input {...props} aria-label="Length (m)" min="0" step="0.001" type="number" value={lengthM} onChange={(event) => setLengthM(event.target.value)} />}
             </Field>
-            <Field label="Material" name="materialId">
-              {(props) => (
-                <Select
-                  {...props}
-                  aria-label="Material"
-                  onChange={(next) => { setMaterialId(next); touch(); }}
-                  options={[{ value: "", label: "Not specified" }, ...configurationOptions.materials.map((option) => ({ value: option.id, label: option.name }))]}
-                  placeholder="Select material"
-                  value={materialId}
-                />
-              )}
-            </Field>
-            <Field label="Nominal Bore" name="nominalBoreId">
-              {(props) => (
-                <Select
-                  {...props}
-                  aria-label="Nominal Bore"
-                  onChange={(next) => { setNominalBoreId(next); touch(); }}
-                  options={[{ value: "", label: "Not specified" }, ...configurationOptions.nominalBores.map((option) => ({ value: option.id, label: option.name }))]}
-                  placeholder="Select nominal bore"
-                  value={nominalBoreId}
-                />
-              )}
-            </Field>
           </FormGrid>
         </FormSection>
         <FormSection title="Ends">
@@ -378,6 +381,8 @@ export function AssetForm({
               attachMethods={configurationOptions.attachMethods}
               couplingAddOns={configurationOptions.couplingAddOns}
               couplings={configurationOptions.couplings}
+              materials={configurationOptions.materials}
+              nominalBores={configurationOptions.nominalBores}
               label="A"
               values={aEnd}
               onChange={setAEnd}
@@ -386,6 +391,8 @@ export function AssetForm({
               attachMethods={configurationOptions.attachMethods}
               couplingAddOns={configurationOptions.couplingAddOns}
               couplings={configurationOptions.couplings}
+              materials={configurationOptions.materials}
+              nominalBores={configurationOptions.nominalBores}
               label="B"
               values={bEnd}
               onChange={setBEnd}

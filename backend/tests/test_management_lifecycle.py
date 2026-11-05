@@ -17,14 +17,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
+from hms_backend.app.core.audit import verify_audit_chain
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base, utc_now
+from hms_backend.app.models.foundation import AuditEvent, SyncChange
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
 from hms_backend.app.modules.customers.models import (
     Customer,
     CustomerContact,
     CustomerLocation,
+    CustomerLocationContact,
 )
 from hms_backend.app.modules.identity.models import (
     BrowserRefreshSession,
@@ -172,6 +175,74 @@ async def test_only_super_admin_deletes_an_eligible_location(
     assert forbidden.status_code == 403
     assert deleted.status_code == 204
     assert [item["id"] for item in customer.json()["locations"]] == [first]
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_location_takes_its_own_contacts_with_it(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A site contact belongs to its location, so it is not work that blocks the delete.
+
+    It is tombstoned alongside, and both tombstones are auditable and syncable.
+    """
+    customer_id, (first, second) = await _customer_with_locations(
+        session_factory, "Alpha", "Beta"
+    )
+    async with session_factory() as session:
+        session.add_all(
+            [
+                CustomerLocationContact(
+                    location_id=second, name="Site Person", phone="+61 400 000 000"
+                ),
+                CustomerLocationContact(
+                    location_id=second, name="Night Shift", phone="+61 400 000 001"
+                ),
+            ]
+        )
+        await session.commit()
+
+    async with client_for(session_factory, SUPER) as client:
+        deleted = await client.delete(
+            f"/api/v1/customers/{customer_id}/locations/{second}"
+        )
+        customer = await client.get(f"/api/v1/customers/{customer_id}")
+
+    assert deleted.status_code == 204
+    assert [item["id"] for item in customer.json()["locations"]] == [first]
+
+    async with session_factory() as session:
+        location = await session.get(CustomerLocation, second)
+        assert location is not None
+        assert location.deleted_at is not None
+        contacts = (
+            await session.scalars(
+                select(CustomerLocationContact).where(
+                    CustomerLocationContact.location_id == second
+                )
+            )
+        ).all()
+        # Nothing is hard-deleted: both contacts stay as tombstones.
+        assert len(contacts) == 2
+        assert all(contact.deleted_at is not None for contact in contacts)
+        assert all(contact.version == 2 for contact in contacts)
+
+        audited = {
+            (event.entity, event.entity_id)
+            for event in (await session.scalars(select(AuditEvent))).all()
+            if event.action
+            in {"customer_location.deleted", "customer_location_contact.deleted"}
+        }
+        synced = {
+            (change.entity, change.entity_id)
+            for change in (await session.scalars(select(SyncChange))).all()
+            if change.op == "delete"
+        }
+        expected = {("CustomerLocation", second)} | {
+            ("CustomerLocationContact", contact.id) for contact in contacts
+        }
+        assert expected <= audited
+        assert expected <= synced
+        assert await verify_audit_chain(session)
 
 
 @pytest.mark.asyncio

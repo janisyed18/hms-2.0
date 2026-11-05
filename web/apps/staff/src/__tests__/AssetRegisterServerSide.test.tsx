@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +10,9 @@ const client = vi.hoisted(() => ({
   listCustomers: vi.fn(),
   listProducts: vi.fn(),
   getAsset: vi.fn(),
+  deleteAsset: vi.fn(),
+  updateAsset: vi.fn(),
+  getCustomer: vi.fn(),
   getAssetConfigurationOptions: vi.fn()
 }));
 
@@ -52,6 +55,10 @@ beforeEach(() => {
     return { total: matching.length, etag: null, items: matching.slice(0, 25) };
   });
   client.listProducts.mockResolvedValue({ total: 0, etag: null, items: [] });
+  client.getCustomer.mockImplementation(async (id: string) => ({
+    ...(customers.find((item) => item.id === id) ?? customers[0]),
+    locations: [{ id: "loc-1", name: "Yard", schedulingTimezone: null }]
+  }));
 });
 
 describe("Asset register is filtered and paged by the server", () => {
@@ -66,6 +73,78 @@ describe("Asset register is filtered and paged by the server", () => {
     await user.click(screen.getByRole("button", { name: "Load more (50 of 130)" }));
     await waitFor(() => expect(client.listAssets).toHaveBeenCalledWith(expect.objectContaining({ offset: 50, limit: 50 })));
     await waitFor(() => expect(screen.getByText("100 of 130 assets loaded")).toBeVisible());
+  });
+
+  it("keeps a deleted asset out of the register when an older list answer arrives after it", async () => {
+    // A list answer is prepared before the delete and arrives after it, so it still
+    // carries the deleted row. Writing it would put the row back on screen.
+    const user = userEvent.setup();
+    let releaseStale: (() => void) | undefined;
+    const stale = new Promise<void>((resolve) => { releaseStale = resolve; });
+    let calls = 0;
+    const page = (items: AssetRecord[]) => ({ total: items.length, etag: null, items });
+    client.listAssets.mockImplementation(async (options: Options = {}) => {
+      if (options.limit === 1) return page([]); // the totals above the table
+      calls += 1;
+      if (calls === 1) return page(assets.slice(0, 2));
+      await stale; // the searched-for answer, held until the delete has landed
+      return page(assets.slice(0, 2));
+    });
+    client.deleteAsset.mockResolvedValue(undefined);
+
+    render(<AssetsWorkspace canDelete canWrite onAssetRouteChange={vi.fn()} routeAssetId={null} />);
+    expect(await screen.findByText("HMS-001")).toBeInTheDocument();
+
+    // Searching asks the server again; that answer is now in flight.
+    await user.type(screen.getByLabelText("Search assets"), "HMS-00");
+    await waitFor(() => expect(calls).toBeGreaterThan(1));
+
+    await user.click(screen.getAllByRole("button", { name: "Delete" })[0]);
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Delete asset" }));
+    await waitFor(() => expect(client.deleteAsset).toHaveBeenCalledWith("asset-1", "a"));
+    await waitFor(() => expect(screen.queryByText("HMS-001")).toBeNull());
+
+    releaseStale?.();
+    // The held answer lands now; the deleted row must not come back with it.
+    await waitFor(() => expect(screen.getByText("HMS-002")).toBeVisible());
+    expect(screen.queryByText("HMS-001")).toBeNull();
+  });
+
+  it("keeps a saved edit when an older list answer arrives after it", async () => {
+    // The same hazard on the save path: the answer in flight still holds the old name.
+    const user = userEvent.setup();
+    let releaseStale: (() => void) | undefined;
+    const stale = new Promise<void>((resolve) => { releaseStale = resolve; });
+    let calls = 0;
+    const located = { ...asset(1), location: { id: "loc-1", name: "Yard", schedulingTimezone: null } } as unknown as AssetRecord;
+    const page = (items: AssetRecord[]) => ({ total: items.length, etag: null, items });
+    client.listAssets.mockImplementation(async (options: Options = {}) => {
+      if (options.limit === 1) return page([]);
+      calls += 1;
+      if (calls === 1) return page([located]);
+      await stale;
+      return page([located]); // the name as it was before the edit
+    });
+    client.updateAsset.mockResolvedValue({ ...located, assetName: "Renamed hose", etag: "b" });
+
+    render(<AssetsWorkspace canWrite onAssetRouteChange={vi.fn()} routeAssetId={null} />);
+    expect(await screen.findByText("HMS-001")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Search assets"), "HMS");
+    await waitFor(() => expect(calls).toBeGreaterThan(1));
+
+    await user.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    const name = await screen.findByLabelText("Asset Name");
+    await user.clear(name);
+    await user.type(name, "Renamed hose");
+    await user.click(screen.getByRole("button", { name: "Save asset" }));
+    await waitFor(() => expect(client.updateAsset).toHaveBeenCalled());
+    expect(await screen.findByText("Renamed hose")).toBeInTheDocument();
+
+    releaseStale?.();
+    // The held answer lands now; it must not undo the saved name.
+    await waitFor(() => expect(screen.getByText("Renamed hose")).toBeInTheDocument());
+    expect(screen.queryByText("HMS-001")).toBeNull();
   });
 
   it("finds an asset past the first page by searching the server", async () => {

@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CustomerForm } from "../components/CustomerForm";
 import { choose } from "../test/choose";
@@ -30,6 +30,7 @@ const customer: CustomerRecord = {
 };
 
 describe("CustomerForm", () => {
+  afterEach(cleanup);
   it("edits only the customer's own fields; locations and contacts live in Customer Details", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);
@@ -69,9 +70,10 @@ describe("CustomerForm", () => {
     await user.type(screen.getByRole("textbox", { name: "Name" }), "Summit Marine Group");
     await user.type(screen.getByRole("textbox", { name: "Notes" }), "Coordinate access with the terminal team.");
     await user.type(screen.getByRole("textbox", { name: "Location name" }), "Newcastle operations yard");
-    await user.type(screen.getByRole("textbox", { name: "Site contact name" }), "Alex Nguyen");
-    await user.type(screen.getByRole("textbox", { name: "Site contact mobile" }), "+61 412 345 678");
-    await user.type(screen.getByRole("textbox", { name: "Site contact email" }), "alex.nguyen@example.test");
+    await user.click(screen.getByRole("button", { name: "Add contact" }));
+    await user.type(screen.getByRole("textbox", { name: "Contact 1 name" }), "Alex Nguyen");
+    await user.type(screen.getByRole("textbox", { name: "Contact 1 phone" }), "+61 412 345 678");
+    await user.type(screen.getByRole("textbox", { name: "Contact 1 email" }), "alex.nguyen@example.test");
     await user.click(screen.getByRole("checkbox", { name: "High Vis" }));
     await choose(user, screen.getByRole("combobox", { name: "Timezone" }), "Australia/Sydney");
     await user.click(screen.getByRole("button", { name: "Save customer" }));

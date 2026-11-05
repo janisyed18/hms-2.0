@@ -67,6 +67,7 @@ class CustomerLocation(SyncableMixin, Base):
     site_contact_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     site_contact_mobile: Mapped[str | None] = mapped_column(String(80), nullable=True)
     site_contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     ppe_requirements: Mapped[list[str]] = mapped_column(
         JSON,
         nullable=False,
@@ -100,6 +101,25 @@ class CustomerLocation(SyncableMixin, Base):
     assets: Mapped[list[Asset]] = relationship(
         back_populates="location",
         lazy="selectin",
+    )
+    contacts: Mapped[list[CustomerLocationContact]] = relationship(
+        back_populates="location", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class CustomerLocationContact(SyncableMixin, Base):
+    __tablename__ = "customer_location_contacts"
+
+    location_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("customer_locations.id"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    role: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+
+    location: Mapped[CustomerLocation] = relationship(
+        back_populates="contacts", lazy="selectin"
     )
 
 

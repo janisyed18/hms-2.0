@@ -808,9 +808,10 @@ describe("hmsClient", () => {
         city: "Newcastle",
         state: "NSW",
         country: "Australia",
-        siteContactName: "Alex Nguyen",
-        siteContactMobile: "+61 412 345 678",
-        siteContactEmail: "alex.nguyen@example.test",
+        siteContactName: "",
+        siteContactMobile: "",
+        siteContactEmail: "",
+        contacts: [{ name: "Alex Nguyen", role: "Supervisor", phone: "+61 412 345 678", email: "alex.nguyen@example.test" }],
         ppeRequirements: ["High Vis", "Safety Boots"],
         additionalRequirements: ["2-way radio"],
         schedulingTimezone: "Australia/Sydney",
@@ -845,7 +846,9 @@ describe("hmsClient", () => {
               scheduling_open_time: "07:00",
               scheduling_close_time: "15:30",
               scheduling_weekdays: [0, 1, 2],
-              scheduling_blackout_dates: ["2026-12-25"]
+              scheduling_blackout_dates: ["2026-12-25"],
+              notes: null,
+              contacts: [{ name: "Alex Nguyen", role: "Supervisor", phone: "+61 412 345 678", email: "alex.nguyen@example.test" }]
             }
           ]
         })
@@ -991,13 +994,11 @@ describe("hmsClient", () => {
       graveDate: "2031-01-15",
       nextInspectionDate: "2026-09-15",
       lengthM: "6.100",
-      materialId: "material-api-1",
-      nominalBoreId: "bore-api-1",
       aEnd: {
         fitting: "",
         size: "",
-        nominalBore: null,
-        material: null,
+        nominalBore: { id: "bore-api-1", code: "2IN", name: "2 inch" },
+        material: { id: "material-api-1", code: "COMPOSITE", name: "Composite" },
         coupling: { id: "coupling-api-1", code: "CAMLOCK", name: "Camlock" },
         couplingAddOn: null,
         attachMethod: { id: "attach-api-1", code: "CRIMP", name: "Crimp" }
@@ -1005,8 +1006,8 @@ describe("hmsClient", () => {
       bEnd: {
         fitting: "",
         size: "",
-        nominalBore: null,
-        material: null,
+        nominalBore: { id: "bore-api-2", code: "3IN", name: "3 inch" },
+        material: { id: "material-api-2", code: "RUBBER", name: "Rubber" },
         coupling: { id: "coupling-api-1", code: "CAMLOCK", name: "Camlock" },
         couplingAddOn: null,
         attachMethod: { id: "attach-api-1", code: "CRIMP", name: "Crimp" }
@@ -1029,8 +1030,6 @@ describe("hmsClient", () => {
           grave_date: "2031-01-15",
           next_inspection_date: "2026-09-15",
           length_m: "6.100",
-          material_id: "material-api-1",
-          nominal_bore_id: "bore-api-1",
           retest_schedule: {
             due_at: "2026-09-15",
             status: "UPCOMING"
@@ -1040,14 +1039,18 @@ describe("hmsClient", () => {
             size: null,
             coupling_id: "coupling-api-1",
             coupling_add_on_id: null,
-            attach_method_id: "attach-api-1"
+            attach_method_id: "attach-api-1",
+            nominal_bore_id: "bore-api-1",
+            material_id: "material-api-1"
           },
           b_end: {
             fitting: null,
             size: null,
             coupling_id: "coupling-api-1",
             coupling_add_on_id: null,
-            attach_method_id: "attach-api-1"
+            attach_method_id: "attach-api-1",
+            nominal_bore_id: "bore-api-2",
+            material_id: "material-api-2"
           }
         })
       })
@@ -1061,6 +1064,71 @@ describe("hmsClient", () => {
     expect(created.description).toBe("Install after pressure test approval.");
     expect(created.aEnd.coupling?.name).toBe("Camlock");
     expect(created.bEnd.attachMethod?.name).toBe("Crimp");
+  });
+
+  it("keeps the asset number on an update but never sends the create-only numbering flag", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(apiAsset));
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const blankEnd = { fitting: "", size: "", nominalBore: null, material: null, coupling: null, couplingAddOn: null, attachMethod: null };
+    const edited = {
+      customerId: "cust-api-1",
+      locationId: "loc-1",
+      productId: "product-api-1",
+      assetNumber: "E2E-FORM-1",
+      generateAssetNumber: false,
+      assetName: "Form Test Hose edited",
+      serialNumber: "SN-FORM-1",
+      notes: "",
+      purchaseOrderNumber: "",
+      installationDate: null,
+      graveDate: null,
+      nextInspectionDate: null,
+      lengthM: null,
+      aEnd: blankEnd,
+      bEnd: blankEnd
+    };
+
+    await client.updateAsset("asset-api-1", edited, '"1"');
+    const updateBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(updateBody.asset_number).toBe("E2E-FORM-1");
+    // AssetUpdate forbids unknown fields, so sending this would make every edit a 422.
+    expect(updateBody).not.toHaveProperty("generate_asset_number");
+
+    // Creating still declares the choice, because the API needs it there.
+    await client.createAsset(edited);
+    const createBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(createBody.generate_asset_number).toBe(false);
+    expect(createBody.asset_number).toBe("E2E-FORM-1");
+  });
+
+  it("sends only the due date for an existing schedule, and a starting status only for a new one", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(apiAsset));
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const blankEnd = { fitting: "", size: "", nominalBore: null, material: null, coupling: null, couplingAddOn: null, attachMethod: null };
+    const values = {
+      customerId: "cust-api-1",
+      locationId: "loc-1",
+      productId: "product-api-1",
+      assetNumber: "E2E-FORM-1",
+      generateAssetNumber: false,
+      assetName: "Renamed",
+      serialNumber: "",
+      notes: "",
+      purchaseOrderNumber: "",
+      installationDate: "2026-01-15",
+      graveDate: null,
+      nextInspectionDate: "2027-01-15",
+      lengthM: null,
+      aEnd: blankEnd,
+      bEnd: blankEnd
+    };
+
+    await client.updateAsset("asset-api-1", values, '"1"');
+    await client.createAsset(values);
+
+    // A save must not reset a schedule that is DUE, or its reminder settings, to UPCOMING and the defaults.
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).retest_schedule).toEqual({ due_at: "2027-01-15" });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).retest_schedule).toEqual({ due_at: "2027-01-15", status: "UPCOMING" });
   });
 
   it("maps inspection list responses and workflow mutations", async () => {

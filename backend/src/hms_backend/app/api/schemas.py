@@ -123,6 +123,8 @@ class CustomerLocationRead(BaseModel):
     site_contact_name: str | None
     site_contact_mobile: str | None
     site_contact_email: str | None
+    notes: str | None
+    contacts: list[CustomerLocationContactRead] = Field(default_factory=list)
     ppe_requirements: list[PpeRequirement]
     additional_requirements: list[AdditionalRequirement]
     scheduling_timezone: str
@@ -139,6 +141,21 @@ class CustomerContactRead(BaseModel):
     phone: str | None
     role: str | None
     receives_retest_reminders: bool
+
+
+class CustomerLocationContactRead(BaseModel):
+    id: str
+    name: str
+    role: str | None
+    phone: str | None
+    email: str | None
+
+
+class CustomerLocationContactWrite(BaseModel):
+    name: str
+    role: str | None = None
+    phone: str | None = None
+    email: str | None = None
 
 
 class CustomerMetricsRead(BaseModel):
@@ -251,6 +268,8 @@ class CustomerLocationWrite(LocationSchedulingValidation):
     site_contact_name: str | None = None
     site_contact_mobile: str | None = None
     site_contact_email: str | None = None
+    notes: str | None = None
+    contacts: list[CustomerLocationContactWrite] = Field(default_factory=list)
     ppe_requirements: list[PpeRequirement] | None = None
     additional_requirements: list[AdditionalRequirement] | None = None
     scheduling_timezone: str = "UTC"
@@ -292,6 +311,8 @@ class CustomerLocationCreate(LocationSchedulingValidation):
     site_contact_name: str | None = None
     site_contact_mobile: str | None = None
     site_contact_email: str | None = None
+    notes: str | None = None
+    contacts: list[CustomerLocationContactWrite] = Field(default_factory=list)
     ppe_requirements: list[PpeRequirement] = Field(default_factory=list)
     additional_requirements: list[AdditionalRequirement] = Field(default_factory=list)
     scheduling_timezone: str = "UTC"
@@ -311,6 +332,8 @@ class CustomerLocationUpdate(LocationSchedulingValidation):
     site_contact_name: str | None = None
     site_contact_mobile: str | None = None
     site_contact_email: str | None = None
+    notes: str | None = None
+    contacts: list[CustomerLocationContactWrite] | None = None
     ppe_requirements: list[PpeRequirement] | None = None
     additional_requirements: list[AdditionalRequirement] | None = None
     scheduling_timezone: str | None = None
@@ -367,7 +390,7 @@ class RetestScheduleSummary(BaseModel):
 
 class RetestScheduleWrite(BaseModel):
     due_at: date
-    status: str
+    status: str = "UPCOMING"
     reminder_interval_days: int = 30
     escalation_interval_days: int = 7
 
@@ -499,6 +522,7 @@ class AssetCreate(BaseModel):
     location_id: str | None = None
     product_id: str
     asset_number: str | None = None
+    generate_asset_number: bool = True
     asset_name: str | None = None
     customer_serial_no: str | None = None
     serial_number: str | None = None
@@ -622,6 +646,10 @@ class InspectionBookingCreate(BaseModel):
 
 
 class InspectionBookingApproval(BaseModel):
+    inspector_user_id: str
+
+
+class InspectionBookingInspectorReassignment(BaseModel):
     inspector_user_id: str
 
 

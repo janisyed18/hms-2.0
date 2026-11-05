@@ -385,7 +385,7 @@ async def test_asset_profile_uses_customer_location_and_reference_configuration(
     assert body["purchase_order_number"] == "PO-100"
     assert body["installation_date"] == "2026-01-15"
     assert body["grave_date"] == "2031-01-15"
-    assert body["next_retest_due_at"] == "2026-07-15"
+    assert body["next_retest_due_at"] == "2027-01-15"
     assert body["a_end"]["material"]["name"] == "Composite"
     assert body["a_end"]["nominal_bore"]["name"] == "2 inch"
     assert body["b_end"]["coupling"]["name"] == "Camlock"
@@ -2445,6 +2445,338 @@ async def test_update_asset_and_retest_schedule_writes_audit_and_sync(
             "Retest completed; return to primary rack."
         )
         assert await verify_audit_chain(session)
+
+
+async def _install_asset(
+    session_factory: async_sessionmaker[AsyncSession], asset_id: str
+) -> None:
+    """Give the seeded asset a real installation date and a schedule that follows it."""
+    async with session_factory() as session:
+        asset = await session.get(Asset, asset_id)
+        schedule = (
+            await session.scalars(
+                select(RetestSchedule).where(RetestSchedule.asset_id == asset_id)
+            )
+        ).one()
+        assert asset is not None
+        asset.installation_date = date(2026, 1, 15)
+        asset.next_retest_due_at = date(2027, 1, 15)
+        schedule.due_at = date(2027, 1, 15)
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_clearing_installation_date_suspends_existing_retest_schedule(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+
+    await _install_asset(session_factory, seeded_session["vopak_asset_id"])
+    async with session_factory() as session:
+        schedule = (
+            await session.scalars(
+                select(RetestSchedule).where(
+                    RetestSchedule.asset_id == seeded_session["vopak_asset_id"]
+                )
+            )
+        ).one()
+        original_due_at = schedule.due_at
+
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/assets/{seeded_session['vopak_asset_id']}",
+            json={"installation_date": None},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["installation_date"] is None
+    assert response.json()["next_retest_due_at"] is None
+
+    async with session_factory() as session:
+        asset = await session.get(Asset, seeded_session["vopak_asset_id"])
+        schedule = (
+            await session.scalars(
+                select(RetestSchedule).where(
+                    RetestSchedule.asset_id == seeded_session["vopak_asset_id"]
+                )
+            )
+        ).one()
+        events = (
+            await session.scalars(
+                select(AuditEvent)
+                .where(AuditEvent.entity_id == schedule.id)
+                .order_by(AuditEvent.sequence.desc())
+            )
+        ).all()
+
+        assert asset is not None
+        assert asset.installation_date is None
+        assert asset.next_retest_due_at is None
+        assert schedule.due_at == original_due_at
+        assert schedule.status == RetestScheduleStatus.SUSPENDED.value
+        assert schedule.deleted_at is not None
+        assert events[0].action == "retest_schedule.suspended"
+
+
+async def _schedule_state(
+    session_factory: async_sessionmaker[AsyncSession], asset_id: str
+) -> tuple[Asset, RetestSchedule, list[str]]:
+    async with session_factory() as session:
+        asset = await session.get(Asset, asset_id)
+        schedule = (
+            await session.scalars(
+                select(RetestSchedule).where(RetestSchedule.asset_id == asset_id)
+            )
+        ).one()
+        actions = list(
+            await session.scalars(
+                select(AuditEvent.action)
+                .where(AuditEvent.entity_id == schedule.id)
+                .order_by(AuditEvent.sequence)
+            )
+        )
+        assert asset is not None
+        return asset, schedule, actions
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_schedule", [True, False])
+async def test_unrelated_edit_of_asset_without_installation_date_keeps_retest_date(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+    with_schedule: bool,
+) -> None:
+    """Staff resends installation_date on every edit; an unchanged value is no edit."""
+    asset_id = seeded_session["vopak_asset_id"]
+    async with session_factory() as session:
+        asset = await session.get(Asset, asset_id)
+        schedule = (
+            await session.scalars(
+                select(RetestSchedule).where(RetestSchedule.asset_id == asset_id)
+            )
+        ).one()
+        assert asset is not None
+        asset.installation_date = None
+        asset.next_retest_due_at = date(2027, 3, 1)
+        schedule.due_at = date(2027, 3, 1)
+        schedule.status = RetestScheduleStatus.UPCOMING.value
+        await session.commit()
+        schedule_id = schedule.id
+
+    body: dict[str, object] = {
+        "asset_name": "Renamed hose",
+        "installation_date": None,
+        "next_inspection_date": "2027-03-01",
+    }
+    if with_schedule:
+        body["retest_schedule"] = {"due_at": "2027-03-01", "status": "UPCOMING"}
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(f"/api/v1/assets/{asset_id}", json=body)
+        listed = await client.get(
+            "/api/v1/retest-schedules",
+            params={"customer_id": seeded_session["vopak_id"]},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["asset_name"] == "Renamed hose"
+    assert response.json()["next_retest_due_at"] == "2027-03-01"
+    asset, schedule, actions = await _schedule_state(session_factory, asset_id)
+    assert asset.next_retest_due_at == date(2027, 3, 1)
+    assert schedule.deleted_at is None
+    assert schedule.status == RetestScheduleStatus.UPCOMING.value
+    assert schedule.due_at == date(2027, 3, 1)
+    assert "retest_schedule.suspended" not in actions
+    assert [item["id"] for item in listed.json()["items"]] == [schedule_id]
+
+
+@pytest.mark.asyncio
+async def test_name_only_edit_keeps_schedule_status_intervals_and_audit_history(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    """The Staff-shaped save of an unchanged asset must not rewrite its schedule."""
+    asset_id = seeded_session["vopak_asset_id"]
+    await _install_asset(session_factory, asset_id)
+    async with session_factory() as session:
+        schedule = (
+            await session.scalars(
+                select(RetestSchedule).where(RetestSchedule.asset_id == asset_id)
+            )
+        ).one()
+        schedule.status = RetestScheduleStatus.DUE.value
+        schedule.reminder_interval_days = 14
+        schedule.escalation_interval_days = 3
+        await session.commit()
+        schedule_version = schedule.version
+    _, _, actions_before = await _schedule_state(session_factory, asset_id)
+
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/assets/{asset_id}",
+            json={
+                "asset_name": "Renamed hose",
+                "installation_date": "2026-01-15",
+                "next_inspection_date": "2027-01-15",
+                # What Staff sends on an update: the due date, no status.
+                "retest_schedule": {"due_at": "2027-01-15"},
+            },
+        )
+
+    assert response.status_code == 200
+    _, schedule, actions_after = await _schedule_state(session_factory, asset_id)
+    assert schedule.status == RetestScheduleStatus.DUE.value
+    assert schedule.reminder_interval_days == 14
+    assert schedule.escalation_interval_days == 3
+    assert schedule.due_at == date(2027, 1, 15)
+    assert schedule.version == schedule_version
+    assert actions_after == actions_before
+
+
+@pytest.mark.asyncio
+async def test_name_only_edit_does_not_undo_a_rescheduled_due_date(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    """A due date moved via the schedule endpoint outlives an unrelated asset save."""
+    asset_id = seeded_session["vopak_asset_id"]
+    await _install_asset(session_factory, asset_id)
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    _, schedule, _ = await _schedule_state(session_factory, asset_id)
+    async with api_client(session_factory, principal) as client:
+        moved = await client.patch(
+            f"/api/v1/retest-schedules/{schedule.id}",
+            json={
+                "due_at": "2027-04-15",
+                "status": "DUE",
+                "reminder_interval_days": 14,
+                "escalation_interval_days": 3,
+            },
+        )
+        assert moved.status_code == 200
+        asset_before, schedule_before, actions_before = await _schedule_state(
+            session_factory, asset_id
+        )
+        assert asset_before.next_retest_due_at == date(2027, 4, 15)
+
+        # What Staff sends for a rename: the unchanged installation date and the
+        # one-year date derived from it.
+        response = await client.patch(
+            f"/api/v1/assets/{asset_id}",
+            json={
+                "asset_name": "Renamed hose",
+                "installation_date": "2026-01-15",
+                "next_inspection_date": "2027-01-15",
+                "retest_schedule": {"due_at": "2027-01-15"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["next_retest_due_at"] == "2027-04-15"
+    asset, schedule, actions = await _schedule_state(session_factory, asset_id)
+    assert asset.next_retest_due_at == date(2027, 4, 15)
+    assert schedule.due_at == date(2027, 4, 15)
+    assert schedule.status == RetestScheduleStatus.DUE.value
+    assert schedule.reminder_interval_days == 14
+    assert schedule.escalation_interval_days == 3
+    assert schedule.version == schedule_before.version
+    assert actions == actions_before
+
+
+@pytest.mark.asyncio
+async def test_changing_installation_date_still_derives_the_due_date_one_year_on(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+) -> None:
+    asset_id = seeded_session["vopak_asset_id"]
+    await _install_asset(session_factory, asset_id)
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with api_client(session_factory, principal) as client:
+        response = await client.patch(
+            f"/api/v1/assets/{asset_id}",
+            json={
+                "installation_date": "2026-03-01",
+                "next_inspection_date": "2030-01-01",
+                "retest_schedule": {"due_at": "2030-01-01"},
+            },
+        )
+
+    assert response.status_code == 200
+    asset, schedule, _ = await _schedule_state(session_factory, asset_id)
+    # The rule wins over whatever date the client derived or guessed.
+    assert asset.next_retest_due_at == date(2027, 3, 1)
+    assert schedule.due_at == date(2027, 3, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_schedule", [True, False])
+async def test_reentering_installation_date_restores_the_suspended_schedule(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded_session: dict[str, str],
+    with_schedule: bool,
+) -> None:
+    asset_id = seeded_session["vopak_asset_id"]
+    await _install_asset(session_factory, asset_id)
+    principal = Principal(
+        user_id="admin-1",
+        roles=frozenset({Role.HMS_ADMIN}),
+        customer_ids=frozenset(),
+    )
+    async with api_client(session_factory, principal) as client:
+        cleared = await client.patch(
+            f"/api/v1/assets/{asset_id}", json={"installation_date": None}
+        )
+        assert cleared.status_code == 200
+        _, suspended, _ = await _schedule_state(session_factory, asset_id)
+        assert suspended.deleted_at is not None
+        schedule_id = suspended.id
+
+        body: dict[str, object] = {
+            "installation_date": "2026-02-10",
+            "next_inspection_date": "2027-02-10",
+        }
+        if with_schedule:
+            body["retest_schedule"] = {"due_at": "2027-02-10", "status": "UPCOMING"}
+        restored = await client.patch(f"/api/v1/assets/{asset_id}", json=body)
+        listed = await client.get(
+            "/api/v1/retest-schedules",
+            params={"customer_id": seeded_session["vopak_id"]},
+        )
+
+    assert restored.status_code == 200
+    assert restored.json()["next_retest_due_at"] == "2027-02-10"
+    asset, schedule, actions = await _schedule_state(session_factory, asset_id)
+    assert asset.installation_date == date(2026, 2, 10)
+    # One row per asset: the history stays on the same schedule, now active again.
+    assert schedule.id == schedule_id
+    assert schedule.deleted_at is None
+    assert schedule.status == RetestScheduleStatus.UPCOMING.value
+    assert schedule.due_at == date(2027, 2, 10)
+    assert "retest_schedule.suspended" in actions
+    assert "retest_schedule.restored" in actions
+    assert [item["id"] for item in listed.json()["items"]] == [schedule_id]
 
 
 @pytest.mark.asyncio

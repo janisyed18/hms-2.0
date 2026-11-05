@@ -382,6 +382,10 @@ export function useSchedulingWorkspace({
     run(bookingId, "Reschedule approved.", () =>
       createHmsClient().approveInspectionBookingReschedule(changeId, inspectorUserId),
     { key: "approve-reschedule", fallback: "The reschedule could not be approved. Try again.", availability: true });
+  const reassignInspector = (bookingId: string, inspectorUserId: string) =>
+    run(bookingId, "Inspector reassigned without changing the appointment time.", () =>
+      createHmsClient().reassignInspectionBookingInspector(bookingId, inspectorUserId),
+    { key: "reassign-inspector", fallback: "The inspector could not be reassigned. Try again.", availability: true });
 
   /** "Book inspection": the existing flow, with the viewed date offered as its date. */
   async function openBooking(date?: string) {
@@ -425,6 +429,7 @@ export function useSchedulingWorkspace({
     anchor,
     approveBooking,
     approveReschedule,
+    reassignInspector,
     busy,
     busyKey,
     cancelBooking,

@@ -42,6 +42,10 @@ export function useAssetsWorkspace() {
   const [deleteTarget, setDeleteTarget] = useState<AssetRecord | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setDeleting] = useState(false);
+  // How many saves and deletes have landed here. A list answer asked for before one of
+  // them must not be written: it still holds the row the delete removed, and under load
+  // it can arrive afterwards and put it back.
+  const mutations = useRef(0);
 
   // Customers and products are searched on the server as the person types, so neither list stops at a first page.
   const customerSearch = useRemoteOptions((text) => createHmsClient().listCustomers({ search: text, sort: "name", limit: 25 }).then((result) => result.items), true);
@@ -80,8 +84,9 @@ export function useAssetsWorkspace() {
     // Only the first load replaces the table; a new search or filter keeps the rows until the answer arrives.
     setError(null);
     const timer = window.setTimeout(() => {
+      const asked = mutations.current;
       void createHmsClient().listAssets({ ...filters, sort: "asset_number", limit: PAGE_SIZE, offset: 0 })
-        .then((result) => { if (!active) return; setAssets(result.items); setServerTotal(result.total); })
+        .then((result) => { if (!active || mutations.current !== asked) return; setAssets(result.items); setServerTotal(result.total); })
         .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Asset records could not be loaded."); })
         .finally(() => { if (active) setIsLoading(false); });
     }, query ? 250 : 0);
@@ -91,8 +96,10 @@ export function useAssetsWorkspace() {
   async function loadMore() {
     if (isLoadingMore) return;
     setLoadingMore(true);
+    const asked = mutations.current;
     try {
       const next = await createHmsClient().listAssets({ ...filters, sort: "asset_number", limit: PAGE_SIZE, offset: assets.length });
+      if (mutations.current !== asked) return;
       setAssets((current) => uniqueById([...current, ...next.items]));
       setServerTotal(next.total);
     } catch (reason) {
@@ -132,6 +139,8 @@ export function useAssetsWorkspace() {
     const client = createHmsClient();
     const session = formSession.current;
     const saved = editingAsset ? await client.updateAsset(editingAsset.id, values, editingAsset.etag) : await client.createAsset(values);
+    if (!saved) return;
+    mutations.current += 1;
     setAssets((current) => editingAsset ? current.map((asset) => asset.id === editingAsset.id ? saved : asset) : [saved, ...current]);
     setViewingAsset((current) => current?.id === saved.id ? saved : current);
     // The saved record always lands in the register; the form only closes if it is still the one that saved.
@@ -148,6 +157,7 @@ export function useAssetsWorkspace() {
     setDeleting(true); setDeleteError(null);
     try {
       await createHmsClient().deleteAsset(asset.id, asset.etag);
+      mutations.current += 1;
       setAssets((current) => current.filter((item) => item.id !== asset.id));
       setViewingAsset((current) => current?.id === asset.id ? null : current);
       setDeleteTarget(null);

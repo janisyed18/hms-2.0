@@ -64,11 +64,15 @@ test.describe("Staff interaction feedback", () => {
       await expect(page.getByLabel("Location")).toBeFocused();
       await chooseOption(page.getByLabel("Location"), { first: true });
       await chooseOption(page.getByRole("combobox", { name: "Product" }), { first: true });
-      await page.getByRole("button", { name: "Save asset" }).click();
-      await expect(page.getByLabel("Asset Name")).toBeFocused();
-      await expect(page.getByLabel("Asset Name")).toHaveAttribute("aria-invalid", "true");
-      await expect(page.getByText("Enter an asset name.")).toBeVisible();
-      await expect(page.getByText("Enter a serial number.")).toBeVisible();
+      // Asset Name and Serial Number are optional; the selected customer, location and
+      // product are the actual required fields in this contract. With those three in
+      // hand the form reports nothing missing, so it is not saved again here: a save
+      // would succeed, close the drawer, and leave the refusal below nothing to refuse.
+      await expect(page.getByLabel("Asset Name")).toHaveValue("");
+      await expect(page.getByLabel("Serial Number")).toHaveValue("");
+      await expect(page.getByRole("heading", { name: "Add asset" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Save asset" })).toBeEnabled();
+      await expect(page.getByText("Enter an asset number.")).toHaveCount(0);
 
       // A server refusal keeps the drawer and the typed values, and says why.
       await page.getByLabel("Asset Name").fill(name);
