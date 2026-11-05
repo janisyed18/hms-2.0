@@ -1127,9 +1127,26 @@ async def delete_customer_location(
         CustomerLocation,
         location.id,
         what="location",
-        ignore={"inspection_availability_quotes"},
+        # A location's own site contacts are part of it, not work done at it, so they
+        # travel with the delete below instead of blocking it.
+        ignore={"inspection_availability_quotes", "customer_location_contacts"},
         alternative="Move or retire that work before deleting the location.",
     )
+    contacts = (
+        await session.scalars(
+            select(CustomerLocationContact).where(
+                CustomerLocationContact.location_id == location.id,
+                CustomerLocationContact.deleted_at.is_(None),
+            )
+        )
+    ).all()
+    for contact in contacts:
+        await soft_delete(
+            session,
+            contact,
+            actor_id=principal.user_id,
+            action="customer_location_contact.deleted",
+        )
     await soft_delete(
         session,
         location,
@@ -1438,7 +1455,13 @@ async def create_asset(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Asset Number is required when automatic generation is disabled",
         )
-    asset_number = requested_number or await _next_asset_number(session)
+    if requested_number is None:
+        asset_number = await _next_asset_number(session)
+    else:
+        # A typed-in number skips the allocator, so take its lock explicitly: the
+        # duplicate check below is only trustworthy while no rival create is in flight.
+        await _lock_asset_number_counter(session)
+        asset_number = requested_number
     duplicate = await session.scalar(
         select(Asset.id).where(
             Asset.asset_number == asset_number,
@@ -4479,7 +4502,14 @@ def _add_calendar_years(value: date, years: int = 1) -> date:
         return value.replace(year=value.year + years, month=2, day=28)
 
 
-async def _next_asset_number(session: AsyncSession) -> str:
+async def _lock_asset_number_counter(session: AsyncSession) -> AssetNumberCounter:
+    """Hold the allocator row for this transaction.
+
+    Every create takes this lock, typed-in numbers included, so the duplicate check
+    that follows cannot read the table while another create of the same number is
+    still uncommitted. Without it two requests both see no duplicate and the unique
+    index turns the loser into a 500 instead of a plain conflict.
+    """
     counter = await session.scalar(
         select(AssetNumberCounter)
         .where(AssetNumberCounter.id == 1)
@@ -4489,6 +4519,11 @@ async def _next_asset_number(session: AsyncSession) -> str:
         counter = AssetNumberCounter(id=1, next_number=1)
         session.add(counter)
         await session.flush()
+    return counter
+
+
+async def _next_asset_number(session: AsyncSession) -> str:
+    counter = await _lock_asset_number_counter(session)
     number = counter.next_number
     counter.next_number = number + 1
     return f"{number:05d}"
@@ -5941,6 +5976,11 @@ async def _get_visible_change_request_or_404(
             InspectionAppointmentChangeRequest.deleted_at.is_(None),
             InspectionBooking.deleted_at.is_(None),
         )
+        # Approving or confirming reads this status and then writes a new appointment
+        # revision. Two admins acting on the same request would both read it as
+        # pending and both write revision n+1, so hold the row until one commits: the
+        # other then reads the status it left and is refused.
+        .with_for_update(of=InspectionAppointmentChangeRequest)
     )
     statement = _apply_customer_scope(statement, principal)
     change = (await session.scalars(statement)).first()

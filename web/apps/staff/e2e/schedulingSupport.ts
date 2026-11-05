@@ -225,16 +225,45 @@ export async function chooseBookingLocationAndAsset(page: Page) {
   await asset.check();
 }
 
+/** Every asset checkbox the booking form offers; the fieldset holds no other checkbox. */
+function bookingAssetCheckboxes(page: Page) {
+  return page.locator("form.inspection-booking-form fieldset.booking-asset-list input[type=checkbox]");
+}
+
+/** The labels of the assets currently ticked, so a selection can be compared before and after. */
+async function checkedBookingAssets(page: Page): Promise<string[]> {
+  return bookingAssetCheckboxes(page).evaluateAll((inputs) =>
+    inputs
+      .filter((input) => (input as HTMLInputElement).checked)
+      .map((input) => input.closest("label")?.textContent?.trim() ?? "")
+      .sort()
+  );
+}
+
 export async function selectFirstAvailableTime(page: Page, localDate = schedulingDate) {
-  const assetLabel = selectedBookingAssets.get(page);
-  expect(assetLabel).toBeTruthy();
-  await expect(page.getByRole("checkbox", { name: assetLabel! })).toBeChecked();
+  const form = page.locator("form.inspection-booking-form");
+  // Two ways in, and they carry their assets differently. A new booking ticked one asset
+  // itself, so hold the form to that identity. A reschedule opens on the booking's own
+  // assets, already ticked and locked, and never recorded one here.
+  const rescheduling = (await form.getByRole("button", { name: "Request reschedule" }).count()) > 0;
+  if (rescheduling) {
+    await expect(bookingAssetCheckboxes(page).first()).toBeDisabled();
+  } else {
+    const assetLabel = selectedBookingAssets.get(page);
+    expect(assetLabel, "a new booking must choose its asset before its time").toBeTruthy();
+    await expect(form.getByRole("checkbox", { name: assetLabel!, exact: true })).toBeChecked();
+  }
+  const selectedBefore = await checkedBookingAssets(page);
+  expect(selectedBefore.length).toBeGreaterThan(0);
+
   const dateInput = page.getByLabel("Preferred inspection date");
   await dateInput.fill(localDate);
   await expect(page.getByText(/Available time \(/)).toBeVisible();
   const timeSelect = page.getByLabel("Available inspection time");
   await expect(timeSelect).toBeEnabled();
   await chooseOption(timeSelect, { first: true });
+  // Picking a date and a time says nothing about which assets the visit covers.
+  expect(await checkedBookingAssets(page)).toEqual(selectedBefore);
 }
 
 export async function submitBookingForm(

@@ -13,6 +13,7 @@ import pytest
 import pytest_asyncio
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from fastapi import HTTPException, status
 from sqlalchemy import func, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -38,12 +39,14 @@ from hms_backend.app.modules.customers.models import Customer, CustomerLocation
 from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.inspections.models import (
     Inspection,
+    InspectionAllocationState,
     InspectionAppointment,
     InspectionAppointmentChangeRequest,
     InspectionAppointmentRevision,
     InspectionAvailabilityQuote,
     InspectionBooking,
     InspectionBookingAsset,
+    InspectionResourceAllocation,
     PressureTestResult,
 )
 from hms_backend.app.modules.products.models import Product
@@ -60,6 +63,7 @@ class Assignment:
     context: SyncWorkContext
     inspector_a: Principal
     inspector_b: Principal
+    inspector_c: Principal
     change_id: str
 
 
@@ -87,7 +91,7 @@ async def database() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 @pytest_asyncio.fixture
 async def assignment(database: async_sessionmaker[AsyncSession]) -> Assignment:
     token = uuid4().hex[:16]
-    user_a, user_b = f"a-{token}", f"b-{token}"
+    user_a, user_b, user_c = f"a-{token}", f"b-{token}", f"c-{token}"
     start = datetime(2031, 1, 1, 8, tzinfo=UTC)
     async with database() as session:
         standard = Standard(code=f"S-{token}", name="Race standard")
@@ -120,6 +124,12 @@ async def assignment(database: async_sessionmaker[AsyncSession]) -> Assignment:
                     id=user_b,
                     oidc_subject=f"oidc:{user_b}",
                     email=f"{user_b}@example.test",
+                    role="INSPECTOR",
+                ),
+                User(
+                    id=user_c,
+                    oidc_subject=f"oidc:{user_c}",
+                    email=f"{user_c}@example.test",
                     role="INSPECTOR",
                 ),
             ]
@@ -165,7 +175,7 @@ async def assignment(database: async_sessionmaker[AsyncSession]) -> Assignment:
             location_id=location.id,
             starts_at=start + timedelta(days=1),
             ends_at=start + timedelta(days=1, hours=1),
-            candidate_inspector_ids=[user_a, user_b],
+            candidate_inspector_ids=[user_a, user_b, user_c],
             expires_at=datetime.now(UTC) + timedelta(days=1),
         )
         session.add_all([revision, quote])
@@ -198,6 +208,12 @@ async def assignment(database: async_sessionmaker[AsyncSession]) -> Assignment:
             inspector_b=Principal(
                 user_id=f"oidc:{user_b}",
                 record_user_id=user_b,
+                roles=frozenset({Role.INSPECTOR}),
+                customer_ids=frozenset(),
+            ),
+            inspector_c=Principal(
+                user_id=f"oidc:{user_c}",
+                record_user_id=user_c,
                 roles=frozenset({Role.INSPECTOR}),
                 customer_ids=frozenset(),
             ),
@@ -654,3 +670,118 @@ async def test_simultaneous_identical_retries_are_idempotent(
             )
             == 1
         )
+
+
+@pytest.mark.asyncio
+async def test_two_admins_reassigning_at_once_leave_one_inspector(
+    database: async_sessionmaker[AsyncSession],
+    assignment: Assignment,
+) -> None:
+    """A -> B and A -> C, approved together, must not both take effect.
+
+    A reassignment writes a new appointment revision and the allocation that holds the
+    inspector's time. Two approvals of the same pending request that both succeed would
+    leave two current revisions and two confirmed allocations for one visit, so the
+    booking, its current revision and its allocation would disagree about who is going.
+    Existing sync races cover an inspector's own work, not two admins competing here.
+    """
+    admin_b = Principal(
+        user_id="admin-b", roles=frozenset({Role.HMS_ADMIN}), customer_ids=frozenset()
+    )
+    admin_c = Principal(
+        user_id="admin-c", roles=frozenset({Role.HMS_ADMIN}), customer_ids=frozenset()
+    )
+    assert assignment.inspector_b.record_user_id is not None
+    assert assignment.inspector_c.record_user_id is not None
+
+    async with database() as session_b, database() as session_c:
+        outcomes = await asyncio.gather(
+            approve_inspection_booking_change_request(
+                assignment.change_id,
+                InspectionAppointmentChangeRequestApproval(
+                    inspector_user_id=assignment.inspector_b.record_user_id
+                ),
+                session_b,
+                admin_b,
+            ),
+            approve_inspection_booking_change_request(
+                assignment.change_id,
+                InspectionAppointmentChangeRequestApproval(
+                    inspector_user_id=assignment.inspector_c.record_user_id
+                ),
+                session_c,
+                admin_c,
+            ),
+            return_exceptions=True,
+        )
+
+    applied = [item for item in outcomes if not isinstance(item, BaseException)]
+    refused = [item for item in outcomes if isinstance(item, HTTPException)]
+    other = [
+        item
+        for item in outcomes
+        if isinstance(item, BaseException) and not isinstance(item, HTTPException)
+    ]
+    assert not other, f"a competing approval failed unexpectedly: {other}"
+    assert len(applied) == 1, f"both approvals took effect: {outcomes}"
+    assert len(refused) == 1
+    assert refused[0].status_code == status.HTTP_409_CONFLICT
+
+    async with database() as session:
+        appointment = await session.get(
+            InspectionAppointment, assignment.context.appointment_id
+        )
+        assert appointment is not None
+        revisions = (
+            await session.scalars(
+                select(InspectionAppointmentRevision)
+                .where(
+                    InspectionAppointmentRevision.appointment_id == appointment.id,
+                    InspectionAppointmentRevision.deleted_at.is_(None),
+                )
+                .order_by(InspectionAppointmentRevision.revision_number)
+            )
+        ).all()
+        # One reassignment, so exactly one revision was added to the seeded one.
+        assert [item.revision_number for item in revisions] == [1, 2]
+        current = next(
+            item
+            for item in revisions
+            if item.revision_number == appointment.current_revision_number
+        )
+        booking = await session.get(
+            InspectionBooking, assignment.context.booking_id
+        )
+        assert booking is not None
+        # The booking, the current revision and the live allocation name one inspector.
+        assert booking.inspector_user_id == current.inspector_user_id
+        assert current.inspector_user_id in {
+            assignment.inspector_b.record_user_id,
+            assignment.inspector_c.record_user_id,
+        }
+        live = (
+            await session.scalars(
+                select(InspectionResourceAllocation).where(
+                    InspectionResourceAllocation.revision_id.in_(
+                        [item.id for item in revisions]
+                    ),
+                    InspectionResourceAllocation.state
+                    == InspectionAllocationState.CONFIRMED.value,
+                    InspectionResourceAllocation.deleted_at.is_(None),
+                )
+            )
+        ).all()
+        inspector_holds = [
+            item
+            for item in live
+            if item.resource_id
+            in {
+                assignment.inspector_b.record_user_id,
+                assignment.inspector_c.record_user_id,
+            }
+        ]
+        assert len(inspector_holds) == 1, (
+            f"{len(inspector_holds)} inspectors hold this visit's time"
+        )
+        assert inspector_holds[0].resource_id == current.inspector_user_id
+        assert inspector_holds[0].revision_id == current.id

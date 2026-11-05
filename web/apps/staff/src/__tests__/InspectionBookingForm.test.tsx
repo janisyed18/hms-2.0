@@ -14,9 +14,10 @@ const listInspectionAvailability = vi.hoisted(() => vi.fn());
 const listCustomers = vi.hoisted(() => vi.fn());
 const getCustomer = vi.hoisted(() => vi.fn());
 const listAssets = vi.hoisted(() => vi.fn());
+const listAllAssets = vi.hoisted(() => vi.fn());
 
 vi.mock("../api/hmsClient", () => ({
-  createHmsClient: () => ({ listInspectionAvailability, listCustomers, getCustomer, listAssets })
+  createHmsClient: () => ({ listInspectionAvailability, listCustomers, getCustomer, listAssets, listAllAssets })
 }));
 
 function asset(id: string, number: string, customerId: string, customerName: string, locationId: string, locationName: string): AssetRecord {
@@ -31,10 +32,12 @@ function asset(id: string, number: string, customerId: string, customerName: str
 // 60 assets at Harris Park: more than one page of the lookup, so a later page has to be reachable.
 const assets = [
   ...Array.from({ length: 60 }, (_, index) => asset(`a${index + 1}`, `ASSET-A${index + 1}`, "cust-1", "TH Industries", "loc-a", "Harris Park")),
-  asset("b1", "ASSET-B1", "cust-1", "TH Industries", "loc-b", "Preston")
+  asset("b1", "ASSET-B1", "cust-1", "TH Industries", "loc-b", "Preston"),
+  // 150 at Welshpool: Select All has to read past the 100-row page to reach them all.
+  ...Array.from({ length: 150 }, (_, index) => asset(`c${index + 1}`, `ASSET-C${index + 1}`, "cust-1", "TH Industries", "loc-c", "Welshpool"))
 ];
 const customers = [
-  { id: "cust-1", code: "cust-1", name: "TH Industries", locations: [{ id: "loc-a", name: "Harris Park", schedulingTimezone: "Australia/Perth" }, { id: "loc-b", name: "Preston", schedulingTimezone: "Australia/Perth" }] },
+  { id: "cust-1", code: "cust-1", name: "TH Industries", locations: [{ id: "loc-a", name: "Harris Park", schedulingTimezone: "Australia/Perth" }, { id: "loc-b", name: "Preston", schedulingTimezone: "Australia/Perth" }, { id: "loc-c", name: "Welshpool", schedulingTimezone: "Australia/Perth" }] },
   { id: "cust-2", code: "cust-2", name: "Other Co", locations: [{ id: "loc-d", name: "Elsewhere", schedulingTimezone: "Australia/Perth" }] }
 ];
 
@@ -52,6 +55,16 @@ function serveLookups() {
       && (!options.search || item.assetNumber.toLowerCase().includes(options.search.toLowerCase())));
     const offset = options.offset ?? 0;
     return { total: matching.length, items: matching.slice(offset, offset + (options.limit ?? 50)) };
+  });
+  // The real client pages this itself, 100 at a time, so page the stub the same way.
+  listAllAssets.mockImplementation(async (options: { customerId?: string; locationId?: string }) => {
+    const pageSize = 100;
+    const items: AssetRecord[] = [];
+    for (;;) {
+      const page = await listAssets({ ...options, limit: pageSize, offset: items.length });
+      items.push(...page.items);
+      if (items.length >= page.total || page.items.length === 0) return { total: page.total, items };
+    }
   });
 }
 
@@ -87,7 +100,7 @@ function renderForm(overrides: Partial<React.ComponentProps<typeof InspectionBoo
 const submitButton = () => screen.getByRole("button", { name: /Create booking|Request reschedule/ });
 
 beforeEach(() => {
-  listCustomers.mockReset(); getCustomer.mockReset(); listAssets.mockReset();
+  listCustomers.mockReset(); getCustomer.mockReset(); listAssets.mockReset(); listAllAssets.mockReset();
   serveLookups();
   listInspectionAvailability.mockReset();
   listInspectionAvailability.mockImplementation(async ({ locationId }: { locationId: string }) => slots(locationId));
@@ -173,6 +186,56 @@ describe("new booking", () => {
       availabilityQuoteId: "loc-a-quote-1",
       additionalInformation: null
     });
+  });
+
+  it("selects every eligible asset beyond the first page, and submits exactly what stays ticked", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderForm();
+
+    await pickCustomer(user, "cust-1");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-c");
+    await assetBoxes();
+    expect(screen.getByText(/25 of 150 assets shown/)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Select all assets" }));
+
+    // All 150 are held, not just the 100 of the first page or the 25 on screen.
+    await waitFor(() => expect(screen.getByText(/150 selected/)).toBeVisible());
+    expect(listAllAssets).toHaveBeenCalledWith(expect.objectContaining({
+      customerId: "cust-1",
+      locationId: "loc-c",
+      newWorkOnly: true
+    }));
+    // An asset from the second Select All page is ticked and shown, though the visible
+    // page never reached it.
+    expect(screen.getByRole("checkbox", { name: "ASSET-C150" })).toBeChecked();
+
+    // Untick two: one on the first page, one only Select All brought in.
+    await user.click(screen.getByRole("checkbox", { name: "ASSET-C1" }));
+    await user.click(screen.getByRole("checkbox", { name: "ASSET-C150" }));
+    await waitFor(() => expect(screen.getByText(/148 selected/)).toBeVisible());
+    // The one on the visible page stays, unticked; the off-page one only had a row
+    // because it was selected, so unticking it takes the row away.
+    expect(screen.getByRole("checkbox", { name: "ASSET-C1" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "ASSET-C150" })).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
+    await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
+    await choose(user, screen.getByLabelText("Available inspection time"), "loc-c-quote-1");
+    await user.click(submitButton());
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0] as { assetIds: string[] };
+    // What was submitted is the whole eligible set for this location, less the two
+    // that were unticked: 150 - 2. Derived from the fixture, so the count cannot drift.
+    const eligible = assets.filter((item) => item.location?.id === "loc-c").map((item) => item.id);
+    const deselected = ["c1", "c150"];
+    expect(eligible).toHaveLength(150);
+    expect(submitted.assetIds).toEqual(eligible.filter((id) => !deselected.includes(id)));
+    expect(submitted.assetIds).toHaveLength(148);
+    // Nothing is sent twice, and neither unticked asset rides along.
+    expect(new Set(submitted.assetIds).size).toBe(148);
+    for (const id of deselected) expect(submitted.assetIds).not.toContain(id);
   });
 
   it("clears assets, date, times and the quote when the location changes", async () => {

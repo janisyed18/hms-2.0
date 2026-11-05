@@ -166,13 +166,20 @@ test.describe("shared Staff form system", () => {
       await page.getByRole("button", { name: "Add asset" }).click();
       const form = page.getByRole("form", { name: "Add asset" });
       await expect(form).toBeVisible();
-      await chooseOption(form.getByLabel("Customer"), { label: "Vopak" });
-      await chooseOption(form.getByLabel("Location"), { first: true });
-      await chooseOption(form.getByRole("combobox", { name: "Product" }), { first: true });
+      // An incomplete save explains itself and focuses the first gap, in form order.
+      // Customer, Location and Product are the required fields; Asset Name and Serial
+      // Number are not, so the form is complete before either is typed.
       await form.getByRole("button", { name: "Save asset" }).click();
-      await expect(form.getByLabel("Asset Name")).toBeFocused();
-      await form.getByRole("button", { name: "Serial Number" }).click();
-      await expect(form.getByLabel("Serial Number")).toBeFocused();
+      await expect(form.getByLabel("Customer")).toBeFocused();
+      await chooseOption(form.getByLabel("Customer"), { label: "Vopak" });
+      await form.getByRole("button", { name: "Save asset" }).click();
+      await expect(form.getByLabel("Location")).toBeFocused();
+      await chooseOption(form.getByLabel("Location"), { first: true });
+      await form.getByRole("button", { name: "Save asset" }).click();
+      await expect(form.getByRole("combobox", { name: "Product" })).toBeFocused();
+      await chooseOption(form.getByRole("combobox", { name: "Product" }), { first: true });
+      await expect(form.getByLabel("Asset Name")).toHaveValue("");
+      await expect(form.getByLabel("Serial Number")).toHaveValue("");
 
       for (const [width, height] of WIDTHS) {
         await page.setViewportSize({ width, height });
@@ -209,6 +216,10 @@ test.describe("shared Staff form system", () => {
       await expect(form.getByLabel("Customer")).toBeFocused(); // focus moved into the form
       await page.keyboard.press("Tab");
       await expect(form.getByLabel("Location")).toBeFocused();
+      await page.keyboard.press("Tab");
+      // An existing asset carries its number, so the override is a stop of its own.
+      await expect(form.getByLabel("Asset Number")).toBeFocused();
+      await expect(form.getByLabel("Asset Number")).toHaveValue("E2E-FORM-1");
       await page.keyboard.press("Tab");
       await expect(form.getByLabel("Asset Name")).toBeFocused(); // logical order
       await page.keyboard.press("ControlOrMeta+A");

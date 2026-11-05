@@ -1493,7 +1493,7 @@ function assetEndPayload(end: AssetEndValues): Record<string, string | null> {
   return payload;
 }
 
-function assetPayload(values: AssetFormValues) {
+function assetPayload(values: AssetFormValues, mode: "create" | "update" = "create") {
   return {
     customer_id: values.customerId,
     location_id: values.locationId,
@@ -1501,7 +1501,11 @@ function assetPayload(values: AssetFormValues) {
     ...(values.assetNumber || values.generateAssetNumber === false
       ? {
           asset_number: values.assetNumber || null,
-          generate_asset_number: values.generateAssetNumber ?? false
+          // Whether to generate a number is a choice made when the asset is created;
+          // an update carries the number itself, and the API rejects the flag.
+          ...(mode === "create"
+            ? { generate_asset_number: values.generateAssetNumber ?? false }
+            : {})
         }
       : {}),
     asset_name: values.assetName || null,
@@ -2118,7 +2122,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         {
           method: "PATCH",
           headers: ifMatchHeader(etag),
-          body: JSON.stringify(assetPayload(values))
+          body: JSON.stringify(assetPayload(values, "update"))
         }
       );
       return toAsset(response.data, response.etag);
