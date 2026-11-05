@@ -283,6 +283,41 @@ describe("new booking", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("ignores a Select All that finishes after the user has moved to another location", async () => {
+    let releaseSlow: (value: { total: number; items: AssetRecord[] }) => void = () => undefined;
+    listAllAssets.mockImplementationOnce(
+      () => new Promise<{ total: number; items: AssetRecord[] }>((resolve) => { releaseSlow = resolve; })
+    );
+    const user = userEvent.setup();
+    const { onSubmit } = renderForm();
+
+    await pickCustomer(user, "cust-1");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-a");
+    await assetBoxes();
+    await user.click(screen.getByRole("button", { name: "Select all assets" }));
+    await choose(user, screen.getByLabelText("Booking location"), "loc-b");
+    expect(await assetBoxes()).toEqual(["ASSET-B1"]);
+
+    // Harris Park's answer arrives only now, after Preston is on screen.
+    const harrisPark = assets.filter((item) => item.location?.id === "loc-a");
+    await act(async () => releaseSlow({ total: harrisPark.length, items: harrisPark }));
+
+    const ticked = screen.getAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked);
+    expect(ticked).toHaveLength(0);
+    expect(screen.queryByRole("checkbox", { name: "ASSET-A1" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: "ASSET-B1" }));
+    await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
+    await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
+    await choose(user, screen.getByLabelText("Available inspection time"), "loc-b-quote-1");
+    await user.click(submitButton());
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0] as { locationId: string; assetIds: string[] };
+    expect(submitted.locationId).toBe("loc-b");
+    expect(submitted.assetIds).toEqual(["b1"]);
+  });
+
   it("drops the chosen time when the date changes, so an old quote cannot be submitted", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm();

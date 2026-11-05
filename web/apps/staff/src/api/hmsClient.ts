@@ -1519,7 +1519,8 @@ function assetPayload(values: AssetFormValues, mode: "create" | "update" = "crea
     retest_schedule: values.nextInspectionDate
       ? {
           due_at: values.nextInspectionDate,
-          status: "UPCOMING"
+          // A new schedule starts upcoming; an existing one keeps the status and reminder settings it has.
+          ...(mode === "create" ? { status: "UPCOMING" } : {})
         }
       : null,
     a_end: assetEndPayload(values.aEnd),

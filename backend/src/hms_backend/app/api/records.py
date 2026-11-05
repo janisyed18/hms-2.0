@@ -3958,11 +3958,17 @@ async def update_asset(
         asset.lifecycle_status = payload.lifecycle_status
     if "manufacture_date" in updates:
         asset.manufacture_date = payload.manufacture_date
+    # Staff resends installation_date on every save, so the field being present is
+    # not an edit: only a value that differs from the stored one reschedules.
+    installation_date_changed = (
+        "installation_date" in updates
+        and payload.installation_date != asset.installation_date
+    )
     if "installation_date" in updates:
         asset.installation_date = payload.installation_date
     if "grave_date" in updates:
         asset.grave_date = payload.grave_date
-    if "installation_date" in updates:
+    if installation_date_changed:
         asset.next_retest_due_at = (
             _add_calendar_years(asset.installation_date)
             if asset.installation_date is not None
@@ -3983,6 +3989,12 @@ async def update_asset(
                     asset.installation_date
                 )
                 schedule_action = "retest_schedule.updated"
+                if asset.retest_schedule.deleted_at is not None:
+                    # Re-entering a cleared date brings back the schedule that
+                    # clearing it suspended (one row per asset, history kept).
+                    asset.retest_schedule.deleted_at = None
+                    asset.retest_schedule.status = RetestScheduleStatus.UPCOMING.value
+                    schedule_action = "retest_schedule.restored"
             await record_update(
                 session,
                 asset.retest_schedule,
@@ -3992,7 +4004,11 @@ async def update_asset(
             )
     elif "next_retest_due_at" in updates or "next_inspection_date" in updates:
         if asset.installation_date is not None:
-            asset.next_retest_due_at = _add_calendar_years(asset.installation_date)
+            # Derived from the installation date only when that is what changed. An
+            # unchanged date resent with its one-year date must not undo a due date
+            # moved since, through the retest schedule; only a missing one is filled.
+            if asset.next_retest_due_at is None:
+                asset.next_retest_due_at = _add_calendar_years(asset.installation_date)
         else:
             asset.next_retest_due_at = (
                 payload.next_inspection_date
@@ -4039,6 +4055,8 @@ async def update_asset(
             and asset.installation_date is not None
             and asset.next_retest_due_at is not None
         ):
+            # The asset's due date is the authority whenever the installation date
+            # is resent: freshly derived if it changed, or the current one if not.
             payload.retest_schedule.due_at = asset.next_retest_due_at
         await _upsert_retest_schedule(
             session,
@@ -5215,9 +5233,18 @@ async def _upsert_retest_schedule(
     before = schedule.to_audit_dict()
     schedule.customer = customer
     schedule.due_at = payload.due_at
-    schedule.status = payload.status
-    schedule.reminder_interval_days = payload.reminder_interval_days
-    schedule.escalation_interval_days = payload.escalation_interval_days
+    # An update changes only what the caller sent. Staff saves the whole asset form
+    # and sends the due date alone, so a schedule's status and reminder settings
+    # survive an edit that never touched them.
+    sent = payload.model_fields_set
+    if "status" in sent:
+        schedule.status = payload.status
+    if "reminder_interval_days" in sent:
+        schedule.reminder_interval_days = payload.reminder_interval_days
+    if "escalation_interval_days" in sent:
+        schedule.escalation_interval_days = payload.escalation_interval_days
+    if schedule.to_audit_dict() == before:
+        return
     await record_update(
         session,
         schedule,

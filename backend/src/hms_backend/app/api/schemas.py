@@ -390,7 +390,7 @@ class RetestScheduleSummary(BaseModel):
 
 class RetestScheduleWrite(BaseModel):
     due_at: date
-    status: str
+    status: str = "UPCOMING"
     reminder_interval_days: int = 30
     escalation_interval_days: int = 7
 

@@ -1101,6 +1101,36 @@ describe("hmsClient", () => {
     expect(createBody.asset_number).toBe("E2E-FORM-1");
   });
 
+  it("sends only the due date for an existing schedule, and a starting status only for a new one", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(apiAsset));
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const blankEnd = { fitting: "", size: "", nominalBore: null, material: null, coupling: null, couplingAddOn: null, attachMethod: null };
+    const values = {
+      customerId: "cust-api-1",
+      locationId: "loc-1",
+      productId: "product-api-1",
+      assetNumber: "E2E-FORM-1",
+      generateAssetNumber: false,
+      assetName: "Renamed",
+      serialNumber: "",
+      notes: "",
+      purchaseOrderNumber: "",
+      installationDate: "2026-01-15",
+      graveDate: null,
+      nextInspectionDate: "2027-01-15",
+      lengthM: null,
+      aEnd: blankEnd,
+      bEnd: blankEnd
+    };
+
+    await client.updateAsset("asset-api-1", values, '"1"');
+    await client.createAsset(values);
+
+    // A save must not reset a schedule that is DUE, or its reminder settings, to UPCOMING and the defaults.
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).retest_schedule).toEqual({ due_at: "2027-01-15" });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).retest_schedule).toEqual({ due_at: "2027-01-15", status: "UPCOMING" });
+  });
+
   it("maps inspection list responses and workflow mutations", async () => {
     const submittedInspection = {
       ...apiInspection,

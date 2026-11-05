@@ -218,8 +218,15 @@ export function InspectionBookingForm({
     }
   }
 
+  // The customer and location the form is showing now. Select All reads it after its request returns, so an
+  // answer for a place the user has already left is dropped rather than ticked into the new place.
+  const assetScope = `${customerId}|${locationId}`;
+  const assetScopeRef = useRef(assetScope);
+  useEffect(() => { assetScopeRef.current = assetScope; }, [assetScope]);
+
   async function selectAllAssets() {
     if (!customerId || !locationId || selectAllLoading) return;
+    const requestedScope = assetScope;
     setSelectAllLoading(true);
     try {
       const result = await createHmsClient().listAllAssets({
@@ -228,10 +235,13 @@ export function InspectionBookingForm({
         newWorkOnly: true,
         sort: "asset_number"
       });
+      if (assetScopeRef.current !== requestedScope) return;
       setAssetIds(result.items.map((asset) => asset.id));
       setPickedAssets(Object.fromEntries(result.items.map((asset) => [asset.id, asset])));
     } catch {
-      setAssetPage((current) => ({ ...current, error: "All eligible assets could not be selected." }));
+      if (assetScopeRef.current === requestedScope) {
+        setAssetPage((current) => ({ ...current, error: "All eligible assets could not be selected." }));
+      }
     } finally {
       setSelectAllLoading(false);
     }

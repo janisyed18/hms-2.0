@@ -141,8 +141,10 @@ export function AssetForm({
   }, [sourceKey, sourceSignature]);
 
   useEffect(() => {
+    // An existing asset keeps the due date it has, which may have been moved since it was installed.
+    // It is derived again only once the person edits the installation date.
+    if (asset && !installationTouched.current) return;
     if (!installationDate) {
-      if (!installationTouched.current && asset) return;
       setNextInspectionDate("");
       return;
     }
