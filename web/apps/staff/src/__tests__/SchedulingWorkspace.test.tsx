@@ -19,7 +19,9 @@ const client = vi.hoisted(() => ({
   approveInspectionBookingReschedule: vi.fn(),
   requestInspectionBookingReschedule: vi.fn(),
   createInspectionBooking: vi.fn(),
-  getInspectionBooking: vi.fn()
+  getInspectionBooking: vi.fn(),
+  reassignInspectionBookingInspector: vi.fn(),
+  getInspectorAvailability: vi.fn()
 }));
 
 vi.mock("../api/hmsClient", async (importOriginal) => ({
@@ -1367,5 +1369,109 @@ describe("drawer focus and back-out", () => {
     await user.click(assign);
     expect(client.approveInspectionBooking).toHaveBeenCalledTimes(1);
     await act(async () => finish());
+  });
+});
+
+describe("Change inspector in the appointment drawer", () => {
+  async function openDrawer(user: ReturnType<typeof userEvent.setup>, name: RegExp = /Orica, Kwinana, Ben Brook, Confirmed/) {
+    renderWorkspace();
+    await ready();
+    await user.click(screen.getByRole("button", { name }));
+    return screen.findByRole("dialog", { name: /Orica · Kwinana/ });
+  }
+  const pickInspector = async (user: ReturnType<typeof userEvent.setup>, name: string) => {
+    await user.click(within(changeDialog()).getByRole("combobox", { name: /New inspector/ }));
+    await user.click(within(changeDialog()).getByRole("option", { name: new RegExp(name) }));
+  };
+  const changeDialog = () => screen.getByRole("dialog", { name: "Change inspector" });
+  beforeEach(() => client.getInspectorAvailability.mockResolvedValue({ eligible: true, blockedReason: null, available: true, reason: null, suggestedInspectorIds: [] }));
+
+  it("shows the assigned inspector with Change inspector beside it, and only a replacement can be chosen", async () => {
+    const user = userEvent.setup();
+    const drawer = await openDrawer(user);
+    expect(within(drawer).getByText("Assigned inspector")).toBeInTheDocument();
+    expect(within(drawer).getByText("Ben Brook")).toBeInTheDocument();
+    // The old "Reassign inspector" / "Confirm reassignment" two-step is gone from the drawer.
+    expect(within(drawer).queryByRole("button", { name: /Reassign inspector|Confirm reassignment/ })).not.toBeInTheDocument();
+
+    await user.click(within(drawer).getByRole("button", { name: "Change inspector" }));
+    const box = within(changeDialog());
+    expect(box.getByText(/appointment date, time, location and assets stay the same/i)).toBeInTheDocument();
+    await user.click(box.getByRole("combobox", { name: /New inspector/ }));
+    const options = box.getAllByRole("option").map((option) => option.querySelector("span")?.textContent?.trim());
+    expect(options).toContain("Ada Archer");
+    expect(options).not.toContain("Ben Brook");
+    expect(client.reassignInspectionBookingInspector).not.toHaveBeenCalled();
+  });
+
+  it("warns inside the dialog when the chosen inspector is booked, and does not save", async () => {
+    client.getInspectorAvailability.mockResolvedValue({ eligible: true, blockedReason: null, available: false, reason: "inspector_busy", suggestedInspectorIds: [] });
+    const user = userEvent.setup();
+    const drawer = await openDrawer(user);
+    await user.click(within(drawer).getByRole("button", { name: "Change inspector" }));
+    await pickInspector(user, "Ada Archer");
+    expect(await within(changeDialog()).findByText(/already scheduled during the selected time/)).toBeInTheDocument();
+    expect(within(changeDialog()).getByRole("button", { name: "Save change" })).toBeDisabled();
+    expect(client.reassignInspectionBookingInspector).not.toHaveBeenCalled();
+  });
+
+  it("saves through the existing reassignment call and closes on success", async () => {
+    client.reassignInspectionBookingInspector.mockResolvedValue({ ...perthB, inspectorUserId: "insp-a" });
+    const user = userEvent.setup();
+    const drawer = await openDrawer(user);
+    await user.click(within(drawer).getByRole("button", { name: "Change inspector" }));
+    await pickInspector(user, "Ada Archer");
+    await user.click(within(changeDialog()).getByRole("button", { name: "Save change" }));
+
+    await waitFor(() => expect(client.reassignInspectionBookingInspector).toHaveBeenCalledWith("b3", "insp-a"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Change inspector" })).not.toBeInTheDocument());
+  });
+
+  it.each([
+    [409, "That inspector already has an appointment at this time."],
+    [403, "You do not have permission to do this."],
+    [409, "Inspector cannot be changed after inspection work has been submitted or approved."]
+  ])("a %i refusal (%s) keeps the dialog open with the replacement still chosen", async (status, message) => {
+    const { HmsApiError } = await import("../api/hmsClient");
+    client.reassignInspectionBookingInspector.mockRejectedValue(new HmsApiError(status, "refused", message, null));
+    const user = userEvent.setup();
+    const drawer = await openDrawer(user);
+    await user.click(within(drawer).getByRole("button", { name: "Change inspector" }));
+    await pickInspector(user, "Ada Archer");
+    await user.click(within(changeDialog()).getByRole("button", { name: "Save change" }));
+
+    expect(await within(changeDialog()).findByText(new RegExp(message.replace(/[.]/g, "\\.")))).toBeInTheDocument();
+    expect(within(changeDialog()).getByRole("combobox", { name: /New inspector/ })).toHaveTextContent("Ada Archer");
+  });
+
+  it("Escape closes only the dialog, not the drawer behind it", async () => {
+    const user = userEvent.setup();
+    const drawer = await openDrawer(user);
+    await user.click(within(drawer).getByRole("button", { name: "Change inspector" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Change inspector" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /Orica · Kwinana/ })).toBeInTheDocument();
+  });
+
+  it("says why it is unavailable while a reschedule is pending, rather than hiding the control", async () => {
+    const waiting = booking({
+      id: "b6", customer: "Orica", customerId: "cust-orica", location: "Kwinana", locationId: "loc-kwinana", zone: PERTH,
+      inspector: "insp-b", start: "2027-03-01T01:00:00Z", end: "2027-03-01T03:00:00Z", change: "PENDING_CUSTOMER_CONFIRMATION"
+    });
+    client.listInspectionSchedule.mockResolvedValue(scheduleResult([waiting]));
+    client.getInspectionBooking.mockResolvedValue(waiting);
+    const user = userEvent.setup();
+    const drawer = await openDrawer(user, /Orica, Kwinana, Ben Brook/);
+    expect(within(drawer).getByText("Cannot change inspector while a reschedule is pending.")).toBeInTheDocument();
+    expect(within(drawer).queryByRole("button", { name: "Change inspector" })).not.toBeInTheDocument();
+  });
+
+  it("is not offered to someone who cannot approve bookings", async () => {
+    renderWorkspace({ canApproveBookings: false });
+    await ready();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /Orica, Kwinana, Ben Brook, Confirmed/ }));
+    const drawer = await screen.findByRole("dialog", { name: /Orica · Kwinana/ });
+    expect(within(drawer).queryByRole("button", { name: "Change inspector" })).not.toBeInTheDocument();
   });
 });

@@ -11,6 +11,7 @@ export function serializeRoute(route: HmsRoute, surface: RouteSurface): string {
   // The portal's organisation comes straight after the view: /portal/?view=assets&customer=...&asset=...
   if (surface === "portal" && route.customer) params.set("customer", route.customer);
   if (route.view === "assets" && route.asset) params.set("asset", route.asset);
+  if (route.view === "assets" && surface === "staff" && !route.asset && route.customer) params.set("customer", route.customer);
   if (route.view === "inspections" && surface === "staff" && route.inspection) params.set("inspection", route.inspection);
   if (surface === "staff" && route.view === "customers" && route.customer) {
     params.set("customer", route.customer);

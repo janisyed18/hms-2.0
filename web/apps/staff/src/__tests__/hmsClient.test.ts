@@ -666,6 +666,38 @@ describe("hmsClient", () => {
     });
   });
 
+  it("reads the deletion check as camelCase with the blocking records", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ can_delete: false, archived: false, blockers: [{ kind: "assets", label: "assets", count: 3, records: [{ id: "a1", name: "A-1" }] }] }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    await expect(client.getCustomerDeletionCheck("cust-1")).resolves.toEqual({
+      canDelete: false,
+      archived: false,
+      blockers: [{ kind: "assets", label: "assets", count: 3, records: [{ id: "a1", name: "A-1" }] }]
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/customers/cust-1/deletion-check", expect.anything());
+  });
+
+  it("reads inspector availability as camelCase for one booking and one inspector", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ booking_id: "bk-1", eligible: true, blocked_reason: null, available: false, reason: "inspector_busy", suggested_inspector_ids: ["i-3"] }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    await expect(client.getInspectorAvailability("bk-1", "i-2")).resolves.toEqual({
+      eligible: true, blockedReason: null, available: false, reason: "inspector_busy", suggestedInspectorIds: ["i-3"]
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/inspection-bookings/bk-1/inspector-availability?inspector_user_id=i-2", expect.anything());
+  });
+
   it("deletes core records with DELETE and optional If-Match headers; archive is a separate POST", async () => {
     const fetchMock = vi
       .fn()

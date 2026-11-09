@@ -24,6 +24,15 @@ _LABELS = {
 }
 
 
+# Which column names a blocking record to a person; tables not listed give a count only.
+_RECORD_NAME_COLUMNS = {
+    "assets": "asset_number",
+    "products": "name",
+    "users": "email",
+}
+_MAX_SAMPLES = 5
+
+
 def require_super_admin(principal: Principal, action: str = "delete") -> None:
     """Delete, archive and restore need Super Admin, not a generic permission."""
     if Role.SUPER_ADMIN not in principal.roles:
@@ -83,3 +92,50 @@ async def ensure_not_referenced(
         status_code=status.HTTP_409_CONFLICT,
         detail=f"This {what} is still used by {summary}. {alternative}",
     )
+
+
+async def blocking_references(
+    session: AsyncSession,
+    model: type[Any],
+    record_id: str,
+    *,
+    ignore: Collection[str] = (),
+) -> list[dict[str, Any]]:
+    """What still refers to the record: per table a count and a few named samples.
+
+    Read-only counterpart of ``ensure_not_referenced`` so the UI can show what blocks a
+    delete before the person tries it. Samples are only ever a name already visible to a
+    Super Admin; nothing here is a reason to relax the server-side check on delete.
+    """
+    counts = await referencing_counts(session, model, record_id, ignore=ignore)
+    target = model.__table__
+    blockers: list[dict[str, Any]] = []
+    for table_name, count in sorted(counts.items()):
+        records: list[dict[str, str]] = []
+        name_column = _RECORD_NAME_COLUMNS.get(table_name)
+        table = Base.metadata.tables[table_name]
+        if name_column is not None and name_column in table.c:
+            link = next(
+                fk.parent for fk in table.foreign_keys if fk.column.table is target
+            )
+            statement = (
+                select(table.c.id, table.c[name_column])
+                .where(link == record_id)
+                .order_by(table.c[name_column])
+                .limit(_MAX_SAMPLES)
+            )
+            if "deleted_at" in table.c:
+                statement = statement.where(table.c.deleted_at.is_(None))
+            records = [
+                {"id": str(row[0]), "name": str(row[1])}
+                for row in (await session.execute(statement)).all()
+            ]
+        blockers.append(
+            {
+                "kind": table_name,
+                "label": _LABELS.get(table_name, table_name.replace("_", " ")),
+                "count": count,
+                "records": records,
+            }
+        )
+    return blockers

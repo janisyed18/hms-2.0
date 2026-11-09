@@ -341,7 +341,7 @@ export function useSchedulingWorkspace({
     bookingId: string | null,
     success: string,
     action: () => Promise<unknown>,
-    options: { key: string; fallback: string; availability?: boolean }
+    options: { key: string; fallback: string; availability?: boolean; onFailure?: (message: string) => void }
   ) {
     setBusy(true);
     setBusyKey(options.key);
@@ -354,10 +354,9 @@ export function useSchedulingWorkspace({
       return true;
     } catch (reason) {
       const friendly = friendlyApiError(reason, { fallback: options.fallback, conflictNeedsRefresh: options.availability });
-      setNotice({
-        kind: friendly.needsRefresh ? "conflict" : "error",
-        message: friendly.needsRefresh && friendly.kind === "conflict" ? `${CONFLICT_COPY} (${friendly.message})` : friendly.message
-      });
+      const message = friendly.needsRefresh && friendly.kind === "conflict" ? `${CONFLICT_COPY} (${friendly.message})` : friendly.message;
+      setNotice({ kind: friendly.needsRefresh ? "conflict" : "error", message });
+      options.onFailure?.(message);
       // Show what the server now says, keeping the user where they are.
       if (bookingId) await reloadBooking(bookingId);
       refresh();
@@ -382,10 +381,18 @@ export function useSchedulingWorkspace({
     run(bookingId, "Reschedule approved.", () =>
       createHmsClient().approveInspectionBookingReschedule(changeId, inspectorUserId),
     { key: "approve-reschedule", fallback: "The reschedule could not be approved. Try again.", availability: true });
-  const reassignInspector = (bookingId: string, inspectorUserId: string) =>
-    run(bookingId, "Inspector reassigned without changing the appointment time.", () =>
+  /** Resolves to null once saved, or to the refusal message, so the dialog can stay open and show it. */
+  const reassignInspector = async (bookingId: string, inspectorUserId: string): Promise<string | null> => {
+    let failure: string | null = null;
+    const saved = await run(bookingId, "Inspector reassigned without changing the appointment time.", () =>
       createHmsClient().reassignInspectionBookingInspector(bookingId, inspectorUserId),
-    { key: "reassign-inspector", fallback: "The inspector could not be reassigned. Try again.", availability: true });
+    { key: "reassign-inspector", fallback: "The inspector could not be reassigned. Try again.", availability: true, onFailure: (message) => { failure = message; } });
+    return saved ? null : failure ?? "The inspector could not be reassigned. Try again.";
+  };
+
+  /** Asks the server whether an inspector is free for a booking's existing time. Rejects when it cannot be verified. */
+  const checkInspectorAvailability = (bookingId: string, inspectorUserId: string) =>
+    createHmsClient().getInspectorAvailability(bookingId, inspectorUserId);
 
   /** "Book inspection": the existing flow, with the viewed date offered as its date. */
   async function openBooking(date?: string) {
@@ -429,6 +436,7 @@ export function useSchedulingWorkspace({
     anchor,
     approveBooking,
     approveReschedule,
+    checkInspectorAvailability,
     reassignInspector,
     busy,
     busyKey,

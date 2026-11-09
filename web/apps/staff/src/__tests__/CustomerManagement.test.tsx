@@ -164,29 +164,35 @@ describe("Customer lifecycle actions", () => {
     expect(screen.queryByRole("button", { name: /Archive customer|Restore customer|Delete customer/ })).not.toBeInTheDocument();
   });
 
-  it("offers Archive for an active customer and Restore and Delete for an archived one, as separate actions", async () => {
+  it("offers Delete on an active customer without archiving first, next to Archive", async () => {
     const user = userEvent.setup();
     const onLifecycle = vi.fn();
-    const { unmount } = renderDetail(customerWith([location("l1", "A")]), { tab: "Overview", canDelete: true, onLifecycle });
-    expect(screen.queryByRole("button", { name: "Delete customer" })).not.toBeInTheDocument();
+    renderDetail(customerWith([location("l1", "A")]), { tab: "Overview", canDelete: true, onLifecycle });
+    expect(screen.getByRole("button", { name: "Delete customer" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Archive customer" }));
-    expect(onLifecycle).toHaveBeenCalledWith("archive", expect.objectContaining({ id: "c1" }));
-    unmount();
+    expect(onLifecycle).toHaveBeenLastCalledWith("archive", expect.objectContaining({ id: "c1" }));
+    await user.click(screen.getByRole("button", { name: "Delete customer" }));
+    expect(onLifecycle).toHaveBeenLastCalledWith("delete", expect.objectContaining({ id: "c1" }));
+  });
 
+  it("offers Restore and Delete on an archived customer, as separate actions", async () => {
+    const user = userEvent.setup();
+    const onLifecycle = vi.fn();
     renderDetail(customerWith([location("l1", "A")], { status: "Archived", archivedAt: "2026-11-02T00:00:00Z" }), { tab: "Overview", canDelete: true, onLifecycle });
+    expect(screen.queryByRole("button", { name: "Archive customer" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Restore customer" }));
     expect(onLifecycle).toHaveBeenLastCalledWith("restore", expect.anything());
     await user.click(screen.getByRole("button", { name: "Delete customer" }));
     expect(onLifecycle).toHaveBeenLastCalledWith("delete", expect.anything());
   });
 
-  it("explains why Delete is not offered yet, and when it will be refused", () => {
+  it("explains archive versus delete, for an active and an archived customer", () => {
     const { unmount } = renderDetail(customerWith([location("l1", "A")]), { tab: "Overview", canDelete: true, onLifecycle: vi.fn() });
     expect(screen.getByRole("heading", { name: "Customer lifecycle" })).toBeVisible();
-    expect(screen.getByText(/Deleting is only offered once a customer is archived/)).toBeVisible();
+    expect(screen.getByText(/Archive hides this customer from active work and keeps its history/)).toBeVisible();
     unmount();
 
     renderDetail(customerWith([location("l1", "A")], { status: "Archived", archivedAt: "2026-11-02T00:00:00Z" }), { tab: "Overview", canDelete: true, onLifecycle: vi.fn() });
-    expect(screen.getByText(/refused while any asset, inspection or other record still refers to this customer/)).toBeVisible();
+    expect(screen.getByText(/Restore brings it back/)).toBeVisible();
   });
 });

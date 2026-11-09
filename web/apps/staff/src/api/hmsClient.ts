@@ -23,6 +23,8 @@ import type {
   CertificateStatus,
   ContactFormValues,
   CustomerContact,
+  CustomerDeletionCheck,
+  InspectorAvailability,
   CustomerFormValues,
   CustomerSummary,
   CustomerUpdateValues,
@@ -1839,6 +1841,20 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toCustomer(response.data, response.etag);
     },
 
+    /** What would stop this customer being permanently deleted right now (Super Admin only). */
+    async getCustomerDeletionCheck(id: string): Promise<CustomerDeletionCheck> {
+      const response = await request<{
+        can_delete: boolean;
+        archived: boolean;
+        blockers: { kind: string; label: string; count: number; records: { id: string; name: string }[] }[];
+      }>(`/api/v1/customers/${encodeURIComponent(id)}/deletion-check`);
+      return {
+        canDelete: response.data.can_delete,
+        archived: response.data.archived,
+        blockers: response.data.blockers.map((blocker) => ({ ...blocker, records: blocker.records ?? [] }))
+      };
+    },
+
     async createCustomer(values: CustomerFormValues): Promise<CustomerRecord> {
       const response = await request<ApiCustomer>(
         "/api/v1/customers",
@@ -2269,6 +2285,24 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         { method: "POST", body: JSON.stringify({ inspector_user_id: inspectorUserId }) }
       );
       return toInspectionBooking(response.data);
+    },
+
+    /** Read-only: is this replacement free for the booking's existing time? Reassigning re-checks it. */
+    async getInspectorAvailability(id: string, inspectorUserId?: string): Promise<InspectorAvailability> {
+      const response = await request<{
+        eligible: boolean;
+        blocked_reason: string | null;
+        available: boolean | null;
+        reason: InspectorAvailability["reason"];
+        suggested_inspector_ids: string[];
+      }>(`/api/v1/inspection-bookings/${encodeURIComponent(id)}/inspector-availability`, {}, { inspector_user_id: inspectorUserId });
+      return {
+        eligible: response.data.eligible,
+        blockedReason: response.data.blocked_reason,
+        available: response.data.available,
+        reason: response.data.reason,
+        suggestedInspectorIds: response.data.suggested_inspector_ids
+      };
     },
 
     async rejectInspectionBooking(

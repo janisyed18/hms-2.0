@@ -263,6 +263,33 @@ export interface CustomerRecord {
   metrics: CustomerMetrics;
 }
 
+/** What the server says about giving a confirmed booking to a different inspector, before anything changes. */
+export interface InspectorAvailability {
+  /** False when the booking cannot be reassigned at all (inspection history), whoever is chosen. */
+  eligible: boolean;
+  blockedReason: string | null;
+  /** Null when no inspector was asked about. */
+  available: boolean | null;
+  reason: "inspector_busy" | "asset_unavailable" | null;
+  /** Up to three other inspectors who are free for the booking's existing time. */
+  suggestedInspectorIds: string[];
+}
+
+/** One kind of record that still refers to a customer and so blocks permanently deleting it. */
+export interface CustomerDeletionBlocker {
+  kind: string;
+  label: string;
+  count: number;
+  /** A few named examples (assets, for instance); empty when the kind has no useful name. */
+  records: { id: string; name: string }[];
+}
+
+export interface CustomerDeletionCheck {
+  canDelete: boolean;
+  archived: boolean;
+  blockers: CustomerDeletionBlocker[];
+}
+
 export interface LocationFormValues {
   name: string;
   address1: string;

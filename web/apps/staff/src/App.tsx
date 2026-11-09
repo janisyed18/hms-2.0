@@ -15,6 +15,7 @@ import { NotificationsPage } from "./notifications/NotificationsPage";
 import { AppShell, type AppModule, type GlobalSearchSuggestion, type NavItem } from "./components/AppShell";
 import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
+import { CustomerDeleteDialog } from "./components/CustomerDeleteDialog";
 import { CustomerForm } from "./components/CustomerForm";
 import { ActionNotice } from "./components/interaction/ActionNotice";
 import { ConfirmDialog } from "./components/interaction/ConfirmDialog";
@@ -31,7 +32,8 @@ import type { AssetWorkflowAction, MyWorkItem, NotificationRecord, StaffPermissi
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import { PageMotion } from "./motion/MotionPrimitives";
 import { useHmsRoute } from "./routing/useHmsRoute";
-import { emptyRoute, type UsersRouteQuery } from "./routing/routeTypes";
+import { DEFAULT_USERS_QUERY, emptyRoute, type UsersRouteQuery } from "./routing/routeTypes";
+import { customerLabel } from "./utils/identity";
 import { greetingName } from "./utils/identity";
 
 const AnalyticsWorkspace = lazy(() =>
@@ -413,6 +415,23 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
     }
   }
 
+  // Where a linked-record row in the delete dialog goes. Returns false when this account has no page for it.
+  const [assetCustomerLabel, setAssetCustomerLabel] = useState<string | undefined>();
+  function openLinkedRecords(customerId: string, customerName: string, kind: string, recordId: string | null): boolean {
+    const target = ({
+      assets: "assets", asset: "assets", inspection_bookings: "inspections", inspection_appointments: "scheduling",
+      products: "products", users: "users", user_customer_accesses: "users"
+    } as Record<string, AppModule>)[kind];
+    if (!target || !visibleModules.includes(target)) return false;
+    workspace.cancelDeletion();
+    workspace.closeDetail();
+    if (kind === "asset" && recordId) navigate((current) => ({ ...emptyRoute("assets"), asset: recordId, customer: portalMode ? current.customer : null }));
+    else if (target === "assets") { setAssetCustomerLabel(customerName); navigate({ ...emptyRoute("assets"), customer: customerId }); }
+    else if (target === "users") navigate({ ...emptyRoute("users"), users: { ...DEFAULT_USERS_QUERY, customer: customerId } });
+    else navigate(emptyRoute(target));
+    return true;
+  }
+
   function handleAssetOpen(assetId: string) {
     if (!visibleModules.includes("assets")) {
       return;
@@ -615,13 +634,11 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                   onTabChange={workspace.setActiveTab}
                 />
                 <ConfirmDialog
-                  confirmLabel={workspace.lifecycleTarget?.action === "delete" ? "Delete customer" : workspace.lifecycleTarget?.action === "restore" ? "Restore customer" : "Archive customer"}
+                  confirmLabel={workspace.lifecycleTarget?.action === "restore" ? "Restore customer" : "Archive customer"}
                   elevated
                   error={workspace.lifecycleError}
                   message={
-                    workspace.lifecycleTarget?.action === "delete"
-                      ? "The customer is removed from the system. Its history is kept, and a customer that still has assets or bookings cannot be deleted."
-                      : workspace.lifecycleTarget?.action === "restore"
+                    workspace.lifecycleTarget?.action === "restore"
                         ? "The customer returns to active work and appears in selectors again."
                         : "The customer and its history are kept. It is left out of new work and selectors until it is restored."
                   }
@@ -630,7 +647,18 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                   open={workspace.lifecycleTarget !== null}
                   pending={workspace.isChangingLifecycle}
                   pendingLabel="Working…"
-                  title={workspace.lifecycleTarget ? `${{ archive: "Archive", restore: "Restore", delete: "Delete" }[workspace.lifecycleTarget.action]} ${workspace.lifecycleTarget.customer.name}?` : "Customer"}
+                  title={workspace.lifecycleTarget ? `${{ archive: "Archive", restore: "Restore" }[workspace.lifecycleTarget.action]} ${workspace.lifecycleTarget.customer.name}?` : "Customer"}
+                />
+                <CustomerDeleteDialog
+                  onArchive={() => void workspace.archiveInsteadOfDeleting()}
+                  onCancel={workspace.cancelDeletion}
+                  onConfirm={() => void workspace.confirmDeletion()}
+                  onOpenLinked={(kind, recordId) => {
+                    const target = workspace.deletion?.customer;
+                    return target ? openLinkedRecords(target.id, customerLabel(target), kind, recordId) : false;
+                  }}
+                  onRetry={workspace.retryDeletionCheck}
+                  state={workspace.deletion}
                 />
                 <CustomerForm
                   open={workspace.isFormOpen}
@@ -648,6 +676,9 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                       canDelete={session.roles.includes("SUPER_ADMIN")}
                       onAssetRouteChange={onAssetRouteChange}
                       routeAssetId={route.asset}
+                      routeCustomerId={portalMode ? null : route.customer}
+                      routeCustomerLabel={assetCustomerLabel}
+                      onCustomerRouteChange={() => navigate({ customer: null }, { replace: true })}
                       workflowNavigation={workflowNavigation}
                     />
                   ) : null}
