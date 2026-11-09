@@ -98,6 +98,12 @@ export function AssetsWorkspace({
       appliedCustomer.current = routeCustomerId;
       setCustomerFilter(routeCustomerId, routeCustomerLabel);
     }
+    else if (!routeCustomerId && appliedCustomer.current) {
+      // Back/Forward removed the customer from the URL: drop the filter it had applied. Forgetting it first
+      // keeps the filter-to-URL effect below from answering with a navigation of its own.
+      appliedCustomer.current = null;
+      setCustomerFilter("ALL");
+    }
   }, [routeCustomerId, routeCustomerLabel, setCustomerFilter]);
   const previousFilter = useRef("ALL");
   useEffect(() => {

@@ -1415,6 +1415,37 @@ describe("Change inspector in the appointment drawer", () => {
     expect(client.reassignInspectionBookingInspector).not.toHaveBeenCalled();
   });
 
+  it("a saved change stays a success when the follow-up refresh fails, and says the view is stale", async () => {
+    client.reassignInspectionBookingInspector.mockResolvedValue({ ...perthB, inspectorUserId: "insp-a" });
+    const user = userEvent.setup();
+    const drawer = await openDrawer(user);
+    await user.click(within(drawer).getByRole("button", { name: "Change inspector" }));
+    await pickInspector(user, "Ada Archer");
+    client.getInspectionBooking.mockRejectedValue(new Error("offline"));
+    await user.click(within(changeDialog()).getByRole("button", { name: "Save change" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Change inspector" })).not.toBeInTheDocument());
+    expect(client.reassignInspectionBookingInspector).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/could not be refreshed/)).toBeInTheDocument();
+    expect(screen.queryByText(/could not be reassigned/)).not.toBeInTheDocument();
+  });
+
+  it("a refusal whose recovery reload also fails still shows the refusal and leaves the dialog usable", async () => {
+    const { HmsApiError } = await import("../api/hmsClient");
+    client.reassignInspectionBookingInspector.mockRejectedValue(new HmsApiError(409, "conflict", "That inspector already has an appointment at this time.", null));
+    const user = userEvent.setup();
+    const drawer = await openDrawer(user);
+    await user.click(within(drawer).getByRole("button", { name: "Change inspector" }));
+    await pickInspector(user, "Ada Archer");
+    client.getInspectionBooking.mockRejectedValue(new Error("offline"));
+    await user.click(within(changeDialog()).getByRole("button", { name: "Save change" }));
+
+    expect(await within(changeDialog()).findByText(/already has an appointment/)).toBeInTheDocument();
+    // Not stuck on "Saving…": the choice is kept and Save works again.
+    await waitFor(() => expect(within(changeDialog()).getByRole("button", { name: "Save change" })).toBeEnabled());
+    expect(within(changeDialog()).getByRole("combobox", { name: /New inspector/ })).toHaveTextContent("Ada Archer");
+  });
+
   it("saves through the existing reassignment call and closes on success", async () => {
     client.reassignInspectionBookingInspector.mockResolvedValue({ ...perthB, inspectorUserId: "insp-a" });
     const user = userEvent.setup();

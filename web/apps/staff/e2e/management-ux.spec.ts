@@ -358,9 +358,9 @@ test.describe("management UX and data correctness", () => {
       await page.getByRole("button", { name: "Delete customer" }).click();
       const confirmDelete = page.getByRole("alertdialog");
       await expect(confirmDelete.getByRole("heading", { name: /^Delete / })).toBeVisible();
-      await expect(confirmDelete.getByText(/This cannot be undone/)).toBeVisible();
+      await expect(confirmDelete.getByText(/its record is kept for audit/)).toBeVisible();
       await confirmDelete.getByRole("button", { name: "Delete customer" }).click();
-      await expect(page.getByRole("status").filter({ hasText: "permanently deleted" })).toBeVisible();
+      await expect(page.getByRole("status").filter({ hasText: "was deleted" })).toBeVisible();
       expect((await api(page, "GET", `/api/v1/customers/${created.id}`)).status).toBe(404);
       await expect(page.getByRole("dialog", { name: name })).toHaveCount(0);
     } finally {

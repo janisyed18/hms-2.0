@@ -69,7 +69,7 @@ test.describe("Delete customer and Change inspector", () => {
         const dialog = page.getByRole("alertdialog");
         await expect(dialog.getByRole("heading", { name: "Delete customer?" })).toBeVisible();
         await expect(dialog.getByText(/This customer has linked records\. Archive the customer to preserve its history/)).toBeVisible();
-        await expect(dialog.getByText("Permanent deletion is available only when no linked records remain.")).toBeVisible();
+        await expect(dialog.getByText("Deletion is available only when no linked records remain.")).toBeVisible();
         const linked = dialog.getByRole("list", { name: "Linked records" });
         await expect(linked).toContainText("assets");
         await expect(dialog.getByRole("button", { name: "Archive customer" })).toBeVisible();

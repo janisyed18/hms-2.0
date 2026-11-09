@@ -275,7 +275,7 @@ export interface InspectorAvailability {
   suggestedInspectorIds: string[];
 }
 
-/** One kind of record that still refers to a customer and so blocks permanently deleting it. */
+/** One kind of record that still refers to a customer and so blocks deleting it. */
 export interface CustomerDeletionBlocker {
   kind: string;
   label: string;

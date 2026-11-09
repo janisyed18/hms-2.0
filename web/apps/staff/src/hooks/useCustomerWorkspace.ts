@@ -204,7 +204,7 @@ export function useCustomerWorkspace(options: { active?: boolean; onSelectedChan
     select(null);
     setDeletion(null);
     reload();
-    notify({ kind: "success", message: `${customerLabel(customer)} was permanently deleted.`, title: "Customer deleted" });
+    notify({ kind: "success", message: `${customerLabel(customer)} was deleted. It is removed from normal use and its record is kept for audit.`, title: "Customer deleted" });
   }
   /** The safe alternative offered when deleting is blocked. It is announced as archiving, never as a deletion. */
   async function archiveInsteadOfDeleting() {

@@ -20,7 +20,7 @@ export const LINKED_RECORD_ICONS: Record<string, ComponentType<{ "aria-hidden"?:
 
 /**
  * Delete customer in one place: it first shows what the server says is linked, then either confirms a
- * permanent delete (nothing linked) or explains what blocks it and offers Archive as the safe alternative.
+ * delete confirmation (nothing linked) or explains what blocks it and offers Archive as the safe alternative.
  * The server repeats the check when deleting, so this dialog informs the choice and never replaces the rule.
  */
 export function CustomerDeleteDialog({
@@ -99,7 +99,7 @@ export function CustomerDeleteDialog({
 
         {check?.canDelete ? (
           <p>
-            Nothing is linked to {name}, so it can be deleted permanently. This cannot be undone.
+            Nothing is linked to {name}, so it can be deleted. It is removed from the customer list and from selectors, and its record is kept for audit. It cannot be restored from the screen.
           </p>
         ) : null}
 
@@ -161,7 +161,7 @@ export function CustomerDeleteDialog({
             </p>
             <p className="field-hint">
               Archiving hides it from active work and selectors while every record is kept, and it can be restored later.
-              Permanent deletion is available only when no linked records remain.
+              Deletion is available only when no linked records remain.
             </p>
           </>
         ) : null}

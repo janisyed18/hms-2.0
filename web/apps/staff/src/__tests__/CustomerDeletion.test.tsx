@@ -81,7 +81,7 @@ describe("Delete customer", () => {
     const user = await openDialog();
 
     expect(await within(dialog()).findByRole("heading", { name: "Delete customer?" })).toBeVisible();
-    expect(within(dialog()).getByText(/can be deleted permanently\. This cannot be undone/)).toBeVisible();
+    expect(within(dialog()).getByText(/can be deleted\. It is removed from the customer list and from selectors, and its record is kept for audit/)).toBeVisible();
     expect(client.deleteCustomer).not.toHaveBeenCalled();
     expect(client.archiveCustomer).not.toHaveBeenCalled();
 
@@ -89,7 +89,7 @@ describe("Delete customer", () => {
     // The version it was read at travels with the delete, so someone else's edit is not overwritten.
     expect(client.deleteCustomer).toHaveBeenCalledWith("c1", '"3"');
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
-    expect(screen.getByTestId("notice")).toHaveTextContent(`Customer deleted: ${LABEL} was permanently deleted.`);
+    expect(screen.getByTestId("notice")).toHaveTextContent(`Customer deleted: ${LABEL} was deleted. It is removed from normal use and its record is kept for audit.`);
     expect(client.archiveCustomer).not.toHaveBeenCalled();
   });
 
@@ -107,7 +107,7 @@ describe("Delete customer", () => {
     expect(within(list).getByText("and 5 more")).toBeVisible();
     expect(within(list).getByText("inspection bookings")).toBeVisible();
     expect(within(dialog()).getByText(/This customer has linked records\. Archive the customer to preserve its history/)).toBeVisible();
-    expect(within(dialog()).getByText(/Permanent deletion is available only when no linked records remain/)).toBeVisible();
+    expect(within(dialog()).getByText(/Deletion is available only when no linked records remain/)).toBeVisible();
     expect(within(dialog()).queryByRole("button", { name: "Delete customer" })).not.toBeInTheDocument();
 
     // A named asset links straight to it.

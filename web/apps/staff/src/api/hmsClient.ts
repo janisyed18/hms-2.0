@@ -1841,7 +1841,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toCustomer(response.data, response.etag);
     },
 
-    /** What would stop this customer being permanently deleted right now (Super Admin only). */
+    /** What would stop this customer being deleted right now (Super Admin only). */
     async getCustomerDeletionCheck(id: string): Promise<CustomerDeletionCheck> {
       const response = await request<{
         can_delete: boolean;

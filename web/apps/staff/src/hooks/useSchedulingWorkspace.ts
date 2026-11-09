@@ -318,7 +318,8 @@ export function useSchedulingWorkspace({
 
   // --- actions: all go through the existing validated endpoints ----------------------
 
-  async function reloadBooking(id: string) {
+  /** Resolves true when the booking was re-read; false (never a throw) when that read failed. */
+  async function reloadBooking(id: string): Promise<boolean> {
     try {
       const fresh = await createHmsClient().getInspectionBooking(id);
       setBookings((current) => current.map((booking) => (booking.id === id ? fresh : booking)));
@@ -326,8 +327,10 @@ export function useSchedulingWorkspace({
         requests: { ...all.requests, items: all.requests.items.map((booking) => (booking.id === id ? fresh : booking)) },
         changes: { ...all.changes, items: all.changes.items.map((booking) => (booking.id === id ? fresh : booking)) }
       }));
+      return true;
     } catch {
       /* the broader refresh below still runs */
+      return false;
     }
   }
 
@@ -348,9 +351,16 @@ export function useSchedulingWorkspace({
     setNotice(null);
     try {
       await action();
-      confirm(success);
-      if (bookingId) await reloadBooking(bookingId);
-      refresh();
+      // The change is saved. Nothing after this line may turn that into a failure: a refresh that
+      // cannot complete is a warning on the success message, never a reason to offer the change again.
+      let refreshed = true;
+      try {
+        if (bookingId) refreshed = await reloadBooking(bookingId);
+        refresh();
+      } catch {
+        refreshed = false;
+      }
+      confirm(refreshed ? success : `${success} The schedule could not be refreshed, so reload it to see the latest.`);
       return true;
     } catch (reason) {
       const friendly = friendlyApiError(reason, { fallback: options.fallback, conflictNeedsRefresh: options.availability });
@@ -358,8 +368,12 @@ export function useSchedulingWorkspace({
       setNotice({ kind: friendly.needsRefresh ? "conflict" : "error", message });
       options.onFailure?.(message);
       // Show what the server now says, keeping the user where they are.
-      if (bookingId) await reloadBooking(bookingId);
-      refresh();
+      try {
+        if (bookingId) await reloadBooking(bookingId);
+        refresh();
+      } catch {
+        /* the failure above is what is shown; a second failure must not hide it or leave the screen busy */
+      }
       return false;
     } finally {
       setBusy(false);
