@@ -210,16 +210,24 @@ export function CustomerDetail({
                 </div>
                 <div><h4>Global Customer Notes</h4><p>{customer.notes || "No global customer notes recorded."}</p></div>
                 {canDelete && onLifecycle ? (
-                  <div className="row-actions" role="group" aria-label="Customer lifecycle">
-                    {customer.status === "Active" ? (
-                      <button className="secondary-button compact-action" onClick={() => onLifecycle("archive", customer)} type="button">Archive customer</button>
-                    ) : (
-                      <>
-                        <button className="secondary-button compact-action" onClick={() => onLifecycle("restore", customer)} type="button">Restore customer</button>
-                        <button className="secondary-button compact-action" onClick={() => onLifecycle("delete", customer)} type="button">Delete customer</button>
-                      </>
-                    )}
-                  </div>
+                  <section aria-labelledby="customer-lifecycle-heading" className="customer-lifecycle">
+                    <h4 id="customer-lifecycle-heading">Customer lifecycle</h4>
+                    <div className="row-actions" role="group" aria-label="Customer lifecycle">
+                      {customer.status === "Active" ? (
+                        <button className="secondary-button compact-action" onClick={() => onLifecycle("archive", customer)} type="button">Archive customer</button>
+                      ) : (
+                        <>
+                          <button className="secondary-button compact-action" onClick={() => onLifecycle("restore", customer)} type="button">Restore customer</button>
+                          <button className="secondary-button compact-action" onClick={() => onLifecycle("delete", customer)} type="button">Delete customer</button>
+                        </>
+                      )}
+                    </div>
+                    <p className="field-hint">
+                      {customer.status === "Active"
+                        ? "Archive this customer to stop new work for it. Deleting is only offered once a customer is archived."
+                        : "Delete is refused while any asset, inspection or other record still refers to this customer; it then stays archived."}
+                    </p>
+                  </section>
                 ) : null}
                 {customer.status === "Archived" ? (
                   <p className="empty-requirements">This customer is archived. It and its history are kept, and it is left out of new work until it is restored.</p>

@@ -508,7 +508,7 @@ function UserTable({
                     <div className="user-actions">
                       <button
                         aria-label={`Manage ${user.email}`}
-                        className="icon-button light"
+                        className="icon-button light user-manage-button"
                         type="button"
                         onClick={(event) => {
                           placeMenu(event.currentTarget);
@@ -516,6 +516,7 @@ function UserTable({
                         }}
                       >
                         <MoreHorizontal aria-hidden="true" size={17} />
+                        <span aria-hidden="true">Manage</span>
                       </button>
                       {managedUserId === user.id ? (
                         <div className="user-action-menu" role="menu" style={menuPosition}>

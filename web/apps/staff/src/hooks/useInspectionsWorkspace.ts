@@ -135,16 +135,20 @@ export function useInspectionsWorkspace(
   }, [selectedId]);
 
   function openCreate() { setFormOpen(true); }
-  async function openBooking() {
-    if (canApproveBookings && inspectors.length === 0) {
-      try {
-        const users = await createHmsClient().listAdminUsers({ sort: "email", limit: 100 });
-        setInspectors(users.items.filter((user) => user.role === "INSPECTOR" && user.accountStatus === "ACTIVE"));
-      } catch (reason) {
-        setError(friendlyApiError(reason, { fallback: "Inspectors could not be loaded." }).message);
-        return;
-      }
+  /** The active inspectors an administrator can assign. Loaded on first need; false when they could not be. */
+  async function loadInspectors(): Promise<boolean> {
+    if (!canApproveBookings || inspectors.length > 0) return true;
+    try {
+      const users = await createHmsClient().listAdminUsers({ sort: "email", limit: 100 });
+      setInspectors(users.items.filter((user) => user.role === "INSPECTOR" && user.accountStatus === "ACTIVE"));
+      return true;
+    } catch (reason) {
+      setError(friendlyApiError(reason, { fallback: "Inspectors could not be loaded." }).message);
+      return false;
     }
+  }
+  async function openBooking() {
+    if (!(await loadInspectors())) return;
     setRescheduleBooking(null); setBookingFormOpen(true);
   }
   function openReschedule(booking: InspectionBookingRecord) { setRescheduleBooking(booking); setBookingFormOpen(true); }
@@ -225,6 +229,15 @@ export function useInspectionsWorkspace(
       });
     }, { ...bookingFailure("Booking could not be approved"), fallback: "The booking could not be approved. Try again.", success: outcome("Booking approved", `Booking at ${booking?.location.name ?? "the site"} approved and an inspector assigned`) });
   }
+  /** Changes who attends a confirmed booking; the appointment time is untouched. A busy inspector is a 409 shown as stated. */
+  function reassignInspectionBookingInspector(id: string, inspectorUserId: string) {
+    const booking = bookings.find((item) => item.id === id);
+    return run(`reassign:${id}`, async () => {
+      const saved = await createHmsClient().reassignInspectionBookingInspector(id, inspectorUserId);
+      setBookings((current) => current.map((item) => item.id === saved.id ? saved : item));
+      return false;
+    }, { ...bookingFailure("Inspector could not be reassigned"), fallback: "The inspector could not be reassigned. Try again.", success: outcome("Inspector reassigned", `The inspector for ${booking?.location.name ?? "the site"} was changed; the inspection time is unchanged`) });
+  }
   // Declining and cancelling are not availability actions: a 409 is an ordinary state conflict and is
   // shown as stated. The booking is reloaded separately, so a failed reload never changes that message.
   const bookingDecision = useConfirmedAction<{ action: "reject" | "cancel"; booking: InspectionBookingRecord }>(
@@ -282,5 +295,5 @@ export function useInspectionsWorkspace(
   }
   function clearInspectionFilters() { setTypeFilter("ALL"); setResultFilter("ALL"); }
   const activeFilterCount = [typeFilter !== "ALL", resultFilter !== "ALL"].filter(Boolean).length;
-  return { serverTotal, activeFilterCount, approveInspection, beginInspectionRework, rejectInspection, startInspection, approveInspectionBooking, approveInspectionBookingReschedule, ratingFor, ratingReady, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
+  return { serverTotal, activeFilterCount, approveInspection, beginInspectionRework, rejectInspection, startInspection, approveInspectionBooking, approveInspectionBookingReschedule, loadInspectors, reassignInspectionBookingInspector, ratingFor, ratingReady, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
 }

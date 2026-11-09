@@ -179,4 +179,14 @@ describe("Customer lifecycle actions", () => {
     await user.click(screen.getByRole("button", { name: "Delete customer" }));
     expect(onLifecycle).toHaveBeenLastCalledWith("delete", expect.anything());
   });
+
+  it("explains why Delete is not offered yet, and when it will be refused", () => {
+    const { unmount } = renderDetail(customerWith([location("l1", "A")]), { tab: "Overview", canDelete: true, onLifecycle: vi.fn() });
+    expect(screen.getByRole("heading", { name: "Customer lifecycle" })).toBeVisible();
+    expect(screen.getByText(/Deleting is only offered once a customer is archived/)).toBeVisible();
+    unmount();
+
+    renderDetail(customerWith([location("l1", "A")], { status: "Archived", archivedAt: "2026-11-02T00:00:00Z" }), { tab: "Overview", canDelete: true, onLifecycle: vi.fn() });
+    expect(screen.getByText(/refused while any asset, inspection or other record still refers to this customer/)).toBeVisible();
+  });
 });

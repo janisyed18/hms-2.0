@@ -1847,7 +1847,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           body: JSON.stringify({
             name: values.name.trim(),
             notes: values.notes.trim() || null,
-            locations: [locationPayload(values.firstLocation)]
+            locations: [values.firstLocation, ...(values.additionalLocations ?? [])].map(locationPayload)
           })
         }
       );

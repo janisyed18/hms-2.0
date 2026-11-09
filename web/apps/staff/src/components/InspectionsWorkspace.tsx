@@ -5,7 +5,7 @@ import {
   ClipboardCheck,
   Clock3
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { InspectionDetail } from "./InspectionDetail";
 import { InspectionBookingForm } from "./InspectionBookingForm";
@@ -81,6 +81,17 @@ export function InspectionsWorkspace({
   const workspace = useInspectionsWorkspace(canApproveBookings, routeInspectionId, onInspectionRouteChange);
   const [inspectorByBooking, setInspectorByBooking] = useState<Record<string, string>>({});
   const [missingInspector, setMissingInspector] = useState<string | null>(null);
+  /** The booking whose inspector is being changed, and the choice awaiting explicit confirmation. */
+  const [reassigning, setReassigning] = useState<string | null>(null);
+  const [reassignChoice, setReassignChoice] = useState<Record<string, string>>({});
+  // The assigned inspector's name needs the inspector list, so it is loaded once a confirmed booking is on screen.
+  const hasConfirmedBooking = workspace.bookings.some((booking) => booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED");
+  const { loadInspectors } = workspace;
+  useEffect(() => {
+    if (canApproveBookings && hasConfirmedBooking) void loadInspectors();
+    // loadInspectors is recreated each render; the list is loaded once, and only when needed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canApproveBookings, hasConfirmedBooking]);
   const draftCount =
     countByStatus(workspace.inspections, "DRAFT") + countByStatus(workspace.inspections, "IN_PROGRESS");
   const submittedCount = countByStatus(workspace.inspections, "SUBMITTED");
@@ -237,6 +248,46 @@ export function InspectionsWorkspace({
                       <ActionButton disabled={workspace.pendingAction !== null} onClick={() => workspace.bookingDecision.request({ action: "cancel", booking })} variant="ghost">
                         Cancel booking
                       </ActionButton>
+                    </span>
+                  ) : null}
+                  {canApproveBookings && booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED" && !booking.changeRequests.some((change) => ["PENDING_ADMIN_APPROVAL", "PENDING_CUSTOMER_CONFIRMATION"].includes(change.status)) ? (
+                    <span className="row-actions">
+                      <span>Inspector: {workspace.inspectors.find((inspector) => inspector.id === booking.inspectorUserId)?.displayName ?? (booking.inspectorUserId ? "Assigned" : "Not assigned")}</span>
+                      {reassigning === booking.id ? (
+                        <>
+                          <select
+                            aria-label={`New inspector for ${booking.location.name}`}
+                            value={reassignChoice[booking.id] ?? ""}
+                            onChange={(event) => setReassignChoice((current) => ({ ...current, [booking.id]: event.target.value }))}
+                          >
+                            <option value="">Choose an inspector</option>
+                            {workspace.inspectors.filter((inspector) => inspector.id !== booking.inspectorUserId).map((inspector) => (
+                              <option key={inspector.id} value={inspector.id}>{inspector.displayName}</option>
+                            ))}
+                          </select>
+                          <ActionButton
+                            disabled={workspace.pendingAction !== null || !reassignChoice[booking.id]}
+                            onClick={() => void workspace.reassignInspectionBookingInspector(booking.id, reassignChoice[booking.id]).then(() => setReassigning(null))}
+                            pending={workspace.pendingAction === `reassign:${booking.id}`}
+                            pendingLabel="Reassigning…"
+                            variant="secondary"
+                          >
+                            Confirm reassignment
+                          </ActionButton>
+                          <ActionButton disabled={workspace.pendingAction !== null} onClick={() => setReassigning(null)} variant="ghost">
+                            Keep inspector
+                          </ActionButton>
+                          <small>The inspection time will not change.</small>
+                        </>
+                      ) : (
+                        <ActionButton
+                          disabled={workspace.pendingAction !== null}
+                          onClick={() => void workspace.loadInspectors().then((loaded) => { if (loaded) setReassigning(booking.id); })}
+                          variant="secondary"
+                        >
+                          Reassign inspector
+                        </ActionButton>
+                      )}
                     </span>
                   ) : null}
                   {canApproveBookings ? booking.changeRequests.filter((change) => change.status === "PENDING_ADMIN_APPROVAL").map((change) => (

@@ -27,6 +27,7 @@ const client = vi.hoisted(() => ({
   revokeCertificate: vi.fn(),
   supersedeCertificate: vi.fn(),
   approveInspectionBooking: vi.fn(),
+  reassignInspectionBookingInspector: vi.fn(),
   rejectInspectionBooking: vi.fn(),
   cancelInspectionBooking: vi.fn(),
   getInspectionBooking: vi.fn(),
@@ -387,5 +388,72 @@ describe("A successful booking action is never reported as a failure because a l
     await user.click(screen.getByRole("button", { name: "Decline" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Decline booking" }));
     expect(await within(await screen.findByRole("alertdialog")).findByRole("alert")).toHaveTextContent("Only pending inspection bookings can be declined.");
+  });
+});
+
+describe("Reassigning the inspector of a confirmed booking", () => {
+  const confirmed = { ...booking, status: "APPROVED", inspectorUserId: "ins-1", appointment: { status: "CONFIRMED" } } as unknown as InspectionBookingRecord;
+  const inspectors = [
+    { id: "ins-1", displayName: "Ben Brook", role: "INSPECTOR", accountStatus: "ACTIVE" },
+    { id: "ins-2", displayName: "Cara Cole", role: "INSPECTOR", accountStatus: "ACTIVE" }
+  ];
+
+  async function renderConfirmed(props: { canApproveBookings: boolean } = { canApproveBookings: true }) {
+    client.listInspectionBookings.mockResolvedValue({ total: 1, etag: null, items: [confirmed] });
+    client.listAdminUsers.mockResolvedValue({ total: 2, etag: null, items: inspectors });
+    const user = userEvent.setup();
+    render(<InspectionsWorkspace canApprove={props.canApproveBookings} canApproveBookings={props.canApproveBookings} canBook canWrite />);
+    await screen.findByText("Kooragang");
+    return user;
+  }
+
+  it("shows the current inspector and changes it only after an explicit confirmation", async () => {
+    client.reassignInspectionBookingInspector.mockResolvedValue({ ...confirmed, inspectorUserId: "ins-2" });
+    const user = await renderConfirmed();
+    expect(await screen.findByText("Inspector: Ben Brook")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reassign inspector" }));
+    const confirm = screen.getByRole("button", { name: "Confirm reassignment" });
+    expect(confirm).toBeDisabled();
+    const choices = within(screen.getByLabelText("New inspector for Kooragang")).getAllByRole("option").map((option) => option.textContent);
+    expect(choices).toEqual(["Choose an inspector", "Cara Cole"]);
+    expect(client.reassignInspectionBookingInspector).not.toHaveBeenCalled();
+
+    await choose(user, screen.getByLabelText("New inspector for Kooragang"), "ins-2");
+    await user.click(confirm);
+    expect(client.reassignInspectionBookingInspector).toHaveBeenCalledWith("bk-1", "ins-2");
+    expect(await screen.findByText("Inspector: Cara Cole")).toBeInTheDocument();
+  });
+
+  it.each([
+    [409, "That inspector already has an appointment at this time."],
+    [403, "You do not have permission to do this."],
+    [409, "Inspector cannot be changed after inspection work has been submitted or approved."]
+  ])("a %i refusal (%s) is shown as stated and the original inspector is kept", async (status, message) => {
+    client.reassignInspectionBookingInspector.mockRejectedValueOnce(api(status, message));
+    const user = await renderConfirmed();
+    await user.click(await screen.findByRole("button", { name: "Reassign inspector" }));
+    await choose(user, screen.getByLabelText("New inspector for Kooragang"), "ins-2");
+    await user.click(screen.getByRole("button", { name: "Confirm reassignment" }));
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.getByText("Inspector: Ben Brook")).toBeInTheDocument();
+    expect(screen.queryByText("Inspector: Cara Cole")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["a booking still awaiting approval", { status: "PENDING_APPROVAL", appointment: null }],
+    ["a cancelled booking", { status: "CANCELLED", appointment: { status: "CANCELLED" } }],
+    ["a booking with a reschedule waiting for the customer", { changeRequests: [{ id: "chg-1", status: "PENDING_CUSTOMER_CONFIRMATION", startsAt: "2027-03-05T00:00:00Z", endsAt: "2027-03-05T01:00:00Z", reason: null, emergency: false, createdAt: "2027-02-01T00:00:00Z" }] }]
+  ])("is not offered for %s", async (_label, overrides) => {
+    client.listInspectionBookings.mockResolvedValue({ total: 1, etag: null, items: [{ ...confirmed, ...overrides } as unknown as InspectionBookingRecord] });
+    client.listAdminUsers.mockResolvedValue({ total: 2, etag: null, items: inspectors });
+    render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
+    await screen.findByText("Kooragang");
+    expect(screen.queryByRole("button", { name: "Reassign inspector" })).not.toBeInTheDocument();
+  });
+
+  it("is not offered to someone who cannot approve bookings", async () => {
+    await renderConfirmed({ canApproveBookings: false });
+    expect(screen.queryByRole("button", { name: "Reassign inspector" })).not.toBeInTheDocument();
   });
 });

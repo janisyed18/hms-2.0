@@ -289,6 +289,8 @@ export interface CustomerFormValues {
   name: string;
   notes: string;
   firstLocation: LocationFormValues;
+  /** Further sites entered on the same form; saved with the customer in one request. */
+  additionalLocations?: LocationFormValues[];
 }
 
 export interface CustomerUpdateValues {
