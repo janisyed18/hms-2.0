@@ -316,13 +316,17 @@ export function AssetForm({
         </FormSection>
         <FormSection title="Identity">
           <FormGrid>
-            <fieldset className="asset-number-mode">
+            <fieldset className="asset-number-mode form-field--wide">
               <legend>Asset Number</legend>
-              {asset ? null : <>
-                <label><input checked={generateAssetNumber} name="asset-number-mode" type="radio" onChange={() => setGenerateAssetNumber(true)} /> Generate automatically</label>
-                <label><input checked={!generateAssetNumber} name="asset-number-mode" type="radio" onChange={() => setGenerateAssetNumber(false)} /> Enter manually</label>
-              </>}
-              {generateAssetNumber && !asset ? <small>Generated when saved</small> : <input aria-label="Asset Number" value={assetNumber} onChange={(event) => { setAssetNumber(event.target.value); clearError("assetNumber"); }} />}
+              <div className="asset-number-mode__row">
+                {asset ? null : (
+                  <div className="asset-number-mode__choices">
+                    <label><input checked={generateAssetNumber} name="asset-number-mode" type="radio" onChange={() => setGenerateAssetNumber(true)} /> Automatic</label>
+                    <label><input checked={!generateAssetNumber} name="asset-number-mode" type="radio" onChange={() => setGenerateAssetNumber(false)} /> Manual</label>
+                  </div>
+                )}
+                {generateAssetNumber && !asset ? <small className="asset-number-mode__hint">Generated when saved</small> : <input aria-label="Asset Number" value={assetNumber} onChange={(event) => { setAssetNumber(event.target.value); clearError("assetNumber"); }} />}
+              </div>
               {errors.assetNumber ? <small className="field-error">{errors.assetNumber}</small> : null}
             </fieldset>
             <Field label="Asset Name" name="assetName">
@@ -376,7 +380,7 @@ export function AssetForm({
           </FormGrid>
         </FormSection>
         <FormSection title="Ends">
-          <FormGrid>
+          <div className="asset-ends">
             <AssetEndEditor
               attachMethods={configurationOptions.attachMethods}
               couplingAddOns={configurationOptions.couplingAddOns}
@@ -397,7 +401,7 @@ export function AssetForm({
               values={bEnd}
               onChange={setBEnd}
             />
-          </FormGrid>
+          </div>
         </FormSection>
       </FormShell>
     </div>

@@ -29,7 +29,8 @@ export function AssetEndEditor({
   onChange
 }: AssetEndEditorProps) {
   return (
-    <>
+    <fieldset className="asset-end">
+      <legend>End {label}</legend>
       <label>
         <span>Material ({label})</span>
         <select aria-label={`Material (${label})`} value={values.material?.id ?? ""} onChange={(event) => onChange({ ...values, material: updateSelection(materials, event.target.value) })}>
@@ -86,6 +87,6 @@ export function AssetEndEditor({
           {attachMethods.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
         </select>
       </label>
-    </>
+    </fieldset>
   );
 }

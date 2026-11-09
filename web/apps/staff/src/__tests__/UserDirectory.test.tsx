@@ -132,6 +132,13 @@ describe("after a change", () => {
     expect(await screen.findByText("1 user matches these filters.")).toBeInTheDocument();
   });
 
+  it("labels the row's Manage control so the actions behind it are discoverable", async () => {
+    client.listAdminUsers.mockResolvedValue({ total: 1, etag: null, nextAfter: null, items: [jani] });
+    renderUsers();
+    const manage = await screen.findByRole("button", { name: "Manage jani@example.com" });
+    expect(manage).toHaveTextContent("Manage");
+  });
+
   it("moves back to the last page that exists when a change empties the current one", async () => {
     // 11 users at 10 a page: page 2 holds one. Once that user leaves, page 2 no longer exists.
     let users = 11;

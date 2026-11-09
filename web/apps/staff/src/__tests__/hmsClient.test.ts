@@ -783,6 +783,21 @@ describe("hmsClient", () => {
     );
   });
 
+  it("sends additional locations in the same create request, after the first", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okJson(apiCustomer));
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const location = (name: string) => ({
+      name, address1: "", address2: "", city: "", state: "", country: "", siteContactName: "", siteContactMobile: "", siteContactEmail: "",
+      contacts: [], ppeRequirements: [], additionalRequirements: [], schedulingTimezone: "Australia/Sydney",
+      schedulingOpenTime: "08:00", schedulingCloseTime: "17:00", schedulingWeekdays: [0, 1, 2, 3, 4], schedulingBlackoutDates: []
+    });
+    await client.createCustomer({ name: "Summit", notes: "", firstLocation: location("First"), additionalLocations: [location("Second"), location("Third")] });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.locations.map((entry: { name: string }) => entry.name)).toEqual(["First", "Second", "Third"]);
+  });
+
   it("sends location-specific contacts and requirements in create payloads", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       okJson({
