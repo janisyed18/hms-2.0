@@ -83,6 +83,7 @@ export function InspectionsWorkspace({
   const [missingInspector, setMissingInspector] = useState<string | null>(null);
   /** The booking whose inspector is being changed, and the choice awaiting explicit confirmation. */
   const [reassigning, setReassigning] = useState<string | null>(null);
+  const [showAllBookings, setShowAllBookings] = useState(false);
   const [reassignChoice, setReassignChoice] = useState<Record<string, string>>({});
   // The assigned inspector's name needs the inspector list, so it is loaded once a confirmed booking is on screen.
   const hasConfirmedBooking = workspace.bookings.some((booking) => booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED");
@@ -193,7 +194,7 @@ export function InspectionsWorkspace({
           </header>
           {workspace.bookings.length ? (
             <div className="inspection-booking-list" aria-label="Inspection bookings">
-              {workspace.bookings.slice(0, 4).map((booking) => (
+              {(showAllBookings ? workspace.bookings : workspace.bookings.slice(0, 4)).map((booking) => (
                 <article className="inspection-booking-card" key={booking.id}>
                   <div>
                     <strong>{booking.location.name}</strong>
@@ -267,7 +268,7 @@ export function InspectionsWorkspace({
                           </select>
                           <ActionButton
                             disabled={workspace.pendingAction !== null || !reassignChoice[booking.id]}
-                            onClick={() => void workspace.reassignInspectionBookingInspector(booking.id, reassignChoice[booking.id]).then(() => setReassigning(null))}
+                            onClick={() => void workspace.reassignInspectionBookingInspector(booking.id, reassignChoice[booking.id]).then((result) => { if (result.ok) setReassigning(null); })}
                             pending={workspace.pendingAction === `reassign:${booking.id}`}
                             pendingLabel="Reassigning…"
                             variant="secondary"
@@ -348,6 +349,16 @@ export function InspectionsWorkspace({
                   )) : null}
                 </article>
               ))}
+              {!showAllBookings && workspace.bookings.length > 4 ? (
+                <button className="secondary-button compact-action" onClick={() => setShowAllBookings(true)} type="button">
+                  {`Show all ${workspace.bookings.length} loaded bookings`}
+                </button>
+              ) : null}
+              {showAllBookings && workspace.bookingTotal > workspace.bookings.length ? (
+                <button className="secondary-button compact-action" onClick={() => void workspace.loadMoreBookings()} type="button">
+                  Load more bookings
+                </button>
+              ) : null}
             </div>
           ) : (
             <p className="inspection-booking-empty">

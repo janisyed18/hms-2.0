@@ -452,6 +452,82 @@ describe("Reassigning the inspector of a confirmed booking", () => {
     expect(screen.queryByRole("button", { name: "Reassign inspector" })).not.toBeInTheDocument();
   });
 
+  const site = (n: number, overrides: Record<string, unknown> = {}) => ({
+    ...confirmed, id: `bk-${n}`, location: { ...(confirmed as unknown as { location: object }).location, id: `loc-${n}`, name: `Site ${n}` }, ...overrides
+  }) as unknown as InspectionBookingRecord;
+
+  it("reaches a confirmed booking beyond the first four, and can load bookings that were not fetched yet", async () => {
+    client.listInspectionBookings.mockResolvedValueOnce({ total: 7, etag: null, items: [1, 2, 3, 4, 5].map((n) => site(n)) });
+    client.listAdminUsers.mockResolvedValue({ total: 2, etag: null, items: inspectors });
+    client.reassignInspectionBookingInspector.mockResolvedValue(site(5, { inspectorUserId: "ins-2" }));
+    const user = userEvent.setup();
+    render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
+    await screen.findByText("Site 1");
+    expect(screen.queryByText("Site 5")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Show all 5 loaded bookings" }));
+    expect(screen.getByText("Site 5")).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Reassign inspector" })[4]);
+    await choose(user, screen.getByLabelText("New inspector for Site 5"), "ins-2");
+    await user.click(screen.getByRole("button", { name: "Confirm reassignment" }));
+    expect(client.reassignInspectionBookingInspector).toHaveBeenCalledWith("bk-5", "ins-2");
+
+    // Two more exist on the server: they can be loaded without leaving the page.
+    client.listInspectionBookings.mockResolvedValueOnce({ total: 7, etag: null, items: [site(6), site(7)] });
+    await user.click(await screen.findByRole("button", { name: "Load more bookings" }));
+    expect(client.listInspectionBookings).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 5 }));
+    expect(await screen.findByText("Site 7")).toBeInTheDocument();
+  });
+
+  it("refreshes the inspections after reassignment, and keeps the change with a warning if that refresh fails", async () => {
+    client.reassignInspectionBookingInspector.mockResolvedValue({ ...confirmed, inspectorUserId: "ins-2" });
+    const user = await renderConfirmed();
+    await screen.findByText("Inspector: Ben Brook");
+    const before = client.listInspections.mock.calls.length;
+    client.listInspections.mockRejectedValueOnce(api(500, "Server error"));
+    await user.click(screen.getByRole("button", { name: "Reassign inspector" }));
+    await choose(user, screen.getByLabelText("New inspector for Kooragang"), "ins-2");
+    await user.click(screen.getByRole("button", { name: "Confirm reassignment" }));
+
+    await waitFor(() => expect(client.listInspections.mock.calls.length).toBeGreaterThan(before));
+    expect(await screen.findByText("Inspector: Cara Cole")).toBeInTheDocument();
+    expect(await screen.findByText(/could not be refreshed/)).toBeInTheDocument();
+    expect(screen.queryByText("Inspector could not be reassigned")).not.toBeInTheDocument();
+  });
+
+  it("keeps the chosen replacement when the change is refused, so it can be corrected or retried", async () => {
+    client.reassignInspectionBookingInspector
+      .mockRejectedValueOnce(api(409, "That inspector already has an appointment at this time."))
+      .mockResolvedValueOnce({ ...confirmed, inspectorUserId: "ins-2" });
+    const user = await renderConfirmed();
+    await user.click(await screen.findByRole("button", { name: "Reassign inspector" }));
+    await choose(user, screen.getByLabelText("New inspector for Kooragang"), "ins-2");
+    await user.click(screen.getByRole("button", { name: "Confirm reassignment" }));
+
+    expect(await screen.findByText("That inspector already has an appointment at this time.")).toBeInTheDocument();
+    expect(screen.getByLabelText("New inspector for Kooragang")).toHaveTextContent("Cara Cole");
+    await user.click(screen.getByRole("button", { name: "Confirm reassignment" }));
+    expect(client.reassignInspectionBookingInspector).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText("Inspector: Cara Cole")).toBeInTheDocument();
+  });
+
+  it("asks the server for active inspectors only, and reads every page of them", async () => {
+    const many = (from: number, count: number) => Array.from({ length: count }, (_, i) => ({ id: `ins-${from + i}`, displayName: `Inspector ${from + i}`, role: "INSPECTOR", accountStatus: "ACTIVE" }));
+    client.listInspectionBookings.mockResolvedValue({ total: 1, etag: null, items: [confirmed] });
+    client.listAdminUsers
+      .mockResolvedValueOnce({ total: 150, etag: null, nextAfter: null, items: many(1, 100) })
+      .mockResolvedValueOnce({ total: 150, etag: null, nextAfter: null, items: many(101, 50) });
+    const user = userEvent.setup();
+    render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
+    await screen.findByText("Kooragang");
+    await user.click(await screen.findByRole("button", { name: "Reassign inspector" }));
+
+    expect(client.listAdminUsers).toHaveBeenNthCalledWith(1, expect.objectContaining({ role: "INSPECTOR", accountStatus: "ACTIVE", offset: 0 }));
+    expect(client.listAdminUsers).toHaveBeenNthCalledWith(2, expect.objectContaining({ role: "INSPECTOR", accountStatus: "ACTIVE", offset: 100 }));
+    // 150 inspectors, minus the one currently assigned (ins-1).
+    expect(within(screen.getByLabelText("New inspector for Kooragang")).getAllByRole("option")).toHaveLength(150);
+  });
+
   it("is not offered to someone who cannot approve bookings", async () => {
     await renderConfirmed({ canApproveBookings: false });
     expect(screen.queryByRole("button", { name: "Reassign inspector" })).not.toBeInTheDocument();
