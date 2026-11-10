@@ -337,7 +337,7 @@ test.describe("management UX and data correctness", () => {
       await editContact.getByRole("button", { name: "Save contact" }).click();
       await expect(page.getByText("Dana Renamed")).toBeVisible();
 
-      // Archive is reversible and keeps history; archived customers leave new-work selectors; Delete follows Archive.
+      // Archive is reversible and keeps history; archived customers leave new-work selectors; Delete is offered beside it.
       await page.getByRole("tab", { name: "Overview" }).click();
       await page.getByRole("button", { name: "Archive customer" }).click();
       await page.getByRole("alertdialog").getByRole("button", { name: "Archive customer" }).click();
@@ -353,14 +353,15 @@ test.describe("management UX and data correctness", () => {
       await expect(page.getByRole("button", { name: "Archive customer" })).toBeVisible();
       expect((await api(page, "GET", `/api/v1/customers?search=${encodeURIComponent(name)}`)).body.total).toBe(1);
 
-      // A restored customer is active, so Delete is refused until it is archived again.
-      const early = await api(page, "DELETE", `/api/v1/customers/${created.id}`);
-      expect(early.status).toBeGreaterThanOrEqual(400);
-
-      await page.getByRole("button", { name: "Archive customer" }).click();
-      await page.getByRole("alertdialog").getByRole("button", { name: "Archive customer" }).click();
+      // Delete does not need an archive step: an unused active customer is deleted in one confirmed step,
+      // after the server has said nothing is linked to it.
       await page.getByRole("button", { name: "Delete customer" }).click();
-      await page.getByRole("alertdialog").getByRole("button", { name: "Delete customer" }).click();
+      const confirmDelete = page.getByRole("alertdialog");
+      await expect(confirmDelete.getByRole("heading", { name: /^Delete / })).toBeVisible();
+      await expect(confirmDelete.getByText(/its record is kept for audit/)).toBeVisible();
+      await confirmDelete.getByRole("button", { name: "Delete customer" }).click();
+      await expect(page.getByRole("status").filter({ hasText: "was deleted" })).toBeVisible();
+      expect((await api(page, "GET", `/api/v1/customers/${created.id}`)).status).toBe(404);
       await expect(page.getByRole("dialog", { name: name })).toHaveCount(0);
     } finally {
       await superAdmin.context.close();

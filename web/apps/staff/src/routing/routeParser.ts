@@ -62,6 +62,8 @@ export function parseRoute(search: string, surface: RouteSurface): HmsRoute {
   const route = emptyRoute(view);
 
   if (view === "assets") route.asset = id(params.get("asset"));
+  // The staff register can be opened already filtered to one customer (e.g. from a delete dialog's linked records).
+  if (view === "assets" && surface === "staff" && !route.asset) route.customer = id(params.get("customer"));
   if (view === "inspections" && surface === "staff") route.inspection = id(params.get("inspection"));
   if (surface === "portal") route.customer = id(params.get("customer"));
   if (surface === "staff" && view === "customers") {

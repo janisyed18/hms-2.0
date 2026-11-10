@@ -4,10 +4,22 @@ import { createHmsClient } from "../api/hmsClient";
 import { useActionNotice } from "../components/interaction/ActionNotice";
 import { friendlyApiError } from "../components/interaction/friendlyApiError";
 import { customerLabel } from "../utils/identity";
-import type { CustomerFormValues, CustomerRecord, CustomerSummary } from "../domain/types";
+import { HmsApiError } from "../api/hmsClient";
+import type { CustomerDeletionCheck, CustomerFormValues, CustomerRecord, CustomerSummary } from "../domain/types";
 
 export type CustomerLifecycleFilter = "active" | "archived" | "all";
 export type CustomerLifecycleAction = "archive" | "restore" | "delete";
+
+export interface CustomerDeletionState {
+  customer: CustomerRecord;
+  /** Null while the server is still being asked. */
+  check: CustomerDeletionCheck | null;
+  /** The check itself could not be completed. */
+  checkError: string | null;
+  /** The last delete or archive attempt was refused. */
+  actionError: string | null;
+  pending: "deleting" | "archiving" | null;
+}
 
 const SEARCH_DELAY_MS = 250;
 
@@ -38,7 +50,10 @@ export function useCustomerWorkspace(options: { active?: boolean; onSelectedChan
   const [editingCustomer, setEditingCustomer] = useState<CustomerRecord | null>(null);
   const [isLoading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [lifecycleTarget, setLifecycleTarget] = useState<{ action: CustomerLifecycleAction; customer: CustomerRecord } | null>(null);
+  const [lifecycleTarget, setLifecycleTarget] = useState<{ action: Exclude<CustomerLifecycleAction, "delete">; customer: CustomerRecord } | null>(null);
+  // Delete asks the server what is linked first, so the dialog can say what will happen before anything does.
+  const [deletion, setDeletion] = useState<CustomerDeletionState | null>(null);
+  const deletionToken = useRef(0);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [isChangingLifecycle, setChangingLifecycle] = useState(false);
   const { notice, notify, clear: dismissNotice } = useActionNotice();
@@ -138,11 +153,76 @@ export function useCustomerWorkspace(options: { active?: boolean; onSelectedChan
     notify({ kind: "success", message: `${customerLabel(saved)} ${editingCustomer ? "updated" : "created"} successfully.`, title: "Customer saved" });
   }
 
+  async function runDeletionCheck(customer: CustomerRecord, keepActionError?: string | null) {
+    const token = ++deletionToken.current;
+    setDeletion({ customer, check: null, checkError: null, actionError: keepActionError ?? null, pending: null });
+    try {
+      const check = await createHmsClient().getCustomerDeletionCheck(customer.id);
+      if (token !== deletionToken.current) return;
+      setDeletion({ customer, check, checkError: null, actionError: keepActionError ?? null, pending: null });
+    } catch (reason) {
+      if (token !== deletionToken.current) return;
+      const message = friendlyApiError(reason, { fallback: `We could not check what ${customerLabel(customer)} is linked to. Try again.` }).message;
+      setDeletion({ customer, check: null, checkError: message, actionError: null, pending: null });
+    }
+  }
   function requestLifecycle(action: CustomerLifecycleAction, customer: CustomerRecord) {
+    if (action === "delete") {
+      void runDeletionCheck(customer);
+      return;
+    }
     setLifecycleError(null);
     setLifecycleTarget({ action, customer });
   }
   function cancelLifecycle() { if (!isChangingLifecycle) { setLifecycleTarget(null); setLifecycleError(null); } }
+  function cancelDeletion() {
+    if (deletion?.pending) return;
+    deletionToken.current += 1;
+    setDeletion(null);
+  }
+  function retryDeletionCheck() { if (deletion) void runDeletionCheck(deletion.customer); }
+  /** The one confirmed step: the server re-checks everything, so a record added since the check still blocks it. */
+  async function confirmDeletion() {
+    if (!deletion || deletion.pending) return;
+    const { customer } = deletion;
+    setDeletion({ ...deletion, pending: "deleting", actionError: null });
+    try {
+      await createHmsClient().deleteCustomer(customer.id, customer.etag);
+    } catch (reason) {
+      if (reason instanceof HmsApiError && reason.status === 409) {
+        // Something now links to it (or it changed): show the current blockers rather than a bare refusal.
+        await runDeletionCheck(customer);
+        return;
+      }
+      const message = friendlyApiError(reason, { fallback: `${customerLabel(customer)} could not be deleted. Try again.` }).message;
+      setDeletion((current) => current && { ...current, pending: null, actionError: message });
+      return;
+    }
+    deletionToken.current += 1;
+    setPageItems((current) => current.filter((item) => item.id !== customer.id));
+    setExtraCustomers((current) => current.filter((item) => item.id !== customer.id));
+    select(null);
+    setDeletion(null);
+    reload();
+    notify({ kind: "success", message: `${customerLabel(customer)} was deleted. It is removed from normal use and its record is kept for audit.`, title: "Customer deleted" });
+  }
+  /** The safe alternative offered when deleting is blocked. It is announced as archiving, never as a deletion. */
+  async function archiveInsteadOfDeleting() {
+    if (!deletion || deletion.pending) return;
+    const { customer } = deletion;
+    setDeletion({ ...deletion, pending: "archiving", actionError: null });
+    try {
+      replaceCustomer(await createHmsClient().archiveCustomer(customer.id));
+    } catch (reason) {
+      const message = friendlyApiError(reason, { fallback: `${customerLabel(customer)} could not be archived. Try again.` }).message;
+      setDeletion((current) => current && { ...current, pending: null, actionError: message });
+      return;
+    }
+    deletionToken.current += 1;
+    setDeletion(null);
+    reload();
+    notify({ kind: "success", message: `${customerLabel(customer)} was archived. Its history is kept, and it can be restored.`, title: "Customer archived" });
+  }
   async function confirmLifecycle() {
     if (!lifecycleTarget || isChangingLifecycle) return;
     const { action, customer } = lifecycleTarget;
@@ -150,17 +230,10 @@ export function useCustomerWorkspace(options: { active?: boolean; onSelectedChan
     setLifecycleError(null);
     try {
       const client = createHmsClient();
-      if (action === "delete") {
-        await client.deleteCustomer(customer.id, customer.etag);
-        setPageItems((current) => current.filter((item) => item.id !== customer.id));
-        setExtraCustomers((current) => current.filter((item) => item.id !== customer.id));
-        select(null);
-      } else {
-        replaceCustomer(action === "archive" ? await client.archiveCustomer(customer.id) : await client.restoreCustomer(customer.id));
-      }
+      replaceCustomer(action === "archive" ? await client.archiveCustomer(customer.id) : await client.restoreCustomer(customer.id));
       reload();
       setLifecycleTarget(null);
-      const done = { archive: "archived", restore: "restored", delete: "deleted" }[action];
+      const done = { archive: "archived", restore: "restored" }[action];
       notify({ kind: "success", message: `${customerLabel(customer)} was ${done}.`, title: `Customer ${done}` });
     } catch (reason) {
       // Nothing changed on the server, so nothing changes here.
@@ -171,7 +244,7 @@ export function useCustomerWorkspace(options: { active?: boolean; onSelectedChan
   }
 
   return {
-    activeTab, addCustomer, cancelLifecycle, closeCustomerForm, closeDetail, confirmLifecycle, customers, dismissNotice,
+    activeTab, addCustomer, archiveInsteadOfDeleting, cancelDeletion, cancelLifecycle, confirmDeletion, deletion, retryDeletionCheck, closeCustomerForm, closeDetail, confirmLifecycle, customers, dismissNotice,
     editingCustomer, error, isChangingLifecycle, isFormOpen, isLoading, lifecycle, lifecycleError, lifecycleTarget, notice, openCreateCustomer,
     openEditCustomer, page, pageSize, query, refreshMetrics: reload, replaceCustomer, requestLifecycle, saveCustomer, selectCustomer,
     selectedCustomer, setActiveTab, setLifecycle, setPage, setPageSize, setQuery, setSelectedId, summary, totalCount, visibleCustomers: pageItems

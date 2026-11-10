@@ -70,7 +70,10 @@ export function AssetsWorkspace({
   canWrite,
   canDelete = false,
   routeAssetId,
+  routeCustomerId,
+  routeCustomerLabel,
   onAssetRouteChange,
+  onCustomerRouteChange,
   workflowNavigation
 }: {
   canWrite: boolean;
@@ -81,8 +84,36 @@ export function AssetsWorkspace({
   /** The asset the URL names; the URL, not this component, is the record of which asset is open. */
   routeAssetId?: string | null;
   onAssetRouteChange?: (assetId: string | null, options?: { replace?: boolean }) => void;
+  /** A customer the URL filters the register to; clearing the filter clears it from the URL. */
+  routeCustomerId?: string | null;
+  routeCustomerLabel?: string;
+  onCustomerRouteChange?: (customerId: string | null) => void;
 }) {
   const workspace = useAssetsWorkspace();
+  const { customerFilter, setCustomerFilter } = workspace;
+  const appliedCustomer = useRef<string | null>(null);
+  // URL to filter, then filter to URL: each side reacts only to its own change.
+  useEffect(() => {
+    if (routeCustomerId && routeCustomerId !== appliedCustomer.current) {
+      appliedCustomer.current = routeCustomerId;
+      setCustomerFilter(routeCustomerId, routeCustomerLabel);
+    }
+    else if (!routeCustomerId && appliedCustomer.current) {
+      // Back/Forward removed the customer from the URL: drop the filter it had applied. Forgetting it first
+      // keeps the filter-to-URL effect below from answering with a navigation of its own.
+      appliedCustomer.current = null;
+      setCustomerFilter("ALL");
+    }
+  }, [routeCustomerId, routeCustomerLabel, setCustomerFilter]);
+  const previousFilter = useRef("ALL");
+  useEffect(() => {
+    // Only a filter that was on and is now off counts as "cleared"; not the render before the URL's filter lands.
+    if (customerFilter === "ALL" && previousFilter.current !== "ALL" && appliedCustomer.current) {
+      appliedCustomer.current = null;
+      onCustomerRouteChange?.(null);
+    }
+    previousFilter.current = customerFilter;
+  }, [customerFilter, onCustomerRouteChange]);
   const { isLoading, resolveAsset, openDetail, reportOpenFailure, closeDetail } = workspace;
   const viewingId = workspace.viewingAsset?.id ?? null;
   // Each direction reacts only to its own side changing, so the two can never chase each other.

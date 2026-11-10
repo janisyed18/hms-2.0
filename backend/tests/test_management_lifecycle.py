@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -33,7 +33,14 @@ from hms_backend.app.modules.identity.models import (
     BrowserRefreshSession,
     User,
 )
-from hms_backend.app.modules.inspections.models import Inspection
+from hms_backend.app.modules.inspections.models import (
+    Inspection,
+    InspectionAppointment,
+    InspectionAppointmentRevision,
+    InspectionBooking,
+    InspectionBookingAsset,
+    InspectionResourceAllocation,
+)
 from hms_backend.app.modules.products.models import Product
 from hms_backend.app.modules.reference.models import Material, Standard
 from hms_backend.app.modules.scheduling.models import RetestSchedule
@@ -374,7 +381,6 @@ async def test_customer_archive_restore_delete_lifecycle(
         admin_archive = await client.post(f"/api/v1/customers/{customer_id}/archive")
         admin_delete = await client.delete(f"/api/v1/customers/{customer_id}")
     async with client_for(session_factory, SUPER) as client:
-        early_delete = await client.delete(f"/api/v1/customers/{customer_id}")
         archived = await client.post(f"/api/v1/customers/{customer_id}/archive")
         archived_twice = await client.post(f"/api/v1/customers/{customer_id}/archive")
         active_list = await client.get("/api/v1/customers")
@@ -392,8 +398,6 @@ async def test_customer_archive_restore_delete_lifecycle(
 
     assert admin_archive.status_code == 403
     assert admin_delete.status_code == 403
-    assert early_delete.status_code == 409
-    assert early_delete.json()["detail"] == "Archive the customer before deleting it."
     assert archived.status_code == 200
     assert archived.json()["status"] == "ARCHIVED"
     assert archived_twice.status_code == 409
@@ -412,6 +416,113 @@ async def test_customer_archive_restore_delete_lifecycle(
     assert customer is not None and customer.deleted_at is not None
     # History is never cascaded away.
     assert location is not None and location.deleted_at is None
+
+
+async def _audit_actions(
+    session_factory: async_sessionmaker[AsyncSession], action: str
+) -> int:
+    async with session_factory() as session:
+        return (
+            await session.scalar(
+                select(func.count())
+                .select_from(AuditEvent)
+                .where(AuditEvent.action == action)
+            )
+            or 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_unused_active_customer_is_deleted_in_one_step_without_archiving(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, _ = await _customer_with_locations(session_factory, "Alpha")
+    async with client_for(session_factory, SUPER) as client:
+        check = await client.get(f"/api/v1/customers/{customer_id}/deletion-check")
+        deleted = await client.delete(f"/api/v1/customers/{customer_id}")
+        again = await client.get(f"/api/v1/customers/{customer_id}/deletion-check")
+
+    assert check.status_code == 200
+    assert check.json() == {"can_delete": True, "archived": False, "blockers": []}
+    assert deleted.status_code == 204
+    assert again.status_code == 404
+    async with session_factory() as session:
+        customer = await session.get(Customer, customer_id)
+    assert customer is not None and customer.deleted_at is not None
+    assert customer.archived_at is None
+    assert await _audit_actions(session_factory, "customer.deleted") == 1
+
+
+@pytest.mark.asyncio
+async def test_deletion_check_names_what_blocks_and_delete_still_refuses(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, (location_id,) = await _customer_with_locations(
+        session_factory, "Alpha"
+    )
+    async with session_factory() as session:
+        product = Product(category="Hose", code="P1", name="P1")
+        session.add(product)
+        for number in ("A-2", "A-1"):
+            session.add(
+                Asset(
+                    customer_id=customer_id,
+                    location_id=location_id,
+                    product=product,
+                    asset_number=number,
+                    customer_serial_no=f"SN-{number}",
+                    tag=f"HMS-{number}",
+                    lifecycle_status=AssetLifecycleStatus.IN_SERVICE.value,
+                )
+            )
+        await session.commit()
+    async with client_for(session_factory, SUPER) as client:
+        check = await client.get(f"/api/v1/customers/{customer_id}/deletion-check")
+        blocked = await client.delete(f"/api/v1/customers/{customer_id}")
+        archived = await client.post(f"/api/v1/customers/{customer_id}/archive")
+    body = check.json()
+
+    assert check.status_code == 200
+    assert body["can_delete"] is False and body["archived"] is False
+    (assets,) = [item for item in body["blockers"] if item["kind"] == "assets"]
+    assert assets["count"] == 2
+    assert [record["name"] for record in assets["records"]] == ["A-1", "A-2"]
+    assert blocked.status_code == 409
+    assert "2 assets" in blocked.json()["detail"]
+    assert archived.status_code == 200
+    assert await _audit_actions(session_factory, "customer.deleted") == 0
+
+
+@pytest.mark.asyncio
+async def test_deletion_check_and_delete_are_super_admin_only(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, _ = await _customer_with_locations(session_factory, "Alpha")
+    async with client_for(session_factory, ADMIN) as client:
+        check = await client.get(f"/api/v1/customers/{customer_id}/deletion-check")
+        deleted = await client.delete(f"/api/v1/customers/{customer_id}")
+
+    assert check.status_code == 403
+    assert deleted.status_code == 403
+    async with session_factory() as session:
+        customer = await session.get(Customer, customer_id)
+    assert customer is not None and customer.deleted_at is None
+
+
+@pytest.mark.asyncio
+async def test_customer_delete_keeps_the_stale_version_guard(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    customer_id, _ = await _customer_with_locations(session_factory, "Alpha")
+    async with client_for(session_factory, SUPER) as client:
+        stale = await client.delete(
+            f"/api/v1/customers/{customer_id}", headers={"If-Match": '"999"'}
+        )
+
+    assert stale.status_code == 412
+    async with session_factory() as session:
+        customer = await session.get(Customer, customer_id)
+    assert customer is not None and customer.deleted_at is None
 
 
 @pytest.mark.asyncio
@@ -929,3 +1040,232 @@ async def test_archived_customer_cannot_gain_a_retest_schedule_but_keeps_history
     assert await schedules() == 1
     assert corrected.status_code == 200
     assert corrected.json()["retest_schedule"]["due_at"] == "2031-01-01"
+
+
+# --- changing the inspector of a confirmed booking: availability preview ------
+
+SLOT_START = datetime(2027, 3, 1, 1, tzinfo=UTC)
+SLOT_END = datetime(2027, 3, 1, 2, tzinfo=UTC)
+
+
+async def _confirmed_booking(
+    session_factory: async_sessionmaker[AsyncSession],
+    customer_id: str,
+    location_id: str,
+    asset_id: str,
+    inspector_id: str,
+    start: datetime = SLOT_START,
+    end: datetime = SLOT_END,
+) -> str:
+    """A confirmed booking whose inspector and asset hold the slot."""
+    async with session_factory() as session:
+        booking = InspectionBooking(
+            customer_id=customer_id,
+            location_id=location_id,
+            scheduled_at=start,
+            scheduled_end_at=end,
+            status="APPROVED",
+            requested_by_user_id="customer",
+            inspector_user_id=inspector_id,
+        )
+        session.add(booking)
+        await session.flush()
+        appointment = InspectionAppointment(
+            booking_id=booking.id,
+            customer_id=customer_id,
+            location_id=location_id,
+            status="CONFIRMED",
+            current_revision_number=1,
+        )
+        session.add_all(
+            [
+                InspectionBookingAsset(booking_id=booking.id, asset_id=asset_id),
+                appointment,
+            ]
+        )
+        await session.flush()
+        revision = InspectionAppointmentRevision(
+            appointment_id=appointment.id,
+            revision_number=1,
+            starts_at=start,
+            ends_at=end,
+            timezone_id="UTC",
+            local_start_snapshot=start.strftime("%Y-%m-%dT%H:%M:%S"),
+            local_end_snapshot=end.strftime("%Y-%m-%dT%H:%M:%S"),
+            utc_offset_start="+00:00",
+            utc_offset_end="+00:00",
+            tzdata_version="test",
+            inspector_user_id=inspector_id,
+            created_by_user_id="admin",
+        )
+        session.add(revision)
+        await session.flush()
+        for kind, resource in (("INSPECTOR", inspector_id), ("ASSET", asset_id)):
+            session.add(
+                InspectionResourceAllocation(
+                    revision_id=revision.id,
+                    resource_type=kind,
+                    resource_id=resource,
+                    starts_at=start,
+                    ends_at=end,
+                )
+            )
+        await session.commit()
+        return booking.id
+
+
+async def _booking_scene(
+    session_factory: async_sessionmaker[AsyncSession], inspectors: int = 1
+) -> tuple[str, str, str, str, list[str]]:
+    """A confirmed booking held by 'ins-current', plus spare inspectors."""
+    customer_id, (location_id,) = await _customer_with_locations(
+        session_factory, "Alpha"
+    )
+    product = await _product(session_factory, "P1", enabled=True)
+    asset_id = await _asset_for(
+        session_factory, customer_id, location_id, product, "A-1"
+    )
+    current = await _user(session_factory, "ins-current", Role.INSPECTOR)
+    spare = [
+        (await _user(session_factory, f"ins-{index}", Role.INSPECTOR)).id
+        for index in range(inspectors)
+    ]
+    booking_id = await _confirmed_booking(
+        session_factory, customer_id, location_id, asset_id, current.id
+    )
+    return booking_id, customer_id, location_id, asset_id, spare
+
+
+@pytest.mark.asyncio
+async def test_availability_preview_says_free_busy_and_suggests_up_to_three(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    booking_id, customer_id, location_id, _, spare = await _booking_scene(
+        session_factory, inspectors=6
+    )
+    busy_id = spare[0]
+    other_product = await _product(session_factory, "P2", enabled=True)
+    other_asset = await _asset_for(
+        session_factory, customer_id, location_id, other_product, "A-2"
+    )
+    await _confirmed_booking(
+        session_factory, customer_id, location_id, other_asset, busy_id,
+        start=datetime(2027, 3, 1, 1, 30, tzinfo=UTC),
+        end=datetime(2027, 3, 1, 2, 30, tzinfo=UTC),
+    )
+    async with session_factory() as session:
+        locked = await session.get(User, spare[5])
+        assert locked is not None
+        locked.account_status = "LOCKED"
+        await session.commit()
+    url = f"/api/v1/inspection-bookings/{booking_id}/inspector-availability"
+    async with client_for(session_factory, ADMIN) as client:
+        free = await client.get(url, params={"inspector_user_id": spare[1]})
+        busy = await client.get(url, params={"inspector_user_id": busy_id})
+        none_chosen = await client.get(url)
+
+    assert free.status_code == 200
+    assert free.json()["available"] is True and free.json()["reason"] is None
+    assert busy.json()["available"] is False
+    assert busy.json()["reason"] == "inspector_busy"
+    suggested = busy.json()["suggested_inspector_ids"]
+    # Up to three; never the busy, locked, current or asked-about inspector.
+    assert len(suggested) == 3
+    assert busy_id not in suggested and spare[5] not in suggested
+    assert set(suggested) <= set(spare[1:5])
+    assert none_chosen.json()["available"] is None
+    assert busy.json()["eligible"] is True
+
+
+@pytest.mark.asyncio
+async def test_availability_preview_flags_an_asset_clash_and_history(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    booking_id, customer_id, location_id, asset_id, spare = await _booking_scene(
+        session_factory, inspectors=2
+    )
+    # Another confirmed visit already holds the same asset in the same hour.
+    await _confirmed_booking(
+        session_factory, customer_id, location_id, asset_id, spare[1]
+    )
+    url = f"/api/v1/inspection-bookings/{booking_id}/inspector-availability"
+    async with client_for(session_factory, ADMIN) as client:
+        clash = await client.get(url, params={"inspector_user_id": spare[0]})
+    assert clash.json()["available"] is False
+    assert clash.json()["reason"] == "asset_unavailable"
+    assert clash.json()["suggested_inspector_ids"] == []
+
+    async with session_factory() as session:
+        session.add(
+            Inspection(
+                asset_id=asset_id,
+                booking_id=booking_id,
+                inspector_user_id="ins-current",
+                inspection_type="SERVICE",
+                status="SUBMITTED",
+            )
+        )
+        await session.commit()
+    async with client_for(session_factory, ADMIN) as client:
+        history = await client.get(url, params={"inspector_user_id": spare[0]})
+    assert history.json()["eligible"] is False
+    assert history.json()["available"] is False
+    assert "inspection history" in history.json()["blocked_reason"]
+
+
+@pytest.mark.asyncio
+async def test_availability_preview_refuses_what_reassigning_would_refuse(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    booking_id, customer_id, _, _, spare = await _booking_scene(session_factory)
+    customer_user = Principal(
+        user_id="cust-1",
+        roles=frozenset({Role.CUSTOMER_USER}),
+        customer_ids=frozenset({customer_id}),
+    )
+    url = f"/api/v1/inspection-bookings/{booking_id}/inspector-availability"
+    async with session_factory() as session:
+        held = await session.get(InspectionBooking, booking_id)
+    assert held is not None and held.inspector_user_id is not None
+    async with client_for(session_factory, customer_user) as client:
+        as_customer = await client.get(url, params={"inspector_user_id": spare[0]})
+    async with client_for(session_factory, ADMIN) as client:
+        same = await client.get(
+            url, params={"inspector_user_id": held.inspector_user_id}
+        )
+        unknown = await client.get(url, params={"inspector_user_id": "nobody"})
+        missing = await client.get(
+            "/api/v1/inspection-bookings/none/inspector-availability"
+        )
+
+    assert as_customer.status_code == 403
+    assert same.status_code == 409  # already the assigned inspector
+    assert unknown.status_code == 422
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_stale_availability_answer_cannot_cause_a_double_booking(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    booking_id, customer_id, location_id, _, spare = await _booking_scene(
+        session_factory
+    )
+    url = f"/api/v1/inspection-bookings/{booking_id}/inspector-availability"
+    async with client_for(session_factory, ADMIN) as client:
+        before = await client.get(url, params={"inspector_user_id": spare[0]})
+    assert before.json()["available"] is True
+
+    # After the preview, someone else books that inspector for the same hour.
+    product = await _product(session_factory, "P3", enabled=True)
+    asset = await _asset_for(session_factory, customer_id, location_id, product, "A-3")
+    await _confirmed_booking(session_factory, customer_id, location_id, asset, spare[0])
+    async with client_for(session_factory, ADMIN) as client:
+        saved = await client.post(
+            f"/api/v1/inspection-bookings/{booking_id}/reassign-inspector",
+            json={"inspector_user_id": spare[0]},
+        )
+    assert saved.status_code == 409
+    async with session_factory() as session:
+        booking = await session.get(InspectionBooking, booking_id)
+    assert booking is not None and booking.inspector_user_id != spare[0]

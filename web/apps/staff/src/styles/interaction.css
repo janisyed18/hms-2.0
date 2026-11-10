@@ -130,3 +130,77 @@
 .customer-lifecycle { display: grid; gap: 8px; margin-top: 16px; }
 .customer-lifecycle h4 { margin: 0; }
 .customer-lifecycle .field-hint { margin: 0; }
+
+/* Change inspector dialog and the assigned-inspector line on booking cards. */
+.dialog-icon { display: inline-grid; place-items: center; width: 40px; height: 40px; flex: 0 0 auto; border-radius: 10px; background: var(--panel-subtle, var(--border)); color: var(--accent); }
+.dialog-close { display: inline-grid; place-items: center; width: 32px; height: 32px; margin-left: auto; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.dialog-close:hover { background: var(--panel-subtle, var(--border)); color: var(--ink); }
+.dialog-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.change-inspector { width: min(520px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }
+.change-inspector__header { display: flex; align-items: flex-start; gap: 12px; }
+.change-inspector__header h2 { font-size: 18px; }
+.change-inspector__header .field-hint { margin: 4px 0 0; }
+.change-inspector__summary { display: grid; margin: 0; border: 1px solid var(--border); border-radius: 10px; }
+.change-inspector__summary > div { display: grid; grid-template-columns: minmax(130px, 40%) 1fr; gap: 8px; align-items: center; padding: 10px 14px; }
+.change-inspector__summary > div + div { border-top: 1px solid var(--border); }
+.change-inspector__summary dt { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.change-inspector__summary dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.change-inspector__field { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
+.change-inspector__field { position: relative; }
+.change-inspector__required { color: var(--danger, #e5484d); }
+.change-inspector__trigger { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 46px; padding: 0 14px; border: 1px solid var(--border-strong, rgb(120 150 200 / 40%)); border-radius: 12px; background: var(--panel-raised, rgb(30 45 80 / 55%)); color: var(--ink); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.change-inspector__trigger:hover:not(:disabled) { border-color: var(--accent); }
+.change-inspector__trigger:focus-visible, .change-inspector__trigger[aria-expanded="true"] { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgb(59 130 246 / 28%); }
+.change-inspector__trigger--warn { border-color: var(--warning, #b7791f); }
+.change-inspector__trigger:disabled { opacity: 0.6; cursor: not-allowed; }
+.change-inspector__placeholder { color: var(--muted); font-weight: 500; }
+.change-inspector__chevron { margin-left: auto; color: var(--muted); }
+.change-inspector__popover { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel, rgb(15 25 50 / 96%)); }
+.change-inspector__search { display: flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--muted); }
+.change-inspector__search input { flex: 1; min-width: 0; height: 40px; border: 0; background: transparent; color: var(--ink); font: inherit; outline: none; }
+.change-inspector__current, .change-inspector__option { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-radius: 10px; font-weight: 600; }
+.change-inspector__current > span:first-child { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.change-inspector__current small { flex-basis: 100%; margin-left: 23px; color: var(--muted); font-weight: 400; }
+.change-inspector__options { display: grid; gap: 2px; max-height: 220px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.change-inspector__option { cursor: pointer; }
+.change-inspector__option > span:first-child { display: inline-flex; align-items: center; gap: 8px; flex: 1; }
+.change-inspector__option.is-active, .change-inspector__option[aria-selected="true"] { background: rgb(59 130 246 / 20%); }
+.change-inspector__chip--info { background: rgb(59 130 246 / 16%); color: var(--accent); }
+.change-inspector__chip--busy { background: rgb(229 72 77 / 16%); color: var(--danger, #e5484d); }
+.change-inspector__status { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); font-size: 13px; }
+.change-inspector__status--ok { color: var(--success, #1f7a4d); font-weight: 600; }
+.change-inspector__warning { display: flex; gap: 10px; padding: 12px 14px; border: 1px solid var(--warning-border, #d9a441); border-radius: 10px; background: var(--warning-bg, rgb(217 164 65 / 14%)); }
+.change-inspector__warning svg { flex: 0 0 auto; margin-top: 1px; color: var(--warning, #b7791f); }
+.change-inspector__warning p { margin: 0; font-size: 13px; }
+.change-inspector__warning .link-button { margin-top: 6px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.change-inspector__suggestions { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.change-inspector__suggestions legend { padding: 0; margin-bottom: 6px; font-size: 13px; font-weight: 600; }
+.change-inspector__suggestion { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.change-inspector__suggestion:hover:not(:disabled) { border-color: var(--accent); }
+.change-inspector__suggestion:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.change-inspector__suggestion span:first-child { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.change-inspector__chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: rgb(31 122 77 / 14%); color: var(--success, #1f7a4d); font-size: 12px; font-weight: 600; }
+.assigned-inspector { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+/* Booking cards style every child div as a stacked grid; this line stays a row across the card. */
+.inspection-booking-card .assigned-inspector { display: flex; grid-column: 1 / -1; }
+.assigned-inspector .action-button { width: auto; flex: 0 0 auto; }
+.assigned-inspector__name { font-weight: 600; }
+.assigned-inspector .field-hint { flex-basis: 100%; margin: 0; }
+
+/* Delete customer dialog: what is linked, and the safe alternative. */
+.customer-delete .link-button { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+
+.customer-delete { width: min(520px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }
+.customer-delete__blockers { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.customer-delete__row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: inherit; font: inherit; text-align: left; }
+button.customer-delete__row { cursor: pointer; }
+button.customer-delete__row:hover { border-color: var(--accent); }
+button.customer-delete__row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.customer-delete__label { flex: 1; font-weight: 600; text-transform: capitalize; }
+.customer-delete__count { padding: 2px 10px; border-radius: 999px; background: var(--panel-subtle, var(--border)); font-size: 12px; font-weight: 600; }
+.customer-delete__chevron { color: var(--muted); }
+.customer-delete__row--static .customer-delete__chevron { visibility: hidden; }
+.customer-delete__records { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 14px 0; font-size: 12px; color: var(--muted); }
+.change-inspector .change-inspector__chip--info { background: rgb(59 130 246 / 16%); color: var(--accent); }
+.change-inspector .change-inspector__chip--busy { background: rgb(229 72 77 / 16%); color: var(--danger, #e5484d); }
+.change-inspector .change-inspector__search input { border: 0; box-shadow: none; padding: 0; background: transparent; }

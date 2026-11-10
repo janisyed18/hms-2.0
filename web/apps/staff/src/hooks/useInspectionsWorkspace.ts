@@ -260,6 +260,10 @@ export function useInspectionsWorkspace(
       });
     }, { ...bookingFailure("Inspector could not be reassigned"), fallback: "The inspector could not be reassigned. Try again.", success: outcome("Inspector reassigned", `The inspector for ${booking?.location.name ?? "the site"} was changed; the inspection time is unchanged`) });
   }
+  /** Asks the server whether an inspector is free for a booking's existing time. Rejects when it cannot be verified. */
+  function checkInspectorAvailability(id: string, inspectorUserId: string) {
+    return createHmsClient().getInspectorAvailability(id, inspectorUserId);
+  }
   /** The next page of bookings, so a confirmed booking beyond the first page can still be reached from this screen. */
   async function loadMoreBookings() {
     try {
@@ -327,5 +331,5 @@ export function useInspectionsWorkspace(
   }
   function clearInspectionFilters() { setTypeFilter("ALL"); setResultFilter("ALL"); }
   const activeFilterCount = [typeFilter !== "ALL", resultFilter !== "ALL"].filter(Boolean).length;
-  return { serverTotal, activeFilterCount, approveInspection, beginInspectionRework, rejectInspection, startInspection, approveInspectionBooking, approveInspectionBookingReschedule, loadInspectors, loadMoreBookings, bookingTotal, reassignInspectionBookingInspector, ratingFor, ratingReady, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
+  return { checkInspectorAvailability, serverTotal, activeFilterCount, approveInspection, beginInspectionRework, rejectInspection, startInspection, approveInspectionBooking, approveInspectionBookingReschedule, loadInspectors, loadMoreBookings, bookingTotal, reassignInspectionBookingInspector, ratingFor, ratingReady, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
 }

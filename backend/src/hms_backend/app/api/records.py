@@ -118,7 +118,11 @@ from hms_backend.app.core.inspector_access import (
     is_inspector_scoped,
     lock_assigned_bookings,
 )
-from hms_backend.app.core.lifecycle import ensure_not_referenced, require_super_admin
+from hms_backend.app.core.lifecycle import (
+    blocking_references,
+    ensure_not_referenced,
+    require_super_admin,
+)
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
@@ -1352,6 +1356,29 @@ async def restore_customer(
     return await _customer_read_for_principal(session, customer, principal)
 
 
+@router.get("/customers/{customer_id}/deletion-check")
+async def customer_deletion_check(
+    customer_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> dict[str, Any]:
+    """Whether the customer can be deleted now, and what blocks it when it cannot."""
+    _require_customer_write(principal)
+    require_super_admin(principal)
+    customer = await _get_visible_customer_or_404(session, customer_id, principal)
+    blockers = await blocking_references(
+        session,
+        Customer,
+        customer.id,
+        ignore={"customer_locations", "customer_contacts"},
+    )
+    return {
+        "can_delete": not blockers,
+        "archived": customer.archived_at is not None,
+        "blockers": blockers,
+    }
+
+
 @router.delete("/customers/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_customer(
     customer_id: str,
@@ -1363,11 +1390,7 @@ async def delete_customer(
     require_super_admin(principal)
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
     _enforce_if_match(if_match, customer.version)
-    if customer.archived_at is None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Archive the customer before deleting it.",
-        )
+    # Archiving first is not required; the dependency check below protects history.
     await ensure_not_referenced(
         session,
         Customer,
@@ -2603,6 +2626,133 @@ async def approve_inspection_booking(
         session, booking.id, principal
     )
     return _inspection_booking_read(loaded)
+
+
+@router.get("/inspection-bookings/{booking_id}/inspector-availability")
+async def inspection_booking_inspector_availability(
+    booking_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+    inspector_user_id: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    """Read-only preview of the checks the reassignment itself enforces.
+
+    Says whether a chosen replacement is free for the booking's existing time, and up
+    to three other free inspectors. Reassigning repeats every check under a lock, so
+    this only informs the choice; a stale answer can never cause a double booking.
+    """
+    _require_inspection_booking(principal)
+    if is_customer_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Customer users cannot reassign inspectors",
+        )
+    booking = await _get_visible_inspection_booking_or_404(
+        session, booking_id, principal
+    )
+    appointment = booking.appointment
+    if (
+        booking.status != InspectionBookingStatus.APPROVED.value
+        or appointment is None
+        or appointment.status != InspectionAppointmentStatus.CONFIRMED.value
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a confirmed inspection booking can be reassigned",
+        )
+    revision = next(
+        item
+        for item in appointment.revisions
+        if item.revision_number == appointment.current_revision_number
+    )
+    selected = (
+        await _get_active_inspector_or_422(session, inspector_user_id)
+        if inspector_user_id
+        else None
+    )
+    if selected is not None and selected.id == revision.inspector_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Choose a different inspector",
+        )
+    inspection_statuses = (
+        await session.scalars(
+            select(Inspection.status).where(
+                Inspection.booking_id == booking.id,
+                Inspection.deleted_at.is_(None),
+            )
+        )
+    ).all()
+    blocked_reason = (
+        "Cannot reassign an appointment with submitted or approved inspection history"
+        if any(
+            value
+            not in {InspectionStatus.DRAFT.value, InspectionStatus.IN_PROGRESS.value}
+            for value in inspection_statuses
+        )
+        else None
+    )
+
+    def overlapping(resource_type: str) -> Select[tuple[str]]:
+        return select(InspectionResourceAllocation.resource_id).where(
+            InspectionResourceAllocation.resource_type == resource_type,
+            InspectionResourceAllocation.state
+            == InspectionAllocationState.CONFIRMED.value,
+            InspectionResourceAllocation.starts_at < revision.ends_at,
+            InspectionResourceAllocation.ends_at > revision.starts_at,
+            InspectionResourceAllocation.deleted_at.is_(None),
+            InspectionResourceAllocation.revision_id != revision.id,
+        )
+
+    busy_inspectors = set((await session.scalars(overlapping("INSPECTOR"))).all())
+    asset_ids = [item.asset_id for item in booking.assets]
+    asset_unavailable = bool(asset_ids) and (
+        await session.scalar(
+            overlapping("ASSET")
+            .where(InspectionResourceAllocation.resource_id.in_(asset_ids))
+            .limit(1)
+        )
+        is not None
+    )
+    reason: str | None = None
+    available: bool | None = None
+    if selected is not None:
+        if asset_unavailable:
+            reason = "asset_unavailable"
+        elif selected.id in busy_inspectors:
+            reason = "inspector_busy"
+        available = reason is None and blocked_reason is None
+    suggestions: list[str] = []
+    if blocked_reason is None and not asset_unavailable:
+        excluded = {revision.inspector_user_id, *busy_inspectors}
+        if selected is not None:
+            excluded.add(selected.id)
+        suggestions = list(
+            (
+                await session.scalars(
+                    select(User.id)
+                    .where(
+                        User.role == "INSPECTOR",
+                        User.account_status == AccountStatus.ACTIVE.value,
+                        User.deleted_at.is_(None),
+                        User.id.not_in(excluded),
+                    )
+                    .order_by(User.email)
+                    .limit(3)
+                )
+            ).all()
+        )
+    return {
+        "booking_id": booking.id,
+        "starts_at": revision.starts_at,
+        "ends_at": revision.ends_at,
+        "inspector_user_id": selected.id if selected is not None else None,
+        "eligible": blocked_reason is None,
+        "blocked_reason": blocked_reason,
+        "available": available,
+        "reason": reason,
+        "suggested_inspector_ids": suggestions,
+    }
 
 
 @router.post(

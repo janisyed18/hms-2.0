@@ -11,6 +11,7 @@ import { InspectionDetail } from "./InspectionDetail";
 import { InspectionBookingForm } from "./InspectionBookingForm";
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
+import { ChangeInspectorDialog } from "./interaction/ChangeInspectorDialog";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
 import { InspectionForm } from "./InspectionForm";
 import { ModuleTable, activeFilterList, type ModuleColumn } from "./ModuleTable";
@@ -18,7 +19,7 @@ import {
   type InspectionStatusFilter,
   useInspectionsWorkspace
 } from "../hooks/useInspectionsWorkspace";
-import type { InspectionRecord } from "../domain/types";
+import type { InspectionBookingRecord, InspectionRecord } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { assetLabel } from "../utils/identity";
 import { inspectionStatusLabel } from "../utils/inspectionStatus";
@@ -63,6 +64,10 @@ function formatLocationDateTime(value: string, timezone: string | null | undefin
   return formatWithZone(value, timezone);
 }
 
+function hasOpenChangeRequest(booking: InspectionBookingRecord) {
+  return booking.changeRequests.some((change) => ["PENDING_ADMIN_APPROVAL", "PENDING_CUSTOMER_CONFIRMATION"].includes(change.status));
+}
+
 export function InspectionsWorkspace({
   canApprove,
   canApproveBookings,
@@ -81,10 +86,9 @@ export function InspectionsWorkspace({
   const workspace = useInspectionsWorkspace(canApproveBookings, routeInspectionId, onInspectionRouteChange);
   const [inspectorByBooking, setInspectorByBooking] = useState<Record<string, string>>({});
   const [missingInspector, setMissingInspector] = useState<string | null>(null);
-  /** The booking whose inspector is being changed, and the choice awaiting explicit confirmation. */
-  const [reassigning, setReassigning] = useState<string | null>(null);
+  /** The booking whose inspector the open "Change inspector" dialog is for. */
+  const [changingInspector, setChangingInspector] = useState<string | null>(null);
   const [showAllBookings, setShowAllBookings] = useState(false);
-  const [reassignChoice, setReassignChoice] = useState<Record<string, string>>({});
   // The assigned inspector's name needs the inspector list, so it is loaded once a confirmed booking is on screen.
   const hasConfirmedBooking = workspace.bookings.some((booking) => booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED");
   const { loadInspectors } = workspace;
@@ -93,6 +97,7 @@ export function InspectionsWorkspace({
     // loadInspectors is recreated each render; the list is loaded once, and only when needed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canApproveBookings, hasConfirmedBooking]);
+  const changingBooking = workspace.bookings.find((booking) => booking.id === changingInspector) ?? null;
   const draftCount =
     countByStatus(workspace.inspections, "DRAFT") + countByStatus(workspace.inspections, "IN_PROGRESS");
   const submittedCount = countByStatus(workspace.inspections, "SUBMITTED");
@@ -251,45 +256,25 @@ export function InspectionsWorkspace({
                       </ActionButton>
                     </span>
                   ) : null}
-                  {canApproveBookings && booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED" && !booking.changeRequests.some((change) => ["PENDING_ADMIN_APPROVAL", "PENDING_CUSTOMER_CONFIRMATION"].includes(change.status)) ? (
-                    <span className="row-actions">
-                      <span>Inspector: {workspace.inspectors.find((inspector) => inspector.id === booking.inspectorUserId)?.displayName ?? (booking.inspectorUserId ? "Assigned" : "Not assigned")}</span>
-                      {reassigning === booking.id ? (
-                        <>
-                          <select
-                            aria-label={`New inspector for ${booking.location.name}`}
-                            value={reassignChoice[booking.id] ?? ""}
-                            onChange={(event) => setReassignChoice((current) => ({ ...current, [booking.id]: event.target.value }))}
-                          >
-                            <option value="">Choose an inspector</option>
-                            {workspace.inspectors.filter((inspector) => inspector.id !== booking.inspectorUserId).map((inspector) => (
-                              <option key={inspector.id} value={inspector.id}>{inspector.displayName}</option>
-                            ))}
-                          </select>
-                          <ActionButton
-                            disabled={workspace.pendingAction !== null || !reassignChoice[booking.id]}
-                            onClick={() => void workspace.reassignInspectionBookingInspector(booking.id, reassignChoice[booking.id]).then((result) => { if (result.ok) setReassigning(null); })}
-                            pending={workspace.pendingAction === `reassign:${booking.id}`}
-                            pendingLabel="Reassigning…"
-                            variant="secondary"
-                          >
-                            Confirm reassignment
-                          </ActionButton>
-                          <ActionButton disabled={workspace.pendingAction !== null} onClick={() => setReassigning(null)} variant="ghost">
-                            Keep inspector
-                          </ActionButton>
-                          <small>The inspection time will not change.</small>
-                        </>
+                  {canApproveBookings && booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED" ? (
+                    <div className="assigned-inspector">
+                      <span>Assigned inspector:</span>
+                      <strong className="assigned-inspector__name">
+                        {workspace.inspectors.find((inspector) => inspector.id === booking.inspectorUserId)?.displayName ?? (booking.inspectorUserId ? "Assigned" : "Not assigned")}
+                      </strong>
+                      {hasOpenChangeRequest(booking) ? (
+                        <small className="field-hint">Cannot change inspector while a reschedule is pending.</small>
                       ) : (
                         <ActionButton
+                          aria-label={`Change inspector for ${booking.location.name}`}
                           disabled={workspace.pendingAction !== null}
-                          onClick={() => void workspace.loadInspectors().then((loaded) => { if (loaded) setReassigning(booking.id); })}
+                          onClick={() => void workspace.loadInspectors().then((loaded) => { if (loaded) setChangingInspector(booking.id); })}
                           variant="secondary"
                         >
-                          Reassign inspector
+                          Change inspector
                         </ActionButton>
                       )}
-                    </span>
+                    </div>
                   ) : null}
                   {canApproveBookings ? booking.changeRequests.filter((change) => change.status === "PENDING_ADMIN_APPROVAL").map((change) => (
                     <span className="row-actions" key={change.id}>
@@ -359,6 +344,23 @@ export function InspectionsWorkspace({
                   Load more bookings
                 </button>
               ) : null}
+              <ChangeInspectorDialog
+                checkAvailability={(inspectorId) => workspace.checkInspectorAvailability(changingBooking?.id ?? "", inspectorId)}
+                currentInspectorId={changingBooking?.inspectorUserId ?? null}
+                currentInspectorName={workspace.inspectors.find((inspector) => inspector.id === changingBooking?.inspectorUserId)?.displayName ?? "Assigned"}
+                inspectors={workspace.inspectors.map((inspector) => ({ id: inspector.id, name: inspector.displayName }))}
+                onClose={() => setChangingInspector(null)}
+                onSave={async (inspectorId) => {
+                  if (!changingBooking) return "This booking is no longer available.";
+                  const result = await workspace.reassignInspectionBookingInspector(changingBooking.id, inspectorId);
+                  if (!result.ok) return result.error.message;
+                  setChangingInspector(null);
+                  return null;
+                }}
+                open={changingBooking !== null}
+                siteName={changingBooking?.location.name ?? ""}
+                whenLabel={changingBooking ? formatLocationDateTime(changingBooking.scheduledAt, changingBooking.location.schedulingTimezone) : undefined}
+              />
             </div>
           ) : (
             <p className="inspection-booking-empty">

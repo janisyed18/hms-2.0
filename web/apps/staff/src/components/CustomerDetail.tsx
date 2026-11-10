@@ -216,16 +216,14 @@ export function CustomerDetail({
                       {customer.status === "Active" ? (
                         <button className="secondary-button compact-action" onClick={() => onLifecycle("archive", customer)} type="button">Archive customer</button>
                       ) : (
-                        <>
-                          <button className="secondary-button compact-action" onClick={() => onLifecycle("restore", customer)} type="button">Restore customer</button>
-                          <button className="secondary-button compact-action" onClick={() => onLifecycle("delete", customer)} type="button">Delete customer</button>
-                        </>
+                        <button className="secondary-button compact-action" onClick={() => onLifecycle("restore", customer)} type="button">Restore customer</button>
                       )}
+                      <button className="secondary-button compact-action customer-lifecycle__delete" onClick={() => onLifecycle("delete", customer)} type="button">Delete customer</button>
                     </div>
                     <p className="field-hint">
                       {customer.status === "Active"
-                        ? "Archive this customer to stop new work for it. Deleting is only offered once a customer is archived."
-                        : "Delete is refused while any asset, inspection or other record still refers to this customer; it then stays archived."}
+                        ? "Archive hides this customer from active work and keeps its history. Delete checks what is linked first: a customer with assets, bookings or other records cannot be deleted, and Archive is offered instead."
+                        : "This customer is archived: hidden from active work, history kept. Restore brings it back. Delete is only possible when no asset, booking or other record refers to it."}
                     </p>
                   </section>
                 ) : null}

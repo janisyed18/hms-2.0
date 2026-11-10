@@ -297,3 +297,38 @@ describe("the customer portal asset follows the URL", () => {
     await waitFor(() => expect(onCustomerChange).toHaveBeenCalledWith("org-1", { replace: true }));
   });
 });
+
+describe("the asset register's customer filter follows the URL", () => {
+  function CustomerHarness({ onCustomerRouteChange }: { onCustomerRouteChange: (id: string | null) => void }) {
+    const [customer, setCustomer] = useState<string | null>("cust-1");
+    return (
+      <>
+        <button onClick={() => setCustomer(null)} type="button">Route: Back</button>
+        <button onClick={() => setCustomer("cust-1")} type="button">Route: Forward</button>
+        <AssetsWorkspace
+          canWrite
+          onCustomerRouteChange={(id) => { onCustomerRouteChange(id); setCustomer(id); }}
+          routeCustomerId={customer}
+          routeCustomerLabel="Orica"
+        />
+      </>
+    );
+  }
+  const lastQuery = () => client.listAssets.mock.calls.at(-1)?.[0] as { customerId?: string } | undefined;
+
+  it("applies the filter from the link, drops it when Back removes it, and re-applies it on Forward, without a loop", async () => {
+    const onCustomerRouteChange = vi.fn();
+    render(<CustomerHarness onCustomerRouteChange={onCustomerRouteChange} />);
+    const actor = userEvent.setup();
+    await waitFor(() => expect(lastQuery()?.customerId).toBe("cust-1"));
+
+    await actor.click(screen.getByRole("button", { name: "Route: Back" }));
+    await waitFor(() => expect(lastQuery()?.customerId).toBeUndefined());
+    expect(screen.queryByText("Orica", { selector: ".filter-chip *, [class*=chip] *" })).toBeNull();
+
+    await actor.click(screen.getByRole("button", { name: "Route: Forward" }));
+    await waitFor(() => expect(lastQuery()?.customerId).toBe("cust-1"));
+    // Only the person clearing the filter tells the URL; URL-driven changes never answer back.
+    expect(onCustomerRouteChange).not.toHaveBeenCalled();
+  });
+});
