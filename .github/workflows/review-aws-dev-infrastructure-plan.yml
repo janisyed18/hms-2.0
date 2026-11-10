@@ -143,12 +143,24 @@ jobs:
           python3 "$GITHUB_WORKSPACE/.github/scripts/summarize-terraform-plan.py" \
             --plan-json plan.json \
             --manifest plan-manifest.json > "$report"
+          # PASS/FAIL assertions for the protected history storage. Fixed strings
+          # only; a FAIL still publishes the report before failing the job.
+          set +e
+          python3 "$GITHUB_WORKSPACE/.github/scripts/assert-history-plan.py" \
+            --plan-json plan.json \
+            --terraform-dir . > "$report_dir/assertions.md"
+          assertions_status=$?
+          set -e
+          cat "$report_dir/assertions.md" >> "$report"
+          rm -f "$report_dir/assertions.md"
           cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          exit "$assertions_status"
 
       # Additional retrieval path for the same sanitized report (the step summary is
       # not exposed through any API). Exactly one file: the summarizer's output.
       # Never add the plan, plan JSON, decrypted plan or manifest here.
       - name: Upload sanitized structural report
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: aws-dev-terraform-review-report-${{ inputs.plan_run_id }}-${{ github.run_id }}
