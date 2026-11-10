@@ -1050,14 +1050,16 @@ REFUSAL = "Customer deletion is not enabled in this environment."
 
 
 def test_customer_deletion_is_off_unless_the_environment_enables_it(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from hms_backend.app.core.config import Settings
 
+    # An empty directory so no developer .env file can change the answer.
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("CUSTOMER_DELETION_ENABLED", raising=False)
-    assert Settings(_env_file=None).customer_deletion_enabled is False
+    assert Settings().customer_deletion_enabled is False
     monkeypatch.setenv("CUSTOMER_DELETION_ENABLED", "true")
-    assert Settings(_env_file=None).customer_deletion_enabled is True
+    assert Settings().customer_deletion_enabled is True
 
 
 @pytest.mark.asyncio

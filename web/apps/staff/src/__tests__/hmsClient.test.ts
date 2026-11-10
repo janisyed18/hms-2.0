@@ -742,6 +742,21 @@ describe("hmsClient", () => {
     );
   });
 
+  it("treats a deletion check without deletion_enabled as deletion not enabled", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          can_delete: true, archived: false, blockers: [], customer_name: "Vopak", customer_code: "VOPA", version: 2,
+          fingerprint: "fp", retention_years: 7, impact: { total_records: 0, items: [], evidence_files: 0 }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    await expect(client.getCustomerDeletionCheck("cust-1")).resolves.toMatchObject({ canDelete: true, deletionEnabled: false });
+  });
+
   it("deletes a customer with history through a POST carrying the name, fingerprint, If-Match and Idempotency-Key", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       okJson({

@@ -113,6 +113,25 @@ describe("Remove customer", () => {
     expect(client.deleteCustomer).not.toHaveBeenCalled();
   });
 
+  it("fails closed: a server reply that does not mention deletion_enabled leaves Delete unavailable", async () => {
+    // Map a real API reply that lacks the flag, then feed the result to the dialog.
+    const actual = await vi.importActual<typeof import("../api/hmsClient")>("../api/hmsClient");
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          can_delete: true, archived: false, blockers: [], customer_name: "Summit Marine Group", customer_code: "SMG", version: 3,
+          fingerprint: "fp-1", retention_years: 7, impact: { total_records: 0, items: [], evidence_files: 0 }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+    client.getCustomerDeletionCheck.mockResolvedValue(await actual.createHmsClient({ fetcher, baseUrl: "" }).getCustomerDeletionCheck("c1"));
+    await openDialog();
+    expect(await within(dialog()).findByRole("radio", { name: /Delete Customer and Related Data/ })).toBeDisabled();
+    expect(within(dialog()).getByText("Not available")).toBeVisible();
+    expect(within(dialog()).getByRole("radio", { name: /Archive Customer/ })).toBeChecked();
+  });
+
   it("offers no action at all when the customer is archived and deletion is not enabled", async () => {
     client.getCustomerDeletionCheck.mockResolvedValue({ ...clear, archived: true, deletionEnabled: false });
     await openDialog(customer({ status: "Archived", archivedAt: "2026-11-09T00:00:00Z" }));

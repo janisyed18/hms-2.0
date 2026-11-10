@@ -1923,8 +1923,8 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         evidenceFiles: body.impact.evidence_files,
         fingerprint: body.fingerprint,
         retentionYears: body.retention_years,
-        // The server enforces this; an older server that does not report it is not gated.
-        deletionEnabled: body.deletion_enabled !== false
+        // Fail closed: only an explicit true from the server offers deletion.
+        deletionEnabled: body.deletion_enabled === true
       };
     },
 
