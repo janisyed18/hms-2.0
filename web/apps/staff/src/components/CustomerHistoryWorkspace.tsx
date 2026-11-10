@@ -306,7 +306,7 @@ function DeletionRecordsDialog({ batchId, onClose }: { batchId: string; onClose:
                   <select aria-label="Record type" onChange={(event) => setRecordType(event.target.value)} value={recordType}>
                     <option value="">All record types</option>
                     <option value="customers">Customer</option>
-                    {detail.recordCounts.map((item) => <option key={item.kind} value={item.kind}>{item.label} ({item.count})</option>)}
+                    {detail.recordCounts.map((item) => <option key={item.kind} value={item.kind}>{item.label} ({item.count}{item.previously_deleted ? `, ${item.previously_deleted} previously deleted` : ""})</option>)}
                   </select>
                 </label>
               </header>
@@ -314,7 +314,7 @@ function DeletionRecordsDialog({ batchId, onClose }: { batchId: string; onClose:
                 {records.map((record) => (
                   <li key={record.id}>
                     <details>
-                      <summary><strong>{record.label}</strong><small>{record.typeLabel}</small></summary>
+                      <summary><strong>{record.label}</strong><small>{record.typeLabel}{record.previouslyDeleted ? " · previously deleted" : ""}</small></summary>
                       <pre aria-label={`${record.label} snapshot`}>{JSON.stringify(record.payload, null, 2)}</pre>
                     </details>
                   </li>

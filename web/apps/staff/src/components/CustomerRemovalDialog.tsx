@@ -346,7 +346,10 @@ function RemovalBody({
                     <li key={item.kind}>
                       <Icon aria-hidden size={16} />
                       <span className="customer-delete__label">{item.label}</span>
-                      <span className="customer-delete__count">{item.count}</span>
+                      <span className="customer-delete__count">
+                        {item.count}
+                        {item.previously_deleted ? <small> ({item.previously_deleted} previously deleted)</small> : null}
+                      </span>
                     </li>
                   );
                 })}

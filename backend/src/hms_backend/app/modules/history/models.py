@@ -70,6 +70,10 @@ class CustomerDeletionBatch(Base):
     record_counts: Mapped[dict[str, int]] = mapped_column(
         JSON, nullable=False, default=dict
     )
+    # How many of record_counts were already soft-deleted before this archive was taken.
+    previously_deleted_counts: Mapped[dict[str, int]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
     total_records: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     evidence_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     evidence_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

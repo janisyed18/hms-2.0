@@ -394,7 +394,7 @@ async def test_preview_counts_every_owned_record_and_nothing_shared(
         body = await preview(client, scene.customer_id)
     counts = {item["kind"]: item["count"] for item in body["impact"]["items"]}
     assert counts == {
-        "customer_locations": 2,  # the already-deleted location is not counted
+        "customer_locations": 3,  # includes the location deleted earlier
         "customer_contacts": 1,
         "customer_location_contacts": 1,
         "assets": 2,
@@ -522,8 +522,10 @@ async def test_delete_archives_every_record_then_removes_it_from_active_hms(
         assert {r.record_type for r in records} == (
             set(history_service.OWNED_TABLES) - not_in_scene
         )
-        # The already-deleted location is not part of the active set.
-        assert scene.ids["gone"] not in {r.original_id for r in records}
+        # The location deleted earlier is archived too, with its original deleted_at.
+        earlier = next(r for r in records if r.original_id == scene.ids["gone"])
+        assert earlier.payload["deleted_at"] is not None
+        assert batch.previously_deleted_counts == {"customer_locations": 1}
         edges = (await session.scalars(select(HistoryRelationship))).all()
         retained = [e for e in edges if e.parent_retained]
         # Shared parents (products, accounts) are referenced, never copied or removed.
@@ -766,6 +768,85 @@ async def test_archive_failure_leaves_everything_intact_and_cleans_up(
     await assert_nothing_changed(factory, scene, before_audit=audit_before)
     # The partial copy made by this attempt was removed again.
     assert store.list_objects("history/") == []
+
+
+@pytest.mark.asyncio
+async def test_records_deleted_earlier_are_archived_labelled_and_left_untouched(
+    factory: async_sessionmaker[AsyncSession], storage: LocalObjectStorage
+) -> None:
+    scene = await build_scene(factory, storage)
+    stamp = datetime(2026, 1, 2, tzinfo=UTC)
+    async with factory() as session:
+        # A child of the location that was already deleted, itself deleted earlier.
+        old = CustomerLocationContact(location_id=scene.ids["gone"], name="Old contact")
+        old.deleted_at = stamp
+        # The same shape belonging to another customer must not be picked up.
+        other_gone = CustomerLocation(customer_id=scene.other_customer_id, name="X")
+        other_gone.deleted_at = stamp
+        session.add_all([old, other_gone])
+        await session.commit()
+        old_id = old.id
+        gone_row = await session.get(CustomerLocation, scene.ids["gone"])
+        assert gone_row is not None
+        gone_version = gone_row.version
+
+    async with client_for(factory) as client:
+        impact = (await preview(client, scene.customer_id))["impact"]
+        done = await delete(client, scene.customer_id)
+        records = await client.get(
+            f"/api/v1/customer-deletions/{done.json()['id']}/records",
+            params={"limit": 200},
+        )
+    assert done.status_code == 200, done.text
+    assert impact["previously_deleted"] == 2
+    by_kind = {i["kind"]: i for i in impact["items"]}
+    assert by_kind["customer_locations"]["previously_deleted"] == 1
+    assert by_kind["customer_location_contacts"]["previously_deleted"] == 1
+    assert by_kind["assets"]["previously_deleted"] == 0
+
+    items = {r["original_id"]: r for r in records.json()["items"]}
+    assert items[old_id]["previously_deleted"] is True
+    assert items[scene.ids["gone"]]["previously_deleted"] is True
+    assert items[scene.ids["asset"]]["previously_deleted"] is False
+    assert other_gone.id not in items
+
+    async with factory() as session:
+        again = await session.get(CustomerLocation, scene.ids["gone"])
+        old_row = await session.get(CustomerLocationContact, old_id)
+        assert again is not None and old_row is not None
+        # Not deleted a second time: same stamp, same version, no new tombstone.
+        assert again.version == gone_version
+        assert old_row.deleted_at is not None
+        assert old_row.deleted_at.replace(tzinfo=UTC) == stamp
+        tombstones = (
+            await session.scalars(
+                select(SyncChange).where(
+                    SyncChange.entity_id.in_([scene.ids["gone"], old_id])
+                )
+            )
+        ).all()
+        assert tombstones == []
+
+
+@pytest.mark.asyncio
+async def test_missing_file_of_a_record_deleted_earlier_blocks_the_archive(
+    factory: async_sessionmaker[AsyncSession], storage: LocalObjectStorage
+) -> None:
+    scene = await build_scene(factory, storage)
+    async with factory() as session:
+        cert = (
+            await session.scalars(
+                select(Certificate).where(Certificate.number == "CERT-ACME-1")
+            )
+        ).one()
+        cert.deleted_at = datetime(2026, 1, 2, tzinfo=UTC)
+        await session.commit()
+    storage.delete("certificates/acme.pdf")
+    async with client_for(factory) as client:
+        response = await delete(client, scene.customer_id)
+    assert response.status_code == 500
+    assert await live(factory, Customer, scene.customer_id) == 1
+    assert await count(factory, HistoryRecord) == 0  # no archive claimed complete
 
 
 @pytest.mark.asyncio

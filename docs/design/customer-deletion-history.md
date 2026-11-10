@@ -132,16 +132,33 @@ engineering procedure from the snapshot.
 
 1. **Strict evidence policy.** A missing certificate file or hash mismatch blocks deletion. Confirm this
    is preferred over deleting with a recorded gap.
-2. **Public certificate verification** for certificates of a deleted customer: current behaviour should
-   be confirmed with the product owner (still verifiable, or reported as withdrawn).
+2. **Public certificate verification** (approved with conditions in review).
+   A certificate of a deleted customer is still found by its QR token: `/certificates/verify/{token}` reports
+   authenticity as before, sets `historical: true` and `valid: false`, withholds the customer name and explains that the
+   certificate is retained for historical verification only. Revoked, superseded and expired states keep their meaning.
+   This applies only to certificates held by a COMPLETED archive; any other soft-deleted certificate is still a 404.
+   The public PDF download returns 404 because the PDF names the customer; the retained copy is in History.
 3. **Portal users** whose `customer_id` is the deleted customer are left as they are.
-4. **Object storage immutability.** Copies live under the history prefix; originals stay in place. Object
-   Lock or a bucket policy preventing delete/overwrite on that prefix is recommended but infrastructure
-   (Terraform/AWS) was deliberately not touched in this change.
+4. **Object storage immutability is a deployment prerequisite.** The PostgreSQL history tables reject update and
+   delete, but the archived PDFs and photos are ordinary objects until the history prefix has S3 Object Lock
+   (or an equivalent bucket policy denying delete/overwrite). Until that is configured, the archive is tamper-evident
+   (SHA-256 per object plus a manifest hash) but not tamper-proof. Terraform/AWS was deliberately not touched here.
+   The originals also stay in place, so nothing is lost if the copy is later damaged.
 5. **Lock scope.** The customer row lock is held while objects are copied; very large customers will
    hold it longer (v1 limitation). Per-record sync flushes are also slow for very large customers.
 6. The history view is not deep-linkable (local state).
-7. The old `DELETE /customers/{id}` route was removed (now `405`); clients use `delete-with-history`.
+7. **Archive completeness (decided in review).** The archive includes records soft-deleted earlier, attributed through
+   the same ownership graph (a child of an earlier-deleted parent is still found). Their original `deleted_at` is kept in
+   the snapshot, History labels them "previously deleted", and impact counts show them separately
+   (`previously_deleted_counts` on the batch). They are not deleted again: no version bump, no new tombstone. Their
+   certificate and photo files are verified like any other, and a missing or altered file fails the whole archive
+   closed. The archive is the state at the time of archiving; it does not recreate earlier edits or versions.
+8. **Concurrency.** After the customer row is locked, every owned row is locked (`FOR UPDATE`, fixed order) before the
+   content fingerprint is checked, and the locks are held until commit. A concurrent edit of a child therefore waits
+   (a PostgreSQL test proves an `UPDATE` times out while the deletion is in progress, and fails without the locks).
+   The fingerprint hashes the content of every owned row, so an edit after the preview returns 409. History date
+   filters use explicit UTC day boundaries.
+9. The old `DELETE /customers/{id}` route was removed (now `405`); clients use `delete-with-history`.
 
 ## 11. Recovery and rollback
 

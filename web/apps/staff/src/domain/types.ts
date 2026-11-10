@@ -288,6 +288,8 @@ export interface CustomerDeletionImpactItem {
   kind: string;
   label: string;
   count: number;
+  /** How many of `count` were already deleted before this customer was; they are archived too. */
+  previously_deleted?: number;
 }
 
 /** What deleting would remove from active HMS, as the server counted it (Super Admin only). */
@@ -349,6 +351,8 @@ export interface CustomerDeletionRecord {
   originalId: string;
   label: string;
   originalVersion: number | null;
+  /** The record was already deleted before the customer was; its original deleted_at is in the snapshot. */
+  previouslyDeleted: boolean;
   payload: Record<string, unknown>;
   payloadSha256: string;
 }

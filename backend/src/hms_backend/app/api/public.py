@@ -35,16 +35,45 @@ from hms_backend.app.modules.certificates.integrity import (
 )
 from hms_backend.app.modules.certificates.mapping import facts_from_snapshot
 from hms_backend.app.modules.certificates.models import Certificate
+from hms_backend.app.modules.history.models import (
+    CustomerDeletionBatch,
+    DeletionStatus,
+    HistoryRecord,
+)
 
 router = APIRouter(prefix="/certificates", tags=["public-verification"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 
+HISTORICAL_MESSAGE = (
+    "This certificate was originally issued by HMS. The associated customer has "
+    "since been removed from active records. This certificate is retained for "
+    "historical verification and is not valid for current operational use."
+)
+
+
+async def _is_archived(session: AsyncSession, certificate: Certificate) -> bool:
+    """Whether a completed customer-deletion archive holds this certificate."""
+    found = await session.scalar(
+        select(HistoryRecord.id)
+        .join(CustomerDeletionBatch, CustomerDeletionBatch.id == HistoryRecord.batch_id)
+        .where(
+            HistoryRecord.record_type == "certificates",
+            HistoryRecord.original_id == certificate.id,
+            CustomerDeletionBatch.status == DeletionStatus.COMPLETED,
+        )
+        .limit(1)
+    )
+    return found is not None
+
+
 async def _load_by_token(session: AsyncSession, token: str) -> Certificate:
+    # A certificate removed with its customer stays verifiable, but only when a
+    # completed archive holds it. Any other soft-deleted certificate is still a 404.
     statement = (
         select(Certificate)
-        .where(Certificate.public_token == token, Certificate.deleted_at.is_(None))
+        .where(Certificate.public_token == token)
         .options(
             selectinload(Certificate.inspection),
             selectinload(Certificate.asset).selectinload(Asset.customer),
@@ -53,6 +82,9 @@ async def _load_by_token(session: AsyncSession, token: str) -> Certificate:
         )
     )
     certificate = (await session.scalars(statement)).first()
+    if certificate is not None and certificate.deleted_at is not None:
+        if not await _is_archived(session, certificate):
+            certificate = None
     if certificate is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -97,8 +129,22 @@ async def verify_certificate(
         standard_code = getattr(getattr(product, "standard", None), "code", None)
         inspection_result = certificate.inspection.result
 
+    historical = certificate.deleted_at is not None
+    message = assessment.message
+    if historical:
+        # Authenticity is still reported, but the record is no longer in active use
+        # and the customer's identity is withheld from the public page.
+        customer_name = "Withheld (archived record)"
+        # A revoked, superseded, expired or failed certificate keeps its own meaning.
+        message = (
+            HISTORICAL_MESSAGE
+            if assessment.valid
+            else f"{HISTORICAL_MESSAGE} {assessment.message}"
+        )
+
     return CertificateVerifyResponse(
-        valid=assessment.valid,
+        valid=assessment.valid and not historical,
+        historical=historical,
         status=certificate.status,
         integrity=assessment.integrity.value,
         hash_matches=assessment.hash_matches,
@@ -115,7 +161,7 @@ async def verify_certificate(
         product_name=product_name,
         standard_code=standard_code,
         inspection_result=inspection_result,
-        message=assessment.message,
+        message=message,
     )
 
 
@@ -126,6 +172,12 @@ async def download_certificate_pdf(
     download: bool = Query(default=False),
 ) -> Response:
     certificate = await _load_by_token(session, public_token)
+    if certificate.deleted_at is not None:
+        # The PDF names the customer, so it is not served once the record is archived.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Certificate PDF is not available",
+        )
     storage = get_object_storage()
     filename = f"{certificate.number}.pdf"
 

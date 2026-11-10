@@ -983,6 +983,8 @@ class CertificateVerifyResponse(BaseModel):
     """Public, unauthenticated verification result for a certificate token."""
 
     valid: bool
+    # True when the customer was removed from active HMS and this is kept for history.
+    historical: bool = False
     status: str
     # Authenticity of the document: VERIFIED (genuine and unmodified, even if revoked
     # or expired), LEGACY_UNVERIFIED (no integrity evidence) or FAILED (tampered).

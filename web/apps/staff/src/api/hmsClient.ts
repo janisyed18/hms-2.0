@@ -1956,7 +1956,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
 
     async listCustomerDeletionRecords(id: string, params: { recordType?: string; limit?: number; offset?: number } = {}): Promise<{ items: CustomerDeletionRecord[]; total: number }> {
       const response = await request<{
-        items: { id: string; record_type: string; type_label: string; original_id: string; label: string; original_version: number | null; payload: Record<string, unknown>; payload_sha256: string }[];
+        items: { id: string; record_type: string; type_label: string; original_id: string; label: string; original_version: number | null; previously_deleted?: boolean; payload: Record<string, unknown>; payload_sha256: string }[];
         total: number;
       }>(`/api/v1/customer-deletions/${encodeURIComponent(id)}/records`, {}, {
         record_type: params.recordType || undefined,
@@ -1972,6 +1972,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           originalId: item.original_id,
           label: item.label,
           originalVersion: item.original_version,
+          previouslyDeleted: item.previously_deleted ?? false,
           payload: item.payload,
           payloadSha256: item.payload_sha256
         }))

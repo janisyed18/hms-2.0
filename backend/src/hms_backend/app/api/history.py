@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -40,6 +40,7 @@ def batch_summary(
     batch: CustomerDeletionBatch, *, replayed: bool = False
 ) -> dict[str, Any]:
     counts = batch.record_counts or {}
+    earlier = batch.previously_deleted_counts or {}
     return {
         "id": batch.id,
         "deletion_number": batch.deletion_number,
@@ -53,7 +54,12 @@ def batch_summary(
         "deleted_at": batch.created_at,
         "total_records": batch.total_records,
         "record_counts": [
-            {"kind": name, "label": LABELS[name], "count": counts[name]}
+            {
+                "kind": name,
+                "label": LABELS[name],
+                "count": counts[name],
+                "previously_deleted": earlier.get(name, 0),
+            }
             for name in OWNED_TABLES
             if name in counts and name != "customers"
         ],
@@ -101,12 +107,12 @@ async def list_customer_deletions(
     if from_date:
         conditions.append(
             CustomerDeletionBatch.created_at
-            >= datetime.combine(from_date, time.min).astimezone()
+            >= datetime.combine(from_date, time.min, tzinfo=UTC)
         )
     if to_date:
         conditions.append(
             CustomerDeletionBatch.created_at
-            < datetime.combine(to_date + timedelta(days=1), time.min).astimezone()
+            < datetime.combine(to_date + timedelta(days=1), time.min, tzinfo=UTC)
         )
     total = await session.scalar(
         select(func.count()).select_from(CustomerDeletionBatch).where(*conditions)
@@ -200,6 +206,8 @@ async def list_customer_deletion_records(
                     ),
                     row.original_id,
                 ),
+                "previously_deleted": row.payload.get("deleted_at") is not None,
+                "deleted_at_origin": row.payload.get("deleted_at"),
                 "original_version": row.original_version,
                 "schema_version": row.schema_version,
                 "payload": row.payload,

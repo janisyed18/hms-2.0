@@ -173,6 +173,14 @@ class Snapshot:
     def counts(self) -> dict[str, int]:
         return {table: len(rows) for table, rows in self.rows.items() if rows}
 
+    @property
+    def previously_deleted_counts(self) -> dict[str, int]:
+        found = {
+            table: sum(1 for row in rows if row.get("deleted_at") is not None)
+            for table, rows in self.rows.items()
+        }
+        return {table: n for table, n in found.items() if n}
+
 
 @dataclass(frozen=True)
 class DeletionOutcome:
@@ -197,34 +205,72 @@ def _active(table: Table) -> ColumnElement[bool]:
     return table.c.deleted_at.is_(None) if "deleted_at" in table.c else true()
 
 
-def owned_clause(table_name: str, customer_id: str) -> ColumnElement[bool]:
-    """Active rows of ``table_name`` that the customer exclusively owns."""
+def owned_clause(
+    table_name: str, customer_id: str, *, include_deleted: bool = True
+) -> ColumnElement[bool]:
+    """Rows of ``table_name`` that the customer exclusively owns.
+
+    By default this includes rows soft-deleted earlier, and ownership is followed
+    through a parent that was soft-deleted earlier, so the archive keeps what was
+    already removed as well as what is active. ``include_deleted=False`` gives the
+    active rows only.
+    """
     table = _table(table_name)
+    live = true() if include_deleted else _active(table)
     if table_name == ROOT:
-        return and_(table.c.id == customer_id, _active(table))
+        return and_(table.c.id == customer_id, live)
     links = []
     for column, parent_name in OWNERSHIP[table_name]:
         parent = _table(parent_name)
         links.append(
             table.c[column].in_(
-                select(parent.c.id).where(owned_clause(parent_name, customer_id))
+                select(parent.c.id).where(
+                    owned_clause(
+                        parent_name, customer_id, include_deleted=include_deleted
+                    )
+                )
             )
         )
-    return and_(or_(*links), _active(table))
+    return and_(or_(*links), live)
 
 
-async def impact_counts(session: AsyncSession, customer_id: str) -> dict[str, int]:
+async def impact_counts(
+    session: AsyncSession, customer_id: str, *, previously_deleted: bool = False
+) -> dict[str, int]:
+    """Owned rows per table: everything archived, or only what was already deleted."""
     counts: dict[str, int] = {}
     for name in OWNED_TABLES:
         table = _table(name)
-        found = await session.scalar(
+        statement = (
             select(func.count())
             .select_from(table)
             .where(owned_clause(name, customer_id))
         )
+        if previously_deleted:
+            if "deleted_at" not in table.c:
+                continue
+            statement = statement.where(table.c.deleted_at.is_not(None))
+        found = await session.scalar(statement)
         if found:
             counts[name] = int(found)
     return counts
+
+
+async def lock_owned_rows(session: AsyncSession, customer_id: str) -> None:
+    """Row-lock every owned row until the transaction ends.
+
+    A concurrent edit of a child record then waits instead of changing data between
+    the fingerprint check and the commit. A new child needs a share lock on a parent
+    this transaction holds, so it waits too. Locks are taken in a fixed order.
+    """
+    for name in OWNED_TABLES:
+        table = _table(name)
+        await session.execute(
+            select(table.c.id)
+            .where(owned_clause(name, customer_id))
+            .order_by(table.c.id)
+            .with_for_update()
+        )
 
 
 async def evidence_file_count(session: AsyncSession, customer_id: str) -> int:
@@ -242,10 +288,33 @@ async def evidence_file_count(session: AsyncSession, customer_id: str) -> int:
     return total
 
 
-def impact_fingerprint(customer: Customer, counts: dict[str, int]) -> str:
+async def impact_digest(session: AsyncSession, customer_id: str) -> str:
+    """A hash over the identity and full content of every owned row.
+
+    Counts alone miss an edit to an existing child record, so the preview a Super
+    Admin reviewed is only valid while every owned row is byte-for-byte the same.
+    """
+    digest = hashlib.sha256()
+    for name in OWNED_TABLES:
+        table = _table(name)
+        result = await session.execute(
+            select(table).where(owned_clause(name, customer_id)).order_by(table.c.id)
+        )
+        digest.update(name.encode("utf-8"))
+        for row in result.mappings().all():
+            content = {column.name: row[column.name] for column in table.c}
+            digest.update(canonical_json(content).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def impact_fingerprint(customer: Customer, content_digest: str) -> str:
     return sha256_hex(
         canonical_json(
-            {"customer_id": customer.id, "version": customer.version, "counts": counts}
+            {
+                "customer_id": customer.id,
+                "version": customer.version,
+                "content": content_digest,
+            }
         )
     )
 
@@ -293,6 +362,7 @@ async def external_references(
 
 async def build_impact(session: AsyncSession, customer: Customer) -> dict[str, Any]:
     counts = await impact_counts(session, customer.id)
+    earlier = await impact_counts(session, customer.id, previously_deleted=True)
     blockers = await external_references(session, customer.id)
     return {
         "can_delete": not blockers,
@@ -304,14 +374,22 @@ async def build_impact(session: AsyncSession, customer: Customer) -> dict[str, A
         "impact": {
             # Related records only: the customer itself is not counted.
             "total_records": sum(n for k, n in counts.items() if k != ROOT),
+            "previously_deleted": sum(n for k, n in earlier.items() if k != ROOT),
             "items": [
-                {"kind": name, "label": LABELS[name], "count": counts[name]}
+                {
+                    "kind": name,
+                    "label": LABELS[name],
+                    "count": counts[name],
+                    "previously_deleted": earlier.get(name, 0),
+                }
                 for name in OWNED_TABLES
                 if name in counts and name != ROOT
             ],
             "evidence_files": await evidence_file_count(session, customer.id),
         },
-        "fingerprint": impact_fingerprint(customer, counts),
+        "fingerprint": impact_fingerprint(
+            customer, await impact_digest(session, customer.id)
+        ),
         "retention_years": settings.history_retention_years,
     }
 
@@ -565,8 +643,11 @@ async def delete_customer_with_history(
             "The customer name you typed does not match.",
         )
 
-    counts = await impact_counts(session, customer.id)
-    fingerprint = impact_fingerprint(customer, counts)
+    # Lock every owned row now, so no child can change before this transaction ends.
+    await lock_owned_rows(session, customer.id)
+    fingerprint = impact_fingerprint(
+        customer, await impact_digest(session, customer.id)
+    )
     if fingerprint != expected_fingerprint:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -671,6 +752,7 @@ async def _write_archive_and_remove(
         record_hashes, [(e.original_id, e.sha256) for e in snapshot.evidence]
     )
     counts = snapshot.counts
+    earlier = snapshot.previously_deleted_counts
     total = sum(n for name, n in counts.items() if name != ROOT)
 
     event = await append_audit_event(
@@ -686,6 +768,7 @@ async def _write_archive_and_remove(
             "customer_code": customer.code,
             "customer_name": customer.name,
             "record_counts": counts,
+            "previously_deleted_counts": earlier,
             "total_records": total,
             "evidence_files": len(snapshot.evidence),
             "manifest_sha256": manifest,
@@ -706,6 +789,7 @@ async def _write_archive_and_remove(
         reason=reason,
         idempotency_key=idempotency_key,
         record_counts=counts,
+        previously_deleted_counts=earlier,
         total_records=total,
         evidence_files=len(snapshot.evidence),
         evidence_bytes=sum(e.size_bytes for e in snapshot.evidence),
@@ -794,7 +878,13 @@ async def _remove_from_active(
     for name in reversed(OWNED_TABLES):
         if name == ROOT:
             continue
-        ids = [str(row["id"]) for row in snapshot.rows.get(name, [])]
+        # Rows already soft-deleted stay exactly as they were: no second delete, no
+        # version bump and no duplicate tombstone.
+        ids = [
+            str(row["id"])
+            for row in snapshot.rows.get(name, [])
+            if row.get("deleted_at") is None
+        ]
         model = classes[name]
         for start in range(0, len(ids), _CHUNK):
             rows = (

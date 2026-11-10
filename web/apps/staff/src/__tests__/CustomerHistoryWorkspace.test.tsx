@@ -62,6 +62,21 @@ describe("Deleted Customers (History)", () => {
     expect(screen.queryByRole("button", { name: /restore|purge|edit/i })).not.toBeInTheDocument();
   });
 
+  it("labels records that were already deleted before the customer was", async () => {
+    const user = userEvent.setup();
+    client.listCustomerDeletionRecords.mockResolvedValue({
+      items: [
+        { id: "r1", recordType: "assets", typeLabel: "Assets", originalId: "a1", label: "A-1", originalVersion: 2, previouslyDeleted: true, payload: { deleted_at: "2026-01-02T00:00:00Z" }, payloadSha256: "x" },
+        { id: "r2", recordType: "assets", typeLabel: "Assets", originalId: "a2", label: "A-2", originalVersion: 1, previouslyDeleted: false, payload: {}, payloadSha256: "y" }
+      ],
+      total: 2
+    });
+    render(<CustomerHistoryWorkspace onBack={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "View records for Summit Marine Group" }));
+    expect(await screen.findByText(/Assets · previously deleted/)).toBeVisible();
+    expect(screen.getAllByText(/previously deleted/)).toHaveLength(1);
+  });
+
   it("shows an empty state when nothing has been deleted", async () => {
     client.listCustomerDeletions.mockResolvedValue({ items: [], total: 0 });
     render(<CustomerHistoryWorkspace onBack={vi.fn()} />);

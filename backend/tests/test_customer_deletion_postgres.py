@@ -19,11 +19,12 @@ import pytest
 import pytest_asyncio
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import hms_backend.app.modules.history.service as history_service
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.core.object_storage import LocalObjectStorage, set_object_storage
 from hms_backend.app.core.rbac import Principal, Role
@@ -145,6 +146,95 @@ async def test_two_simultaneous_deletes_archive_the_customer_exactly_once(
             )
         )
     assert batches == 1
+
+
+@pytest.mark.asyncio
+async def test_editing_a_child_record_after_the_preview_blocks_the_delete(
+    database: async_sessionmaker[AsyncSession], storage: LocalObjectStorage
+) -> None:
+    """Counts are unchanged, but the reviewed impact is not what would be archived."""
+    customer_id, name = await _customer(database)
+    async with client_for(database) as client:
+        body = await _body(client, customer_id, name)
+        async with database() as session:
+            await session.execute(
+                update(Asset)
+                .where(Asset.customer_id == customer_id)
+                .values(tag=f"CHANGED-{uuid4().hex[:6]}")
+            )
+            await session.commit()
+        response = await client.post(
+            f"/api/v1/customers/{customer_id}/delete-with-history", json=body
+        )
+        assert response.status_code == 409
+        assert "changed after you reviewed" in response.json()["detail"]
+        # A fresh preview reflects the edit and the delete then succeeds.
+        fresh = await _body(client, customer_id, name)
+        assert fresh["impact_fingerprint"] != body["impact_fingerprint"]
+        retry = await client.post(
+            f"/api/v1/customers/{customer_id}/delete-with-history", json=fresh
+        )
+        assert retry.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_child_records_cannot_change_while_the_deletion_is_in_progress(
+    database: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checking the fingerprint is not enough: the rows stay locked until commit."""
+    customer_id, name = await _customer(database)
+    reached, release = asyncio.Event(), asyncio.Event()
+    original = history_service.read_snapshot
+
+    async def paused(session: AsyncSession, customer: str) -> history_service.Snapshot:
+        reached.set()  # fingerprint checked, archive not yet written
+        await release.wait()
+        return await original(session, customer)
+
+    async with client_for(database) as client:
+        body = await _body(client, customer_id, name)
+        monkeypatch.setattr(history_service, "read_snapshot", paused)
+        deletion = asyncio.create_task(
+            client.post(
+                f"/api/v1/customers/{customer_id}/delete-with-history", json=body
+            )
+        )
+        await asyncio.wait_for(reached.wait(), timeout=20)
+
+        async def attempt(statement: str) -> None:
+            async with database() as other:
+                await other.execute(text("SET LOCAL lock_timeout = '400ms'"))
+                await other.execute(text(statement), {"cid": customer_id})
+                await other.commit()
+
+        # Another transaction cannot edit existing children in the meantime.
+        with pytest.raises(DBAPIError, match="lock timeout"):
+            await attempt("UPDATE assets SET tag = 'EDITED' WHERE customer_id = :cid")
+        with pytest.raises(DBAPIError, match="lock timeout"):
+            await attempt(
+                "UPDATE customer_locations SET name = 'EDITED' WHERE customer_id = :cid"
+            )
+        release.set()
+        response = await asyncio.wait_for(deletion, timeout=60)
+
+    assert response.status_code == 200, response.text
+    async with database() as session:
+        archived = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT payload->>'tag' FROM history_records "
+                        "WHERE batch_id = :batch AND record_type = 'assets'"
+                    ),
+                    {"batch": response.json()["id"]},
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert archived and "EDITED" not in archived
 
 
 @pytest.mark.asyncio
