@@ -389,6 +389,7 @@ async def _delete_customer(
 
 @pytest.mark.asyncio
 async def test_customer_archive_restore_delete_lifecycle(
+    customer_deletion_enabled: None,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     customer_id, (location_id,) = await _customer_with_locations(
@@ -452,6 +453,7 @@ async def _audit_actions(
 
 @pytest.mark.asyncio
 async def test_unused_active_customer_is_deleted_in_one_step_without_archiving(
+    customer_deletion_enabled: None,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     customer_id, _ = await _customer_with_locations(session_factory, "Alpha")
@@ -478,6 +480,7 @@ async def test_unused_active_customer_is_deleted_in_one_step_without_archiving(
 
 @pytest.mark.asyncio
 async def test_deletion_check_counts_linked_records_and_delete_cascades(
+    customer_deletion_enabled: None,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     customer_id, (location_id,) = await _customer_with_locations(
@@ -524,6 +527,7 @@ async def test_deletion_check_and_delete_are_super_admin_only(
 
 @pytest.mark.asyncio
 async def test_customer_delete_keeps_the_stale_version_guard(
+    customer_deletion_enabled: None,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     customer_id, _ = await _customer_with_locations(session_factory, "Alpha")
@@ -540,6 +544,7 @@ async def test_customer_delete_keeps_the_stale_version_guard(
 
 @pytest.mark.asyncio
 async def test_archived_customer_with_assets_can_be_deleted_with_history(
+    customer_deletion_enabled: None,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     customer_id, (location_id,) = await _customer_with_locations(

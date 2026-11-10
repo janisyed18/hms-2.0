@@ -1376,7 +1376,10 @@ async def customer_deletion_check(
     _require_customer_write(principal)
     require_super_admin(principal)
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
-    return await build_impact(session, customer)
+    impact = await build_impact(session, customer)
+    # Lets the UI explain an unavailable action; the delete route enforces it.
+    impact["deletion_enabled"] = settings.customer_deletion_enabled
+    return impact
 
 
 @router.post(
@@ -1399,6 +1402,15 @@ async def delete_customer_with_history_route(
     """
     _require_customer_write(principal)
     require_super_admin(principal)
+    # Before anything else: no lookup, archive, storage write or database change.
+    if not settings.customer_deletion_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Customer deletion is not enabled in this environment. "
+                "Nothing was removed. You can archive the customer instead."
+            ),
+        )
     # No separate visibility lookup: a Super Admin sees every customer, and a retry of
     # a finished deletion must reach the service to be answered from its batch record.
     outcome = await delete_customer_with_history(

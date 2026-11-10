@@ -35,9 +35,12 @@ from hms_backend.app.modules.history.models import CustomerDeletionBatch
 from hms_backend.app.modules.products.models import Product
 
 POSTGRES_URL = os.environ.get("POSTGRES_TEST_DATABASE_URL")
-pytestmark = pytest.mark.skipif(
-    not POSTGRES_URL, reason="POSTGRES_TEST_DATABASE_URL is not configured"
-)
+pytestmark = [
+    pytest.mark.skipif(
+        not POSTGRES_URL, reason="POSTGRES_TEST_DATABASE_URL is not configured"
+    ),
+    pytest.mark.usefixtures("customer_deletion_enabled"),
+]
 SUPER = Principal(
     user_id="pg-super", roles=frozenset({Role.SUPER_ADMIN}), customer_ids=frozenset()
 )

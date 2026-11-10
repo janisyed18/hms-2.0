@@ -1552,6 +1552,7 @@ async def test_customer_detail_returns_etag_and_patch_enforces_if_match(
 
 @pytest.mark.asyncio
 async def test_soft_delete_customer_writes_tombstone_sync_and_audit(
+    customer_deletion_enabled: None,
     session_factory: async_sessionmaker[AsyncSession],
     seeded_session: dict[str, str],
 ) -> None:

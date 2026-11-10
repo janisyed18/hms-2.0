@@ -172,3 +172,42 @@ engineering procedure from the snapshot.
   would again allow `DELETE /customers/{id}`, which only succeeds for customers with no linked records.
 * **Migration downgrade** drops the history tables and therefore destroys retained evidence metadata.
   Never run it in an environment that holds real batches; it exists for local development.
+
+## 12. Feature gate: deployed is not enabled
+
+`CUSTOMER_DELETION_ENABLED` (setting `customer_deletion_enabled`, **default `false`**) is the master switch for
+"Delete Customer and Related Data". Shipping this code to an environment does not make deletion available.
+
+**What the flag does**
+
+* `POST /customers/{id}/delete-with-history` returns **409** ("Customer deletion is not enabled in this
+  environment…") when it is off. The check runs right after authentication and the Super Admin check and
+  before the customer lookup, the archive, any object-storage write or any database change, so a refused
+  request leaves no batch, no history row, no evidence object, no audit event and no sync change.
+  Authorization stays first: a caller who is not a Super Admin still gets 403 and never learns the flag.
+* `GET /customers/{id}/deletion-check` (the read-only impact preview) keeps working and now includes
+  `deletion_enabled`, so the screen can explain the state. The preview does not authorise anything.
+* The Remove Customer dialog shows "Delete Customer and Related Data" as **Not available**, disabled, with a
+  short explanation, and offers Archive instead. This is a convenience only; the API is authoritative.
+* Unchanged with the flag off: Archive, Restore, ordinary record management, the read-only Deleted Customers
+  (History) pages and certificate verification of anything already archived. The old
+  `DELETE /customers/{id}` stays removed (405) either way.
+
+**Configuration.** Set the environment variable on the API service only. It is not set anywhere in the dev
+Terraform task definition, so a deployment leaves it off. `docker-compose.yml` passes it through and
+defaults it to off; the CI Staff E2E job sets it to `true` explicitly because it exercises the deletion.
+Backend tests that delete opt in through the `customer_deletion_enabled` fixture; nothing enables it globally.
+
+**Before switching it on in any shared environment** (DEV included), all of these need to be true and signed off:
+
+1. Immutable evidence storage: a dedicated history bucket with S3 Object Lock and versioning, and separate
+   permissions so ordinary application credentials cannot delete objects or shorten retention. A key prefix
+   policy on the media bucket is not equivalent to Object Lock and should not be described as such.
+2. An approved retention period (the default of 7 years is a placeholder, not regulatory advice).
+3. A tested recovery and restore procedure for the history tables and the evidence bucket.
+4. Product-owner approval of the historical-certificate wording.
+5. The database migration preflight: the environment's Alembic revision confirmed and a backup verified.
+
+**Rollback.** Turning the flag off is immediate (restart or redeploy the API with it unset) and loses nothing:
+batches already written stay in History, remain verifiable, and keep their evidence. It stops *new* deletions
+only; it does not restore a deleted customer (restore is design-only, section 9).

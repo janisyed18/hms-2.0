@@ -671,7 +671,7 @@ describe("hmsClient", () => {
       new Response(
         JSON.stringify({
           can_delete: false, archived: false, blockers: [{ kind: "assets", label: "assets", count: 3, records: [{ id: "a1", name: "A-1" }] }],
-          customer_name: "Vopak", customer_code: "VOPA", version: 2, fingerprint: "fp", retention_years: 7,
+          customer_name: "Vopak", customer_code: "VOPA", version: 2, fingerprint: "fp", retention_years: 7, deletion_enabled: false,
           impact: { total_records: 4, items: [{ kind: "assets", label: "Assets", count: 4 }], evidence_files: 1 }
         }),
         { status: 200, headers: { "content-type": "application/json" } }
@@ -684,7 +684,7 @@ describe("hmsClient", () => {
       archived: false,
       blockers: [{ kind: "assets", label: "assets", count: 3, records: [{ id: "a1", name: "A-1" }] }],
       customerName: "Vopak", customerCode: "VOPA", totalRecords: 4, items: [{ kind: "assets", label: "Assets", count: 4 }],
-      evidenceFiles: 1, fingerprint: "fp", retentionYears: 7
+      evidenceFiles: 1, fingerprint: "fp", retentionYears: 7, deletionEnabled: false
     });
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/customers/cust-1/deletion-check", expect.anything());
   });
@@ -740,6 +740,21 @@ describe("hmsClient", () => {
         headers: expect.objectContaining({ "If-Match": '"5"' })
       })
     );
+  });
+
+  it("treats a deletion check without deletion_enabled as deletion not enabled", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          can_delete: true, archived: false, blockers: [], customer_name: "Vopak", customer_code: "VOPA", version: 2,
+          fingerprint: "fp", retention_years: 7, impact: { total_records: 0, items: [], evidence_files: 0 }
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+
+    await expect(client.getCustomerDeletionCheck("cust-1")).resolves.toMatchObject({ canDelete: true, deletionEnabled: false });
   });
 
   it("deletes a customer with history through a POST carrying the name, fingerprint, If-Match and Idempotency-Key", async () => {
