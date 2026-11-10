@@ -669,7 +669,11 @@ describe("hmsClient", () => {
   it("reads the deletion check as camelCase with the blocking records", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       new Response(
-        JSON.stringify({ can_delete: false, archived: false, blockers: [{ kind: "assets", label: "assets", count: 3, records: [{ id: "a1", name: "A-1" }] }] }),
+        JSON.stringify({
+          can_delete: false, archived: false, blockers: [{ kind: "assets", label: "assets", count: 3, records: [{ id: "a1", name: "A-1" }] }],
+          customer_name: "Vopak", customer_code: "VOPA", version: 2, fingerprint: "fp", retention_years: 7,
+          impact: { total_records: 4, items: [{ kind: "assets", label: "Assets", count: 4 }], evidence_files: 1 }
+        }),
         { status: 200, headers: { "content-type": "application/json" } }
       )
     );
@@ -678,7 +682,9 @@ describe("hmsClient", () => {
     await expect(client.getCustomerDeletionCheck("cust-1")).resolves.toEqual({
       canDelete: false,
       archived: false,
-      blockers: [{ kind: "assets", label: "assets", count: 3, records: [{ id: "a1", name: "A-1" }] }]
+      blockers: [{ kind: "assets", label: "assets", count: 3, records: [{ id: "a1", name: "A-1" }] }],
+      customerName: "Vopak", customerCode: "VOPA", totalRecords: 4, items: [{ kind: "assets", label: "Assets", count: 4 }],
+      evidenceFiles: 1, fingerprint: "fp", retentionYears: 7
     });
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/customers/cust-1/deletion-check", expect.anything());
   });
@@ -703,25 +709,15 @@ describe("hmsClient", () => {
       .fn()
       .mockResolvedValueOnce(noContent())
       .mockResolvedValueOnce(noContent())
-      .mockResolvedValueOnce(noContent())
       .mockResolvedValueOnce(noContent());
 
     const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
-    await client.deleteCustomer("cust-api-1", '"2"');
     await client.deleteProduct("product-api-1", '"3"');
     await client.deleteAsset("asset-api-1", '"4"');
     await client.deleteReferenceCatalogItem("standards", "standard-api-1", '"5"');
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/v1/customers/cust-api-1",
-      expect.objectContaining({
-        method: "DELETE",
-        headers: expect.objectContaining({ "If-Match": '"2"' })
-      })
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
       "/api/v1/products/product-api-1",
       expect.objectContaining({
         method: "DELETE",
@@ -729,7 +725,7 @@ describe("hmsClient", () => {
       })
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
+      2,
       "/api/v1/assets/asset-api-1",
       expect.objectContaining({
         method: "DELETE",
@@ -737,13 +733,35 @@ describe("hmsClient", () => {
       })
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
-      4,
+      3,
       "/api/v1/reference/catalog/standards/standard-api-1",
       expect.objectContaining({
         method: "DELETE",
         headers: expect.objectContaining({ "If-Match": '"5"' })
       })
     );
+  });
+
+  it("deletes a customer with history through a POST carrying the name, fingerprint, If-Match and Idempotency-Key", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      okJson({
+        id: "b1", deletion_number: "DEL-2026-000001", status: "completed", customer_id: "c1", customer_code: "SMG",
+        customer_name: "Summit", actor_name: "Sam", reason: null, created_at: "2026-11-10T01:00:00Z", total_records: 3,
+        record_counts: [{ kind: "assets", label: "Assets", count: 3 }], evidence_files: 0, manifest_sha256: "x", retention_until: "2033-11-10"
+      })
+    );
+    const client = createHmsClient({ fetcher: fetchMock, baseUrl: "" });
+    const result = await client.deleteCustomer("c1", { confirmName: "Summit", fingerprint: "fp", etag: '"2"', idempotencyKey: "key-12345678" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/customers/c1/delete-with-history",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "If-Match": '"2"', "Idempotency-Key": "key-12345678" }),
+        body: expect.stringContaining('"confirm_name":"Summit"')
+      })
+    );
+    expect(result.deletionNumber).toBe("DEL-2026-000001");
   });
 
   it("manages category-scoped reference catalog values", async () => {

@@ -284,10 +284,73 @@ export interface CustomerDeletionBlocker {
   records: { id: string; name: string }[];
 }
 
+export interface CustomerDeletionImpactItem {
+  kind: string;
+  label: string;
+  count: number;
+}
+
+/** What deleting would remove from active HMS, as the server counted it (Super Admin only). */
 export interface CustomerDeletionCheck {
   canDelete: boolean;
   archived: boolean;
   blockers: CustomerDeletionBlocker[];
+  customerName: string;
+  customerCode: string;
+  /** Related records only: the customer itself is not counted. */
+  totalRecords: number;
+  items: CustomerDeletionImpactItem[];
+  evidenceFiles: number;
+  /** Echoed back on delete so records added after this review are noticed. */
+  fingerprint: string;
+  retentionYears: number;
+}
+
+/** One deletion batch in the read-only historical archive. */
+export interface CustomerDeletionSummary {
+  id: string;
+  deletionNumber: string;
+  status: string;
+  customerId: string;
+  customerCode: string;
+  customerName: string;
+  actorName: string;
+  reason: string | null;
+  deletedAt: string;
+  totalRecords: number;
+  recordCounts: CustomerDeletionImpactItem[];
+  evidenceFiles: number;
+  manifestSha256: string | null;
+  retentionUntil: string | null;
+  retentionBasis: string | null;
+  failureDetail: string | null;
+  replayed: boolean;
+}
+
+export interface CustomerDeletionEvidence {
+  id: string;
+  kind: string;
+  label: string;
+  recordType: string;
+  originalId: string;
+  contentType: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
+export interface CustomerDeletionDetail extends CustomerDeletionSummary {
+  evidence: CustomerDeletionEvidence[];
+}
+
+export interface CustomerDeletionRecord {
+  id: string;
+  recordType: string;
+  typeLabel: string;
+  originalId: string;
+  label: string;
+  originalVersion: number | null;
+  payload: Record<string, unknown>;
+  payloadSha256: string;
 }
 
 export interface LocationFormValues {

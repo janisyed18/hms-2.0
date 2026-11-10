@@ -170,6 +170,34 @@ class CustomerMetricsRead(BaseModel):
     in_service_count: int
 
 
+class CustomerDeleteRequest(BaseModel):
+    confirm_name: str = Field(min_length=1, max_length=200)
+    impact_fingerprint: str = Field(min_length=64, max_length=64)
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class CustomerDeletionRead(BaseModel):
+    id: str
+    deletion_number: str
+    status: str
+    customer_id: str
+    customer_code: str
+    customer_name: str
+    actor_id: str
+    actor_name: str
+    reason: str | None
+    deleted_at: datetime
+    total_records: int
+    record_counts: list[dict[str, Any]]
+    evidence_files: int
+    evidence_bytes: int
+    manifest_sha256: str | None
+    retention_until: date | None
+    retention_basis: str | None
+    failure_detail: str | None
+    replayed: bool
+
+
 class CustomerRead(BaseModel):
     id: str
     code: str

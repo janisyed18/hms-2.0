@@ -370,6 +370,23 @@ async def test_contact_crud_with_super_admin_only_delete(
 # --- customer archive / restore / delete -------------------------------------
 
 
+async def _delete_customer(
+    client: httpx.AsyncClient,
+    customer_id: str,
+    *,
+    name: str = "Acme",
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
+    """Delete with history the way the UI does: preview first, then confirm."""
+    check = await client.get(f"/api/v1/customers/{customer_id}/deletion-check")
+    fingerprint = check.json()["fingerprint"] if check.status_code == 200 else "0" * 64
+    return await client.post(
+        f"/api/v1/customers/{customer_id}/delete-with-history",
+        json={"confirm_name": name, "impact_fingerprint": fingerprint},
+        headers=headers,
+    )
+
+
 @pytest.mark.asyncio
 async def test_customer_archive_restore_delete_lifecycle(
     session_factory: async_sessionmaker[AsyncSession],
@@ -379,7 +396,7 @@ async def test_customer_archive_restore_delete_lifecycle(
     )
     async with client_for(session_factory, ADMIN) as client:
         admin_archive = await client.post(f"/api/v1/customers/{customer_id}/archive")
-        admin_delete = await client.delete(f"/api/v1/customers/{customer_id}")
+        admin_delete = await _delete_customer(client, customer_id)
     async with client_for(session_factory, SUPER) as client:
         archived = await client.post(f"/api/v1/customers/{customer_id}/archive")
         archived_twice = await client.post(f"/api/v1/customers/{customer_id}/archive")
@@ -394,7 +411,7 @@ async def test_customer_archive_restore_delete_lifecycle(
         restored_twice = await client.post(f"/api/v1/customers/{customer_id}/restore")
         back_in_list = await client.get("/api/v1/customers")
         archived_again = await client.post(f"/api/v1/customers/{customer_id}/archive")
-        deleted = await client.delete(f"/api/v1/customers/{customer_id}")
+        deleted = await _delete_customer(client, customer_id)
 
     assert admin_archive.status_code == 403
     assert admin_delete.status_code == 403
@@ -409,13 +426,14 @@ async def test_customer_archive_restore_delete_lifecycle(
     assert restored_twice.status_code == 409
     assert back_in_list.json()["total"] == 1
     assert archived_again.status_code == 200
-    assert deleted.status_code == 204
+    assert deleted.status_code == 200
     async with session_factory() as session:
         customer = await session.get(Customer, customer_id)
         location = await session.get(CustomerLocation, location_id)
     assert customer is not None and customer.deleted_at is not None
-    # History is never cascaded away.
-    assert location is not None and location.deleted_at is None
+    # Owned records leave active HMS, but only after the archive was written; rows
+    # are never physically removed.
+    assert location is not None and location.deleted_at is not None
 
 
 async def _audit_actions(
@@ -439,58 +457,53 @@ async def test_unused_active_customer_is_deleted_in_one_step_without_archiving(
     customer_id, _ = await _customer_with_locations(session_factory, "Alpha")
     async with client_for(session_factory, SUPER) as client:
         check = await client.get(f"/api/v1/customers/{customer_id}/deletion-check")
-        deleted = await client.delete(f"/api/v1/customers/{customer_id}")
+        deleted = await _delete_customer(client, customer_id)
         again = await client.get(f"/api/v1/customers/{customer_id}/deletion-check")
 
     assert check.status_code == 200
-    assert check.json() == {"can_delete": True, "archived": False, "blockers": []}
-    assert deleted.status_code == 204
+    body = check.json()
+    assert body["can_delete"] is True and body["archived"] is False
+    assert body["blockers"] == []
+    assert body["impact"]["total_records"] == 1  # the one location
+    assert deleted.status_code == 200
+    assert deleted.json()["status"] == "COMPLETED"
     assert again.status_code == 404
     async with session_factory() as session:
         customer = await session.get(Customer, customer_id)
     assert customer is not None and customer.deleted_at is not None
     assert customer.archived_at is None
     assert await _audit_actions(session_factory, "customer.deleted") == 1
+    assert await _audit_actions(session_factory, "customer.deleted_with_history") == 1
 
 
 @pytest.mark.asyncio
-async def test_deletion_check_names_what_blocks_and_delete_still_refuses(
+async def test_deletion_check_counts_linked_records_and_delete_cascades(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     customer_id, (location_id,) = await _customer_with_locations(
         session_factory, "Alpha"
     )
-    async with session_factory() as session:
-        product = Product(category="Hose", code="P1", name="P1")
-        session.add(product)
-        for number in ("A-2", "A-1"):
-            session.add(
-                Asset(
-                    customer_id=customer_id,
-                    location_id=location_id,
-                    product=product,
-                    asset_number=number,
-                    customer_serial_no=f"SN-{number}",
-                    tag=f"HMS-{number}",
-                    lifecycle_status=AssetLifecycleStatus.IN_SERVICE.value,
-                )
-            )
-        await session.commit()
+    product = await _product(session_factory, "P1", enabled=True)
+    for number in ("A-2", "A-1"):
+        await _asset_for(session_factory, customer_id, location_id, product, number)
     async with client_for(session_factory, SUPER) as client:
         check = await client.get(f"/api/v1/customers/{customer_id}/deletion-check")
-        blocked = await client.delete(f"/api/v1/customers/{customer_id}")
-        archived = await client.post(f"/api/v1/customers/{customer_id}/archive")
+        deleted = await _delete_customer(client, customer_id)
     body = check.json()
 
     assert check.status_code == 200
-    assert body["can_delete"] is False and body["archived"] is False
-    (assets,) = [item for item in body["blockers"] if item["kind"] == "assets"]
-    assert assets["count"] == 2
-    assert [record["name"] for record in assets["records"]] == ["A-1", "A-2"]
-    assert blocked.status_code == 409
-    assert "2 assets" in blocked.json()["detail"]
-    assert archived.status_code == 200
-    assert await _audit_actions(session_factory, "customer.deleted") == 0
+    assert body["can_delete"] is True
+    counts = {item["kind"]: item["count"] for item in body["impact"]["items"]}
+    assert counts["assets"] == 2 and counts["customer_locations"] == 1
+    assert deleted.status_code == 200
+    assert deleted.json()["total_records"] == 3  # location + 2 assets
+    async with session_factory() as session:
+        live_assets = await session.scalar(
+            select(func.count()).select_from(Asset).where(Asset.deleted_at.is_(None))
+        )
+        shared_product = await session.get(Product, product.id)
+    assert live_assets == 0
+    assert shared_product is not None and shared_product.deleted_at is None
 
 
 @pytest.mark.asyncio
@@ -500,7 +513,7 @@ async def test_deletion_check_and_delete_are_super_admin_only(
     customer_id, _ = await _customer_with_locations(session_factory, "Alpha")
     async with client_for(session_factory, ADMIN) as client:
         check = await client.get(f"/api/v1/customers/{customer_id}/deletion-check")
-        deleted = await client.delete(f"/api/v1/customers/{customer_id}")
+        deleted = await _delete_customer(client, customer_id)
 
     assert check.status_code == 403
     assert deleted.status_code == 403
@@ -515,8 +528,8 @@ async def test_customer_delete_keeps_the_stale_version_guard(
 ) -> None:
     customer_id, _ = await _customer_with_locations(session_factory, "Alpha")
     async with client_for(session_factory, SUPER) as client:
-        stale = await client.delete(
-            f"/api/v1/customers/{customer_id}", headers={"If-Match": '"999"'}
+        stale = await _delete_customer(
+            client, customer_id, headers={"If-Match": '"999"'}
         )
 
     assert stale.status_code == 412
@@ -526,30 +539,16 @@ async def test_customer_delete_keeps_the_stale_version_guard(
 
 
 @pytest.mark.asyncio
-async def test_customer_with_assets_cannot_be_deleted_only_archived(
+async def test_archived_customer_with_assets_can_be_deleted_with_history(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     customer_id, (location_id,) = await _customer_with_locations(
         session_factory, "Alpha"
     )
-    async with session_factory() as session:
-        product = Product(category="Hose", code="P1", name="P1")
-        session.add(product)
-        session.add(
-            Asset(
-                customer_id=customer_id,
-                location_id=location_id,
-                product=product,
-                asset_number="A-1",
-                customer_serial_no="SN-1",
-                tag="HMS-A-1",
-                lifecycle_status=AssetLifecycleStatus.IN_SERVICE.value,
-            )
-        )
-        await session.commit()
+    product = await _product(session_factory, "P1", enabled=True)
+    await _asset_for(session_factory, customer_id, location_id, product, "A-1")
     async with client_for(session_factory, SUPER) as client:
         await client.post(f"/api/v1/customers/{customer_id}/archive")
-        blocked = await client.delete(f"/api/v1/customers/{customer_id}")
         new_asset = await client.post(
             "/api/v1/assets",
             json={
@@ -560,11 +559,11 @@ async def test_customer_with_assets_cannot_be_deleted_only_archived(
                 "customer_serial_no": "SN-2",
             },
         )
+        deleted = await _delete_customer(client, customer_id)
 
-    assert blocked.status_code == 409
-    assert "1 assets" in blocked.json()["detail"]
     assert new_asset.status_code == 409
     assert "archived" in new_asset.json()["detail"]
+    assert deleted.status_code == 200
 
 
 # --- users -------------------------------------------------------------------

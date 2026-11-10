@@ -15,7 +15,8 @@ import { NotificationsPage } from "./notifications/NotificationsPage";
 import { AppShell, type AppModule, type GlobalSearchSuggestion, type NavItem } from "./components/AppShell";
 import { AssetsWorkspace } from "./components/AssetsWorkspace";
 import { CustomerDetail } from "./components/CustomerDetail";
-import { CustomerDeleteDialog } from "./components/CustomerDeleteDialog";
+import { CustomerHistoryWorkspace } from "./components/CustomerHistoryWorkspace";
+import { CustomerRemovalDialog } from "./components/CustomerRemovalDialog";
 import { CustomerForm } from "./components/CustomerForm";
 import { ActionNotice } from "./components/interaction/ActionNotice";
 import { ConfirmDialog } from "./components/interaction/ConfirmDialog";
@@ -32,8 +33,7 @@ import type { AssetWorkflowAction, MyWorkItem, NotificationRecord, StaffPermissi
 import { useCustomerWorkspace } from "./hooks/useCustomerWorkspace";
 import { PageMotion } from "./motion/MotionPrimitives";
 import { useHmsRoute } from "./routing/useHmsRoute";
-import { DEFAULT_USERS_QUERY, emptyRoute, type UsersRouteQuery } from "./routing/routeTypes";
-import { customerLabel } from "./utils/identity";
+import { emptyRoute, type UsersRouteQuery } from "./routing/routeTypes";
 import { greetingName } from "./utils/identity";
 
 const AnalyticsWorkspace = lazy(() =>
@@ -351,6 +351,10 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
   const { route, navigate } = useHmsRoute(portalMode ? "portal" : "staff", visibleModules, visibleModules[0] ?? "dashboard");
   const renderedActiveModule = route.view as AppModule;
   const [customerUnavailable, setCustomerUnavailable] = useState(false);
+  // Deleted Customers (History) is a Super Admin view inside Customers; it is not a route of its own.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyBatchId, setHistoryBatchId] = useState<string | null>(null);
+  const isSuperAdmin = session.roles.includes("SUPER_ADMIN");
   const workspace = useCustomerWorkspace({
     active: renderedActiveModule === "customers",
     onSelectedChange: (id) => navigate((current) => ({ ...emptyRoute("customers"), customer: id, users: current.users }))
@@ -413,23 +417,6 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
       // A new workspace starts clean; the portal keeps its organisation.
       navigate((current) => ({ ...emptyRoute(module), inspection: module === "inspections" ? inspectionId ?? null : null, customer: portalMode ? current.customer : null }));
     }
-  }
-
-  // Where a linked-record row in the delete dialog goes. Returns false when this account has no page for it.
-  const [assetCustomerLabel, setAssetCustomerLabel] = useState<string | undefined>();
-  function openLinkedRecords(customerId: string, customerName: string, kind: string, recordId: string | null): boolean {
-    const target = ({
-      assets: "assets", asset: "assets", inspection_bookings: "inspections", inspection_appointments: "scheduling",
-      products: "products", users: "users", user_customer_accesses: "users"
-    } as Record<string, AppModule>)[kind];
-    if (!target || !visibleModules.includes(target)) return false;
-    workspace.cancelDeletion();
-    workspace.closeDetail();
-    if (kind === "asset" && recordId) navigate((current) => ({ ...emptyRoute("assets"), asset: recordId, customer: portalMode ? current.customer : null }));
-    else if (target === "assets") { setAssetCustomerLabel(customerName); navigate({ ...emptyRoute("assets"), customer: customerId }); }
-    else if (target === "users") navigate({ ...emptyRoute("users"), users: { ...DEFAULT_USERS_QUERY, customer: customerId } });
-    else navigate(emptyRoute(target));
-    return true;
   }
 
   function handleAssetOpen(assetId: string) {
@@ -570,6 +557,16 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                   />
                 </div>
               </main>
+            ) : renderedActiveModule === "customers" && historyOpen && isSuperAdmin ? (
+              <main className="customer-page">
+                <div className="customer-main">
+                  <CustomerHistoryWorkspace
+                    initialBatchId={historyBatchId}
+                    key={historyBatchId ?? "list"}
+                    onBack={() => { setHistoryOpen(false); setHistoryBatchId(null); }}
+                  />
+                </div>
+              </main>
             ) : renderedActiveModule === "customers" ? (
               <>
                 <main className="customer-page">
@@ -611,6 +608,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                           onPageSizeChange={workspace.setPageSize}
                           onSelectCustomer={workspace.selectCustomer}
                           onAddCustomer={workspace.openCreateCustomer}
+                          onOpenHistory={isSuperAdmin ? () => { setHistoryBatchId(null); setHistoryOpen(true); } : undefined}
                         />
                       </>
                     )}
@@ -620,7 +618,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                   customer={workspace.selectedCustomer}
                   activeTab={workspace.activeTab}
                   canWrite={hasPermission(session, "customer:write")}
-                  canDelete={session.roles.includes("SUPER_ADMIN")}
+                  canDelete={isSuperAdmin}
                   onAssetOpen={handleAssetOpen}
                   onCustomerChange={workspace.replaceCustomer}
                   onLifecycle={workspace.requestLifecycle}
@@ -649,15 +647,16 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                   pendingLabel="Working…"
                   title={workspace.lifecycleTarget ? `${{ archive: "Archive", restore: "Restore" }[workspace.lifecycleTarget.action]} ${workspace.lifecycleTarget.customer.name}?` : "Customer"}
                 />
-                <CustomerDeleteDialog
+                <CustomerRemovalDialog
                   onArchive={() => void workspace.archiveInsteadOfDeleting()}
                   onCancel={workspace.cancelDeletion}
-                  onConfirm={() => void workspace.confirmDeletion()}
-                  onOpenLinked={(kind, recordId) => {
-                    const target = workspace.deletion?.customer;
-                    return target ? openLinkedRecords(target.id, customerLabel(target), kind, recordId) : false;
-                  }}
+                  onConfirm={(input) => void workspace.confirmDeletion(input)}
                   onRetry={workspace.retryDeletionCheck}
+                  onViewHistory={(batchId) => {
+                    workspace.cancelDeletion();
+                    setHistoryBatchId(batchId);
+                    setHistoryOpen(true);
+                  }}
                   state={workspace.deletion}
                 />
                 <CustomerForm
@@ -677,7 +676,6 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                       onAssetRouteChange={onAssetRouteChange}
                       routeAssetId={route.asset}
                       routeCustomerId={portalMode ? null : route.customer}
-                      routeCustomerLabel={assetCustomerLabel}
                       onCustomerRouteChange={() => navigate({ customer: null }, { replace: true })}
                       workflowNavigation={workflowNavigation}
                     />

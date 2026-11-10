@@ -1567,10 +1567,17 @@ async def test_soft_delete_customer_writes_tombstone_sync_and_audit(
         temporary_id = temporary.id
 
     async with api_client(session_factory, principal) as client:
-        delete_response = await client.delete(f"/api/v1/customers/{temporary_id}")
+        check = await client.get(f"/api/v1/customers/{temporary_id}/deletion-check")
+        delete_response = await client.post(
+            f"/api/v1/customers/{temporary_id}/delete-with-history",
+            json={
+                "confirm_name": "Temporary",
+                "impact_fingerprint": check.json()["fingerprint"],
+            },
+        )
         list_response = await client.get("/api/v1/customers")
 
-    assert delete_response.status_code == 204
+    assert delete_response.status_code == 200
     assert list_response.status_code == 200
     assert {item["code"] for item in list_response.json()["items"]} == {
         "VOPA",
@@ -1580,8 +1587,20 @@ async def test_soft_delete_customer_writes_tombstone_sync_and_audit(
     async with session_factory() as session:
         customer = await session.get(Customer, temporary_id)
         sync_change = (await session.scalars(select(SyncChange))).one()
-        audit_event = (await session.scalars(select(AuditEvent))).one()
+        audit_event = (
+            await session.scalars(
+                select(AuditEvent).where(AuditEvent.action == "customer.deleted")
+            )
+        ).one()
+        batch_event = (
+            await session.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.action == "customer.deleted_with_history"
+                )
+            )
+        ).one()
 
+        assert batch_event.entity == "CustomerDeletionBatch"
         assert customer is not None
         assert customer.deleted_at is not None
         assert customer.version == 2
@@ -1611,8 +1630,9 @@ async def test_customer_user_cannot_delete_customer(
     )
 
     async with api_client(session_factory, principal) as client:
-        response = await client.delete(
-            f"/api/v1/customers/{seeded_session['vopak_id']}"
+        response = await client.post(
+            f"/api/v1/customers/{seeded_session['vopak_id']}/delete-with-history",
+            json={"confirm_name": "Vopak", "impact_fingerprint": "0" * 64},
         )
 
     assert response.status_code == 403
@@ -3094,10 +3114,6 @@ async def test_delete_routes_enforce_if_match_when_supplied(
             f"/api/v1/reference/standards/{standard_id}",
             headers={"If-Match": '"0"'},
         )
-        customer_response = await client.delete(
-            f"/api/v1/customers/{seeded_session['vopak_id']}",
-            headers={"If-Match": '"0"'},
-        )
         product_response = await client.delete(
             f"/api/v1/products/{seeded_session['product_id']}",
             headers={"If-Match": '"0"'},
@@ -3108,7 +3124,6 @@ async def test_delete_routes_enforce_if_match_when_supplied(
         )
 
     assert standard_response.status_code == 412
-    assert customer_response.status_code == 412
     assert product_response.status_code == 412
     assert asset_response.status_code == 412
 

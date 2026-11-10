@@ -5,7 +5,7 @@ import { useActionNotice } from "../components/interaction/ActionNotice";
 import { friendlyApiError } from "../components/interaction/friendlyApiError";
 import { customerLabel } from "../utils/identity";
 import { HmsApiError } from "../api/hmsClient";
-import type { CustomerDeletionCheck, CustomerFormValues, CustomerRecord, CustomerSummary } from "../domain/types";
+import type { CustomerDeletionCheck, CustomerDeletionSummary, CustomerFormValues, CustomerRecord, CustomerSummary } from "../domain/types";
 
 export type CustomerLifecycleFilter = "active" | "archived" | "all";
 export type CustomerLifecycleAction = "archive" | "restore" | "delete";
@@ -16,9 +16,15 @@ export interface CustomerDeletionState {
   check: CustomerDeletionCheck | null;
   /** The check itself could not be completed. */
   checkError: string | null;
-  /** The last delete or archive attempt was refused. */
+  /** The last delete or archive attempt was refused or failed. */
   actionError: string | null;
   pending: "deleting" | "archiving" | null;
+  /** Set once the server has archived the records and removed them from active HMS. */
+  result: CustomerDeletionSummary | null;
+  /** Which step the dialog opens on: Review again when the records changed after the last review. */
+  startAt: "choose" | "review";
+  /** Bumped on every fresh review so the dialog starts its steps again. */
+  attempt: number;
 }
 
 const SEARCH_DELAY_MS = 250;
@@ -54,6 +60,8 @@ export function useCustomerWorkspace(options: { active?: boolean; onSelectedChan
   // Delete asks the server what is linked first, so the dialog can say what will happen before anything does.
   const [deletion, setDeletion] = useState<CustomerDeletionState | null>(null);
   const deletionToken = useRef(0);
+  // One key per reviewed impact: a retry of the same confirmation is answered from the first result.
+  const deletionKey = useRef("");
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [isChangingLifecycle, setChangingLifecycle] = useState(false);
   const { notice, notify, clear: dismissNotice } = useActionNotice();
@@ -155,15 +163,17 @@ export function useCustomerWorkspace(options: { active?: boolean; onSelectedChan
 
   async function runDeletionCheck(customer: CustomerRecord, keepActionError?: string | null) {
     const token = ++deletionToken.current;
-    setDeletion({ customer, check: null, checkError: null, actionError: keepActionError ?? null, pending: null });
+    deletionKey.current = newIdempotencyKey();
+    const base = { customer, actionError: keepActionError ?? null, pending: null, result: null, startAt: keepActionError ? "review" : "choose", attempt: token } as const;
+    setDeletion({ ...base, check: null, checkError: null });
     try {
       const check = await createHmsClient().getCustomerDeletionCheck(customer.id);
       if (token !== deletionToken.current) return;
-      setDeletion({ customer, check, checkError: null, actionError: keepActionError ?? null, pending: null });
+      setDeletion({ ...base, check, checkError: null });
     } catch (reason) {
       if (token !== deletionToken.current) return;
       const message = friendlyApiError(reason, { fallback: `We could not check what ${customerLabel(customer)} is linked to. Try again.` }).message;
-      setDeletion({ customer, check: null, checkError: message, actionError: null, pending: null });
+      setDeletion({ ...base, actionError: null, check: null, checkError: message });
     }
   }
   function requestLifecycle(action: CustomerLifecycleAction, customer: CustomerRecord) {
@@ -181,30 +191,38 @@ export function useCustomerWorkspace(options: { active?: boolean; onSelectedChan
     setDeletion(null);
   }
   function retryDeletionCheck() { if (deletion) void runDeletionCheck(deletion.customer); }
-  /** The one confirmed step: the server re-checks everything, so a record added since the check still blocks it. */
-  async function confirmDeletion() {
-    if (!deletion || deletion.pending) return;
-    const { customer } = deletion;
+  /**
+   * The one confirmed step. The server archives a verified copy first, re-checks the typed name, the version and
+   * the impact the person reviewed, and removes nothing if any of that fails.
+   */
+  async function confirmDeletion(input: { confirmName: string; reason: string }) {
+    if (!deletion || deletion.pending || !deletion.check) return;
+    const { customer, check } = deletion;
     setDeletion({ ...deletion, pending: "deleting", actionError: null });
+    let result: CustomerDeletionSummary;
     try {
-      await createHmsClient().deleteCustomer(customer.id, customer.etag);
+      result = await createHmsClient().deleteCustomer(customer.id, {
+        confirmName: input.confirmName,
+        fingerprint: check.fingerprint,
+        reason: input.reason,
+        etag: customer.etag,
+        idempotencyKey: deletionKey.current
+      });
     } catch (reason) {
-      if (reason instanceof HmsApiError && reason.status === 409) {
-        // Something now links to it (or it changed): show the current blockers rather than a bare refusal.
-        await runDeletionCheck(customer);
+      if (reason instanceof HmsApiError && (reason.status === 409 || reason.status === 412)) {
+        // Records or the customer changed since the review: show the current impact rather than a bare refusal.
+        await runDeletionCheck(customer, "This customer's records changed after you reviewed them. Review the impact again before deleting.");
         return;
       }
-      const message = friendlyApiError(reason, { fallback: `${customerLabel(customer)} could not be deleted. Try again.` }).message;
+      const message = friendlyApiError(reason, { fallback: `${customerLabel(customer)} could not be deleted. Nothing was removed. Try again.` }).message;
       setDeletion((current) => current && { ...current, pending: null, actionError: message });
       return;
     }
-    deletionToken.current += 1;
     setPageItems((current) => current.filter((item) => item.id !== customer.id));
     setExtraCustomers((current) => current.filter((item) => item.id !== customer.id));
     select(null);
-    setDeletion(null);
     reload();
-    notify({ kind: "success", message: `${customerLabel(customer)} was deleted. It is removed from normal use and its record is kept for audit.`, title: "Customer deleted" });
+    setDeletion((current) => current && { ...current, pending: null, actionError: null, result });
   }
   /** The safe alternative offered when deleting is blocked. It is announced as archiving, never as a deletion. */
   async function archiveInsteadOfDeleting() {
@@ -249,4 +267,8 @@ export function useCustomerWorkspace(options: { active?: boolean; onSelectedChan
     openEditCustomer, page, pageSize, query, refreshMetrics: reload, replaceCustomer, requestLifecycle, saveCustomer, selectCustomer,
     selectedCustomer, setActiveTab, setLifecycle, setPage, setPageSize, setQuery, setSelectedId, summary, totalCount, visibleCustomers: pageItems
   };
+}
+
+function newIdempotencyKey(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `del-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }

@@ -189,10 +189,10 @@ describe("Customer lifecycle actions", () => {
   it("explains archive versus delete, for an active and an archived customer", () => {
     const { unmount } = renderDetail(customerWith([location("l1", "A")]), { tab: "Overview", canDelete: true, onLifecycle: vi.fn() });
     expect(screen.getByRole("heading", { name: "Customer lifecycle" })).toBeVisible();
-    expect(screen.getByText(/Archive hides this customer from active work and keeps its history/)).toBeVisible();
+    expect(screen.getByText(/Archive hides this customer from active work and keeps history/)).toBeVisible();
     unmount();
 
     renderDetail(customerWith([location("l1", "A")], { status: "Archived", archivedAt: "2026-11-02T00:00:00Z" }), { tab: "Overview", canDelete: true, onLifecycle: vi.fn() });
-    expect(screen.getByText(/Restore brings it back/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Restore customer" })).toBeVisible();
   });
 });

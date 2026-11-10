@@ -1,4 +1,4 @@
-import { Boxes, CheckCircle2, Download, Filter, MapPin, Plus, Search, UsersRound, X } from "lucide-react";
+import { Boxes, CheckCircle2, Download, Filter, History, MapPin, Plus, Search, UsersRound, X } from "lucide-react";
 import { useState } from "react";
 import { m, useReducedMotion } from "motion/react";
 
@@ -32,6 +32,8 @@ interface CustomerTableProps {
   onPageSizeChange: (size: number) => void;
   onSelectCustomer: (id: string) => void;
   onAddCustomer: () => void;
+  /** Only offered to Super Admins: opens Deleted Customers (History). */
+  onOpenHistory?: () => void;
 }
 
 function locationLabel(customer: CustomerRecord) {
@@ -75,7 +77,8 @@ export function CustomerTable({
   onPageChange,
   onPageSizeChange,
   onSelectCustomer,
-  onAddCustomer
+  onAddCustomer,
+  onOpenHistory
 }: CustomerTableProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const reducedMotion = useReducedMotion();
@@ -141,6 +144,12 @@ export function CustomerTable({
         >
           <Download size={17} />
         </button>
+        {onOpenHistory ? (
+          <button className="secondary-button" onClick={onOpenHistory} type="button">
+            <History aria-hidden="true" size={16} />
+            Deleted customers
+          </button>
+        ) : null}
         {canWrite ? (
           <button className="primary-button" type="button" onClick={onAddCustomer}>
             <Plus aria-hidden="true" size={17} />
