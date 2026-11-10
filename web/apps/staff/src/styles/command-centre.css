@@ -1078,6 +1078,7 @@ button:active:not(:disabled) {
 .data-panel,
 .operations-table-panel,
 .table-panel.module-panel,
+.inspection-workspace,
 .inspection-dashboard,
 .activity-panel {
   min-width: 0;
@@ -2826,12 +2827,14 @@ button:active:not(:disabled) {
 /* Inspection operations: live workflow state, bookings, and the inspection register. */
 .inspection-workspace {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   width: 100%;
 }
 
 .inspection-dashboard {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
   padding: 8px 2px 0;
   border: 0;
@@ -3018,43 +3021,247 @@ button:active:not(:disabled) {
   flex: 0 0 auto;
 }
 
+.inspection-command-side {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
 .inspection-booking-list {
   display: grid;
-  gap: 0;
+  gap: 10px;
   margin: 0;
+  padding: 14px 16px 16px;
 }
 
+/* One booking: a primary row on a shared grid, then optional rows for the inspector or a reschedule. */
 .inspection-booking-card {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto auto;
-  align-items: center;
-  gap: 16px;
-  padding: 14px 18px;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  background: transparent;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
 }
 
-.inspection-booking-card:last-child {
-  border-bottom: 0;
-}
-
-.inspection-booking-card div {
+.booking-card__primary {
   display: grid;
-  gap: 3px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.5fr) 156px minmax(0, auto);
+  align-items: center;
+  gap: 12px 20px;
+  padding: 14px 16px;
+}
+
+.booking-card__site {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
 }
 
-.inspection-booking-card strong {
+.booking-card__icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-2);
+}
+
+.booking-card__text,
+.booking-card__details {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.booking-card__text strong {
+  overflow-wrap: anywhere;
   color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.booking-card__text > span {
+  overflow-wrap: anywhere;
+  color: var(--soft);
+  font-size: 12px;
+}
+
+.booking-card__line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--soft);
   font-size: 13px;
 }
 
-.inspection-booking-card span,
-.inspection-booking-card time {
+.booking-card__line svg {
+  flex: 0 0 auto;
+}
+
+.booking-card__line span,
+.booking-card__line time {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.booking-card__status {
+  display: flex;
+  justify-content: center;
+}
+
+.booking-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.booking-card__actions:empty {
+  display: none;
+}
+
+.booking-card__primary > .field-error {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.booking-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.booking-status--approved {
+  border-color: color-mix(in srgb, var(--success) 34%, transparent);
+  background: var(--color-success-soft);
+  color: var(--success);
+}
+
+.booking-status--pending {
+  border-color: color-mix(in srgb, var(--warning) 34%, transparent);
+  background: var(--color-warning-soft);
+  color: var(--warning);
+}
+
+.booking-status--rejected {
+  border-color: color-mix(in srgb, var(--danger) 34%, transparent);
+  background: var(--color-danger-soft);
+  color: var(--danger);
+}
+
+.booking-status--neutral {
+  border-color: var(--border);
+  background: transparent;
   color: var(--soft);
-  font-size: 12px;
+}
+
+.booking-card__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  color: var(--soft);
+  font-size: 13px;
+}
+
+.booking-card__row > svg {
+  flex: 0 0 auto;
+  color: var(--accent-2);
+}
+
+.booking-card__row strong {
+  color: var(--ink);
+}
+
+.booking-card__row--reschedule {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.booking-card__row-text {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.booking-card__row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.booking-card__row > .field-error {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.booking-card__row .action-button,
+.booking-card__primary .action-button {
+  min-height: 36px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+/* The inspector choice keeps the native control, dressed to match the rest of the page. */
+.booking-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+
+.booking-select select {
+  min-width: 176px;
+  min-height: 36px;
+  max-width: 100%;
+  padding: 0 34px 0 12px;
+  appearance: none;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: var(--control-radius);
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease;
+}
+
+.booking-select select:hover {
+  border-color: var(--accent);
+}
+
+.booking-select select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.booking-select svg {
+  position: absolute;
+  right: 11px;
+  color: var(--soft);
+  pointer-events: none;
 }
 
 .inspection-booking-empty {

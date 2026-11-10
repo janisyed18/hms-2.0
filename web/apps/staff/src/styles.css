@@ -2668,8 +2668,7 @@ tbody tr.is-selected {
   margin-top: 4px;
 }
 
-.inspection-bookings-heading,
-.inspection-booking-card {
+.inspection-bookings-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2698,24 +2697,6 @@ tbody tr.is-selected {
   margin-top: 12px;
 }
 
-.inspection-booking-card {
-  padding: 12px 14px;
-  border: 1px solid var(--border, #d9e2ef);
-  border-radius: 8px;
-  background: var(--panel, #ffffff);
-}
-
-.inspection-booking-card div {
-  display: grid;
-  gap: 3px;
-}
-
-.inspection-booking-card span,
-.inspection-booking-card time {
-  color: var(--muted, #667085);
-  font-size: 13px;
-}
-
 .booking-asset-list {
   display: grid;
   gap: 8px;
@@ -2732,8 +2713,7 @@ tbody tr.is-selected {
 }
 
 @media (max-width: 640px) {
-  .inspection-bookings-heading,
-  .inspection-booking-card {
+  .inspection-bookings-heading {
     align-items: flex-start;
     flex-direction: column;
   }

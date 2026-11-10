@@ -690,22 +690,9 @@
     flex: 1 1 auto;
   }
 
-  .inspection-bookings-heading,
-  .inspection-booking-card {
+  .inspection-bookings-heading {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .inspection-bookings-heading {
-    display: flex;
-  }
-
-  .inspection-book-button {
-    width: 100%;
-  }
-
-  .inspection-booking-card {
-    display: flex;
   }
 
   .inspection-filter-tabs {
@@ -787,6 +774,81 @@
   .analytics-outcome-footer {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+/* Inspection booking cards: tablet keeps the three information columns and drops the actions to their own row. */
+@media (max-width: 1279px) {
+  .booking-card__primary {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  }
+
+  .booking-card__actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .inspection-command-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+/* Phone: one logical column (site, reference, date, status, then actions) with touch-sized controls. */
+@media (max-width: 767px) {
+  .inspection-command-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .inspection-command-side {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .inspection-command-context {
+    min-width: 0;
+    padding: 0;
+    border-left: 0;
+  }
+
+  .inspection-book-button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .booking-card__primary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .booking-card__status {
+    justify-content: flex-start;
+  }
+
+  .booking-card__actions,
+  .booking-card__row-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .booking-card__actions .action-button,
+  .booking-card__row .action-button {
+    flex: 1 1 140px;
+    min-height: 44px;
+  }
+
+  .booking-select {
+    flex: 1 1 100%;
+  }
+
+  .booking-select select {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .booking-card__row > .action-button {
+    flex: 1 1 100%;
   }
 }
 

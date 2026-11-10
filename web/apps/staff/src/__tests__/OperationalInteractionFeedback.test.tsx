@@ -316,6 +316,19 @@ describe("Inspection bookings", () => {
     expect(screen.getByRole("button", { name: "Assign & approve" })).toBeInTheDocument();
   });
 
+  it("puts Book inspection in the page header, only for someone who can book", async () => {
+    client.listInspectionBookings.mockResolvedValue({ total: 1, etag: null, items: [booking] });
+    client.listInspections.mockResolvedValue({ total: 0, etag: null, items: [] });
+    const { unmount } = render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
+    await screen.findByText("Kooragang");
+    const header = screen.getByRole("heading", { name: "Inspection operations" }).closest("header") as HTMLElement;
+    expect(within(header).getByRole("button", { name: "Book inspection" })).toBeVisible();
+    unmount();
+    render(<InspectionsWorkspace canApprove canApproveBookings={false} canBook={false} canWrite={false} />);
+    await screen.findByText("Kooragang");
+    expect(screen.queryByRole("button", { name: "Book inspection" })).not.toBeInTheDocument();
+  });
+
   it("names the booked asset by name first, then HMS number", async () => {
     await renderBookings();
     const card = screen.getByText("Kooragang").closest("article") as HTMLElement;
