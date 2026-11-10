@@ -285,9 +285,7 @@ def _policy_is_exact(
                 and _actions(got.get("Action", "")) == want["actions"]
                 and sorted(t for t in got["Resource"].strip("[]").split(",") if t)
                 == sorted(want["resources"])
-                and all(
-                    token in got.get("Condition", "") for token in want.get("condition", [])
-                )
+                and got.get("Condition", "") == want.get("condition", "")
             ),
             None,
         )
@@ -340,7 +338,8 @@ def check_source(directory: Path, checks: Checks) -> None:
                     "principal": '"*"',
                     "actions": {"s3:*"},
                     "resources": both,
-                    "condition": ["aws:SecureTransport", '"false"'],
+                    # Exact, whitespace-free: no extra operator, key or value.
+                    "condition": '{Bool={"aws:SecureTransport"="false"}}',
                 },
                 {
                     "keys": ["Sid", "Effect", "Principal", "Action", "Resource"],

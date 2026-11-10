@@ -192,7 +192,16 @@ class PolicyMutationTests(unittest.TestCase):
                                                  "]\n      },\n    ]"),
             "NotAction replaces Action": ("        Action = [\n          \"s3:DeleteObject\"",
                                           "        NotAction = [\n          \"s3:DeleteObject\""),
-            "the TLS condition is removed": ('Bool = { "aws:SecureTransport" = "false" }',
+            "an extra conjunctive condition": (
+                'Bool = { "aws:SecureTransport" = "false" }',
+                'Bool = { "aws:SecureTransport" = "false" }\n'
+                '          StringEquals = { "aws:PrincipalTag/env" = "never" }',
+            ),
+            "an extra key in the same operator": (
+                'Bool = { "aws:SecureTransport" = "false" }',
+                'Bool = { "aws:SecureTransport" = "false", "aws:ViaAWSService" = "true" }',
+            ),
+            "the TLS condition is inverted": ('Bool = { "aws:SecureTransport" = "false" }',
                                              'Bool = { "aws:SecureTransport" = "true" }'),
         }
         for name, (old, new) in cases.items():
