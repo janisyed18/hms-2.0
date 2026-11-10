@@ -15,6 +15,7 @@ from sqlalchemy.orm import joinedload, lazyload, load_only, selectinload
 from sqlalchemy.sql import Select
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
+from hms_backend.app.api.history import batch_summary
 from hms_backend.app.api.schemas import (
     AdditionalRequirement,
     AnalyticsCertificateCoverageRead,
@@ -46,6 +47,8 @@ from hms_backend.app.api.schemas import (
     CustomerContactRead,
     CustomerContactUpdate,
     CustomerCreate,
+    CustomerDeleteRequest,
+    CustomerDeletionRead,
     CustomerListResponse,
     CustomerLocationContactRead,
     CustomerLocationContactWrite,
@@ -119,10 +122,10 @@ from hms_backend.app.core.inspector_access import (
     lock_assigned_bookings,
 )
 from hms_backend.app.core.lifecycle import (
-    blocking_references,
     ensure_not_referenced,
     require_super_admin,
 )
+from hms_backend.app.core.object_storage import get_object_storage
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
@@ -168,6 +171,10 @@ from hms_backend.app.modules.customers.models import (
     CustomerContact,
     CustomerLocation,
     CustomerLocationContact,
+)
+from hms_backend.app.modules.history.service import (
+    build_impact,
+    delete_customer_with_history,
 )
 from hms_backend.app.modules.identity.models import AccountStatus, User
 from hms_backend.app.modules.inspections.models import (
@@ -225,6 +232,9 @@ PrincipalDep = Annotated[Principal, Depends(get_current_principal)]
 LimitParam = Annotated[int, Query(ge=1, le=100)]
 OffsetParam = Annotated[int, Query(ge=0)]
 IfMatchHeader = Annotated[str | None, Header(alias="If-Match")]
+IdempotencyKeyHeader = Annotated[
+    str | None, Header(alias="Idempotency-Key", min_length=8, max_length=80)
+]
 ReportingStartParam = Annotated[datetime | None, Query()]
 ReportingEndParam = Annotated[datetime | None, Query()]
 
@@ -1362,51 +1372,49 @@ async def customer_deletion_check(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> dict[str, Any]:
-    """Whether the customer can be deleted now, and what blocks it when it cannot."""
+    """Mandatory impact preview: what deleting would remove from active HMS."""
     _require_customer_write(principal)
     require_super_admin(principal)
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
-    blockers = await blocking_references(
-        session,
-        Customer,
-        customer.id,
-        ignore={"customer_locations", "customer_contacts"},
-    )
-    return {
-        "can_delete": not blockers,
-        "archived": customer.archived_at is not None,
-        "blockers": blockers,
-    }
+    return await build_impact(session, customer)
 
 
-@router.delete("/customers/{customer_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_customer(
+@router.post(
+    "/customers/{customer_id}/delete-with-history",
+    response_model=CustomerDeletionRead,
+)
+async def delete_customer_with_history_route(
     customer_id: str,
+    payload: CustomerDeleteRequest,
     session: SessionDep,
     principal: PrincipalDep,
+    response: Response,
     if_match: IfMatchHeader = None,
-) -> Response:
+    idempotency_key: IdempotencyKeyHeader = None,
+) -> dict[str, Any]:
+    """Remove a customer and its owned records from active HMS, archive first.
+
+    Nothing is removed unless the historical archive was written and verified. Retrying
+    with the same ``Idempotency-Key`` returns the original result.
+    """
     _require_customer_write(principal)
     require_super_admin(principal)
-    customer = await _get_visible_customer_or_404(session, customer_id, principal)
-    _enforce_if_match(if_match, customer.version)
-    # Archiving first is not required; the dependency check below protects history.
-    await ensure_not_referenced(
+    # No separate visibility lookup: a Super Admin sees every customer, and a retry of
+    # a finished deletion must reach the service to be answered from its batch record.
+    outcome = await delete_customer_with_history(
         session,
-        Customer,
-        customer.id,
-        what="customer",
-        ignore={"customer_locations", "customer_contacts"},
-        alternative="History is kept, so an in-use customer stays archived.",
+        customer_id=customer_id,
+        principal=principal,
+        storage=get_object_storage(),
+        confirm_name=payload.confirm_name,
+        expected_fingerprint=payload.impact_fingerprint,
+        reason=_clean_optional(payload.reason),
+        idempotency_key=idempotency_key,
+        check_version=lambda version: _enforce_if_match(if_match, version),
     )
-    await soft_delete(
-        session,
-        customer,
-        actor_id=principal.user_id,
-        action="customer.deleted",
-    )
-    await session.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    if outcome.replayed:
+        response.headers["Idempotent-Replay"] = "true"
+    return batch_summary(outcome.batch, replayed=outcome.replayed)
 
 
 @router.get("/customers/{customer_id}", response_model=CustomerRead)

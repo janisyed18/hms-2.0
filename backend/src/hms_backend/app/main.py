@@ -12,6 +12,7 @@ from hms_backend.app.api.admin import router as admin_router
 from hms_backend.app.api.auth import router as auth_router
 from hms_backend.app.api.browser_auth import router as browser_auth_router
 from hms_backend.app.api.dependencies import engine
+from hms_backend.app.api.history import router as history_router
 from hms_backend.app.api.jobs import router as jobs_router
 from hms_backend.app.api.notifications import router as notifications_router
 from hms_backend.app.api.public import router as public_router
@@ -164,6 +165,7 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(records_router, prefix="/api/v1", tags=["core-records"])
+    app.include_router(history_router, prefix="/api/v1", tags=["customer-history"])
     app.include_router(sync_router, prefix="/api/v1", tags=["sync"])
     app.include_router(auth_router, prefix="/api/v1", tags=["auth"])
     app.include_router(browser_auth_router, prefix="/api/v1", tags=["auth-browser"])

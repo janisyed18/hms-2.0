@@ -24,6 +24,10 @@ import type {
   ContactFormValues,
   CustomerContact,
   CustomerDeletionCheck,
+  CustomerDeletionDetail,
+  CustomerDeletionImpactItem,
+  CustomerDeletionRecord,
+  CustomerDeletionSummary,
   InspectorAvailability,
   CustomerFormValues,
   CustomerSummary,
@@ -1614,6 +1618,59 @@ function readEtag(response: Response): string | null {
   return response.headers?.get("ETag") ?? response.headers?.get("etag") ?? null;
 }
 
+interface ApiCustomerDeletion {
+  id: string;
+  deletion_number: string;
+  status: string;
+  customer_id: string;
+  customer_code: string;
+  customer_name: string;
+  actor_name: string;
+  reason: string | null;
+  deleted_at: string;
+  total_records: number;
+  record_counts: CustomerDeletionImpactItem[];
+  evidence_files: number;
+  manifest_sha256: string | null;
+  retention_until: string | null;
+  retention_basis: string | null;
+  failure_detail: string | null;
+  replayed: boolean;
+}
+
+interface ApiDeletionEvidence {
+  id: string;
+  kind: string;
+  label: string;
+  record_type: string;
+  original_id: string;
+  content_type: string;
+  size_bytes: number;
+  sha256: string;
+}
+
+function toCustomerDeletion(item: ApiCustomerDeletion): CustomerDeletionSummary {
+  return {
+    id: item.id,
+    deletionNumber: item.deletion_number,
+    status: item.status,
+    customerId: item.customer_id,
+    customerCode: item.customer_code,
+    customerName: item.customer_name,
+    actorName: item.actor_name,
+    reason: item.reason,
+    deletedAt: item.deleted_at,
+    totalRecords: item.total_records,
+    recordCounts: item.record_counts,
+    evidenceFiles: item.evidence_files,
+    manifestSha256: item.manifest_sha256,
+    retentionUntil: item.retention_until,
+    retentionBasis: item.retention_basis,
+    failureDetail: item.failure_detail,
+    replayed: item.replayed
+  };
+}
+
 function ifMatchHeader(etag?: string | null): Record<string, string> {
   return etag ? { "If-Match": etag } : {};
 }
@@ -1841,18 +1898,97 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toCustomer(response.data, response.etag);
     },
 
-    /** What would stop this customer being deleted right now (Super Admin only). */
+    /** The mandatory deletion-impact preview: what deleting removes from active HMS (Super Admin only). */
     async getCustomerDeletionCheck(id: string): Promise<CustomerDeletionCheck> {
       const response = await request<{
         can_delete: boolean;
         archived: boolean;
         blockers: { kind: string; label: string; count: number; records: { id: string; name: string }[] }[];
+        customer_name: string;
+        customer_code: string;
+        impact: { total_records: number; items: CustomerDeletionImpactItem[]; evidence_files: number };
+        fingerprint: string;
+        retention_years: number;
       }>(`/api/v1/customers/${encodeURIComponent(id)}/deletion-check`);
+      const body = response.data;
       return {
-        canDelete: response.data.can_delete,
-        archived: response.data.archived,
-        blockers: response.data.blockers.map((blocker) => ({ ...blocker, records: blocker.records ?? [] }))
+        canDelete: body.can_delete,
+        archived: body.archived,
+        blockers: body.blockers.map((blocker) => ({ ...blocker, records: blocker.records ?? [] })),
+        customerName: body.customer_name,
+        customerCode: body.customer_code,
+        totalRecords: body.impact.total_records,
+        items: body.impact.items,
+        evidenceFiles: body.impact.evidence_files,
+        fingerprint: body.fingerprint,
+        retentionYears: body.retention_years
       };
+    },
+
+    /** The deletion archive: read-only, Super Admin only. */
+    async listCustomerDeletions(params: { q?: string; fromDate?: string; toDate?: string; limit?: number; offset?: number } = {}): Promise<{ items: CustomerDeletionSummary[]; total: number }> {
+      const response = await request<{ items: ApiCustomerDeletion[]; total: number }>("/api/v1/customer-deletions", {}, {
+        q: params.q?.trim() || undefined,
+        from_date: params.fromDate || undefined,
+        to_date: params.toDate || undefined,
+        limit: params.limit ?? 25,
+        offset: params.offset ?? 0
+      });
+      return { items: response.data.items.map(toCustomerDeletion), total: response.data.total };
+    },
+
+    async getCustomerDeletion(id: string): Promise<CustomerDeletionDetail> {
+      const response = await request<ApiCustomerDeletion & { evidence: ApiDeletionEvidence[] }>(`/api/v1/customer-deletions/${encodeURIComponent(id)}`);
+      return {
+        ...toCustomerDeletion(response.data),
+        evidence: response.data.evidence.map((item) => ({
+          id: item.id,
+          kind: item.kind,
+          label: item.label,
+          recordType: item.record_type,
+          originalId: item.original_id,
+          contentType: item.content_type,
+          sizeBytes: item.size_bytes,
+          sha256: item.sha256
+        }))
+      };
+    },
+
+    async listCustomerDeletionRecords(id: string, params: { recordType?: string; limit?: number; offset?: number } = {}): Promise<{ items: CustomerDeletionRecord[]; total: number }> {
+      const response = await request<{
+        items: { id: string; record_type: string; type_label: string; original_id: string; label: string; original_version: number | null; previously_deleted?: boolean; payload: Record<string, unknown>; payload_sha256: string }[];
+        total: number;
+      }>(`/api/v1/customer-deletions/${encodeURIComponent(id)}/records`, {}, {
+        record_type: params.recordType || undefined,
+        limit: params.limit ?? 50,
+        offset: params.offset ?? 0
+      });
+      return {
+        total: response.data.total,
+        items: response.data.items.map((item) => ({
+          id: item.id,
+          recordType: item.record_type,
+          typeLabel: item.type_label,
+          originalId: item.original_id,
+          label: item.label,
+          originalVersion: item.original_version,
+          previouslyDeleted: item.previously_deleted ?? false,
+          payload: item.payload,
+          payloadSha256: item.payload_sha256
+        }))
+      };
+    },
+
+    /** The archived copy of a certificate or photo. The server re-checks its hash before sending it. */
+    async downloadCustomerDeletionEvidence(batchId: string, evidenceId: string): Promise<Blob> {
+      const response = await fetcher(
+        buildUrl(baseUrl, `/api/v1/customer-deletions/${encodeURIComponent(batchId)}/evidence/${encodeURIComponent(evidenceId)}/download`, {}),
+        { headers: identityHeaders(options) }
+      );
+      if (!response.ok) {
+        throw new HmsApiError(response.status, "http_error", "The archived file could not be retrieved.", null);
+      }
+      return response.blob();
     },
 
     async createCustomer(values: CustomerFormValues): Promise<CustomerRecord> {
@@ -2805,11 +2941,24 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       };
     },
 
-    async deleteCustomer(id: string, etag?: string | null): Promise<void> {
-      await request<void>(`/api/v1/customers/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        headers: ifMatchHeader(etag)
+    /**
+     * Delete a customer and its owned records from active HMS. The server archives a verified copy first and
+     * removes nothing if that fails. The same `idempotencyKey` returns the original result on a retry.
+     */
+    async deleteCustomer(
+      id: string,
+      input: { confirmName: string; fingerprint: string; reason?: string; etag?: string | null; idempotencyKey: string }
+    ): Promise<CustomerDeletionSummary> {
+      const response = await request<ApiCustomerDeletion>(`/api/v1/customers/${encodeURIComponent(id)}/delete-with-history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": input.idempotencyKey, ...ifMatchHeader(input.etag) },
+        body: JSON.stringify({
+          confirm_name: input.confirmName,
+          impact_fingerprint: input.fingerprint,
+          ...(input.reason?.trim() ? { reason: input.reason.trim() } : {})
+        })
       });
+      return toCustomerDeletion(response.data);
     },
 
     async deleteProduct(id: string, etag?: string | null): Promise<void> {

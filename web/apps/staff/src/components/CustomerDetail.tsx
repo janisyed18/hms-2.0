@@ -1,4 +1,4 @@
-import { Building2, Edit3, X } from "lucide-react";
+import { Archive, Building2, Crown, Edit3, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, m, useReducedMotion } from "motion/react";
 
@@ -211,20 +211,31 @@ export function CustomerDetail({
                 <div><h4>Global Customer Notes</h4><p>{customer.notes || "No global customer notes recorded."}</p></div>
                 {canDelete && onLifecycle ? (
                   <section aria-labelledby="customer-lifecycle-heading" className="customer-lifecycle">
-                    <h4 id="customer-lifecycle-heading">Customer lifecycle</h4>
-                    <div className="row-actions" role="group" aria-label="Customer lifecycle">
-                      {customer.status === "Active" ? (
-                        <button className="secondary-button compact-action" onClick={() => onLifecycle("archive", customer)} type="button">Archive customer</button>
-                      ) : (
-                        <button className="secondary-button compact-action" onClick={() => onLifecycle("restore", customer)} type="button">Restore customer</button>
-                      )}
-                      <button className="secondary-button compact-action customer-lifecycle__delete" onClick={() => onLifecycle("delete", customer)} type="button">Delete customer</button>
+                    <header className="customer-lifecycle__head">
+                      <span aria-hidden="true" className="dialog-icon"><Archive size={20} /></span>
+                      <div>
+                        <h4 id="customer-lifecycle-heading">Customer lifecycle</h4>
+                        <p className="field-hint">Manage this customer's lifecycle in HMS.</p>
+                      </div>
+                      <span className="customer-lifecycle__badge"><Crown aria-hidden="true" size={14} /> Super Admin only</span>
+                    </header>
+                    <div className="customer-lifecycle__body">
+                      <div className="row-actions" role="group" aria-label="Customer lifecycle">
+                        {customer.status === "Active" ? (
+                          <button className="secondary-button compact-action customer-lifecycle__archive" onClick={() => onLifecycle("archive", customer)} type="button">
+                            <Archive aria-hidden="true" size={16} /> Archive customer
+                          </button>
+                        ) : (
+                          <button className="secondary-button compact-action" onClick={() => onLifecycle("restore", customer)} type="button">Restore customer</button>
+                        )}
+                        <button className="secondary-button compact-action customer-lifecycle__delete" onClick={() => onLifecycle("delete", customer)} type="button">
+                          <Trash2 aria-hidden="true" size={16} /> Delete customer
+                        </button>
+                      </div>
+                      <p className="field-hint">
+                        Archive hides this customer from active work and keeps history. Delete removes the customer and its records from active HMS after a verified historical copy is saved.
+                      </p>
                     </div>
-                    <p className="field-hint">
-                      {customer.status === "Active"
-                        ? "Archive hides this customer from active work and keeps its history. Delete checks what is linked first: a customer with assets, bookings or other records cannot be deleted, and Archive is offered instead."
-                        : "This customer is archived: hidden from active work, history kept. Restore brings it back. Delete is only possible when no asset, booking or other record refers to it."}
-                    </p>
                   </section>
                 ) : null}
                 {customer.status === "Archived" ? (

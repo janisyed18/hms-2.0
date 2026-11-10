@@ -15,6 +15,7 @@ from hms_backend.app.modules.certificates import (  # noqa: F401
     models as certificate_models,
 )
 from hms_backend.app.modules.customers import models as customer_models  # noqa: F401
+from hms_backend.app.modules.history import models as history_models  # noqa: F401
 from hms_backend.app.modules.identity import models as identity_models  # noqa: F401
 from hms_backend.app.modules.inspections import (  # noqa: F401
     models as inspection_models,

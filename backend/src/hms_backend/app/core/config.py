@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     object_storage_s3_endpoint_url: str = ""  # e.g. LocalStack/MinIO
     object_storage_s3_prefix: str = ""  # optional prefix namespacing keys
     object_storage_s3_presign_expiry_seconds: int = 900
+    # Years certificate/inspection evidence is kept after a customer is deleted.
+    history_retention_years: int = 7
     # Server-side encryption applied on upload ("AES256" or "aws:kms"; blank off).
     object_storage_s3_sse: str = "AES256"
     object_storage_s3_sse_kms_key_id: str = ""  # required when using aws:kms

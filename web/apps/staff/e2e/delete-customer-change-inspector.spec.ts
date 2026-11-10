@@ -48,51 +48,79 @@ test.describe("Delete customer and Change inspector", () => {
     clearRateLimits();
   });
 
-  async function openVopak(page: Page) {
+  async function createDisposableCustomer(page: Page, name: string) {
     await page.goto("/?view=customers");
-    await page.getByLabel("Search customers", { exact: true }).fill("Vopak");
-    await page.getByRole("button", { name: /^Select customer Vopak/ }).first().click();
+    await page.getByRole("button", { name: "Add customer" }).first().click();
+    const form = page.getByRole("form", { name: "Add customer" });
+    await form.getByLabel("Name", { exact: true }).fill(name);
+    await form.getByLabel("Location name").fill("Head Office");
+    const zone = form.getByLabel("Timezone");
+    await zone.click();
+    await zone.fill("Australia/Sydney");
+    await page.getByRole("listbox").getByRole("option", { name: "Australia/Sydney", exact: true }).click();
+    await form.getByRole("button", { name: "Add contact" }).click();
+    const contact = form.getByRole("group", { name: "Location contacts" }).last();
+    await contact.getByLabel("Contact 1 name").fill("Site Person");
+    await contact.getByLabel("Contact 1 phone").fill("+61 400 000 000");
+    await contact.getByLabel("Contact 1 email").fill("site.person@example.test");
+    await form.getByRole("button", { name: "Save customer" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "created successfully" })).toBeVisible();
+    await page.getByLabel("Search customers", { exact: true }).fill(name);
+    await page.getByRole("button", { name: `Select customer ${name}` }).click();
     await expect(page.getByRole("heading", { name: "Customer lifecycle" })).toBeVisible();
   }
 
   for (const [label, width, height] of [["desktop", 1440, 900], ["mobile", 390, 844]] as const) {
-    test(`Delete customer explains what blocks it and offers Archive (${label})`, async ({ browser }, testInfo) => {
+    test(`Remove customer: archive is recommended, deletion needs the typed name, and history is kept (${label})`, async ({ browser }, testInfo) => {
+      test.setTimeout(240_000);
       const { context, page } = await signedInPage(browser, SUPER, permanentPasswords.admin);
+      const name = `Zz Removal ${Date.now().toString(36)}`;
       try {
         await page.setViewportSize({ width, height });
-        await openVopak(page);
+        await createDisposableCustomer(page, name);
+        await expect(page.getByText("Super Admin only")).toBeVisible();
         await page.screenshot({ path: testInfo.outputPath(`customer-lifecycle-${label}.png`) });
-        // Delete sits beside Archive on an active customer: no hidden prerequisite.
-        await expect(page.getByRole("button", { name: "Archive customer" })).toBeVisible();
         await page.getByRole("button", { name: "Delete customer" }).click();
 
         const dialog = page.getByRole("alertdialog");
-        await expect(dialog.getByRole("heading", { name: "Delete customer?" })).toBeVisible();
-        await expect(dialog.getByText(/This customer has linked records\. Archive the customer to preserve its history/)).toBeVisible();
-        await expect(dialog.getByText("Deletion is available only when no linked records remain.")).toBeVisible();
-        const linked = dialog.getByRole("list", { name: "Linked records" });
-        await expect(linked).toContainText("assets");
-        await expect(dialog.getByRole("button", { name: "Archive customer" })).toBeVisible();
-        await expect(dialog.getByRole("button", { name: "Delete customer" })).toHaveCount(0);
-        const box = (await dialog.boundingBox())!;
-        expect(box.x).toBeGreaterThanOrEqual(0);
-        expect(box.x + box.width).toBeLessThanOrEqual(width + 1);
-        expect(box.y).toBeGreaterThanOrEqual(0);
-        expect(box.y + box.height).toBeLessThanOrEqual(height + 1);
-        expect(await fitsTheScreen(page)).toBe(true);
-        await page.screenshot({ path: testInfo.outputPath(`customer-delete-blocked-${label}.png`) });
+        await expect(dialog.getByRole("heading", { name: "Remove Customer" })).toBeVisible();
+        await expect(dialog.getByText("Recommended")).toBeVisible();
+        await page.screenshot({ path: testInfo.outputPath(`remove-step1-${label}.png`) });
 
-        // Escape leaves everything as it was: the customer is still active and listed.
+        // Escape leaves everything as it was.
         await page.keyboard.press("Escape");
         await expect(dialog).toHaveCount(0);
-        await expect(page.getByRole("button", { name: "Archive customer" })).toBeVisible();
 
-        // A linked-record row is a link: Assets opens the register already filtered to this customer.
         await page.getByRole("button", { name: "Delete customer" }).click();
-        await dialog.getByRole("button", { name: /^assets, \d+\. Open$/ }).click();
-        await expect(page).toHaveURL(/view=assets&customer=/);
-        await expect(dialog).toHaveCount(0);
-        await expect(page.getByText("Vopak").first()).toBeVisible();
+        await dialog.getByRole("radio", { name: /Delete Customer and Related Data/ }).check();
+        await dialog.getByRole("button", { name: /Continue/ }).click();
+        await expect(dialog.getByRole("heading", { name: "Delete Customer and Related Data" })).toBeVisible();
+        await expect(dialog.getByText(/Deletion Impact/)).toBeVisible();
+        await page.screenshot({ path: testInfo.outputPath(`remove-step2-${label}.png`) });
+        await dialog.getByRole("button", { name: /Continue/ }).click();
+
+        const remove = dialog.getByRole("button", { name: /Delete Customer$/ });
+        await expect(remove).toBeDisabled();
+        await dialog.getByLabel(/Type the customer name/).fill(name);
+        await dialog.getByRole("checkbox").check();
+        await expect(remove).toBeEnabled();
+        await page.screenshot({ path: testInfo.outputPath(`remove-step3-${label}.png`) });
+        expect(await fitsTheScreen(page)).toBe(true);
+        await remove.click();
+
+        await expect(dialog.getByRole("heading", { name: "Customer Deleted Successfully" })).toBeVisible({ timeout: 60_000 });
+        await expect(dialog).toContainText(/DEL-\d{4}-\d{6}/);
+        await page.screenshot({ path: testInfo.outputPath(`remove-success-${label}.png`) });
+        await dialog.getByRole("button", { name: /View in History/ }).click();
+
+        await expect(page.getByRole("heading", { name: "Deleted Customers (History)" })).toBeVisible();
+        // View in History opens that batch's records.
+        const records = page.getByRole("dialog", { name: new RegExp(`${name} · DEL-`) });
+        await expect(records).toBeVisible();
+        await page.screenshot({ path: testInfo.outputPath(`history-records-${label}.png`) });
+        await records.getByRole("button", { name: "Close" }).click();
+        await expect(page.getByRole("table").getByText(name)).toBeVisible();
+        await page.screenshot({ path: testInfo.outputPath(`history-${label}.png`) });
       } finally {
         await context.close();
       }
@@ -108,6 +136,9 @@ test.describe("Delete customer and Change inspector", () => {
       await expect(page.getByRole("tab", { name: "Overview" })).toBeVisible();
       await expect(page.getByRole("button", { name: "Delete customer" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Archive customer" })).toHaveCount(0);
+      await expect(page.getByText("Super Admin only")).toHaveCount(0);
+      // The history is not offered either (the server refuses it too: see the backend authorization tests).
+      await expect(page.getByRole("button", { name: "Deleted customers" })).toHaveCount(0);
     } finally {
       await context.close();
     }

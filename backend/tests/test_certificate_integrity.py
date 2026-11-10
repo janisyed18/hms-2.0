@@ -61,6 +61,7 @@ from hms_backend.app.modules.certificates.mapping import (
 )
 from hms_backend.app.modules.certificates.models import Certificate, CertificateStatus
 from hms_backend.app.modules.customers.models import Customer, CustomerLocation
+from hms_backend.app.modules.history.models import CustomerDeletionBatch, HistoryRecord
 from hms_backend.app.modules.inspections.models import (
     Inspection,
 )
@@ -694,6 +695,99 @@ async def test_revoked_or_superseded_is_not_valid(
     # Revoked or superseded: authentic, but no longer valid.
     assert body["integrity"] == "VERIFIED"
     assert (body["hash_matches"], body["artifact_verified"]) == (True, True)
+
+
+async def _verify_raw(client: httpx.AsyncClient, token: str) -> httpx.Response:
+    return await client.get(f"/api/v1/certificates/verify/{token}")
+
+
+async def _archive(factory, cert: Certificate, status_value: str = "COMPLETED") -> None:
+    """Record that a customer-deletion batch holds this certificate."""
+    async with factory() as session:
+        batch = CustomerDeletionBatch(
+            deletion_number=f"DEL-TEST-{cert.id[:6]}",
+            status=status_value,
+            customer_id="c-1",
+            customer_code="C1",
+            customer_name="Customer",
+            customer_version=1,
+            actor_id="u-1",
+            actor_name="Actor",
+            impact_fingerprint="0" * 64,
+        )
+        session.add(batch)
+        await session.flush()
+        session.add(
+            HistoryRecord(
+                batch_id=batch.id,
+                record_type="certificates",
+                original_id=cert.id,
+                ordinal=1,
+                payload={"id": cert.id},
+                payload_sha256="0" * 64,
+            )
+        )
+        row = await session.get(Certificate, cert.id)
+        assert row is not None
+        row.deleted_at = datetime.now(UTC)
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_certificate_in_a_completed_archive_stays_verifiable_but_historical(
+    factory, storage, engine
+) -> None:
+    async with api(factory) as client:
+        _, cert = await issued(client, factory, "R-HIST")
+        before = await verify(client, cert.public_token)
+        await _archive(factory, cert)
+        body = await verify(client, cert.public_token)
+        download = await _download(client, cert.public_token)
+    assert before["valid"] is True
+    assert body["integrity"] == "VERIFIED"
+    assert body["historical"] is True
+    assert body["valid"] is False
+    assert "removed from active records" in body["message"]
+    assert "not valid for current operational use" in body["message"]
+    assert body["customer_name"] != before["customer_name"]
+    assert body["certificate_number"] == before["certificate_number"]
+    assert download.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_soft_deleted_certificate_outside_an_archive_is_still_not_found(
+    factory, storage, engine
+) -> None:
+    async with api(factory) as client:
+        _, cert = await issued(client, factory, "R-NOARC")
+        async with factory() as session:
+            row = await session.get(Certificate, cert.id)
+            assert row is not None
+            row.deleted_at = datetime.now(UTC)
+            await session.commit()
+        assert (await _verify_raw(client, cert.public_token)).status_code == 404
+        # A batch that failed holds nothing: its certificate is not public either.
+        await _archive(factory, cert, "FAILED")
+        assert (await _verify_raw(client, cert.public_token)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_archived_revoked_certificate_keeps_its_revoked_meaning(
+    factory, storage, engine
+) -> None:
+    async with api(factory) as client:
+        _, cert = await issued(client, factory, "R-REV")
+        async with factory() as session:
+            row = await session.get(Certificate, cert.id)
+            assert row is not None
+            row.status = CertificateStatus.REVOKED.value
+            await session.commit()
+        await _archive(factory, cert)
+        body = await verify(client, cert.public_token)
+    assert body["historical"] is True
+    assert body["status"] == "REVOKED"
+    assert body["valid"] is False
+    assert "revoked" in body["message"].lower()
 
 
 @pytest.mark.asyncio

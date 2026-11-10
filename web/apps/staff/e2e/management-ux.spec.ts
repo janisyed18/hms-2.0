@@ -346,21 +346,29 @@ test.describe("management UX and data correctness", () => {
       const offered = await api(page, "GET", `/api/v1/customers?search=${encodeURIComponent(name)}`);
       expect(offered.body.total).toBe(0); // the default list is active customers only
       expect((await api(page, "GET", `/api/v1/customers?search=${encodeURIComponent(name)}&lifecycle=archived`)).body.total).toBe(1);
-      expect((await api(hms.page, "DELETE", `/api/v1/customers/${created.id}`)).status).toBe(403);
+      // Removal is Super Admin only, enforced by the server. The old one-step DELETE route no longer exists.
+      const removal = { confirm_name: name, impact_fingerprint: "0".repeat(64) };
+      expect((await api(hms.page, "POST", `/api/v1/customers/${created.id}/delete-with-history`, removal)).status).toBe(403);
+      expect((await api(hms.page, "GET", `/api/v1/customers/${created.id}/deletion-check`)).status).toBe(403);
+      expect((await api(page, "DELETE", `/api/v1/customers/${created.id}`)).status).toBe(405);
 
       await page.getByRole("button", { name: "Restore customer" }).click();
       await page.getByRole("alertdialog").getByRole("button", { name: "Restore customer" }).click();
       await expect(page.getByRole("button", { name: "Archive customer" })).toBeVisible();
       expect((await api(page, "GET", `/api/v1/customers?search=${encodeURIComponent(name)}`)).body.total).toBe(1);
 
-      // Delete does not need an archive step: an unused active customer is deleted in one confirmed step,
-      // after the server has said nothing is linked to it.
+      // Delete does not need an archive step: an unused active customer goes through the three-step removal,
+      // after the server has saved and verified its historical copy.
       await page.getByRole("button", { name: "Delete customer" }).click();
-      const confirmDelete = page.getByRole("alertdialog");
-      await expect(confirmDelete.getByRole("heading", { name: /^Delete / })).toBeVisible();
-      await expect(confirmDelete.getByText(/its record is kept for audit/)).toBeVisible();
-      await confirmDelete.getByRole("button", { name: "Delete customer" }).click();
-      await expect(page.getByRole("status").filter({ hasText: "was deleted" })).toBeVisible();
+      const removeDialog = page.getByRole("alertdialog");
+      await removeDialog.getByRole("radio", { name: /Delete Customer and Related Data/ }).check();
+      await removeDialog.getByRole("button", { name: /Continue/ }).click();
+      await removeDialog.getByRole("button", { name: /Continue/ }).click();
+      await removeDialog.getByLabel(/Type the customer name/).fill(name);
+      await removeDialog.getByRole("checkbox").check();
+      await removeDialog.getByRole("button", { name: /Delete Customer$/ }).click();
+      await expect(removeDialog.getByRole("heading", { name: "Customer Deleted Successfully" })).toBeVisible({ timeout: 60_000 });
+      await removeDialog.getByRole("button", { name: /Close|Done/ }).first().click();
       expect((await api(page, "GET", `/api/v1/customers/${created.id}`)).status).toBe(404);
       await expect(page.getByRole("dialog", { name: name })).toHaveCount(0);
     } finally {
