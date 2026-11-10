@@ -16,12 +16,13 @@ success unless the commit happened.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -38,8 +39,12 @@ from hms_backend.app.core.audit import (
 )
 from hms_backend.app.core.config import settings
 from hms_backend.app.core.object_storage import (
+    HistoryStorageError,
     ObjectNotFoundError,
     ObjectStorage,
+    get_evidence,
+    history_storage_problems,
+    put_evidence,
 )
 from hms_backend.app.core.rbac import Principal
 from hms_backend.app.core.sync_ledger import stage_sync_change
@@ -162,6 +167,9 @@ class EvidenceItem:
     history_key: str = ""
     size_bytes: int = 0
     sha256: str = ""
+    history_version_id: str | None = None
+    retention_mode: str | None = None
+    retain_until: datetime | None = None
 
 
 @dataclass
@@ -360,6 +368,45 @@ async def external_references(
     return blockers
 
 
+DELETION_OFF_MESSAGE = (
+    "Customer deletion is not enabled in this environment. "
+    "Nothing was removed. You can archive the customer instead."
+)
+STORAGE_NOT_READY_MESSAGE = (
+    "Customer deletion is unavailable because protected history storage is not "
+    "ready. Nothing was removed. You can archive the customer instead."
+)
+
+
+RETENTION_NOT_APPROVED_MESSAGE = (
+    "Customer deletion is unavailable because this environment's evidence "
+    "retention period has not been approved. Nothing was removed. You can archive "
+    "the customer instead."
+)
+
+
+async def deletion_unavailable_reason() -> str | None:
+    """Why deleting a customer is refused right now, or None when it is allowed.
+
+    Two independent conditions: the environment switch, and the evidence store being
+    the protected, locked bucket (or the local/test fallback). Either one off means
+    nothing is archived or removed.
+    """
+    if not settings.customer_deletion_enabled:
+        return DELETION_OFF_MESSAGE
+    approved = bool(settings.history_retention_approval.strip())
+    if not approved and not settings.is_local_or_test:
+        return RETENTION_NOT_APPROVED_MESSAGE
+    problems = await asyncio.to_thread(history_storage_problems)
+    if problems:
+        logger.error(
+            "customer deletion refused: protected history storage is not ready",
+            extra={"problems": problems},
+        )
+        return STORAGE_NOT_READY_MESSAGE
+    return None
+
+
 async def build_impact(session: AsyncSession, customer: Customer) -> dict[str, Any]:
     counts = await impact_counts(session, customer.id)
     earlier = await impact_counts(session, customer.id, previously_deleted=True)
@@ -390,7 +437,8 @@ async def build_impact(session: AsyncSession, customer: Customer) -> dict[str, A
         "fingerprint": impact_fingerprint(
             customer, await impact_digest(session, customer.id)
         ),
-        "retention_years": settings.history_retention_years,
+        "retention_days": settings.history_retention_period_days,
+        "retention_years": round(settings.history_retention_period_days / 365, 2),
     }
 
 
@@ -468,11 +516,23 @@ def _relationships(snapshot: Snapshot) -> list[dict[str, Any]]:
 
 
 def _copy_evidence(
-    storage: ObjectStorage, batch_id: str, snapshot: Snapshot, written: list[str]
+    source: ObjectStorage,
+    history: ObjectStorage,
+    batch_id: str,
+    snapshot: Snapshot,
+    written: list[dict[str, Any]],
+    retention_until: date,
 ) -> None:
+    """Copy every evidence file into the history store, pinned to its version.
+
+    ``written`` gets an entry for each key *before* it is written and the version id
+    once known, so a file left behind by any failure (even a write whose outcome is
+    unknown) is listed on the FAILED batch for reconciliation.
+    """
+    min_retain_until = datetime.combine(retention_until, time.min, tzinfo=UTC)
     for item in snapshot.evidence:
         try:
-            data = storage.get(item.source_key)
+            data = source.get(item.source_key)
         except ObjectNotFoundError as exc:
             raise ArchiveError(
                 f"{item.label}: the stored {item.kind.lower().replace('_', ' ')} "
@@ -487,22 +547,50 @@ def _copy_evidence(
             f"{HISTORY_PREFIX}/{batch_id}/{item.record_type}/{item.original_id}/"
             f"{item.source_key.rsplit('/', 1)[-1]}"
         )
-        storage.put(item.history_key, data, content_type=item.content_type)
-        written.append(item.history_key)
-        if sha256_hex(storage.get(item.history_key)) != digest:
+        entry: dict[str, Any] = {"key": item.history_key, "version_id": None}
+        written.append(entry)
+        try:
+            stored = put_evidence(
+                history,
+                item.history_key,
+                data,
+                content_type=item.content_type,
+                min_retain_until=min_retain_until,
+            )
+        except HistoryStorageError as exc:
+            entry["version_id"] = exc.version_id
+            raise ArchiveError(f"{item.label}: {exc}") from exc
+        entry["version_id"] = stored.version_id
+        item.history_version_id = stored.version_id
+        item.retention_mode = stored.retention_mode
+        item.retain_until = stored.retain_until
+        try:
+            copy = get_evidence(history, item.history_key, stored.version_id)
+        except (HistoryStorageError, ObjectNotFoundError) as exc:
+            raise ArchiveError(
+                f"{item.label}: the archived copy could not be read back"
+            ) from exc
+        if sha256_hex(copy) != digest:
             raise ArchiveError(f"{item.label}: archived copy failed verification")
         item.size_bytes = len(data)
         item.sha256 = digest
 
 
-def _cleanup(storage: ObjectStorage, keys: list[str]) -> str:
+def _cleanup(storage: ObjectStorage, written: list[dict[str, Any]]) -> str:
+    if getattr(storage, "protected", False):
+        # Locked evidence is never deleted and its retention is never weakened. A
+        # copy left by a failed attempt stays until its retention ends; it is
+        # unreferenced, and the FAILED batch lists it (key and version) to reconcile.
+        return (
+            f"{len(written)} retained in protected storage" if written else "removed"
+        )
     failed = 0
-    for key in keys:
+    for entry in written:
         try:
-            storage.delete(key)
+            storage.delete(entry["key"])
         except Exception:  # best effort; the keys are listed on the FAILED batch
             failed += 1
-            logger.warning("history object cleanup failed", extra={"key": key})
+            logger.warning("history object cleanup failed", extra={"key": entry["key"]})
     return "removed" if not failed else f"{failed} could not be removed"
 
 
@@ -525,16 +613,15 @@ async def _actor_name(session: AsyncSession, principal: Principal) -> str:
 
 def _retention() -> tuple[date, str]:
     today = datetime.now(UTC).date()
-    years = settings.history_retention_years
-    try:
-        until = today.replace(year=today.year + years)
-    except ValueError:  # 29 February
-        until = today.replace(year=today.year + years, day=28)
+    days = settings.history_retention_period_days
+    until = today + timedelta(days=days)
+    approval = settings.history_retention_approval.strip()
+    approved = f" Retention period approved under: {approval}." if approval else ""
     return until, (
-        f"Certificate and inspection evidence is retained for {years} years from "
-        "deletion under the HMS evidence-retention setting. Retention of a record "
-        "is not the same as erasing personal data; erasure requests are reviewed "
-        "separately."
+        f"Certificate and inspection evidence is retained for {days} days from "
+        "deletion under the HMS evidence-retention setting."
+        f"{approved} Retention of a record is not the same as erasing personal "
+        "data; erasure requests are reviewed separately."
     )
 
 
@@ -570,6 +657,7 @@ async def _record_failure(
     reason: str | None,
     fingerprint: str,
     detail: str,
+    orphaned_evidence: list[dict[str, Any]] | None = None,
 ) -> CustomerDeletionBatch:
     number = await _next_number(session)
     batch = CustomerDeletionBatch(
@@ -585,6 +673,7 @@ async def _record_failure(
         reason=reason,
         impact_fingerprint=fingerprint,
         failure_detail=detail[:2000],
+        orphaned_evidence=orphaned_evidence or [],
     )
     session.add(batch)
     event = await append_audit_event(
@@ -599,6 +688,7 @@ async def _record_failure(
             "customer_id": customer["id"],
             "status": DeletionStatus.FAILED,
             "detail": detail[:500],
+            "orphaned_evidence": len(orphaned_evidence or []),
         },
     )
     batch.audit_event_sequence = event.sequence
@@ -611,7 +701,8 @@ async def delete_customer_with_history(
     *,
     customer_id: str,
     principal: Principal,
-    storage: ObjectStorage,
+    source_storage: ObjectStorage,
+    history_storage: ObjectStorage,
     confirm_name: str,
     expected_fingerprint: str,
     reason: str | None,
@@ -671,10 +762,18 @@ async def delete_customer_with_history(
         "version": customer.version,
     }
     batch_id = str(uuid7())
-    written: list[str] = []
+    written: list[dict[str, Any]] = []
+    retention_until, retention_basis = _retention()
     try:
         snapshot = await read_snapshot(session, customer.id)
-        _copy_evidence(storage, batch_id, snapshot, written)
+        _copy_evidence(
+            source_storage,
+            history_storage,
+            batch_id,
+            snapshot,
+            written,
+            retention_until,
+        )
         batch = await _write_archive_and_remove(
             session,
             customer=customer,
@@ -685,15 +784,29 @@ async def delete_customer_with_history(
             fingerprint=fingerprint,
             reason=reason,
             idempotency_key=idempotency_key,
+            retention_until=retention_until,
+            retention_basis=retention_basis,
         )
         await session.commit()
-    except HTTPException:
+    except HTTPException as exc:
         await session.rollback()
-        _cleanup(storage, written)
+        cleanup = _cleanup(history_storage, written)
+        if getattr(history_storage, "protected", False) and written:
+            await _record_failure(
+                session,
+                batch_id=batch_id,
+                customer=summary_customer,
+                actor_id=principal.user_id,
+                actor_name=actor_name,
+                reason=reason,
+                fingerprint=fingerprint,
+                detail=f"refused after archiving files: {exc.detail}; {cleanup}",
+                orphaned_evidence=written,
+            )
         raise
     except Exception as exc:  # nothing has been removed: roll back, record, report
         await session.rollback()
-        cleanup = _cleanup(storage, written)
+        cleanup = _cleanup(history_storage, written)
         detail = f"{type(exc).__name__}: {exc}; archived copies {cleanup}"
         logger.error("customer deletion archive failed", exc_info=exc)
         failed = await _record_failure(
@@ -705,6 +818,9 @@ async def delete_customer_with_history(
             reason=reason,
             fingerprint=fingerprint,
             detail=detail,
+            orphaned_evidence=(
+                written if getattr(history_storage, "protected", False) else []
+            ),
         )
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -725,9 +841,10 @@ async def _write_archive_and_remove(
     fingerprint: str,
     reason: str | None,
     idempotency_key: str | None,
+    retention_until: date,
+    retention_basis: str,
 ) -> CustomerDeletionBatch:
     number = await _next_number(session)
-    retention_until, retention_basis = _retention()
     record_hashes: list[tuple[str, str, str]] = []
     records: list[HistoryRecord] = []
     ordinal = 0
@@ -820,6 +937,9 @@ async def _write_archive_and_remove(
             content_type=item.content_type,
             size_bytes=item.size_bytes,
             sha256=item.sha256,
+            history_version_id=item.history_version_id,
+            retention_mode=item.retention_mode,
+            retain_until=item.retain_until,
         )
         for item in snapshot.evidence
     )

@@ -11,7 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.core.lifecycle import require_super_admin
-from hms_backend.app.core.object_storage import ObjectNotFoundError, get_object_storage
+from hms_backend.app.core.object_storage import (
+    HistoryStorageError,
+    HistoryStorageUnavailable,
+    ObjectNotFoundError,
+    describe_evidence,
+    get_evidence,
+    get_history_storage,
+)
 from hms_backend.app.core.rbac import Principal
 from hms_backend.app.modules.history.models import (
     CustomerDeletionBatch,
@@ -267,8 +274,15 @@ async def download_customer_deletion_evidence(
     if item is None or item.batch_id != batch_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Evidence not found")
     try:
-        data = get_object_storage().get(item.history_key)
-    except ObjectNotFoundError as exc:
+        data = get_evidence(
+            get_history_storage(), item.history_key, item.history_version_id
+        )
+    except HistoryStorageUnavailable as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Archived files are unavailable: history storage is not configured.",
+        ) from exc
+    except (ObjectNotFoundError, HistoryStorageError) as exc:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY, "The archived file is not available."
         ) from exc
@@ -302,7 +316,17 @@ async def check_customer_deletion_integrity(
         await verify_batch_in_session(session, batch)
     except Exception as exc:
         problems.append(str(exc))
-    storage = get_object_storage()
+    try:
+        storage = get_history_storage()
+    except HistoryStorageUnavailable as exc:
+        problems.append(str(exc))
+        return {
+            "batch_id": batch.id,
+            "verified": False,
+            "records_checked": batch.total_records + 1,
+            "evidence_checked": 0,
+            "problems": problems,
+        }
     evidence = (
         await session.scalars(
             select(HistoryEvidenceObject).where(
@@ -312,10 +336,25 @@ async def check_customer_deletion_integrity(
     ).all()
     for item in evidence:
         try:
-            if sha256_hex(storage.get(item.history_key)) != item.sha256:
+            data = get_evidence(storage, item.history_key, item.history_version_id)
+            if sha256_hex(data) != item.sha256:
                 problems.append(f"{item.label}: archived file hash differs")
+            now = describe_evidence(storage, item.history_key, item.history_version_id)
         except ObjectNotFoundError:
-            problems.append(f"{item.label}: archived file is missing")
+            problems.append(f"{item.label}: archived file version is missing")
+            continue
+        except HistoryStorageError as exc:
+            problems.append(f"{item.label}: {exc}")
+            continue
+        recorded = item.retain_until
+        if recorded is not None and recorded.tzinfo is None:
+            recorded = recorded.replace(tzinfo=UTC)  # SQLite test databases
+        if now is not None and (
+            now.retention_mode is None
+            or now.retain_until is None
+            or (recorded is not None and now.retain_until < recorded)
+        ):
+            problems.append(f"{item.label}: retention is no longer applied")
     return {
         "batch_id": batch.id,
         "verified": not problems,

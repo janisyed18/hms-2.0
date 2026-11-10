@@ -42,13 +42,29 @@ class Settings(BaseSettings):
     object_storage_s3_endpoint_url: str = ""  # e.g. LocalStack/MinIO
     object_storage_s3_prefix: str = ""  # optional prefix namespacing keys
     object_storage_s3_presign_expiry_seconds: int = 900
-    # Years certificate/inspection evidence is kept after a customer is deleted.
+    # How long certificate/inspection evidence is kept after a customer is deleted.
+    # Days win when set (DEV uses a short period for synthetic data); otherwise years.
+    # The 7-year default is a placeholder, NOT an approved policy: outside local/test
+    # deletion stays unavailable until HISTORY_RETENTION_APPROVAL names the approval.
     history_retention_years: int = 7
+    history_retention_days: int = 0
+    # Reference to the approval of this environment's retention period (ticket,
+    # decision record). Recorded on every deletion batch.
+    # Env: HISTORY_RETENTION_APPROVAL.
+    history_retention_approval: str = ""
     # Master switch for "Delete Customer and Related Data". Off by default: a
     # deployment can carry the code without exposing the destructive action until
     # immutable evidence storage, retention and recovery are approved. Env:
     # CUSTOMER_DELETION_ENABLED. See docs/design/customer-deletion-history.md.
     customer_deletion_enabled: bool = False
+    # Dedicated bucket for deleted-customer evidence: versioned, with S3 Object Lock
+    # default retention, and written by a role that cannot delete or shorten
+    # retention. Region, endpoint and SSE settings are shared with the media store.
+    # Required for deletion outside local/test; when blank there, deletion is
+    # refused rather than falling back to the ordinary media bucket.
+    history_object_storage_s3_bucket: str = ""
+    # How long a positive/negative protection check is reused before S3 is asked again.
+    history_storage_check_ttl_seconds: int = 300
     # Server-side encryption applied on upload ("AES256" or "aws:kms"; blank off).
     object_storage_s3_sse: str = "AES256"
     object_storage_s3_sse_kms_key_id: str = ""  # required when using aws:kms
@@ -222,6 +238,13 @@ class Settings(BaseSettings):
     # that many entries from the right and is honoured only on requests that present
     # the edge secret. 0 ignores forwarding headers and uses the socket peer.
     security_trusted_proxy_hops: int = Field(default=0, ge=0, le=5)
+
+    @property
+    def history_retention_period_days(self) -> int:
+        """Days archived evidence is protected: explicit days, else years of 365."""
+        if self.history_retention_days > 0:
+            return self.history_retention_days
+        return 365 * max(self.history_retention_years, 0)
 
     @property
     def is_local_or_test(self) -> bool:

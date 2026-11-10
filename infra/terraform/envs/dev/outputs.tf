@@ -28,6 +28,11 @@ output "media_bucket" {
   value       = aws_s3_bucket.media.bucket
 }
 
+output "history_bucket" {
+  description = "Versioned, Object Lock S3 bucket holding archived deleted-customer evidence."
+  value       = aws_s3_bucket.history.bucket
+}
+
 output "staff_bucket" {
   description = "Private S3 bucket used for the staff static app."
   value       = aws_s3_bucket.staff.bucket

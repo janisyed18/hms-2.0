@@ -18,13 +18,19 @@ from typing import Any
 import httpx
 import pytest
 import pytest_asyncio
+from conftest import FakeHistoryS3
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import hms_backend.app.modules.history.service as history_service
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.core.audit import verify_audit_chain
-from hms_backend.app.core.object_storage import LocalObjectStorage, set_object_storage
+from hms_backend.app.core.object_storage import (
+    LocalObjectStorage,
+    S3HistoryStorage,
+    set_history_storage,
+    set_object_storage,
+)
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
@@ -1182,3 +1188,381 @@ async def test_enabled_flag_allows_the_authorised_deletion(
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "COMPLETED"
     assert await live(factory, Customer, scene.customer_id) == 0
+
+
+# --- protected evidence storage ----------------------------------------------
+# Archived evidence goes to a dedicated, locked bucket, never the media bucket, and
+# deletion stays unavailable unless that bucket is configured as required.
+
+STORAGE_MESSAGE = "protected history storage is not ready"
+
+
+@pytest.mark.asyncio
+async def test_evidence_is_written_to_the_protected_bucket_and_served_from_it(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    protected_history: tuple[S3HistoryStorage, FakeHistoryS3],
+) -> None:
+    _, bucket = protected_history
+    scene = await build_scene(factory, storage)
+    async with client_for(factory) as client:
+        response = await delete(client, scene.customer_id)
+        assert response.status_code == 200, response.text
+        batch_id = response.json()["id"]
+        detail = (await client.get(f"/api/v1/customer-deletions/{batch_id}")).json()
+        served = [
+            await client.get(
+                f"/api/v1/customer-deletions/{batch_id}/evidence/{item['id']}/download"
+            )
+            for item in detail["evidence"]
+        ]
+        integrity = (
+            await client.get(f"/api/v1/customer-deletions/{batch_id}/integrity")
+        ).json()
+
+    assert detail["evidence"], "the scene has certificate and photo evidence"
+    assert len(bucket.objects) == len(detail["evidence"])
+    assert set(bucket.objects.values()) == {PDF_BYTES, PHOTO_BYTES}
+    assert all(key.startswith("history/customer-deletions/") for key in bucket.objects)
+    assert storage.list_objects("history/") == []  # nothing in the media store
+    assert [r.status_code for r in served] == [200] * len(served)
+    assert integrity["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_failed_archive_never_deletes_from_the_protected_bucket(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    protected_history: tuple[S3HistoryStorage, FakeHistoryS3],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, bucket = protected_history
+    scene = await build_scene(factory, storage)
+    audit_before = await count(factory, AuditEvent)
+
+    async def boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(history_service, "_remove_from_active", boom)
+    async with client_for(factory) as client:
+        response = await delete(client, scene.customer_id)
+    assert response.status_code == 500
+    await assert_nothing_changed(factory, scene, before_audit=audit_before)
+    # The unreferenced copies are retained, not removed, and the failure says so.
+    assert bucket.objects
+    assert "delete_object" not in bucket.calls
+    async with factory() as session:
+        failed = (
+            await session.scalars(
+                select(CustomerDeletionBatch).where(
+                    CustomerDeletionBatch.status == "FAILED"
+                )
+            )
+        ).one()
+    assert "retained in protected storage" in (failed.failure_detail or "")
+
+
+@pytest.mark.asyncio
+async def test_evidence_that_is_not_locked_fails_the_archive_closed(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    protected_history: tuple[S3HistoryStorage, FakeHistoryS3],
+) -> None:
+    _, bucket = protected_history
+    bucket.lock_objects = (
+        False  # the bucket reports itself fine but objects come back bare
+    )
+    scene = await build_scene(factory, storage)
+    audit_before = await count(factory, AuditEvent)
+    async with client_for(factory) as client:
+        response = await delete(client, scene.customer_id)
+    assert response.status_code == 500
+    await assert_nothing_changed(factory, scene, before_audit=audit_before)
+
+
+@pytest.mark.asyncio
+async def test_an_unprotected_bucket_refuses_before_any_write(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    protected_history: tuple[S3HistoryStorage, FakeHistoryS3],
+) -> None:
+    _, bucket = protected_history
+    bucket.lock = False  # Object Lock is off on the bucket
+    scene = await build_scene(factory, storage)
+    audit_before = await count(factory, AuditEvent)
+    async with client_for(factory) as client:
+        checked = await preview(client, scene.customer_id)
+        response = await delete(
+            client, scene.customer_id, fingerprint=checked["fingerprint"]
+        )
+    assert checked["deletion_enabled"] is False
+    assert response.status_code == 409
+    assert STORAGE_MESSAGE in response.json()["detail"]
+    assert bucket.objects == {} and "put_object" not in bucket.calls
+    assert await count(factory, CustomerDeletionBatch) == 0
+    assert await count(factory, AuditEvent) == audit_before
+    assert await live(factory, Customer, scene.customer_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_outside_local_a_missing_history_bucket_refuses_and_uses_no_storage(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hms_backend.app.core.config import settings
+
+    scene = await build_scene(factory, storage)
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "history_retention_approval", "DEC-1")
+    monkeypatch.setattr(settings, "history_object_storage_s3_bucket", "")
+    async with client_for(factory) as client:
+        checked = await preview(client, scene.customer_id)
+        response = await delete(
+            client, scene.customer_id, fingerprint=checked["fingerprint"]
+        )
+    assert checked["deletion_enabled"] is False
+    assert response.status_code == 409
+    assert STORAGE_MESSAGE in response.json()["detail"]
+    assert storage.list_objects("history/") == []
+    assert await count(factory, CustomerDeletionBatch) == 0
+    assert await live(factory, Customer, scene.customer_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_outside_local_deletion_needs_an_approved_retention_period(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    protected_history: tuple[S3HistoryStorage, FakeHistoryS3],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 7-year default is a placeholder; an environment must approve its own."""
+    from hms_backend.app.core.config import settings
+
+    _, bucket = protected_history
+    scene = await build_scene(factory, storage)
+    monkeypatch.setattr(settings, "environment", "dev")
+    monkeypatch.setattr(settings, "history_retention_approval", "")
+    async with client_for(factory) as client:
+        checked = await preview(client, scene.customer_id)
+        refused = await delete(
+            client, scene.customer_id, fingerprint=checked["fingerprint"]
+        )
+        monkeypatch.setattr(settings, "history_retention_approval", "DEC-42")
+        allowed = await delete(
+            client, scene.customer_id, fingerprint=checked["fingerprint"]
+        )
+    assert checked["deletion_enabled"] is False
+    assert refused.status_code == 409
+    assert "retention period has not been approved" in refused.json()["detail"]
+    assert allowed.status_code == 200, allowed.text
+    assert bucket.objects  # nothing was written until it was approved
+    async with factory() as session:
+        batch = (await session.scalars(select(CustomerDeletionBatch))).one()
+    assert "DEC-42" in (batch.retention_basis or "")
+
+
+@pytest.mark.asyncio
+async def test_day_based_retention_sets_the_batch_retention_and_bucket_check(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEV keeps synthetic evidence for 30 days; the bucket must cover exactly that."""
+    from hms_backend.app.core.config import settings
+
+    fake = FakeHistoryS3(years=0, days=30, retain_days=30)
+    set_history_storage(S3HistoryStorage(bucket="hms-history", client=fake))
+    monkeypatch.setattr(settings, "history_retention_days", 30)
+    scene = await build_scene(factory, storage)
+    async with client_for(factory) as client:
+        checked = await preview(client, scene.customer_id)
+        response = await delete(
+            client, scene.customer_id, fingerprint=checked["fingerprint"]
+        )
+    assert checked["retention_days"] == 30 and checked["deletion_enabled"] is True
+    assert response.status_code == 200, response.text
+    async with factory() as session:
+        batch = (await session.scalars(select(CustomerDeletionBatch))).one()
+    assert batch.retention_until is not None
+    assert (batch.retention_until - datetime.now(UTC).date()).days in {29, 30}
+
+
+@pytest.mark.asyncio
+async def test_a_bucket_shorter_than_the_configured_retention_refuses(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    protected_history: tuple[S3HistoryStorage, FakeHistoryS3],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hms_backend.app.core.config import settings
+
+    _, bucket = protected_history
+    bucket.years, bucket.days = 0, 30  # bucket default 30 days...
+    monkeypatch.setattr(settings, "history_retention_days", 365)  # ...config wants 365
+    scene = await build_scene(factory, storage)
+    async with client_for(factory) as client:
+        checked = await preview(client, scene.customer_id)
+        response = await delete(
+            client, scene.customer_id, fingerprint=checked["fingerprint"]
+        )
+    assert checked["deletion_enabled"] is False
+    assert response.status_code == 409
+    assert "put_object" not in bucket.calls
+
+
+@pytest.mark.asyncio
+async def test_each_evidence_file_is_pinned_to_the_version_that_was_written(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    protected_history: tuple[S3HistoryStorage, FakeHistoryS3],
+) -> None:
+    _, bucket = protected_history
+    scene = await build_scene(factory, storage)
+    async with client_for(factory) as client:
+        response = await delete(client, scene.customer_id)
+        assert response.status_code == 200, response.text
+        batch_id = response.json()["id"]
+        async with factory() as session:
+            items = (await session.scalars(select(HistoryEvidenceObject))).all()
+        assert items
+        assert all(
+            i.history_version_id and i.retention_mode == "GOVERNANCE" and i.retain_until
+            for i in items
+        )
+        # Someone writes a different object to the same key afterwards.
+        for item in items:
+            bucket.put_object(Bucket="hms-history", Key=item.history_key, Body=b"other")
+        served = [
+            await client.get(
+                f"/api/v1/customer-deletions/{batch_id}/evidence/{i.id}/download"
+            )
+            for i in items
+        ]
+        integrity = (
+            await client.get(f"/api/v1/customer-deletions/{batch_id}/integrity")
+        ).json()
+    assert [r.status_code for r in served] == [200] * len(items)
+    assert {r.content for r in served} == {PDF_BYTES, PHOTO_BYTES}
+    assert integrity["verified"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("bucket_options", "orphan_version_known", "expected"),
+    [
+        ({"fail_put_on": 2}, False, "InternalError"),
+        ({"return_version_id": False}, False, "version id"),
+        ({"lock_objects": False}, True, "without Object Lock"),
+        ({"retain_days": 10}, True, "shorter than the batch retention"),
+        ({"corrupt_reads": True}, True, "failed verification"),
+    ],
+    ids=[
+        "write-fails",
+        "no-version-id",
+        "no-retention-metadata",
+        "insufficient-retention",
+        "hash-mismatch",
+    ],
+)
+async def test_a_bad_protected_write_fails_closed_and_records_the_orphans(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    bucket_options: dict[str, Any],
+    orphan_version_known: bool,
+    expected: str,
+) -> None:
+    bucket = FakeHistoryS3(**bucket_options)
+    set_history_storage(S3HistoryStorage(bucket="hms-history", client=bucket))
+    scene = await build_scene(factory, storage)
+    audit_before = await count(factory, AuditEvent)
+    async with client_for(factory) as client:
+        response = await delete(client, scene.customer_id)
+    assert response.status_code == 500
+    await assert_nothing_changed(factory, scene, before_audit=audit_before)
+    assert "delete_object" not in bucket.calls  # retention is never worked around
+    async with factory() as session:
+        failed = (await session.scalars(select(CustomerDeletionBatch))).one()
+    assert expected in (failed.failure_detail or "")
+    orphans = failed.orphaned_evidence
+    assert orphans, "every file touched by the attempt is listed for reconciliation"
+    prefix = f"history/customer-deletions/{failed.id}/"
+    assert all(o["key"].startswith(prefix) for o in orphans)
+    if orphan_version_known:
+        assert orphans[-1]["version_id"] in bucket.versions[orphans[-1]["key"]]
+
+
+@pytest.mark.asyncio
+async def test_a_retry_after_a_failure_uses_new_keys_and_keeps_the_orphans(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+) -> None:
+    bucket = FakeHistoryS3(fail_put_on=2)
+    set_history_storage(S3HistoryStorage(bucket="hms-history", client=bucket))
+    scene = await build_scene(factory, storage)
+    async with client_for(factory) as client:
+        first = await delete(client, scene.customer_id)
+        assert first.status_code == 500
+        orphaned = set(bucket.objects)
+        bucket.fail_put_on = None
+        second = await delete(client, scene.customer_id)
+    assert second.status_code == 200, second.text
+    final = set(bucket.objects) - orphaned
+    assert orphaned and final and not (orphaned & final)  # nothing was overwritten
+    assert "delete_object" not in bucket.calls
+    async with factory() as session:
+        failed = (
+            await session.scalars(
+                select(CustomerDeletionBatch).where(
+                    CustomerDeletionBatch.status == "FAILED"
+                )
+            )
+        ).one()
+    listed = {o["key"] for o in failed.orphaned_evidence}
+    # Every stored object is listed; so is the key whose write outcome was unknown.
+    assert orphaned <= listed and len(listed - orphaned) == 1
+
+
+@pytest.mark.asyncio
+async def test_restoring_database_rows_without_the_protected_versions_is_not_recovery(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    protected_history: tuple[S3HistoryStorage, FakeHistoryS3],
+) -> None:
+    """Recovery covers both stores: rows pin versions, and a missing or altered
+    version, or retention that is no longer applied, is reported by the check."""
+    _, bucket = protected_history
+    scene = await build_scene(factory, storage)
+    async with client_for(factory) as client:
+        response = await delete(client, scene.customer_id)
+        batch_id = response.json()["id"]
+
+        async def integrity() -> dict[str, Any]:
+            result = await client.get(
+                f"/api/v1/customer-deletions/{batch_id}/integrity"
+            )
+            body: dict[str, Any] = result.json()
+            return body
+
+        assert (await integrity())["verified"] is True  # both stores agree
+
+        saved = {k: dict(v) for k, v in bucket.versions.items()}
+        bucket.versions = {}  # database restored, bucket versions gone
+        missing = await integrity()
+        bucket.versions = saved
+
+        key = next(iter(bucket.versions))
+        version = next(iter(bucket.versions[key]))
+        original = bucket.versions[key][version]["body"]
+        bucket.versions[key][version]["body"] = b"altered"
+        altered = await integrity()
+        bucket.versions[key][version]["body"] = original
+        restored = await integrity()
+        bucket.lock_objects = False  # the version exists but is no longer locked
+        unlocked = await integrity()
+
+    assert missing["verified"] is False
+    assert any("version is missing" in p for p in missing["problems"])
+    assert any("hash differs" in p for p in altered["problems"])
+    assert restored["verified"] is True
+    assert any("retention is no longer applied" in p for p in unlocked["problems"])

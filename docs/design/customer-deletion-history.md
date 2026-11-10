@@ -104,8 +104,10 @@ Sync `delete` tombstones are staged for entities in `SYNC_MODELS`, so devices dr
 
 ## 7. Retention
 
-`history_retention_years` (default 7) sets `retention_until` on each batch, with the basis recorded.
-Nothing purges batches. Retention supports certificate and inspection evidence obligations; it is not a
+`HISTORY_RETENTION_DAYS` (or `HISTORY_RETENTION_YEARS`, counted as 365-day years; days win) sets
+`retention_until` on each batch, with the basis and the approval reference recorded. The 7-year default is a
+placeholder: outside local/test the app treats the retention period as unapproved, and deletion stays
+unavailable, until `HISTORY_RETENTION_APPROVAL` names the approval (section 13). Nothing purges batches. Retention supports certificate and inspection evidence obligations; it is not a
 claim of legal compliance, and the period must be confirmed by whoever owns regulatory requirements.
 
 ## 8. Staff app
@@ -202,8 +204,10 @@ Backend tests that delete opt in through the `customer_deletion_enabled` fixture
 
 1. Immutable evidence storage: a dedicated history bucket with S3 Object Lock and versioning, and separate
    permissions so ordinary application credentials cannot delete objects or shorten retention. A key prefix
-   policy on the media bucket is not equivalent to Object Lock and should not be described as such.
-2. An approved retention period (the default of 7 years is a placeholder, not regulatory advice).
+   policy on the media bucket is not equivalent to Object Lock and should not be described as such. Built in section 13 and
+   checked by the app before every deletion, but not yet applied to any environment.
+2. An approved retention period for the environment (the 7-year default is a placeholder, not regulatory
+   advice). The app keeps deletion unavailable outside local/test until `HISTORY_RETENTION_APPROVAL` is set.
 3. A tested recovery and restore procedure for the history tables and the evidence bucket.
 4. Product-owner approval of the historical-certificate wording.
 5. The database migration preflight: the environment's Alembic revision confirmed and a backup verified.
@@ -211,3 +215,116 @@ Backend tests that delete opt in through the `customer_deletion_enabled` fixture
 **Rollback.** Turning the flag off is immediate (restart or redeploy the API with it unset) and loses nothing:
 batches already written stay in History, remain verifiable, and keep their evidence. It stops *new* deletions
 only; it does not restore a deleted customer (restore is design-only, section 9).
+
+## 13. Protected evidence storage
+
+Archived evidence (certificate PDFs and inspection photos) is copied into a **dedicated history bucket**, not
+the media bucket. Protection comes from the bucket and its permissions; the application adds checks that
+fail closed when the protection is missing.
+
+**The bucket (Terraform, `infra/terraform/envs/dev/main.tf`)**
+
+* Versioning on and S3 Object Lock enabled, with a default retention rule (`history_retention_mode` plus
+  exactly one of `history_retention_days` / `history_retention_years`), SSE-S3 encryption, all public access
+  blocked, TLS required, and `prevent_destroy` so a `terraform destroy` cannot remove retained evidence.
+* The application's ECS task role may `PutObject`, `GetObject`, `GetObjectVersion` and `GetObjectRetention`
+  on objects, and read the bucket's versioning and Object Lock settings. The last two are the minimum for
+  reading a pinned version and checking its retention. A bucket-policy **explicit deny** stops that role from
+  deleting objects or versions, changing retention or legal hold, bypassing governance retention, or
+  changing versioning, Object Lock, lifecycle or the bucket policy, whatever other policies grant it.
+* Retention administration is not an application capability. Shortening or removing retention (possible
+  only in GOVERNANCE mode) belongs to account administrators acting deliberately, outside the app.
+* A key prefix policy on the media bucket was rejected: it is not Object Lock, and the media role needs
+  delete for ordinary files.
+
+**The application**
+
+* `HISTORY_OBJECT_STORAGE_S3_BUCKET` selects the bucket. Outside local/test it is required: with it blank,
+  deleting a customer is refused rather than quietly using the media bucket. Local and test runs fall back
+  to the ordinary store so developers need no AWS.
+* **Retention must be approved.** Outside local/test, deletion is unavailable (409; the preview reports
+  `deletion_enabled: false`) until `HISTORY_RETENTION_APPROVAL` is set to a reference for the approval. The
+  reference is written into each batch's `retention_basis`. The Terraform variable defaults to empty, so
+  applying the infrastructure never makes deletion available by itself, and neither does the flag alone.
+* **Pinned versions.** Each evidence file is written under a unique key
+  (`history/customer-deletions/{batch}/...`) and the `VersionId` S3 returns is stored on the evidence row
+  (`history_version_id`). Downloads, the read-back verification and the integrity check use that version, so a
+  later upload to the same key changes nothing that is served or verified. A protected store never reads
+  without a pinned version.
+* **Actual retention is verified, not assumed.** After each write the app heads *that version* and refuses
+  (failing the archive, nothing removed) unless it has a version id, an Object Lock mode and a retain-until
+  date that covers the batch's `retention_until`. The mode and retain-until are stored on the evidence row.
+  It then reads the version back and compares its SHA-256 with the source file.
+* Before each deletion the app checks the bucket: versioning enabled, Object Lock enabled, a default
+  retention mode set, and default retention at least the configured period. The result is cached for
+  `HISTORY_STORAGE_CHECK_TTL_SECONDS` (300). If any check fails, deletion is unavailable as above. Setting
+  `CUSTOMER_DELETION_ENABLED=true` cannot expose deletion on an unprotected bucket or an unapproved period.
+* **Failure atomicity.** Any failure before the commit (write error, missing version id, missing or
+  insufficient retention, hash mismatch, database error) rolls back the transaction, so the customer and all
+  operational records are unchanged, and records a FAILED batch.
+* **Orphaned protected objects.** The app never deletes from this store and never weakens retention to remove
+  anything. Each key is recorded on the FAILED batch (`orphaned_evidence`: key and, when known, version id)
+  *before* it is written, so even a write whose outcome is unknown is listed. A retry uses a new batch id and
+  therefore new keys, so it can never overwrite an orphan. Orphans are unreferenced by any evidence row and
+  expire with their retention. Reconciliation is an administrator task: list the FAILED batches, compare
+  `orphaned_evidence` with the bucket, and leave the objects in place until their retention ends (in
+  GOVERNANCE an administrator may remove them early, deliberately, outside the app).
+* The integrity check reports, per evidence file: a missing version, a different hash, and retention that is
+  no longer applied or is earlier than what was recorded.
+
+**Decisions (from the product owner) and what remains**
+
+1. **Retention period.** Not approved at seven years. For DEV, which holds synthetic data only, the target is
+   30 days (`history_retention_days = 30`) in GOVERNANCE mode. Production retention needs business and legal
+   approval; until then the production approval reference stays empty and deletion stays unavailable there.
+2. **Mode.** GOVERNANCE for DEV. COMPLIANCE is preferred for production once the retention obligation and the
+   recovery design are approved. COMPLIANCE cannot be shortened or removed by anyone, including the account
+   root, until the period ends, and a bucket holding such objects cannot be emptied or deleted. It is
+   one-way for every object written under it.
+3. **Encryption.** SSE-S3 is approved for DEV. A customer-managed KMS key is not required for this change and
+   would add separation of duties through the key policy at the cost of another resource.
+4. **Recovery.** A documented and **tested** procedure is required before deletion is enabled anywhere
+   (section 14). Cross-region replication is a separate disaster-recovery improvement.
+5. **Certificate wording** for archived certificates still needs product-owner sign-off (section 10).
+
+**To verify on DEV before enabling deletion.** The IAM actions the app needs for `HeadObject` and
+`GetObject` on a specific version (`s3:GetObjectVersion`, `s3:GetObjectRetention`) are written from the AWS
+documentation and fake-client tests; they have not been exercised against a real bucket. Run one write, read
+and integrity check against the DEV bucket after the apply and confirm there is no AccessDenied.
+
+**Rollout order.** Terraform plan reviewed, then applied (creates the bucket and role policy and adds the
+environment variables, which re-registers the task definitions), then an API deploy, then the history
+storage checks confirmed on DEV, then the recovery drill (section 14), and only then a decision to set
+`HISTORY_RETENTION_APPROVAL` and `CUSTOMER_DELETION_ENABLED`. Applying the Terraform alone enables nothing.
+
+## 14. Recovery across both stores
+
+A deleted customer is recoverable only if **both** the database history rows and the pinned S3 object
+versions survive. Restoring database rows without the protected versions is not a recovery: the evidence rows
+would point at files that are gone, and the integrity check reports every one as "archived file version is
+missing".
+
+| Asset | Protection | Failure it covers |
+|---|---|---|
+| History tables (`history_*`) | RDS automated backups and point-in-time recovery; insert-only triggers | Loss or corruption of the database |
+| Evidence objects | Versioning and Object Lock; the app role cannot delete | Accidental overwrite or delete; a compromised app |
+| The link between them | `history_version_id` and `retain_until` on each evidence row | Silent replacement of a file at the same key |
+
+**Procedure (to be run as a drill on DEV before deletion is enabled)**
+
+1. Note the batch to recover and run its integrity check; record the result.
+2. Database: restore RDS to a new instance at a point in time before the loss. Do not restore over the live
+   instance. Confirm `history_customer_deletions`, `history_evidence_objects` and `history_records` contain the
+   batch, and that the Alembic revision matches the application.
+3. Evidence: for each evidence row, confirm its `history_version_id` exists in the history bucket
+   (`aws s3api head-object --bucket ... --key ... --version-id ...`). If a version is gone because the bucket
+   itself was lost, it cannot be rebuilt from the database; that is the gap cross-region replication would
+   close, and why production uses COMPLIANCE.
+4. Run the integrity check on the restored environment. Recovery is complete only when it reports
+   `verified: true` for every batch that matters: hashes match and retention is still applied.
+5. Re-point the application at the restored database; do not move or recreate evidence objects.
+6. Record the date, who ran it, the batch used, the time taken and any gaps in this document.
+
+**Not yet done.** The drill itself has not been run. The automated tests cover the application's side
+(missing, altered or unlocked versions are detected, and database rows alone do not pass); they do not replace
+a restore of a real RDS snapshot against a real bucket.

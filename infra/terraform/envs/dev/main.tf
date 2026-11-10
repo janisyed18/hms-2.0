@@ -9,7 +9,9 @@ data "tls_certificate" "github_actions" {
 }
 
 locals {
-  name = "${var.project}-${var.environment}"
+  # Retention the backend checks the history bucket against (years count as 365 days).
+  history_retention_days = var.history_retention_days > 0 ? var.history_retention_days : 365 * var.history_retention_years
+  name                   = "${var.project}-${var.environment}"
 
   azs = slice(data.aws_availability_zones.available.names, 0, 2)
 
@@ -185,6 +187,21 @@ locals {
     {
       name  = "OBJECT_STORAGE_S3_PREFIX"
       value = local.media_prefix
+    },
+    {
+      # Where archived deleted-customer evidence goes. Customer deletion itself stays
+      # off until CUSTOMER_DELETION_ENABLED is set; this only prepares the storage.
+      name  = "HISTORY_OBJECT_STORAGE_S3_BUCKET"
+      value = aws_s3_bucket.history.bucket
+    },
+    {
+      name  = "HISTORY_RETENTION_DAYS"
+      value = tostring(local.history_retention_days)
+    },
+    {
+      # Empty until the retention period is approved; deletion stays unavailable.
+      name  = "HISTORY_RETENTION_APPROVAL"
+      value = var.history_retention_approval
     },
     {
       name  = "OBJECT_STORAGE_S3_REGION"
@@ -511,6 +528,109 @@ resource "aws_s3_bucket" "staff" {
 
 resource "aws_s3_bucket" "inspector" {
   bucket_prefix = "${local.name}-inspector-"
+}
+
+# Archived evidence for deleted customers. Kept apart from the media bucket so that
+# nothing the application can do to media (including delete) applies to it.
+resource "aws_s3_bucket" "history" {
+  bucket_prefix       = "${local.name}-history-"
+  object_lock_enabled = true
+
+  lifecycle {
+    # Destroying this bucket would destroy retained evidence.
+    prevent_destroy = true
+  }
+}
+
+resource "aws_s3_bucket_versioning" "history" {
+  bucket = aws_s3_bucket.history.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_object_lock_configuration" "history" {
+  bucket = aws_s3_bucket.history.id
+
+  rule {
+    default_retention {
+      mode  = var.history_retention_mode
+      days  = var.history_retention_days > 0 ? var.history_retention_days : null
+      years = var.history_retention_years > 0 ? var.history_retention_years : null
+    }
+  }
+
+  # Object Lock needs versioning enabled first.
+  depends_on = [aws_s3_bucket_versioning.history]
+}
+
+resource "aws_s3_bucket_public_access_block" "history" {
+  bucket                  = aws_s3_bucket.history.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "history" {
+  bucket = aws_s3_bucket.history.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "history" {
+  bucket = aws_s3_bucket.history.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource = [
+          aws_s3_bucket.history.arn,
+          "${aws_s3_bucket.history.arn}/*",
+        ]
+        Condition = {
+          Bool = { "aws:SecureTransport" = "false" }
+        }
+      },
+      {
+        # The application role can write and read evidence. It can never delete it,
+        # change retention, or change how the bucket is protected, whatever other
+        # policies grant it. Retention administration belongs to account administrators.
+        Sid       = "DenyApplicationRoleFromRemovingOrWeakeningEvidence"
+        Effect    = "Deny"
+        Principal = { AWS = aws_iam_role.ecs_task.arn }
+        Action = [
+          "s3:DeleteObject",
+          "s3:DeleteObjectVersion",
+          "s3:PutObjectRetention",
+          "s3:PutObjectLegalHold",
+          "s3:BypassGovernanceRetention",
+          "s3:PutBucketObjectLockConfiguration",
+          "s3:PutBucketVersioning",
+          "s3:PutLifecycleConfiguration",
+          "s3:PutBucketPolicy",
+          "s3:DeleteBucketPolicy",
+          "s3:DeleteBucket",
+        ]
+        Resource = [
+          aws_s3_bucket.history.arn,
+          "${aws_s3_bucket.history.arn}/*",
+        ]
+      },
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.history]
 }
 
 resource "aws_s3_bucket_public_access_block" "all" {
@@ -953,6 +1073,40 @@ resource "aws_iam_role_policy" "ecs_task_media" {
         ]
         Resource = aws_s3_bucket.media.arn
       }
+    ]
+  })
+}
+
+# Write and read evidence, and read the bucket's protection settings so the app can
+# refuse to delete customers if versioning or Object Lock is ever turned off. No
+# delete, retention or configuration actions: those are also denied on the bucket.
+resource "aws_iam_role_policy" "ecs_task_history" {
+  name = "${local.name}-ecs-task-history"
+  role = aws_iam_role.ecs_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          # Pinned-version reads and the per-version retention check. HeadObject on a
+          # version needs GetObjectVersion, and its lock fields need GetObjectRetention.
+          "s3:GetObjectVersion",
+          "s3:GetObjectRetention",
+        ]
+        Resource = "${aws_s3_bucket.history.arn}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetBucketVersioning",
+          "s3:GetBucketObjectLockConfiguration",
+        ]
+        Resource = aws_s3_bucket.history.arn
+      },
     ]
   })
 }
