@@ -145,5 +145,79 @@ class AssertHistoryPlanTests(unittest.TestCase):
         self.assertNotIn(CANARY, result.stdout + result.stderr)
 
 
+IAM = 'resource "aws_iam_role_policy" "ecs_task_history"'
+BUCKET_POLICY = 'resource "aws_s3_bucket_policy" "history"'
+
+
+def mutate_block(source: str, header: str, old: str, new: str) -> str:
+    """Replace ``old`` with ``new`` only inside the block that starts at ``header``."""
+    start = source.index(header)
+    end = source.index("\nresource ", start + 1)
+    block = source[start:end]
+    assert old in block, old
+    return source[:start] + block.replace(old, new, 1) + source[end:]
+
+
+class PolicyMutationTests(unittest.TestCase):
+    def failing(self, header: str, old: str, new: str, check: str) -> None:
+        source = (TERRAFORM_DIR / "main.tf").read_text(encoding="utf-8")
+        mutated = mutate_block(source, header, old, new)
+        self.assertNotEqual(source, mutated)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "main.tf").write_text(mutated, encoding="utf-8")
+            result = run(GOOD, Path(tmp))
+        self.assertEqual(result.returncode, 1, old)
+        failed = [
+            line for line in result.stdout.splitlines() if "**FAIL**" in line
+        ]
+        self.assertTrue(any(check in line for line in failed), failed)
+        self.assertNotIn(CANARY, result.stdout)
+
+    def test_the_real_source_passes(self) -> None:
+        result = run(GOOD)
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_bucket_policy_mutations_fail(self) -> None:
+        check = "Bucket policy denies"
+        cases = {
+            "effect becomes Allow": ('Effect    = "Deny"\n        Principal = { AWS',
+                                     'Effect    = "Allow"\n        Principal = { AWS'),
+            "principal becomes everyone": ("Principal = { AWS = aws_iam_role.ecs_task.arn }",
+                                           'Principal = "*"'),
+            "principal becomes another role": ("aws_iam_role.ecs_task.arn }",
+                                               "aws_iam_role.ecs_exec.arn }"),
+            "a denied action is dropped": ('"s3:BypassGovernanceRetention",', ""),
+            "an extra action is denied": ('"s3:DeleteBucket",', '"s3:DeleteBucket",\n          "s3:GetObject",'),
+            "scope narrows to the bucket only": ('"${aws_s3_bucket.history.arn}/*",\n        ]\n      },\n    ]',
+                                                 "]\n      },\n    ]"),
+            "NotAction replaces Action": ("        Action = [\n          \"s3:DeleteObject\"",
+                                          "        NotAction = [\n          \"s3:DeleteObject\""),
+            "the TLS condition is removed": ('Bool = { "aws:SecureTransport" = "false" }',
+                                             'Bool = { "aws:SecureTransport" = "true" }'),
+        }
+        for name, (old, new) in cases.items():
+            with self.subTest(name):
+                self.failing(BUCKET_POLICY, old, new, check)
+
+    def test_history_iam_policy_mutations_fail(self) -> None:
+        check = "History IAM policy"
+        cases = {
+            "an extra allowed action": ('"s3:GetObjectRetention",', '"s3:GetObjectRetention",\n          "s3:DeleteObject",'),
+            "a missing action": ('"s3:GetObjectVersion",', ""),
+            "wildcard resource": ('Resource = "${aws_s3_bucket.history.arn}/*"', 'Resource = "*"'),
+            "effect becomes Deny": ('Effect = "Allow"\n        Action = [\n          "s3:PutObject"',
+                                    'Effect = "Deny"\n        Action = [\n          "s3:PutObject"'),
+            "an extra statement": ("    Statement = [\n",
+                                   '    Statement = [\n      {\n        Effect = "Allow"\n'
+                                   '        Action = ["s3:*"]\n        Resource = "*"\n      },\n'),
+            "attached to another role": ("role = aws_iam_role.ecs_task.id", "role = aws_iam_role.ecs_exec.id"),
+            "a Condition is added": ('Resource = aws_s3_bucket.history.arn',
+                                     'Resource = aws_s3_bucket.history.arn\n        Condition = {}'),
+        }
+        for name, (old, new) in cases.items():
+            with self.subTest(name):
+                self.failing(IAM, old, new, check)
+
+
 if __name__ == "__main__":
     unittest.main()

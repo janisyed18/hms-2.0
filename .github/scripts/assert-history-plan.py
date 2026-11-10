@@ -209,28 +209,148 @@ def check_variables(plan: dict[str, Any], checks: Checks) -> None:
     )
 
 
+def _strip_comments(text: str) -> str:
+    return re.sub(r"(?m)^\s*(#|//).*$", "", text)
+
+
+def _statements(block: str) -> list[dict[str, str]] | None:
+    """Each ``Statement`` object as {top-level key: whitespace-free value text}.
+
+    Returns None when the structure is not the simple shape we can reason about, so
+    the check fails closed instead of guessing.
+    """
+    text = _strip_comments(block)
+    head = re.search(r"Statement\s*=\s*\[", text)
+    if head is None:
+        return None
+    statements: list[dict[str, str]] = []
+    depth, start = 0, -1
+    for position in range(head.end(), len(text)):
+        char = text[position]
+        if char == "{":
+            if depth == 0:
+                start = position + 1
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                statements.append(_fields(text[start:position]))
+            if depth < 0:
+                return None
+        elif char == "]" and depth == 0:
+            return statements
+    return None
+
+
+def _fields(body: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    depth, key, buffer = 0, None, []
+    for line in body.splitlines():
+        match = re.match(r"\s*(\w+)\s*=(.*)$", line) if depth == 0 else None
+        if match:
+            if key is not None:
+                fields[key] = "".join(buffer)
+            key, buffer = match.group(1), [match.group(2)]
+        elif key is not None:
+            buffer.append(line)
+        depth += sum(line.count(c) for c in "{[(") - sum(line.count(c) for c in "}])")
+    if key is not None:
+        fields[key] = "".join(buffer)
+    return {name: re.sub(r"\s+", "", value) for name, value in fields.items()}
+
+
+def _actions(value: str) -> set[str]:
+    return set(re.findall(r'"([^"]+)"', value))
+
+
+BUCKET = "aws_s3_bucket.history.arn"
+OBJECTS = '"${aws_s3_bucket.history.arn}/*"'
+
+
+def _policy_is_exact(
+    statements: list[dict[str, str]] | None, expected: list[dict[str, Any]]
+) -> bool:
+    """Exactly the expected statements: no extra statement, key, action or scope."""
+    if statements is None or len(statements) != len(expected):
+        return False
+    remaining = list(statements)
+    for want in expected:
+        match = next(
+            (
+                got
+                for got in remaining
+                if set(got) == set(want["keys"])
+                and got.get("Effect") == f'"{want["effect"]}"'
+                and got.get("Principal") == want.get("principal", got.get("Principal"))
+                and _actions(got.get("Action", "")) == want["actions"]
+                and sorted(t for t in got["Resource"].strip("[]").split(",") if t)
+                == sorted(want["resources"])
+                and all(
+                    token in got.get("Condition", "") for token in want.get("condition", [])
+                )
+            ),
+            None,
+        )
+        if match is None:
+            return False
+        remaining.remove(match)
+    return True
+
+
 def check_source(directory: Path, checks: Checks) -> None:
     main = (directory / "main.tf").read_text(encoding="utf-8")
     policy = _block(main, 'resource "aws_iam_role_policy" "ecs_task_history"')
-    lists = _action_lists(policy) if policy else []
-    allowed = {frozenset(APP_EVIDENCE_ACTIONS), frozenset(APP_PROTECTION_READ_ACTIONS)}
+    allow_keys = ["Effect", "Action", "Resource"]
     checks.check(
         "History IAM policy grants only evidence read/write and protection reads",
-        None if policy is None else bool(lists) and {frozenset(a) for a in lists} == allowed
-        and "Deny" not in policy,
+        None
+        if policy is None
+        else "role=aws_iam_role.ecs_task.id" in re.sub(r"\s+", "", policy)
+        and _policy_is_exact(
+            _statements(policy),
+            [
+                {
+                    "keys": allow_keys,
+                    "effect": "Allow",
+                    "actions": APP_EVIDENCE_ACTIONS,
+                    "resources": [OBJECTS],
+                },
+                {
+                    "keys": allow_keys,
+                    "effect": "Allow",
+                    "actions": APP_PROTECTION_READ_ACTIONS,
+                    "resources": [BUCKET],
+                },
+            ],
+        ),
         "SOURCE (policy contains values known only after apply)",
     )
     bucket_policy = _block(main, 'resource "aws_s3_bucket_policy" "history"')
-    deny = [
-        a
-        for a in _action_lists(bucket_policy or "")
-        if a != {"s3:*"}
-    ]
+    both = [BUCKET, OBJECTS]
     checks.check(
         "Bucket policy denies app-role deletion, retention changes and bypass",
-        None if bucket_policy is None else deny == [DENIED_TO_APP_ROLE]
-        and "aws_iam_role.ecs_task.arn" in bucket_policy
-        and "aws:SecureTransport" in bucket_policy,
+        None
+        if bucket_policy is None
+        else _policy_is_exact(
+            _statements(bucket_policy),
+            [
+                {
+                    "keys": ["Sid", "Effect", "Principal", "Action", "Resource", "Condition"],
+                    "effect": "Deny",
+                    "principal": '"*"',
+                    "actions": {"s3:*"},
+                    "resources": both,
+                    "condition": ["aws:SecureTransport", '"false"'],
+                },
+                {
+                    "keys": ["Sid", "Effect", "Principal", "Action", "Resource"],
+                    "effect": "Deny",
+                    "principal": "{AWS=aws_iam_role.ecs_task.arn}",
+                    "actions": DENIED_TO_APP_ROLE,
+                    "resources": both,
+                },
+            ],
+        ),
         "SOURCE (policy contains values known only after apply)",
     )
     enabled = re.search(r'name\s*=\s*"CUSTOMER_DELETION_ENABLED"\s*\n\s*value\s*=\s*(.+)', main)
