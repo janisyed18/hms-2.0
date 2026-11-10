@@ -1909,6 +1909,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         impact: { total_records: number; items: CustomerDeletionImpactItem[]; evidence_files: number };
         fingerprint: string;
         retention_years: number;
+        deletion_enabled?: boolean;
       }>(`/api/v1/customers/${encodeURIComponent(id)}/deletion-check`);
       const body = response.data;
       return {
@@ -1921,7 +1922,9 @@ export function createHmsClient(options: HmsClientOptions = {}) {
         items: body.impact.items,
         evidenceFiles: body.impact.evidence_files,
         fingerprint: body.fingerprint,
-        retentionYears: body.retention_years
+        retentionYears: body.retention_years,
+        // The server enforces this; an older server that does not report it is not gated.
+        deletionEnabled: body.deletion_enabled !== false
       };
     },
 

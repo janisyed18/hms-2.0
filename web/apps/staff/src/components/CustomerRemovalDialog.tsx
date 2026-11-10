@@ -136,7 +136,9 @@ function RemovalBody({
   const [copied, setCopied] = useState(false);
   const alreadyArchived = check?.archived === true;
   // Archive is the recommended default, unless the customer already is archived.
-  const selected = choice ?? (alreadyArchived ? "delete" : "archive");
+  // Deleting can be switched off per environment; the server refuses it regardless.
+  const deletionOff = check !== null && !check.deletionEnabled;
+  const selected = choice ?? (alreadyArchived && !deletionOff ? "delete" : "archive");
   const nameMatches = check !== null && typed.trim() === check.customerName.trim();
   const busy = pending !== null;
 
@@ -280,17 +282,23 @@ function RemovalBody({
               type="radio"
             />
           </label>
-          <label className={`removal-option removal-option--danger${selected === "delete" ? " is-selected" : ""}`}>
+          <label className={`removal-option removal-option--danger${selected === "delete" ? " is-selected" : ""}${deletionOff ? " is-disabled" : ""}`}>
             <span aria-hidden="true" className="removal-option__icon removal-option__icon--danger"><Trash2 size={20} /></span>
             <span className="removal-option__text">
-              <strong>Delete Customer and Related Data</strong>
+              <strong>
+                Delete Customer and Related Data
+                {deletionOff ? <span className="removal-tag">Not available</span> : null}
+              </strong>
               <span>
-                Remove the customer and its associated records from active HMS. A complete historical copy is kept in Deleted Customers (History) for audit and future reference.
+                {deletionOff
+                  ? "Deleting customers is not enabled in this environment yet. Nothing can be removed. You can archive the customer instead."
+                  : "Remove the customer and its associated records from active HMS. A complete historical copy is kept in Deleted Customers (History) for audit and future reference."}
               </span>
             </span>
             <input
               checked={selected === "delete"}
-              data-initial-focus={alreadyArchived ? true : undefined}
+              data-initial-focus={alreadyArchived && !deletionOff ? true : undefined}
+              disabled={deletionOff}
               name={`${ids}-action`}
               onChange={() => setChoice("delete")}
               type="radio"
@@ -305,11 +313,11 @@ function RemovalBody({
           <ActionButton disabled={busy} onClick={onCancel} variant="ghost">Cancel</ActionButton>
           {checkError ? <ActionButton onClick={onRetry} variant="secondary">Try again</ActionButton> : null}
           {selected === "archive" ? (
-            <ActionButton disabled={loading || checkError !== null} onClick={onArchive} pending={pending === "archiving"} pendingLabel="Archiving…" variant="primary">
+            <ActionButton disabled={loading || checkError !== null || alreadyArchived} onClick={onArchive} pending={pending === "archiving"} pendingLabel="Archiving…" variant="primary">
               Archive customer
             </ActionButton>
           ) : (
-            <ActionButton disabled={loading || checkError !== null} onClick={() => setStep("review")} variant="primary">
+            <ActionButton disabled={loading || checkError !== null || deletionOff} onClick={() => setStep("review")} variant="primary">
               Continue <ArrowRight aria-hidden="true" size={16} />
             </ActionButton>
           )}

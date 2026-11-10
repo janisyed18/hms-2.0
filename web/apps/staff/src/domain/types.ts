@@ -306,6 +306,8 @@ export interface CustomerDeletionCheck {
   /** Echoed back on delete so records added after this review are noticed. */
   fingerprint: string;
   retentionYears: number;
+  /** False when this environment has not switched on "Delete Customer and Related Data". */
+  deletionEnabled: boolean;
 }
 
 /** One deletion batch in the read-only historical archive. */

@@ -31,7 +31,7 @@ function customer(overrides: Partial<CustomerRecord> = {}): CustomerRecord {
 
 const clear: CustomerDeletionCheck = {
   canDelete: true, archived: false, blockers: [], customerName: "Summit Marine Group", customerCode: "SMG",
-  totalRecords: 12, evidenceFiles: 2, fingerprint: "fp-1", retentionYears: 7,
+  totalRecords: 12, evidenceFiles: 2, fingerprint: "fp-1", retentionYears: 7, deletionEnabled: true,
   items: [{ kind: "assets", label: "Assets", count: 7 }, { kind: "certificates", label: "Certificates", count: 5 }]
 };
 const blocked: CustomerDeletionCheck = {
@@ -97,6 +97,28 @@ describe("Remove customer", () => {
     expect(within(dialog()).getByText("Recommended")).toBeVisible();
     expect(within(dialog()).getByRole("radio", { name: /Archive Customer/ })).toBeChecked();
     expect(client.deleteCustomer).not.toHaveBeenCalled();
+  });
+
+  it("explains and disables Delete when this environment has not enabled it, but still archives", async () => {
+    client.getCustomerDeletionCheck.mockResolvedValue({ ...clear, deletionEnabled: false });
+    client.archiveCustomer.mockResolvedValue(customer({ status: "Archived", archivedAt: "2026-11-09T00:00:00Z" }));
+    const user = await openDialog();
+    const remove = await within(dialog()).findByRole("radio", { name: /Delete Customer and Related Data/ });
+    expect(remove).toBeDisabled();
+    expect(within(dialog()).getByText("Not available")).toBeVisible();
+    expect(within(dialog()).getByText(/not enabled in this environment yet/)).toBeVisible();
+    expect(within(dialog()).getByRole("radio", { name: /Archive Customer/ })).toBeChecked();
+    await user.click(within(dialog()).getByRole("button", { name: "Archive customer" }));
+    expect(client.archiveCustomer).toHaveBeenCalledWith("c1");
+    expect(client.deleteCustomer).not.toHaveBeenCalled();
+  });
+
+  it("offers no action at all when the customer is archived and deletion is not enabled", async () => {
+    client.getCustomerDeletionCheck.mockResolvedValue({ ...clear, archived: true, deletionEnabled: false });
+    await openDialog(customer({ status: "Archived", archivedAt: "2026-11-09T00:00:00Z" }));
+    expect(await within(dialog()).findByRole("radio", { name: /Delete Customer and Related Data/ })).toBeDisabled();
+    expect(within(dialog()).getByRole("button", { name: "Archive customer" })).toBeDisabled();
+    expect(within(dialog()).queryByRole("button", { name: /Continue/ })).not.toBeInTheDocument();
   });
 
   it("archives from the first step without deleting anything", async () => {

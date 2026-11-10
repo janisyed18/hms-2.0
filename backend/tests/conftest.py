@@ -18,6 +18,18 @@ from hms_backend.app.core.redis import set_redis_client
 reset_tzpath(())
 
 
+@pytest.fixture
+def customer_deletion_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opt a test in to "Delete Customer and Related Data".
+
+    The flag is off by default (as in every deployment); tests that exercise the
+    deletion itself ask for it explicitly.
+    """
+    from hms_backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "customer_deletion_enabled", True)
+
+
 @pytest.fixture(autouse=True)
 def disable_cache_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep API tests isolated from any developer/Docker Redis instance."""

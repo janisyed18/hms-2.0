@@ -78,6 +78,10 @@ OPERATIONAL = (
     InspectionAppointment,
 )
 
+# These tests exercise the deletion itself, so they opt in to the flag that is
+# off by default. The gate is covered in test_customer_deletion_gate.py.
+pytestmark = pytest.mark.usefixtures("customer_deletion_enabled")
+
 
 @pytest.fixture
 def storage(tmp_path: Path) -> Iterator[LocalObjectStorage]:
@@ -1036,3 +1040,143 @@ def test_every_table_that_references_an_owned_table_is_accounted_for() -> None:
         for column, parent in links:
             assert column in Base.metadata.tables[name].c
             assert parent in owned
+
+
+# --- the feature gate ---------------------------------------------------------
+# Deleting a customer is off unless CUSTOMER_DELETION_ENABLED is set, so a
+# deployment can carry the code before evidence storage and retention are approved.
+
+REFUSAL = "Customer deletion is not enabled in this environment."
+
+
+def test_customer_deletion_is_off_unless_the_environment_enables_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hms_backend.app.core.config import Settings
+
+    monkeypatch.delenv("CUSTOMER_DELETION_ENABLED", raising=False)
+    assert Settings(_env_file=None).customer_deletion_enabled is False
+    monkeypatch.setenv("CUSTOMER_DELETION_ENABLED", "true")
+    assert Settings(_env_file=None).customer_deletion_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_disabled_delete_is_refused_with_no_side_effects(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hms_backend.app.core.config import settings
+
+    scene = await build_scene(factory, storage)
+    async with factory() as session:
+        audits_before = await session.scalar(
+            select(func.count()).select_from(AuditEvent)
+        )
+    stored_before = sorted(p.name for p in (tmp_path / "objects").rglob("*"))
+    async with client_for(factory) as client:
+        # The preview still works and tells the screen why the action is unavailable.
+        assert (await preview(client, scene.customer_id))["deletion_enabled"] is True
+        fingerprint = (await preview(client, scene.customer_id))["fingerprint"]
+        monkeypatch.setattr(settings, "customer_deletion_enabled", False)
+        assert (await preview(client, scene.customer_id))["deletion_enabled"] is False
+
+        # Valid, replayed, wrong-name and unknown-customer requests are all refused by
+        # the gate before the name, fingerprint or version is read; a malformed body
+        # never reaches the handler at all.
+        valid = await delete(client, scene.customer_id, fingerprint=fingerprint)
+        keyed = await delete(
+            client,
+            scene.customer_id,
+            fingerprint=fingerprint,
+            headers={"Idempotency-Key": "gate-test-0001", "If-Match": '"1"'},
+        )
+        wrong_name = await delete(
+            client, scene.customer_id, name="nope", fingerprint="0" * 64
+        )
+        malformed = await client.post(
+            f"/api/v1/customers/{scene.customer_id}/delete-with-history", json={}
+        )
+        unknown = await delete(client, "no-such-customer", fingerprint="0" * 64)
+    for response in (valid, keyed, wrong_name, unknown):
+        assert response.status_code == 409, response.text
+        assert REFUSAL in response.text
+    assert (
+        malformed.status_code == 422
+    )  # rejected by schema validation, before any code runs
+
+    assert await count(factory, CustomerDeletionBatch) == 0
+    assert await count(factory, HistoryRecord) == 0
+    assert await count(factory, HistoryEvidenceObject) == 0
+    assert await count(factory, SyncChange) == 0
+    assert await live(factory, Customer, scene.customer_id) == 1
+    for model in OPERATIONAL:
+        assert await live(factory, model, scene.customer_id) > 0
+    async with factory() as session:
+        assert (
+            await session.scalar(select(func.count()).select_from(AuditEvent))
+            == audits_before
+        )
+    assert sorted(p.name for p in (tmp_path / "objects").rglob("*")) == stored_before
+    assert not list((tmp_path / "objects").glob("history*"))
+
+
+@pytest.mark.asyncio
+async def test_disabled_gate_does_not_widen_access_or_revive_the_old_route(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hms_backend.app.core.config import settings
+
+    scene = await build_scene(factory, storage)
+    monkeypatch.setattr(settings, "customer_deletion_enabled", False)
+    async with client_for(factory, ADMIN) as client:
+        # Authorization is checked first: a non-Super Admin never learns the flag.
+        assert (
+            await delete(client, scene.customer_id, fingerprint="0" * 64)
+        ).status_code == 403
+    async with client_for(factory) as client:
+        # The old plain DELETE stays unavailable whatever the flag says.
+        for enabled in (False, True):
+            monkeypatch.setattr(settings, "customer_deletion_enabled", enabled)
+            old = await client.delete(f"/api/v1/customers/{scene.customer_id}")
+            assert old.status_code == 405
+    assert await live(factory, Customer, scene.customer_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_archive_restore_and_read_only_history_work_while_deletion_is_off(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from hms_backend.app.core.config import settings
+
+    scene = await build_scene(factory, storage)
+    monkeypatch.setattr(settings, "customer_deletion_enabled", False)
+    async with client_for(factory) as client:
+        assert (
+            await client.post(f"/api/v1/customers/{scene.customer_id}/archive")
+        ).status_code == 200
+        assert (
+            await client.post(f"/api/v1/customers/{scene.customer_id}/restore")
+        ).status_code == 200
+        history = await client.get("/api/v1/customer-deletions")
+        assert history.status_code == 200
+        assert history.json()["total"] == 0
+        assert (await preview(client, scene.customer_id))["can_delete"] is True
+
+
+@pytest.mark.asyncio
+async def test_enabled_flag_allows_the_authorised_deletion(
+    factory: async_sessionmaker[AsyncSession], storage: LocalObjectStorage
+) -> None:
+    # The module opts in through the fixture; this pins the gate's enabled side.
+    scene = await build_scene(factory, storage)
+    async with client_for(factory) as client:
+        response = await delete(client, scene.customer_id)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "COMPLETED"
+    assert await live(factory, Customer, scene.customer_id) == 0

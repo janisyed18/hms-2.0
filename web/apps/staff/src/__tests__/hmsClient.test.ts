@@ -671,7 +671,7 @@ describe("hmsClient", () => {
       new Response(
         JSON.stringify({
           can_delete: false, archived: false, blockers: [{ kind: "assets", label: "assets", count: 3, records: [{ id: "a1", name: "A-1" }] }],
-          customer_name: "Vopak", customer_code: "VOPA", version: 2, fingerprint: "fp", retention_years: 7,
+          customer_name: "Vopak", customer_code: "VOPA", version: 2, fingerprint: "fp", retention_years: 7, deletion_enabled: false,
           impact: { total_records: 4, items: [{ kind: "assets", label: "Assets", count: 4 }], evidence_files: 1 }
         }),
         { status: 200, headers: { "content-type": "application/json" } }
@@ -684,7 +684,7 @@ describe("hmsClient", () => {
       archived: false,
       blockers: [{ kind: "assets", label: "assets", count: 3, records: [{ id: "a1", name: "A-1" }] }],
       customerName: "Vopak", customerCode: "VOPA", totalRecords: 4, items: [{ kind: "assets", label: "Assets", count: 4 }],
-      evidenceFiles: 1, fingerprint: "fp", retentionYears: 7
+      evidenceFiles: 1, fingerprint: "fp", retentionYears: 7, deletionEnabled: false
     });
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/customers/cust-1/deletion-check", expect.anything());
   });

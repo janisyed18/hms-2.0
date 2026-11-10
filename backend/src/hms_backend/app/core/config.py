@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     object_storage_s3_presign_expiry_seconds: int = 900
     # Years certificate/inspection evidence is kept after a customer is deleted.
     history_retention_years: int = 7
+    # Master switch for "Delete Customer and Related Data". Off by default: a
+    # deployment can carry the code without exposing the destructive action until
+    # immutable evidence storage, retention and recovery are approved. Env:
+    # CUSTOMER_DELETION_ENABLED. See docs/design/customer-deletion-history.md.
+    customer_deletion_enabled: bool = False
     # Server-side encryption applied on upload ("AES256" or "aws:kms"; blank off).
     object_storage_s3_sse: str = "AES256"
     object_storage_s3_sse_kms_key_id: str = ""  # required when using aws:kms
