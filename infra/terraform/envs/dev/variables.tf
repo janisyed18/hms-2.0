@@ -152,6 +152,50 @@ variable "auth_mfa_key_version" {
   }
 }
 
+variable "history_retention_mode" {
+  description = "S3 Object Lock default retention mode for archived deleted-customer evidence. GOVERNANCE lets an administrator with s3:BypassGovernanceRetention shorten or remove retention, which suits a development account. COMPLIANCE cannot be shortened or removed by anyone, including the account root, until the period ends, so use it only once the retention period is approved."
+  type        = string
+  default     = "GOVERNANCE"
+
+  validation {
+    condition     = contains(["GOVERNANCE", "COMPLIANCE"], var.history_retention_mode)
+    error_message = "history_retention_mode must be GOVERNANCE or COMPLIANCE."
+  }
+}
+
+variable "history_retention_days" {
+  description = "Default Object Lock retention, in days, for archived deleted-customer evidence. DEV holds synthetic data only, so it defaults to 30 days with GOVERNANCE. Set exactly one of history_retention_days and history_retention_years; the backend refuses to delete customers while the bucket's retention is shorter than its own setting, which this passes to it as HISTORY_RETENTION_DAYS."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.history_retention_days >= 0 && floor(var.history_retention_days) == var.history_retention_days
+    error_message = "history_retention_days must be a whole number of days."
+  }
+}
+
+variable "history_retention_years" {
+  description = "Alternative to history_retention_days, in whole years (365 days each for the backend's check). Leave at 0 when using days. Production needs a period approved by the business and legal; none is approved yet."
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.history_retention_years >= 0 && floor(var.history_retention_years) == var.history_retention_years
+    error_message = "history_retention_years must be a whole number of years."
+  }
+
+  validation {
+    condition     = (var.history_retention_years > 0) != (var.history_retention_days > 0)
+    error_message = "Set exactly one of history_retention_days and history_retention_years."
+  }
+}
+
+variable "history_retention_approval" {
+  description = "Reference (ticket or decision record) approving this environment's evidence retention period. Empty by default: the backend keeps customer deletion unavailable outside local/test until this is set, so applying the infrastructure alone never enables deletion."
+  type        = string
+  default     = ""
+}
+
 variable "enable_deletion_protection" {
   description = "Enable deletion protection for stateful resources."
   type        = bool

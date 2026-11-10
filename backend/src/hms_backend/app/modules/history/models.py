@@ -74,6 +74,11 @@ class CustomerDeletionBatch(Base):
     previously_deleted_counts: Mapped[dict[str, int]] = mapped_column(
         JSON, nullable=False, default=dict
     )
+    # Protected evidence versions written by a failed attempt, kept (never deleted)
+    # for reconciliation: [{"key": ..., "version_id": ...}].
+    orphaned_evidence: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
     total_records: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     evidence_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     evidence_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -148,6 +153,15 @@ class HistoryEvidenceObject(Base):
     content_type: Mapped[str] = mapped_column(String(80), nullable=False)
     size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The exact S3 object version the evidence was written as (null: local/test store),
+    # and the retention it carried when written. Reads and integrity checks use it.
+    history_version_id: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True
+    )
+    retention_mode: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    retain_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     verified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )

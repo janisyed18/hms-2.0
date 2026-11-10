@@ -21,6 +21,7 @@ from __future__ import annotations
 import importlib
 import os
 import posixpath
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -172,6 +173,15 @@ def _is_s3_not_found(exc: Exception) -> bool:
     return error.get("Code") in {"404", "NoSuchKey", "NotFound"}
 
 
+def _is_s3_no_such_version(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    error = response.get("Error") if isinstance(response, dict) else None
+    return isinstance(error, dict) and error.get("Code") in {
+        "NoSuchVersion",
+        "InvalidArgument",
+    }
+
+
 class S3ObjectStorage:
     """S3-backed object store for AWS deployments."""
 
@@ -310,6 +320,274 @@ class S3ObjectStorage:
             ExpiresIn=expires_in or self._presign_expiry_seconds,
         )
         return cast(str, url)
+
+
+class HistoryStorageError(RuntimeError):
+    """Archived evidence was not stored (or could not be read) as required.
+
+    ``version_id`` is set when an object version was written before the problem was
+    found, so the caller can record it as an orphan for reconciliation.
+    """
+
+    def __init__(self, message: str, *, version_id: str | None = None) -> None:
+        super().__init__(message)
+        self.version_id = version_id
+
+
+@dataclass(frozen=True)
+class StoredEvidence:
+    """The exact protected object version a copy of evidence was written as."""
+
+    version_id: str | None
+    retention_mode: str | None = None
+    retain_until: datetime | None = None
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+class S3HistoryStorage(S3ObjectStorage):
+    """S3 store for deleted-customer evidence: write once, never delete.
+
+    The bucket (not this class) provides the protection: versioning plus Object Lock
+    default retention, and a bucket policy that denies delete and retention changes
+    to the application role. This class adds the checks that fail the archive closed
+    when that protection is missing: the written *version* is pinned and must come
+    back locked for at least the batch retention, and :meth:`check_protection`
+    reports a bucket that is not configured as required.
+    """
+
+    protected = True
+
+    def put_evidence(
+        self,
+        key: str,
+        data: bytes,
+        *,
+        content_type: str,
+        min_retain_until: datetime | None = None,
+    ) -> StoredEvidence:
+        s3_key = self._s3_key(key)
+        client = self._get_client()
+        args: dict[str, Any] = {
+            "Bucket": self._bucket,
+            "Key": s3_key,
+            "Body": data,
+            "ContentType": content_type,
+            **self._sse_args(),
+        }
+        response = client.put_object(**args)
+        version_id = response.get("VersionId")
+        if not version_id:
+            raise HistoryStorageError(
+                "the archived file was stored without a version id (bucket "
+                "versioning is not enabled)"
+            )
+        try:
+            head = client.head_object(
+                Bucket=self._bucket, Key=s3_key, VersionId=version_id
+            )
+        except Exception as exc:
+            # The version exists; keep its id so the caller records the orphan.
+            raise HistoryStorageError(
+                f"the archived file's retention could not be verified "
+                f"({type(exc).__name__})",
+                version_id=version_id,
+            ) from exc
+        mode = head.get("ObjectLockMode")
+        until = head.get("ObjectLockRetainUntilDate")
+        if mode not in {"GOVERNANCE", "COMPLIANCE"} or until is None:
+            raise HistoryStorageError(
+                "the archived file was stored without Object Lock retention",
+                version_id=version_id,
+            )
+        until = _aware(until)
+        if until <= datetime.now(UTC):
+            raise HistoryStorageError(
+                "the archived file's retention has already ended",
+                version_id=version_id,
+            )
+        if min_retain_until is not None and until < _aware(min_retain_until):
+            raise HistoryStorageError(
+                "the archived file's retention is shorter than the batch retention",
+                version_id=version_id,
+            )
+        return StoredEvidence(version_id, mode, until)
+
+    def put(
+        self, key: str, data: bytes, *, content_type: str = "application/pdf"
+    ) -> str:
+        self.put_evidence(key, data, content_type=content_type)
+        return key
+
+    def get_version(self, key: str, version_id: str) -> bytes:
+        try:
+            response = self._get_client().get_object(
+                Bucket=self._bucket, Key=self._s3_key(key), VersionId=version_id
+            )
+        except Exception as exc:
+            if _is_s3_not_found(exc) or _is_s3_no_such_version(exc):
+                raise ObjectNotFoundError(key) from exc
+            raise
+        return cast(bytes, response["Body"].read())
+
+    def describe_version(self, key: str, version_id: str) -> StoredEvidence:
+        try:
+            head = self._get_client().head_object(
+                Bucket=self._bucket, Key=self._s3_key(key), VersionId=version_id
+            )
+        except Exception as exc:
+            if _is_s3_not_found(exc) or _is_s3_no_such_version(exc):
+                raise ObjectNotFoundError(key) from exc
+            raise
+        until = head.get("ObjectLockRetainUntilDate")
+        return StoredEvidence(
+            version_id,
+            head.get("ObjectLockMode"),
+            _aware(until) if until is not None else None,
+        )
+
+    def delete(self, key: str) -> None:
+        raise PermissionError("archived history evidence is never deleted by the app")
+
+    def check_protection(self, *, min_retention_days: int) -> list[str]:
+        """What is wrong with the bucket; an empty list means it is as required."""
+        problems: list[str] = []
+        client = self._get_client()
+        try:
+            versioning = client.get_bucket_versioning(Bucket=self._bucket)
+            if versioning.get("Status") != "Enabled":
+                problems.append("bucket versioning is not enabled")
+        except Exception as exc:
+            problems.append(
+                f"bucket versioning could not be read ({type(exc).__name__})"
+            )
+        try:
+            config = client.get_object_lock_configuration(Bucket=self._bucket)[
+                "ObjectLockConfiguration"
+            ]
+        except Exception as exc:
+            problems.append(f"Object Lock is not enabled ({type(exc).__name__})")
+            return problems
+        if config.get("ObjectLockEnabled") != "Enabled":
+            problems.append("Object Lock is not enabled")
+        retention = (config.get("Rule") or {}).get("DefaultRetention") or {}
+        if retention.get("Mode") not in {"GOVERNANCE", "COMPLIANCE"}:
+            problems.append("no default retention mode is set")
+        days = int(retention.get("Days") or 0) + 365 * int(retention.get("Years") or 0)
+        if days < min_retention_days:
+            problems.append(
+                f"default retention ({days} days) is shorter than the configured "
+                f"history retention ({min_retention_days} days)"
+            )
+        return problems
+
+
+def put_evidence(
+    storage: ObjectStorage,
+    key: str,
+    data: bytes,
+    *,
+    content_type: str,
+    min_retain_until: datetime | None = None,
+) -> StoredEvidence:
+    """Write evidence and say exactly which version (and retention) was stored.
+
+    The local/test fallback has no versions or locks; it returns a null version.
+    """
+    if isinstance(storage, S3HistoryStorage):
+        return storage.put_evidence(
+            key, data, content_type=content_type, min_retain_until=min_retain_until
+        )
+    storage.put(key, data, content_type=content_type)
+    return StoredEvidence(None)
+
+
+def get_evidence(storage: ObjectStorage, key: str, version_id: str | None) -> bytes:
+    """Read evidence at the pinned version; never whatever is newest at the key."""
+    if isinstance(storage, S3HistoryStorage):
+        if not version_id:
+            raise HistoryStorageError("the archived file has no pinned version")
+        return storage.get_version(key, version_id)
+    return storage.get(key)
+
+
+def describe_evidence(
+    storage: ObjectStorage, key: str, version_id: str | None
+) -> StoredEvidence | None:
+    """Retention now applied to the pinned version; None for unprotected stores."""
+    if isinstance(storage, S3HistoryStorage):
+        if not version_id:
+            raise HistoryStorageError("the archived file has no pinned version")
+        return storage.describe_version(key, version_id)
+    return None
+
+
+class HistoryStorageUnavailable(RuntimeError):
+    """Deleting customers is refused because protected storage is not ready."""
+
+
+_history_storage: ObjectStorage | None = None
+_protection_checked_at: float | None = None
+_protection_problems: list[str] = []
+
+
+def get_history_storage() -> ObjectStorage:
+    """The store for archived evidence.
+
+    A configured history bucket always wins. Without one, local and test runs use the
+    ordinary store so developers need no AWS; any other environment is refused,
+    because evidence kept in the shared media bucket is not protected.
+    """
+    global _history_storage
+    if _history_storage is None:
+        bucket = settings.history_object_storage_s3_bucket.strip()
+        if bucket:
+            _history_storage = S3HistoryStorage(
+                bucket=bucket,
+                region_name=settings.object_storage_s3_region,
+                endpoint_url=settings.object_storage_s3_endpoint_url,
+                sse=settings.object_storage_s3_sse,
+                sse_kms_key_id=settings.object_storage_s3_sse_kms_key_id,
+            )
+        elif settings.is_local_or_test:
+            return get_object_storage()
+        else:
+            raise HistoryStorageUnavailable(
+                "protected history storage is not configured"
+            )
+    return _history_storage
+
+
+def set_history_storage(storage: ObjectStorage | None) -> None:
+    """Override the history store and forget any cached protection result (tests)."""
+    global _history_storage, _protection_checked_at
+    _history_storage = storage
+    _protection_checked_at = None
+
+
+def history_storage_problems() -> list[str]:
+    """Why archived evidence cannot be trusted right now; empty when it can.
+
+    Cached for ``history_storage_check_ttl_seconds`` so the answer is cheap on every
+    request but a misconfigured bucket is noticed within minutes.
+    """
+    global _protection_checked_at, _protection_problems
+    try:
+        storage = get_history_storage()
+    except HistoryStorageUnavailable as exc:
+        return [str(exc)]
+    if not isinstance(storage, S3HistoryStorage):
+        return []  # local/test fallback: there is nothing to check
+    now = time.monotonic()
+    ttl = settings.history_storage_check_ttl_seconds
+    if _protection_checked_at is None or now - _protection_checked_at >= ttl:
+        _protection_problems = storage.check_protection(
+            min_retention_days=settings.history_retention_period_days
+        )
+        _protection_checked_at = now
+    return list(_protection_problems)
 
 
 _storage: ObjectStorage | None = None

@@ -125,7 +125,10 @@ from hms_backend.app.core.lifecycle import (
     ensure_not_referenced,
     require_super_admin,
 )
-from hms_backend.app.core.object_storage import get_object_storage
+from hms_backend.app.core.object_storage import (
+    get_history_storage,
+    get_object_storage,
+)
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
@@ -175,6 +178,7 @@ from hms_backend.app.modules.customers.models import (
 from hms_backend.app.modules.history.service import (
     build_impact,
     delete_customer_with_history,
+    deletion_unavailable_reason,
 )
 from hms_backend.app.modules.identity.models import AccountStatus, User
 from hms_backend.app.modules.inspections.models import (
@@ -1378,7 +1382,7 @@ async def customer_deletion_check(
     customer = await _get_visible_customer_or_404(session, customer_id, principal)
     impact = await build_impact(session, customer)
     # Lets the UI explain an unavailable action; the delete route enforces it.
-    impact["deletion_enabled"] = settings.customer_deletion_enabled
+    impact["deletion_enabled"] = await deletion_unavailable_reason() is None
     return impact
 
 
@@ -1403,21 +1407,17 @@ async def delete_customer_with_history_route(
     _require_customer_write(principal)
     require_super_admin(principal)
     # Before anything else: no lookup, archive, storage write or database change.
-    if not settings.customer_deletion_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "Customer deletion is not enabled in this environment. "
-                "Nothing was removed. You can archive the customer instead."
-            ),
-        )
+    unavailable = await deletion_unavailable_reason()
+    if unavailable is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=unavailable)
     # No separate visibility lookup: a Super Admin sees every customer, and a retry of
     # a finished deletion must reach the service to be answered from its batch record.
     outcome = await delete_customer_with_history(
         session,
         customer_id=customer_id,
         principal=principal,
-        storage=get_object_storage(),
+        source_storage=get_object_storage(),
+        history_storage=get_history_storage(),
         confirm_name=payload.confirm_name,
         expected_fingerprint=payload.impact_fingerprint,
         reason=_clean_optional(payload.reason),
