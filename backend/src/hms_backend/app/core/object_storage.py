@@ -384,9 +384,17 @@ class S3HistoryStorage(S3ObjectStorage):
                 "the archived file was stored without a version id (bucket "
                 "versioning is not enabled)"
             )
-        head = client.head_object(
-            Bucket=self._bucket, Key=s3_key, VersionId=version_id
-        )
+        try:
+            head = client.head_object(
+                Bucket=self._bucket, Key=s3_key, VersionId=version_id
+            )
+        except Exception as exc:
+            # The version exists; keep its id so the caller records the orphan.
+            raise HistoryStorageError(
+                f"the archived file's retention could not be verified "
+                f"({type(exc).__name__})",
+                version_id=version_id,
+            ) from exc
         mode = head.get("ObjectLockMode")
         until = head.get("ObjectLockRetainUntilDate")
         if mode not in {"GOVERNANCE", "COMPLIANCE"} or until is None:

@@ -1566,3 +1566,49 @@ async def test_restoring_database_rows_without_the_protected_versions_is_not_rec
     assert any("hash differs" in p for p in altered["problems"])
     assert restored["verified"] is True
     assert any("retention is no longer applied" in p for p in unlocked["problems"])
+
+
+@pytest.mark.asyncio
+async def test_a_failed_head_after_a_successful_put_keeps_the_version_id(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+) -> None:
+    class HeadDenied(FakeHistoryS3):
+        def head_object(self, **_: Any) -> dict[str, Any]:
+            raise PermissionError("AccessDenied")
+
+    bucket = HeadDenied()
+    set_history_storage(S3HistoryStorage(bucket="hms-history", client=bucket))
+    scene = await build_scene(factory, storage)
+    audit_before = await count(factory, AuditEvent)
+    async with client_for(factory) as client:
+        response = await delete(client, scene.customer_id)
+    assert response.status_code == 500
+    await assert_nothing_changed(factory, scene, before_audit=audit_before)
+    async with factory() as session:
+        failed = (await session.scalars(select(CustomerDeletionBatch))).one()
+    (orphan,) = failed.orphaned_evidence
+    assert orphan["version_id"] in bucket.versions[orphan["key"]]
+    assert "could not be verified" in (failed.failure_detail or "")
+
+
+@pytest.mark.asyncio
+async def test_integrity_reports_s3_read_failures_without_raising(
+    factory: async_sessionmaker[AsyncSession],
+    storage: LocalObjectStorage,
+    protected_history: tuple[S3HistoryStorage, FakeHistoryS3],
+) -> None:
+    _, bucket = protected_history
+    scene = await build_scene(factory, storage)
+    async with client_for(factory) as client:
+        batch_id = (await delete(client, scene.customer_id)).json()["id"]
+
+        def denied(**_: Any) -> dict[str, Any]:
+            raise PermissionError("AccessDenied: arn:aws:s3:::secret-bucket")
+
+        bucket.get_object = denied  # type: ignore[method-assign]
+        result = await client.get(f"/api/v1/customer-deletions/{batch_id}/integrity")
+    body = result.json()
+    assert result.status_code == 200 and body["verified"] is False
+    assert any("could not be read (PermissionError)" in p for p in body["problems"])
+    assert "secret-bucket" not in str(body)

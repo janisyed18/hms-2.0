@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any
 
@@ -32,6 +33,8 @@ from hms_backend.app.modules.history.service import (
     sha256_hex,
     verify_batch_in_session,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -345,6 +348,15 @@ async def check_customer_deletion_integrity(
             continue
         except HistoryStorageError as exc:
             problems.append(f"{item.label}: {exc}")
+            continue
+        except Exception as exc:  # S3 permission or timeout: report, never succeed
+            logger.warning(
+                "history integrity read failed", extra={"error": type(exc).__name__}
+            )
+            problems.append(
+                f"{item.label}: the archived file could not be read "
+                f"({type(exc).__name__})"
+            )
             continue
         recorded = item.retain_until
         if recorded is not None and recorded.tzinfo is None:
