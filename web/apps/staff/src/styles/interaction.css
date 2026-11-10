@@ -181,8 +181,6 @@
 .change-inspector__suggestion span:first-child { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
 .change-inspector__chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: rgb(31 122 77 / 14%); color: var(--success, #1f7a4d); font-size: 12px; font-weight: 600; }
 .assigned-inspector { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
-/* Booking cards style every child div as a stacked grid; this line stays a row across the card. */
-.inspection-booking-card .assigned-inspector { display: flex; grid-column: 1 / -1; }
 .assigned-inspector .action-button { width: auto; flex: 0 0 auto; }
 .assigned-inspector__name { font-weight: 600; }
 .assigned-inspector .field-hint { flex-basis: 100%; margin: 0; }

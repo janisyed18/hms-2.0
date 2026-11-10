@@ -8,8 +8,8 @@ import {
 import { useEffect, useState } from "react";
 
 import { InspectionDetail } from "./InspectionDetail";
+import { InspectionBookingCard } from "./InspectionBookingCard";
 import { InspectionBookingForm } from "./InspectionBookingForm";
-import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
 import { ChangeInspectorDialog } from "./interaction/ChangeInspectorDialog";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
@@ -19,7 +19,7 @@ import {
   type InspectionStatusFilter,
   useInspectionsWorkspace
 } from "../hooks/useInspectionsWorkspace";
-import type { InspectionBookingRecord, InspectionRecord } from "../domain/types";
+import type { InspectionRecord } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { assetLabel } from "../utils/identity";
 import { inspectionStatusLabel } from "../utils/inspectionStatus";
@@ -64,10 +64,6 @@ function formatLocationDateTime(value: string, timezone: string | null | undefin
   return formatWithZone(value, timezone);
 }
 
-function hasOpenChangeRequest(booking: InspectionBookingRecord) {
-  return booking.changeRequests.some((change) => ["PENDING_ADMIN_APPROVAL", "PENDING_CUSTOMER_CONFIRMATION"].includes(change.status));
-}
-
 export function InspectionsWorkspace({
   canApprove,
   canApproveBookings,
@@ -84,8 +80,6 @@ export function InspectionsWorkspace({
   onInspectionRouteChange?: (inspectionId: string | null, options?: { replace?: boolean }) => void;
 }) {
   const workspace = useInspectionsWorkspace(canApproveBookings, routeInspectionId, onInspectionRouteChange);
-  const [inspectorByBooking, setInspectorByBooking] = useState<Record<string, string>>({});
-  const [missingInspector, setMissingInspector] = useState<string | null>(null);
   /** The booking whose inspector the open "Change inspector" dialog is for. */
   const [changingInspector, setChangingInspector] = useState<string | null>(null);
   const [showAllBookings, setShowAllBookings] = useState(false);
@@ -160,12 +154,20 @@ export function InspectionsWorkspace({
             <h2 id="inspection-workspace-heading">Inspection operations</h2>
             <p>Review inspection work, pressure tests, and approval readiness.</p>
           </div>
-          <div className="inspection-command-context" aria-label="Current inspection scope">
-            <ClipboardCheck aria-hidden="true" size={23} />
-            <span>
-              <strong>{workspace.inspections.length} inspection{workspace.inspections.length === 1 ? "" : "s"}</strong>
-              <small>{workspace.visibleInspections.length} matching the current view</small>
-            </span>
+          <div className="inspection-command-side">
+            <div className="inspection-command-context" aria-label="Current inspection scope">
+              <ClipboardCheck aria-hidden="true" size={23} />
+              <span>
+                <strong>{workspace.inspections.length} inspection{workspace.inspections.length === 1 ? "" : "s"}</strong>
+                <small>{workspace.visibleInspections.length} matching the current view</small>
+              </span>
+            </div>
+            {canBook ? (
+              <button className="primary-button inspection-book-button" onClick={workspace.openBooking} type="button">
+                <CalendarDays aria-hidden="true" size={17} />
+                Book inspection
+              </button>
+            ) : null}
           </div>
         </header>
         {workspace.notice ? (
@@ -190,149 +192,25 @@ export function InspectionsWorkspace({
                 <p>Schedule site visits before per-asset inspection work begins.</p>
               </div>
             </div>
-            {canBook ? (
-              <button className="primary-button inspection-book-button" onClick={workspace.openBooking} type="button">
-                <CalendarDays aria-hidden="true" size={17} />
-                Book inspection
-              </button>
-            ) : null}
           </header>
           {workspace.bookings.length ? (
             <div className="inspection-booking-list" aria-label="Inspection bookings">
               {(showAllBookings ? workspace.bookings : workspace.bookings.slice(0, 4)).map((booking) => (
-                <article className="inspection-booking-card" key={booking.id}>
-                  <div>
-                    <strong>{booking.location.name}</strong>
-                    <span>{booking.customer.name}</span>
-                  </div>
-                  <div>
-                    <span>{booking.assets.map(assetLabel).join(", ")}</span>
-                    <time dateTime={booking.scheduledAt}>
-                      {formatLocationDateTime(booking.scheduledAt, booking.location.schedulingTimezone)}
-                    </time>
-                  </div>
-                  <span className={statusClass(booking.status)}>
-                    {booking.status.replace("_", " ")}
-                  </span>
-                  {canApproveBookings && booking.status === "PENDING_APPROVAL" ? (
-                    <span className="row-actions">
-                      <select
-                        aria-label={`Assign inspector for ${booking.location.name}`}
-                        value={inspectorByBooking[booking.id] ?? ""}
-                        onChange={(event) => setInspectorByBooking((current) => ({ ...current, [booking.id]: event.target.value }))}
-                      >
-                        <option value="">Assign inspector</option>
-                        {workspace.inspectors.map((inspector) => (
-                          <option key={inspector.id} value={inspector.id}>{inspector.displayName}</option>
-                        ))}
-                      </select>
-                      <ActionButton
-                        disabled={workspace.pendingAction !== null}
-                        onClick={() => {
-                          if (!inspectorByBooking[booking.id]) { setMissingInspector(booking.id); return; }
-                          void workspace.approveInspectionBooking(booking.id, inspectorByBooking[booking.id]);
-                        }}
-                        pending={workspace.pendingAction === `approve:${booking.id}`}
-                        pendingLabel="Approving…"
-                        variant="primary"
-                      >
-                        Assign & approve
-                      </ActionButton>
-                      <ActionButton disabled={workspace.pendingAction !== null} onClick={() => workspace.bookingDecision.request({ action: "reject", booking })} variant="ghost">
-                        Decline
-                      </ActionButton>
-                      {missingInspector === booking.id && !inspectorByBooking[booking.id] ? (
-                        <small className="field-error" role="alert">Choose an inspector to assign first.</small>
-                      ) : null}
-                    </span>
-                  ) : null}
-                  {canBook && booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED" && !booking.changeRequests.some((change) => ["PENDING_ADMIN_APPROVAL", "PENDING_CUSTOMER_CONFIRMATION"].includes(change.status)) ? (
-                    <span className="row-actions">
-                      <ActionButton disabled={workspace.pendingAction !== null} onClick={() => workspace.openReschedule(booking)} variant="secondary">
-                        Request reschedule
-                      </ActionButton>
-                      <ActionButton disabled={workspace.pendingAction !== null} onClick={() => workspace.bookingDecision.request({ action: "cancel", booking })} variant="ghost">
-                        Cancel booking
-                      </ActionButton>
-                    </span>
-                  ) : null}
-                  {canApproveBookings && booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED" ? (
-                    <div className="assigned-inspector">
-                      <span>Assigned inspector:</span>
-                      <strong className="assigned-inspector__name">
-                        {workspace.inspectors.find((inspector) => inspector.id === booking.inspectorUserId)?.displayName ?? (booking.inspectorUserId ? "Assigned" : "Not assigned")}
-                      </strong>
-                      {hasOpenChangeRequest(booking) ? (
-                        <small className="field-hint">Cannot change inspector while a reschedule is pending.</small>
-                      ) : (
-                        <ActionButton
-                          aria-label={`Change inspector for ${booking.location.name}`}
-                          disabled={workspace.pendingAction !== null}
-                          onClick={() => void workspace.loadInspectors().then((loaded) => { if (loaded) setChangingInspector(booking.id); })}
-                          variant="secondary"
-                        >
-                          Change inspector
-                        </ActionButton>
-                      )}
-                    </div>
-                  ) : null}
-                  {canApproveBookings ? booking.changeRequests.filter((change) => change.status === "PENDING_ADMIN_APPROVAL").map((change) => (
-                    <span className="row-actions" key={change.id}>
-                      <time dateTime={change.startsAt}>Reschedule: {formatLocationDateTime(change.startsAt, booking.location.schedulingTimezone)}</time>
-                      <select
-                        aria-label={`Assign inspector for reschedule at ${booking.location.name}`}
-                        value={inspectorByBooking[change.id] ?? ""}
-                        onChange={(event) => setInspectorByBooking((current) => ({ ...current, [change.id]: event.target.value }))}
-                      >
-                        <option value="">Assign inspector</option>
-                        {workspace.inspectors.map((inspector) => (
-                          <option key={inspector.id} value={inspector.id}>{inspector.displayName}</option>
-                        ))}
-                      </select>
-                      <ActionButton
-                        disabled={workspace.pendingAction !== null}
-                        onClick={() => {
-                          if (!inspectorByBooking[change.id]) { setMissingInspector(change.id); return; }
-                          void workspace.approveInspectionBookingReschedule(change.id, inspectorByBooking[change.id]);
-                        }}
-                        pending={workspace.pendingAction === `approve-change:${change.id}`}
-                        pendingLabel="Approving…"
-                        variant="primary"
-                      >
-                        Approve reschedule
-                      </ActionButton>
-                      {missingInspector === change.id && !inspectorByBooking[change.id] ? (
-                        <small className="field-error" role="alert">Choose an inspector to assign first.</small>
-                      ) : null}
-                    </span>
-                  )) : null}
-                  {canApproveBookings ? booking.changeRequests.filter((change) => change.status === "PENDING_CUSTOMER_CONFIRMATION").map((change) => (
-                    <span className="row-actions" key={change.id}>
-                      <span className="mini-status status-review">Awaiting customer confirmation</span>
-                      <time dateTime={change.startsAt}>Proposed: {formatLocationDateTime(change.startsAt, booking.location.schedulingTimezone)}</time>
-                    </span>
-                  )) : null}
-                  {canBook && !canApproveBookings ? booking.changeRequests.filter((change) => change.status === "PENDING_ADMIN_APPROVAL").map((change) => (
-                    <span className="row-actions" key={change.id}>
-                      <span className="mini-status status-review">Awaiting admin approval</span>
-                      <time dateTime={change.startsAt}>Requested: {formatLocationDateTime(change.startsAt, booking.location.schedulingTimezone)}</time>
-                    </span>
-                  )) : null}
-                  {canBook && !canApproveBookings ? booking.changeRequests.filter((change) => change.status === "PENDING_CUSTOMER_CONFIRMATION").map((change) => (
-                    <span className="row-actions" key={change.id}>
-                      <time dateTime={change.startsAt}>Proposed: {formatLocationDateTime(change.startsAt, booking.location.schedulingTimezone)}</time>
-                      <ActionButton
-                        disabled={workspace.pendingAction !== null}
-                        onClick={() => void workspace.confirmInspectionBookingReschedule(change.id)}
-                        pending={workspace.pendingAction === `confirm:${change.id}`}
-                        pendingLabel="Confirming…"
-                        variant="primary"
-                      >
-                        Confirm reschedule
-                      </ActionButton>
-                    </span>
-                  )) : null}
-                </article>
+                <InspectionBookingCard
+                  booking={booking}
+                  canApproveBookings={canApproveBookings}
+                  canBook={canBook}
+                  inspectors={workspace.inspectors}
+                  key={booking.id}
+                  onApprove={(bookingId, inspectorId) => void workspace.approveInspectionBooking(bookingId, inspectorId)}
+                  onApproveReschedule={(changeId, inspectorId) => void workspace.approveInspectionBookingReschedule(changeId, inspectorId)}
+                  onCancel={(target) => workspace.bookingDecision.request({ action: "cancel", booking: target })}
+                  onChangeInspector={(target) => void workspace.loadInspectors().then((loaded) => { if (loaded) setChangingInspector(target.id); })}
+                  onConfirmReschedule={(changeId) => void workspace.confirmInspectionBookingReschedule(changeId)}
+                  onDecline={(target) => workspace.bookingDecision.request({ action: "reject", booking: target })}
+                  onRequestReschedule={workspace.openReschedule}
+                  pendingAction={workspace.pendingAction}
+                />
               ))}
               {!showAllBookings && workspace.bookings.length > 4 ? (
                 <button className="secondary-button compact-action" onClick={() => setShowAllBookings(true)} type="button">
