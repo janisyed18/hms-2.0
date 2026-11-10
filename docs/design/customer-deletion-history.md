@@ -1,7 +1,7 @@
 # Customer deletion with historical data preservation
 
 Status: implemented on `feature/customer-deletion-history`, awaiting independent review.
-Scope: backend (`modules/history`, `api/history.py`, `api/records.py`), Alembic `20261110_0027`, Staff web app.
+Scope: backend (`modules/history`, `api/history.py`, `api/records.py`), Alembic `20261110_0027` and `20261110_0028`, Staff web app.
 
 ## 1. What this is, and what it is not
 
@@ -51,7 +51,7 @@ already and are left as they are.
 
 ## 4. History schema
 
-Four insert-only tables, created by migration `20261110_0027` (no foreign keys to operational tables, so
+Four insert-only tables, created by migration `20261110_0027` (`20261110_0028` adds `previously_deleted_counts` separately, so a database that already ran 0027 upgrades cleanly) (no foreign keys to operational tables, so
 the archive survives whatever happens to them):
 
 * `history_customer_deletions`: one row per batch. Id, human number `DEL-{year}-{n}`, status

@@ -41,9 +41,6 @@ def upgrade() -> None:
             "snapshot_schema_version", sa.Integer(), nullable=False, server_default="1"
         ),
         sa.Column("record_counts", sa.JSON(), nullable=False),
-        sa.Column(
-            "previously_deleted_counts", sa.JSON(), nullable=False, server_default="{}"
-        ),
         sa.Column("total_records", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("evidence_files", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("evidence_bytes", sa.Integer(), nullable=False, server_default="0"),
