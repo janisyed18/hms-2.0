@@ -13,7 +13,7 @@ both decisions are approved here **and** a separate change to enable it is autho
 
 **Status: PENDING product-owner approval.**
 
-Already specified and implemented: a certificate belonging to an archived customer is reported with
+Already specified and implemented: a certificate held by a COMPLETED customer-deletion archive (not an ordinary Archive Customer) is reported with
 `historical: true` and `valid: false`; the customer name is withheld; the PDF is not publicly downloadable;
 revoked, superseded and expired states keep their meaning.
 
