@@ -286,7 +286,7 @@ fail closed when the protection is missing.
 4. **Recovery.** A documented and **tested** procedure is required before deletion is enabled anywhere
    (section 14). Cross-region replication is a separate disaster-recovery improvement.
 5. **Certificate wording** for archived certificates still needs product-owner sign-off (section 10). The
-   pending wording and retention decisions are tracked in [customer-deletion-approvals.md](customer-deletion-approvals.md).
+   wording and DEV retention approvals (2026-11-11) are recorded in [customer-deletion-approvals.md](customer-deletion-approvals.md).
 
 **Verified on DEV (2026-11-11).** The IAM actions the app needs for `HeadObject` and `GetObject` on a specific
 version (`s3:GetObjectVersion`, `s3:GetObjectRetention`) were exercised against the real DEV bucket: a write,

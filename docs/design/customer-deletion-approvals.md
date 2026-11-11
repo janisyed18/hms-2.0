@@ -1,23 +1,25 @@
 # Customer deletion: approval record
 
-Status of the two decisions that must be recorded before customer deletion can be enabled in DEV. Both are
-**pending**. Nothing here is an approval until the approver fills in the fields below. Engineering has not
-invented approvers, dates or references, and this record is not legal sign-off.
+Status of the two decisions that had to be recorded before customer deletion can be enabled in DEV. Both are
+**approved for DEV only** (2026-11-11, see below). This record is not legal sign-off, and nothing here approves
+production.
 
 Related: [design](customer-deletion-history.md) (sections 7, 10, 13, 14).
 
-Deletion stays disabled in DEV (`CUSTOMER_DELETION_ENABLED` unset, `HISTORY_RETENTION_APPROVAL` empty) until
-both decisions are approved here **and** a separate change to enable it is authorised.
+Deletion is still disabled in DEV (`CUSTOMER_DELETION_ENABLED` unset, `HISTORY_RETENTION_APPROVAL` empty) until a
+separate change to enable it is reviewed and authorised. The approval itself authorises preparing the DEV-only
+changes, not deploying them or enabling deletion.
 
 ## 1. Historical-certificate wording
 
-**Status: PENDING product-owner approval.**
+**Status: APPROVED for DEV (2026-11-11).** The approved wording is the proposed text below. The code still carries
+the older text until the alignment change (separate PR) merges.
 
 Already specified and implemented: a certificate held by a COMPLETED customer-deletion archive (not an ordinary Archive Customer) is reported with
 `historical: true` and `valid: false`; the customer name is withheld; the PDF is not publicly downloadable;
 revoked, superseded and expired states keep their meaning.
 
-Proposed customer-facing wording:
+Approved customer-facing wording:
 
 > **Historical Certificate**
 >
@@ -34,24 +36,24 @@ Wording currently in the code (`HISTORICAL_MESSAGE` in `backend/src/hms_backend/
 > This certificate was originally issued by HMS. The associated customer has since been removed from active
 > records. This certificate is retained for historical verification and is not valid for current operational use.
 
-The two differ. If the proposed wording is approved, aligning the code to it is a small separate change (the
-constant, plus any test or screen that asserts the text). It is not part of this record.
+The two differ. Aligning the code to the approved wording is a small separate change (the constant, plus any
+test or screen that asserts the text). It is not part of this record.
 
 | Field | Value |
 |---|---|
-| Approved wording (exact text) | _pending_ |
-| Approver (name and role) | _pending_ |
-| Date | _pending_ |
-| Reference (ticket, email or minute) | _pending_ |
+| Approved wording (exact text) | The proposed wording above, unchanged |
+| Approver (name and role) | Jani Syed, Senior Architect |
+| Date | 2026-11-11 |
+| Reference (ticket, email or minute) | https://github.com/janisyed18/hms-2.0/issues/125#issuecomment-6787691378 |
 
 ## 2. DEV retention
 
-**Status: PENDING approval by the responsible product or business owner.**
+**Status: APPROVED for DEV only (2026-11-11).**
 
-Engineering recommendation: approve the following for **DEV only**, which holds synthetic data. It matches what
-is deployed and what the recovery drill (design section 14) exercised.
+Approved for **DEV only**, which holds synthetic data. It matches what is deployed and what the recovery drill
+(design section 14) exercised.
 
-| Setting | Proposed decision |
+| Setting | Approved decision |
 |---|---|
 | Environment | DEV only |
 | Data | Synthetic test data only |
@@ -60,15 +62,15 @@ is deployed and what the recovery drill (design section 14) exercised.
 | Encryption | SSE-S3 |
 | Production retention | **Not approved.** Needs business and legal approval; COMPLIANCE preferred once approved |
 
-`HISTORY_RETENTION_APPROVAL` must name an actual approved decision. Populate it only after the fields below are
-filled in, using the reference recorded here. Do not use this recommendation, or a made-up ticket, in its place.
+`HISTORY_RETENTION_APPROVAL` must name an actual approved decision: use the reference recorded below. It stays
+empty in live DEV until the separate enablement change is authorised and deployed.
 
 | Field | Value |
 |---|---|
-| Approved retention for DEV | _pending_ |
-| Approver (name and role) | _pending_ |
-| Date | _pending_ |
-| Reference to set in `HISTORY_RETENTION_APPROVAL` | _pending_ |
+| Approved retention for DEV | 30 days, GOVERNANCE, SSE-S3, synthetic data only |
+| Approver (name and role) | Jani Syed, Senior Architect |
+| Date | 2026-11-11 |
+| Reference to set in `HISTORY_RETENTION_APPROVAL` | https://github.com/janisyed18/hms-2.0/issues/125#issuecomment-6787691378 |
 
 ## What is already complete (for context, not approvals)
 
