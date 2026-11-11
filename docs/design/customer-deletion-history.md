@@ -325,6 +325,41 @@ missing".
 5. Re-point the application at the restored database; do not move or recreate evidence objects.
 6. Record the date, who ran it, the batch used, the time taken and any gaps in this document.
 
-**Not yet done.** The drill itself has not been run. The automated tests cover the application's side
-(missing, altered or unlocked versions are detected, and database rows alone do not pass); they do not replace
-a restore of a real RDS snapshot against a real bucket.
+The automated tests cover the application's side (missing, altered or unlocked versions are detected, and
+database rows alone do not pass); they do not replace a restore of a real RDS snapshot against a real bucket.
+
+### Drill record: DEV, 2026-11-11 (passed)
+
+Run against the real DEV history bucket with synthetic data only. Live DEV was not written to, and deletion stayed
+disabled there: the deletion gate and a test-only retention approval were set as environment overrides on the drill
+task alone.
+
+| Item | Value |
+|---|---|
+| Source database | `hms-dev-postgres` (read only; point-in-time restore at 2026-11-11T01:31:02Z, Alembic `20261110_0029`) |
+| Isolated instance A | `hms-dev-recovery-drill-a`, restored from the source, non-public, own security group open to the ECS tasks only |
+| Synthetic batch | `DEL-2026-000001`, id `01a1c85b-acc8-7bfa-89c5-a57a29912a93`, created on A through the real deletion flow (one synthetic customer, one certificate PDF; 4 records plus the customer) |
+| Evidence | one object, version `xwTigYjwlb1lICo_bAdf0tzgk_3R8L2y`, GOVERNANCE until 2026-12-11T02:06:53Z |
+| Recovery snapshot | manual snapshot of A (`hms-dev-recovery-drill-snap`), then restored to instance B (`hms-dev-recovery-drill-b`) |
+| Integrity on A (before) | `verified: true`, 5 records, 1 file |
+| Integrity on B (after) | `verified: true`, 5 records, 1 file, no problems; recorded and re-read SHA-256 identical; version still locked with the recorded retention |
+
+Timings: restoring A from the source took about 27 minutes (including its first backup); snapshot 2m38s; restoring B
+from the snapshot 8m30s; verification task 68s. From the start of the snapshot restore to a verified result: about
+9m51s.
+
+What this proves, and what it does not:
+
+- It proves a restored database's history rows still reference the correct retained object version, and that the
+  integrity check passes against the real bucket from a recovered database.
+- Instance B came from a **manual snapshot** of A, not point-in-time recovery; A itself was a point-in-time restore
+  of the live database. The PITR path of the batch itself (restoring to a moment after the batch existed) was not
+  exercised.
+- It does not cover loss of the bucket (see step 3, and cross-region replication), COMPLIANCE mode, or a real
+  customer's evidence.
+- The drill's temporary instances, snapshot and security group were deleted afterwards. The two evidence objects it
+  and the storage test wrote remain in the history bucket under Object Lock until their retention ends (2026-12-11).
+
+Gaps found: none in the application. Run notes: the app's edge-origin check (`x-hms-edge-secret`) applies to
+in-process calls too, so a drill harness must send it; container overrides are limited to 8192 characters, so the
+script is passed compressed.
