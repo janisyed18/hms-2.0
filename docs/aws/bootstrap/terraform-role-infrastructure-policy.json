@@ -84,6 +84,15 @@
       "Resource": "arn:aws:s3:::hms-dev-*"
     },
     {
+      "Sid": "ManageHmsDevHistoryBucketProtection",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutBucketObjectLockConfiguration",
+        "s3:PutBucketVersioning"
+      ],
+      "Resource": "arn:aws:s3:::hms-dev-history-*"
+    },
+    {
       "Sid": "ManageHmsDevRuntimeAndNotifications",
       "Effect": "Allow",
       "Action": [

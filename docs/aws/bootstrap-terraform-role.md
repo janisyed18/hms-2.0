@@ -190,6 +190,35 @@ aws iam simulate-principal-policy --policy-source-arn "$ROLE_ARN" \
   --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text   # allowed
 ```
 
+### Reviewed policy update: history bucket Object Lock and versioning
+
+Creating the deleted-customer evidence bucket (`aws_s3_bucket.history`, Object Lock
+enabled) and its versioning needs two actions the role did not have; the first Apply
+that included them failed with `AccessDenied` on `s3:PutBucketObjectLockConfiguration`.
+`terraform-role-infrastructure-policy.json` gains one statement,
+`ManageHmsDevHistoryBucketProtection`, allowing only `s3:PutBucketObjectLockConfiguration`
+and `s3:PutBucketVersioning` on `arn:aws:s3:::hms-dev-history-*`. The media, staff and
+inspector buckets are not covered, and the application and deployment roles gain nothing.
+
+An SSO administrator applies it with the same `create-policy-version` loop as above, for
+`terraform-role-infrastructure-policy` only, **before** the next Plan that includes the
+history bucket. Then verify the live default policy version and simulate both actions
+(read-only):
+
+```bash
+ROLE_ARN=arn:aws:iam::${ACCOUNT_ID}:role/hms-dev-github-actions-terraform
+for ACTION in s3:PutBucketObjectLockConfiguration s3:PutBucketVersioning; do
+  aws iam simulate-principal-policy --policy-source-arn "$ROLE_ARN" \
+    --action-names "$ACTION" \
+    --resource-arns arn:aws:s3:::hms-dev-history-example \
+    --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text   # allowed
+  aws iam simulate-principal-policy --policy-source-arn "$ROLE_ARN" \
+    --action-names "$ACTION" \
+    --resource-arns arn:aws:s3:::hms-dev-media-example \
+    --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text   # implicitDeny
+done
+```
+
 ## Policy Scope
 
 The identity policy is intentionally explicit rather than using service or

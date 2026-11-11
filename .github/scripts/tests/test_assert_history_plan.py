@@ -48,7 +48,7 @@ GOOD = {
                {"block_public_acls": True, "block_public_policy": True,
                 "ignore_public_acls": True, "restrict_public_buckets": True}),
         change("aws_ecs_task_definition.api", "aws_ecs_task_definition",
-               ["delete", "create"]),
+               ["create", "delete"]),
         change("aws_db_instance.postgres", "aws_db_instance", ["no-op"]),
     ],
 }
@@ -110,6 +110,18 @@ class AssertHistoryPlanTests(unittest.TestCase):
             )
         )
         self.assertEqual(result.returncode, 1)
+
+    def test_destroy_before_create_task_definitions_fail(self) -> None:
+        result = self.mutated(
+            lambda p: p["resource_changes"][5]["change"].update(
+                actions=["delete", "create"]
+            )
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(
+            any("create-before-destroy" in l and "**FAIL**" in l
+                for l in result.stdout.splitlines())
+        )
 
     def test_changing_the_media_bucket_fails(self) -> None:
         result = self.mutated(

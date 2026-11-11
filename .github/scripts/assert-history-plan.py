@@ -398,6 +398,19 @@ def check_blast_radius(plan: dict[str, Any], checks: Checks) -> None:
         and str(item.get("type", "")).startswith(("aws_db_", "aws_s3_bucket"))
         and ".history" not in str(item.get("address", ""))
     ]
+    # A replaced task definition must register the new revision before the old one is
+    # deregistered, or a failure part-way leaves services on an inactive revision.
+    replaced = [
+        (item.get("change") or {}).get("actions")
+        for item in plan.get("resource_changes") or []
+        if item.get("type") == "aws_ecs_task_definition"
+        and "delete" in ((item.get("change") or {}).get("actions") or [])
+    ]
+    checks.check(
+        "ECS task definitions are replaced create-before-destroy",
+        None if not replaced else all(a == ["create", "delete"] for a in replaced),
+        "plan (action order)",
+    )
     checks.check(
         "Existing RDS and media/inspector buckets are not changed at all",
         not touched,
