@@ -46,10 +46,14 @@ router = APIRouter(prefix="/certificates", tags=["public-verification"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 
+# Product-owner approved wording (docs/design/customer-deletion-approvals.md). The
+# "Historical Certificate" heading belongs to whatever screen renders this message.
 HISTORICAL_MESSAGE = (
-    "This certificate was originally issued by HMS. The associated customer has "
-    "since been removed from active records. This certificate is retained for "
-    "historical verification and is not valid for current operational use."
+    "This certificate is retained for historical verification only because the "
+    "associated customer record has been removed from active HMS.\n\n"
+    "This certificate is not valid for current operational use. Existing expiry, "
+    "revocation or supersession information remains applicable.\n\n"
+    "Customer details and the original certificate PDF are not publicly available."
 )
 
 

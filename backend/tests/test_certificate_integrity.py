@@ -747,8 +747,10 @@ async def test_certificate_in_a_completed_archive_stays_verifiable_but_historica
     assert body["integrity"] == "VERIFIED"
     assert body["historical"] is True
     assert body["valid"] is False
-    assert "removed from active records" in body["message"]
+    assert "retained for historical verification only" in body["message"]
+    assert "removed from active HMS" in body["message"]
     assert "not valid for current operational use" in body["message"]
+    assert "not publicly available" in body["message"]
     assert body["customer_name"] != before["customer_name"]
     assert body["certificate_number"] == before["certificate_number"]
     assert download.status_code == 404
