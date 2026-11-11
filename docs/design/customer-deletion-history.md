@@ -285,12 +285,13 @@ fail closed when the protection is missing.
    would add separation of duties through the key policy at the cost of another resource.
 4. **Recovery.** A documented and **tested** procedure is required before deletion is enabled anywhere
    (section 14). Cross-region replication is a separate disaster-recovery improvement.
-5. **Certificate wording** for archived certificates still needs product-owner sign-off (section 10).
+5. **Certificate wording** for archived certificates still needs product-owner sign-off (section 10). The
+   pending wording and retention decisions are tracked in [customer-deletion-approvals.md](customer-deletion-approvals.md).
 
-**To verify on DEV before enabling deletion.** The IAM actions the app needs for `HeadObject` and
-`GetObject` on a specific version (`s3:GetObjectVersion`, `s3:GetObjectRetention`) are written from the AWS
-documentation and fake-client tests; they have not been exercised against a real bucket. Run one write, read
-and integrity check against the DEV bucket after the apply and confirm there is no AccessDenied.
+**Verified on DEV (2026-11-11).** The IAM actions the app needs for `HeadObject` and `GetObject` on a specific
+version (`s3:GetObjectVersion`, `s3:GetObjectRetention`) were exercised against the real DEV bucket: a write,
+version-pinned read, retention check and SHA-256 comparison ran with no AccessDenied, and the recovery drill
+(section 14) repeated them from a restored database.
 
 **Rollout order.** Terraform plan reviewed, then applied (creates the bucket and role policy and adds the
 environment variables, which re-registers the task definitions), then an API deploy, then the history
