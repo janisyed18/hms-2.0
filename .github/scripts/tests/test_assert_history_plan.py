@@ -28,6 +28,7 @@ GOOD = {
         "history_retention_years": {"value": 0},
         "history_retention_mode": {"value": "GOVERNANCE"},
         "history_retention_approval": {"value": ""},
+        "customer_deletion_enabled": {"value": False},
         "db_password": {"value": CANARY},
     },
     "resource_changes": [
@@ -92,6 +93,8 @@ class AssertHistoryPlanTests(unittest.TestCase):
                 block_public_acls=False),
             "approval": lambda p: p["variables"]["history_retention_approval"].update(
                 value="DEC-1"),
+            "enabled_without_approval": lambda p: p["variables"][
+                "customer_deletion_enabled"].update(value=True),
             "versioning": lambda p: p["resource_changes"][1]["change"]["after"][
                 "versioning_configuration"][0].update(status="Suspended"),
         }
@@ -136,6 +139,19 @@ class AssertHistoryPlanTests(unittest.TestCase):
         self.assertIn("UNVERIFIED", result.stdout)
         self.assertNotIn("**PASS** | plan", result.stdout.split("Fixed checks")[1].split(
             "UNVERIFIED means")[0])
+
+    def test_deletion_on_with_the_recorded_approval_reference_passes(self) -> None:
+        reference = (
+            "https://github.com/janisyed18/hms-2.0/issues/125#issuecomment-6787691378"
+        )
+
+        def enable(plan: dict) -> None:
+            plan["variables"]["customer_deletion_enabled"]["value"] = True
+            plan["variables"]["history_retention_approval"]["value"] = reference
+
+        result = self.mutated(enable)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("**FAIL**", result.stdout)
 
     def test_source_checks_fail_when_the_source_drifts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -22,6 +22,11 @@ from typing import Any
 
 PASS, FAIL, UNVERIFIED = "PASS", "FAIL", "UNVERIFIED"
 
+# Recorded in docs/design/customer-deletion-approvals.md (DEV only, 2026-11-11).
+APPROVED_DEV_REFERENCE = (
+    "https://github.com/janisyed18/hms-2.0/issues/125#issuecomment-6787691378"
+)
+
 APP_EVIDENCE_ACTIONS = {
     "s3:PutObject",
     "s3:GetObject",
@@ -192,10 +197,18 @@ def check_variables(plan: dict[str, Any], checks: Checks) -> None:
     def value(name: str) -> Any:
         return (variables.get(name) or {}).get("value")
 
+    approval_value = value("history_retention_approval")
     checks.check(
-        "Evidence retention approval is empty (deletion stays unavailable)",
+        "Evidence retention approval is empty or the recorded DEV approval reference",
         None if "history_retention_approval" not in variables
-        else value("history_retention_approval") in ("", None),
+        else approval_value in ("", None, APPROVED_DEV_REFERENCE),
+        "plan variables",
+    )
+    checks.check(
+        "Customer deletion is off, or on only with the recorded approval reference",
+        None if "customer_deletion_enabled" not in variables
+        else value("customer_deletion_enabled") in (False, None)
+        or approval_value == APPROVED_DEV_REFERENCE,
         "plan variables",
     )
     checks.check(
@@ -352,17 +365,28 @@ def check_source(directory: Path, checks: Checks) -> None:
         ),
         "SOURCE (policy contains values known only after apply)",
     )
-    enabled = re.search(r'name\s*=\s*"CUSTOMER_DELETION_ENABLED"\s*\n\s*value\s*=\s*(.+)', main)
+    # The only way the flag can reach a container is the conditional below, which
+    # sets it to "true" when var.customer_deletion_enabled (default false) is true.
+    flag_ok = (
+        len(re.findall(r'"CUSTOMER_DELETION_ENABLED"', main)) == 1
+        and re.search(
+            r'var\.customer_deletion_enabled\s*\?\s*\[\s*\{\s*'
+            r'name\s*=\s*"CUSTOMER_DELETION_ENABLED"\s*\n\s*value\s*=\s*"true"'
+            r'\s*\},?\s*\]\s*:\s*\[\]\)',
+            main,
+        )
+        is not None
+    )
     checks.check(
-        "CUSTOMER_DELETION_ENABLED is absent or false",
-        enabled is None or enabled.group(1).strip().strip('"').lower() == "false",
+        "CUSTOMER_DELETION_ENABLED is set only by var.customer_deletion_enabled",
+        flag_ok,
         "SOURCE (container definitions contain values known only after apply)",
     )
     approval = re.search(
         r'name\s*=\s*"HISTORY_RETENTION_APPROVAL"\s*\n\s*value\s*=\s*(.+)', main
     )
     checks.check(
-        "HISTORY_RETENTION_APPROVAL comes only from the (empty) approval variable",
+        "HISTORY_RETENTION_APPROVAL comes only from the approval variable",
         approval is not None
         and approval.group(1).strip() == "var.history_retention_approval",
         "SOURCE (container definitions contain values known only after apply)",
