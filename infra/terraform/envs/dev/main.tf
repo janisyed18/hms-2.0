@@ -1395,6 +1395,13 @@ resource "aws_ecs_task_definition" "api" {
       }
     }
   ])
+
+  # A changed container definition registers the new revision before the old one
+  # is deregistered. Without this, a failure part-way through an apply leaves the
+  # services pointing at an inactive revision with no active replacement.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_ecs_task_definition" "migrate" {
@@ -1433,6 +1440,13 @@ resource "aws_ecs_task_definition" "migrate" {
       }
     }
   ])
+
+  # A changed container definition registers the new revision before the old one
+  # is deregistered. Without this, a failure part-way through an apply leaves the
+  # services pointing at an inactive revision with no active replacement.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_ecs_task_definition" "worker" {
@@ -1473,6 +1487,13 @@ resource "aws_ecs_task_definition" "worker" {
       }
     }
   ])
+
+  # A changed container definition registers the new revision before the old one
+  # is deregistered. Without this, a failure part-way through an apply leaves the
+  # services pointing at an inactive revision with no active replacement.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_ecs_task_definition" "beat" {
@@ -1513,6 +1534,13 @@ resource "aws_ecs_task_definition" "beat" {
       }
     }
   ])
+
+  # A changed container definition registers the new revision before the old one
+  # is deregistered. Without this, a failure part-way through an apply leaves the
+  # services pointing at an inactive revision with no active replacement.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_ecs_task_definition" "certificate_engine" {
@@ -1602,6 +1630,13 @@ resource "aws_ecs_task_definition" "certificate_engine" {
       }
     }
   ])
+
+  # A changed container definition registers the new revision before the old one
+  # is deregistered. Without this, a failure part-way through an apply leaves the
+  # services pointing at an inactive revision with no active replacement.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_ecs_service" "certificate_engine" {
