@@ -191,15 +191,15 @@ variable "history_retention_years" {
 }
 
 variable "history_retention_approval" {
-  description = "Reference (ticket or decision record) approving this environment's evidence retention period. Empty by default: the backend keeps customer deletion unavailable outside local/test until this is set, so applying the infrastructure alone never enables deletion."
+  description = "Reference (ticket or decision record) approving this environment's evidence retention period. DEV: the recorded 2026-11-11 approval (see docs/design/customer-deletion-approvals.md). The backend keeps customer deletion unavailable outside local/test while this is empty."
   type        = string
-  default     = ""
+  default     = "https://github.com/janisyed18/hms-2.0/issues/125#issuecomment-6787691378"
 }
 
 variable "customer_deletion_enabled" {
-  description = "Turn on customer deletion with preserved history in the backend. Off by default. Also needs history_retention_approval; deploying the infrastructure alone never enables it."
+  description = "Turn on customer deletion with preserved history in the backend. DEV only: enabled by the reviewed change that records the approval. Also needs history_retention_approval; production must not reuse this."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "enable_deletion_protection" {
