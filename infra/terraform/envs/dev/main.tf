@@ -159,7 +159,7 @@ locals {
     },
   ])
 
-  backend_environment = [
+  backend_environment = concat([
     {
       name  = "ENVIRONMENT"
       value = var.environment
@@ -291,7 +291,15 @@ locals {
       name  = "ISSUER_NAME"
       value = "BAT Engineering Pty Ltd"
     },
-  ]
+    ],
+    # Present only when explicitly enabled; absent means the backend keeps customer
+    # deletion off. Also needs HISTORY_RETENTION_APPROVAL (the app refuses otherwise).
+    var.customer_deletion_enabled ? [
+      {
+        name  = "CUSTOMER_DELETION_ENABLED"
+        value = "true"
+      },
+  ] : [])
 
   backend_image            = "${aws_ecr_repository.api.repository_url}:${var.image_tag}"
   certificate_engine_image = "${aws_ecr_repository.certificate_engine.repository_url}:${var.image_tag}"

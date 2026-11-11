@@ -196,6 +196,12 @@ variable "history_retention_approval" {
   default     = ""
 }
 
+variable "customer_deletion_enabled" {
+  description = "Turn on customer deletion with preserved history in the backend. Off by default. Also needs history_retention_approval; deploying the infrastructure alone never enables it."
+  type        = bool
+  default     = false
+}
+
 variable "enable_deletion_protection" {
   description = "Enable deletion protection for stateful resources."
   type        = bool
