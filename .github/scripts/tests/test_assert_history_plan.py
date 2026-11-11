@@ -105,6 +105,34 @@ class AssertHistoryPlanTests(unittest.TestCase):
                 self.assertIn("FAIL", result.stdout)
                 self.assertNotIn(CANARY, result.stdout)
 
+    def test_existing_unchanged_protected_history_bucket_passes(self) -> None:
+        result = self.mutated(
+            lambda p: p["resource_changes"][0]["change"].update(actions=["no-op"])
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn("FAIL", result.stdout)
+
+    def test_history_bucket_without_lock_or_with_destructive_action_fails(self) -> None:
+        cases = {
+            "no lock, new": lambda c: c["after"].update(object_lock_enabled=False),
+            "no lock, existing": lambda c: c.update(
+                actions=["no-op"], after={"object_lock_enabled": False}),
+            "lock unknown": lambda c: c.update(after={}),
+            "update": lambda c: c.update(actions=["update"]),
+            "replace": lambda c: c.update(actions=["delete", "create"]),
+            "replace, create first": lambda c: c.update(actions=["create", "delete"]),
+            "delete": lambda c: c.update(actions=["delete"]),
+        }
+        for name, edit in cases.items():
+            with self.subTest(name):
+                result = self.mutated(lambda p: edit(p["resource_changes"][0]["change"]))
+                self.assertEqual(result.returncode, 1)
+                self.assertTrue(
+                    any("Object Lock enabled and is new or unchanged" in l
+                        and "**FAIL**" in l for l in result.stdout.splitlines()),
+                    result.stdout,
+                )
+
     def test_replacing_stateful_resources_fails(self) -> None:
         result = self.mutated(
             lambda p: p["resource_changes"].append(

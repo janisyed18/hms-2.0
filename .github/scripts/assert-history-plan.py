@@ -122,8 +122,12 @@ def check_bucket(plan: dict[str, Any], checks: Checks) -> None:
     bucket = _resource(plan, "aws_s3_bucket.history")
     after = (bucket or {}).get("after") or {}
     checks.check(
-        "History bucket is created with Object Lock enabled",
-        None if bucket is None else bucket.get("actions") == ["create"]
+        "History bucket has Object Lock enabled and is new or unchanged",
+        # An existing protected bucket plans as no-op; any update, replacement or
+        # deletion of the evidence bucket must still fail the review.
+        None
+        if bucket is None
+        else bucket.get("actions") in (["create"], ["no-op"])
         and after.get("object_lock_enabled") is True,
         "plan",
     )
