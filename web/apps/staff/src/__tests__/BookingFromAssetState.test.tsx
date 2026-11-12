@@ -23,8 +23,9 @@ vi.mock("../api/hmsClient", async (importOriginal) => ({
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => { resolve = res; });
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
 }
 
 const placed = (id: string, number: string, customer: string, locationId: string, location: string) => ({
@@ -87,6 +88,24 @@ describe("booking started from an asset in the address", () => {
     expect(screen.getByRole("combobox", { name: "Booking customer" })).toHaveValue("Beta Co");
     await waitFor(() => expect(checked().join(" ")).toContain("ASSET-B"));
     expect(checked().join(" ")).not.toContain("ASSET-A");
+  });
+
+  it("keeps Asset B's booking when Asset A's slow inspector load fails after the address moved", async () => {
+    client.getAsset.mockImplementation(async (id: string) => all.find((item) => item.id === id));
+    const slowInspectors = deferred<never>();
+    client.listAdminUsers
+      .mockImplementationOnce(() => slowInspectors.promise)
+      .mockResolvedValue({ total: 1, etag: null, items: [{ id: "ins-1", displayName: "Ben Brook", role: "INSPECTOR", accountStatus: "ACTIVE" }] });
+    const handled = vi.fn();
+    const view = render(<InspectionsWorkspace bookAssetId="a" canApprove canApproveBookings canBook canWrite onBookAssetHandled={handled} />);
+    await waitFor(() => expect(client.listAdminUsers).toHaveBeenCalledTimes(1));
+    view.rerender(<InspectionsWorkspace bookAssetId="b" canApprove canApproveBookings canBook canWrite onBookAssetHandled={handled} />);
+    await waitFor(() => expect(checked().join(" ")).toContain("ASSET-B"));
+    slowInspectors.reject(new Error("late failure for A"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByRole("combobox", { name: "Booking customer" })).toHaveValue("Beta Co");
+    expect(checked().join(" ")).toContain("ASSET-B");
+    expect(handled).not.toHaveBeenCalled();
   });
 
   it("does not open a booking, or even load the asset, for someone who may not book", async () => {

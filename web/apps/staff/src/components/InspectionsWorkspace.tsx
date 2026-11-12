@@ -117,7 +117,11 @@ export function InspectionsWorkspace({
       }
       if (!active) return;
       setBookingAsset({ asset, opened: false });
-      if (!(await openBookingRef.current())) {
+      const opened = await openBookingRef.current();
+      // Opening waits on the inspector list; by then the address may have moved to another asset, and a
+      // late failure for this one must not clear that one's booking context.
+      if (!active) return;
+      if (!opened) {
         setBookingAsset(null);
         handled.current?.();
       }
