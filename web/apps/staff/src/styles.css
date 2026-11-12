@@ -3271,6 +3271,7 @@ tbody tr.is-selected {
 
 .detail-page-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -3278,6 +3279,7 @@ tbody tr.is-selected {
 
 .detail-page-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }

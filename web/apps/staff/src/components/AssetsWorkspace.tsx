@@ -74,11 +74,14 @@ export function AssetsWorkspace({
   routeCustomerLabel,
   onAssetRouteChange,
   onCustomerRouteChange,
+  onBookInspection,
   workflowNavigation
 }: {
   canWrite: boolean;
   /** Only a Super Admin deletes an asset; everyone else edits it or sets its lifecycle to Retired or Condemned. */
   canDelete?: boolean;
+  /** Starts an inspection booking from an asset; omitted when this person cannot book. */
+  onBookInspection?: (asset: AssetRecord) => void;
   /** Where the workflow's next action can go in this app. Editing the asset is handled here. */
   workflowNavigation?: { canOpen: (action: AssetWorkflowAction) => boolean; open: (action: AssetWorkflowAction) => void };
   /** The asset the URL names; the URL, not this component, is the record of which asset is open. */
@@ -215,7 +218,7 @@ export function AssetsWorkspace({
                 event.stopPropagation();
                 workspace.requestDelete(asset);
               }}
-              variant="ghost"
+              variant="destructive"
             >
               Delete
             </ActionButton>
@@ -233,6 +236,7 @@ export function AssetsWorkspace({
         onBack={workspace.closeDetail}
         onCopy={workspace.copyAsset}
         onEdit={workspace.openEdit}
+        onBookInspection={onBookInspection}
         canOpenWorkflowAction={(action) =>
           action.code === "EDIT_ASSET" ? canWrite : workflowNavigation?.canOpen(action) ?? false
         }

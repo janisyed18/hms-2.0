@@ -111,13 +111,39 @@ describe("Staff customer detail and cards", () => {
     const onAssetOpen = vi.fn();
     client.listAssets.mockResolvedValue(list([asset("1", "HMS-373CEBA88", "Main Transfer Hose"), asset("3", "HMS-333", null)]));
     render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onAssetOpen={onAssetOpen} onClose={vi.fn()} onEdit={vi.fn()} onTabChange={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: /^View / }));
     const link = await screen.findByRole("button", { name: "Open asset Main Transfer Hose, HMS-373CEBA88" });
     expect(link).toHaveTextContent("Main Transfer Hose");
     expect(link).toHaveTextContent("Asset #HMS-373CEBA88");
     expect(screen.getByRole("button", { name: "Open asset HMS-333" })).toBeInTheDocument();
     await user.click(link);
     expect(onAssetOpen).toHaveBeenCalledWith("1");
+  });
+
+  it("links a single asset under the count, by the asset's real id", async () => {
+    const user = userEvent.setup();
+    const onAssetOpen = vi.fn();
+    client.listAssets.mockResolvedValue(list([asset("real-id-9", "HMS-9", null)]));
+    render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onAssetOpen={onAssetOpen} onClose={vi.fn()} onEdit={vi.fn()} onTabChange={vi.fn()} />);
+    const link = await screen.findByRole("button", { name: "Open asset HMS-9" });
+    expect(screen.getByText("asset")).toBeInTheDocument();
+    await user.click(link);
+    expect(onAssetOpen).toHaveBeenCalledWith("real-id-9");
+  });
+
+  it("opens each of several assets from its own link without opening the View panel", async () => {
+    const user = userEvent.setup();
+    const onAssetOpen = vi.fn();
+    render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onAssetOpen={onAssetOpen} onClose={vi.fn()} onEdit={vi.fn()} onTabChange={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Open asset HMS-333" }));
+    await user.click(screen.getByRole("button", { name: "Open asset Main Transfer Hose, HMS-373CEBA88" }));
+    expect(onAssetOpen.mock.calls.map(([id]) => id)).toEqual(["3", "1"]);
+  });
+
+  it("shows an empty state, and no link, for a location with no assets", async () => {
+    client.listAssets.mockResolvedValue(list([]));
+    render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onAssetOpen={vi.fn()} onClose={vi.fn()} onEdit={vi.fn()} onTabChange={vi.fn()} />);
+    expect(await screen.findByText("No assets at this location.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Open asset/ })).toBeNull();
   });
 
   it("derives a card's initials from the first two words of the customer's name", () => {

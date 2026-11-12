@@ -52,7 +52,7 @@ export function ReferenceWorkspace({ canManage, canDelete = false }: ReferenceWo
         <span className="row-actions">
           <ActionButton onClick={() => workspace.openEdit(record)} variant="secondary">Edit</ActionButton>
           <ActionButton onClick={() => void workspace.toggleEnabled(record)} variant="ghost">{record.enabled ? "Disable" : "Enable"}</ActionButton>
-          {canDelete ? <ActionButton onClick={() => workspace.remove.request(record)} variant="ghost">Delete</ActionButton> : null}
+          {canDelete ? <ActionButton onClick={() => workspace.remove.request(record)} variant="destructive">Delete</ActionButton> : null}
         </span>
       ) : "Read only"
     }

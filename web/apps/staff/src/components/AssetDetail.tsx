@@ -1,4 +1,4 @@
-import { ArrowLeft, ClipboardCheck, Copy, FileCheck2, Edit3, X } from "lucide-react";
+import { ArrowLeft, CalendarPlus, ClipboardCheck, Copy, FileCheck2, Edit3, X } from "lucide-react";
 
 import type { AssetRecord, AssetWorkflowAction } from "../domain/types";
 import { AssetWorkflowCard } from "./AssetWorkflowCard";
@@ -10,6 +10,8 @@ interface AssetDetailProps {
   onBack: () => void;
   onCopy: (asset: AssetRecord) => void;
   onEdit: (asset: AssetRecord) => void;
+  /** Present only when this person may book inspections: opens the booking form started from this asset. */
+  onBookInspection?: (asset: AssetRecord) => void;
   canOpenWorkflowAction: (action: AssetWorkflowAction) => boolean;
   onWorkflowAction: (action: AssetWorkflowAction) => void;
 }
@@ -55,7 +57,7 @@ function historyStatus(status: string) {
   return `mini-status ${status.toLowerCase().replaceAll("_", "-")}`;
 }
 
-export function AssetDetail({ asset, canWrite, onBack, onCopy, onEdit, canOpenWorkflowAction, onWorkflowAction }: AssetDetailProps) {
+export function AssetDetail({ asset, canWrite, onBack, onCopy, onEdit, canOpenWorkflowAction, onWorkflowAction, onBookInspection }: AssetDetailProps) {
   const assetName = assetDisplayName(asset);
   const { inspectionHistory, certificateHistory } = asset;
 
@@ -75,13 +77,19 @@ export function AssetDetail({ asset, canWrite, onBack, onCopy, onEdit, canOpenWo
           >
             <X aria-hidden="true" size={16} />
           </button>
+          {onBookInspection ? (
+            <button className="primary-button" onClick={() => onBookInspection(asset)} type="button">
+              <CalendarPlus aria-hidden="true" size={16} />
+              Book Inspection
+            </button>
+          ) : null}
           {canWrite ? (
             <>
               <button className="secondary-button" onClick={() => onCopy(asset)} type="button">
                 <Copy aria-hidden="true" size={16} />
                 Copy
               </button>
-              <button className="primary-button" onClick={() => onEdit(asset)} type="button">
+              <button className="secondary-button" onClick={() => onEdit(asset)} type="button">
                 <Edit3 aria-hidden="true" size={16} />
                 Edit
               </button>

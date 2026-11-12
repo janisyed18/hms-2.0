@@ -161,9 +161,10 @@ export function useInspectionsWorkspace(
       return false;
     }
   }
-  async function openBooking() {
-    if (!(await loadInspectors())) return;
+  async function openBooking(): Promise<boolean> {
+    if (!(await loadInspectors())) return false;
     setRescheduleBooking(null); setBookingFormOpen(true);
+    return true;
   }
   function openReschedule(booking: InspectionBookingRecord) { setRescheduleBooking(booking); setBookingFormOpen(true); }
   function openDetail(inspection: InspectionRecord) { setSelectedId(inspection.id); }

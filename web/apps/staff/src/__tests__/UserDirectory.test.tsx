@@ -105,7 +105,7 @@ describe("user discovery", () => {
     expect(within(metrics).getByText("33")).toBeInTheDocument();
     expect(screen.getByText("Admin Seats").parentElement).toHaveTextContent("4"); // 3 HMS + 1 Super
     expect(screen.getByText("Reviewer Seats").parentElement).toHaveTextContent("6");
-    expect(screen.getByText("20 users")).toBeInTheDocument(); // role matrix: inspectors
+    expect(screen.queryByText("Role Matrix")).not.toBeInTheDocument();
   });
 });
 

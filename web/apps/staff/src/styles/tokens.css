@@ -61,6 +61,12 @@
   --control-height-mobile: 44px;
   --icon-control-size: 40px;
   --control-radius: 8px;
+  /* Dropdowns (the Select, Combobox, their menus and native lists) share one shape; the Inspector reassign list is the reference. */
+  --dropdown-radius: 10px;
+  --button-primary: #2468d6;
+  --button-primary-hover: #1d57b5;
+  --button-danger: #d13a3f;
+  --button-danger-hover: #b92f34;
   --card-radius: 10px;
   --border-hover: var(--color-neutral-500);
   --surface-raised: var(--panel);
@@ -113,6 +119,10 @@
   --shadow-soft: 0 6px 18px rgb(15 23 42 / 6%);
   --shadow: 0 16px 38px rgb(15 23 42 / 12%);
   --focus: 0 0 0 3px rgb(47 111 218 / 22%);
+  --button-primary: #1f5fbf;
+  --button-primary-hover: #174ea6;
+  --button-danger: #b42318;
+  --button-danger-hover: #912018;
 }
 
 html {

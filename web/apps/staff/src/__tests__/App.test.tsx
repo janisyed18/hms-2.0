@@ -1401,7 +1401,7 @@ describe("App", () => {
 
     await user.click(screen.getByRole("button", { name: "Users & Roles" }));
     expect(await screen.findByRole("heading", { name: "Users & Roles" })).toBeVisible();
-    expect(await screen.findByText("Role Matrix")).toBeVisible();
+    expect(screen.queryByText("Role Matrix")).not.toBeInTheDocument();
     expect(await screen.findByText("Alex Williams")).toBeVisible();
     expect(screen.getByRole("table", { name: "User access records" })).toHaveTextContent(
       "Alex Williams"

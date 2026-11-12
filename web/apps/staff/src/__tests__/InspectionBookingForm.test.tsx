@@ -106,6 +106,75 @@ beforeEach(() => {
   listInspectionAvailability.mockImplementation(async ({ locationId }: { locationId: string }) => slots(locationId));
 });
 
+describe("booking started from an asset", () => {
+  it("chooses the asset's customer, location and the asset itself, and leaves everything else blank", async () => {
+    renderForm({ initialAsset: assets.find((item) => item.id === "a3") });
+
+    expect(screen.getByRole("combobox", { name: "Booking customer" })).toHaveValue("TH Industries");
+    await waitFor(() => expect(screen.getByLabelText("Booking location")).toHaveTextContent("Harris Park"));
+    const labels = await assetBoxes();
+    expect(labels).toContain("ASSET-A3");
+    expect(screen.getAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked)).toHaveLength(1);
+    expect(screen.getByLabelText("Preferred inspection date")).toHaveValue("");
+    expect(screen.getByLabelText("Additional inspection information")).toHaveValue("");
+    expect(submitButton()).toBeDisabled();
+  });
+
+  it("submits the asset's own customer, location and id once a time is chosen", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderForm({ initialAsset: assets.find((item) => item.id === "a3") });
+    await assetBoxes();
+    await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
+    await choose(user, await screen.findByLabelText("Available inspection time"), "loc-a-quote-1");
+    await user.click(submitButton());
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ customerId: "cust-1", locationId: "loc-a", assetIds: ["a3"], availabilityQuoteId: "loc-a-quote-1" }));
+  });
+
+  it("leaves the location and assets blank for an asset that has no location", async () => {
+    const unplaced = { ...assets[0], id: "z1", assetNumber: "ASSET-Z1", location: null } as unknown as AssetRecord;
+    renderForm({ initialAsset: unplaced });
+    expect(screen.getByRole("combobox", { name: "Booking customer" })).toHaveValue("TH Industries");
+    expect(screen.getByText("Choose a location to see its assets.")).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("ASSET-Z1 has no location recorded");
+    expect(screen.queryAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked)).toHaveLength(0);
+  });
+});
+
+describe("changing what an asset started", () => {
+  it("clears the assets, date and chosen time when the location is changed after the prefill", async () => {
+    const user = userEvent.setup();
+    renderForm({ initialAsset: assets.find((item) => item.id === "a3") });
+    await assetBoxes();
+    await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
+    await choose(user, await screen.findByLabelText("Available inspection time"), "loc-a-quote-1");
+    await choose(user, screen.getByLabelText("Booking location"), "loc-b");
+    await waitFor(() => expect(screen.getByLabelText("Preferred inspection date")).toHaveValue(""));
+    expect(screen.getAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked)).toHaveLength(0);
+    expect(submitButton()).toBeDisabled();
+  });
+
+  it("clears the location and assets when the customer is changed after the prefill", async () => {
+    const user = userEvent.setup();
+    renderForm({ initialAsset: assets.find((item) => item.id === "a3") });
+    await assetBoxes();
+    await pickCustomer(user, "cust-2");
+    expect(screen.getByLabelText("Booking location")).not.toHaveTextContent("Harris Park");
+    expect(screen.queryAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked)).toHaveLength(0);
+    expect(submitButton()).toBeDisabled();
+  });
+
+  it("reloads every field for a different asset, even after the first one was edited", async () => {
+    const user = userEvent.setup();
+    const { rerender, props } = renderForm({ initialAsset: assets.find((item) => item.id === "a3") });
+    await assetBoxes();
+    await user.type(screen.getByLabelText("Additional inspection information"), "gate code 12");
+    rerender(<InspectionBookingForm {...props} initialAsset={assets.find((item) => item.id === "b1")} />);
+    await waitFor(() => expect(screen.getByLabelText("Booking location")).toHaveTextContent("Preston"));
+    expect(screen.getByLabelText("Additional inspection information")).toHaveValue("");
+    await waitFor(() => expect(screen.getAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked)).toHaveLength(1));
+  });
+});
+
 describe("new booking", () => {
   it("starts with no customer, no location, no assets and nothing submittable", () => {
     renderForm();

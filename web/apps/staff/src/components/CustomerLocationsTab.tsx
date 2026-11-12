@@ -11,6 +11,9 @@ import { friendlyApiError } from "./interaction/friendlyApiError";
 import { LocationEditor } from "./LocationEditor";
 import { scheduleSummary } from "./LocationFields";
 
+/** Asset links shown on a location card before "+N more"; the rest are one click away. */
+const ASSET_LINK_PREVIEW = 4;
+
 export const FINAL_LOCATION_MESSAGE = "A customer must have at least one location. Add another location before deleting this one.";
 
 function googleMapsUrl(location: CustomerLocation) {
@@ -116,14 +119,39 @@ export function CustomerLocationsTab({
                 ) : null}
               </div>
               <p className="customer-location-contact">{(location.contacts ?? []).length ? `${(location.contacts ?? []).length} location contact${(location.contacts ?? []).length === 1 ? "" : "s"}` : location.siteContactName ? `Site contact: ${location.siteContactName}` : "Site contact not recorded"}</p>
-              <strong>{isLoadingAssets ? "…" : locationAssets.length}<small>{locationAssets.length === 1 ? "asset" : "assets"}</small></strong>
+              <div className="customer-location-assets">
+                {isLoadingAssets ? (
+                  <strong aria-label="Loading assets" className="customer-location-asset-count">…</strong>
+                ) : (
+                  <strong className="customer-location-asset-count">{locationAssets.length}<small>{locationAssets.length === 1 ? "asset" : "assets"}</small></strong>
+                )}
+                {!isLoadingAssets && locationAssets.length === 0 ? <p className="customer-location-no-assets">No assets at this location.</p> : null}
+                {locationAssets.length > 0 ? (
+                  <ul aria-label={`Assets at ${location.name}`} className="customer-location-asset-chips">
+                    {(isOpen ? locationAssets : locationAssets.slice(0, ASSET_LINK_PREVIEW)).map((asset) => (
+                      <li key={asset.id}>
+                        <button aria-label={`Open asset ${assetAccessibleName(asset)}`} className="customer-location-asset-link" onClick={() => onAssetOpen(asset.id)} type="button">
+                          <AssetIdentity asset={asset} />
+                        </button>
+                      </li>
+                    ))}
+                    {!isOpen && locationAssets.length > ASSET_LINK_PREVIEW ? (
+                      <li>
+                        <button aria-label={`Show all ${locationAssets.length} assets at ${location.name}`} className="customer-location-asset-link customer-location-asset-more" onClick={() => setExpanded(location.id)} type="button">
+                          +{locationAssets.length - ASSET_LINK_PREVIEW} more
+                        </button>
+                      </li>
+                    ) : null}
+                  </ul>
+                ) : null}
+              </div>
               <span className="row-actions">
                 <ActionButton aria-expanded={isOpen} aria-label={`View ${location.name}`} onClick={() => setExpanded(isOpen ? null : location.id)} variant="ghost">
                   <ChevronDown aria-hidden="true" size={15} /> {isOpen ? "Hide" : "View"}
                 </ActionButton>
                 {canWrite ? <ActionButton aria-label={`Edit ${location.name}`} onClick={() => setEditing(location)} variant="secondary">Edit</ActionButton> : null}
                 {canDelete ? (
-                  <ActionButton aria-label={`Delete ${location.name}`} disabled={isFinal} onClick={() => { setDeleteError(null); setDeleting(location); }} variant="ghost">Delete</ActionButton>
+                  <ActionButton aria-label={`Delete ${location.name}`} disabled={isFinal} onClick={() => { setDeleteError(null); setDeleting(location); }} variant="destructive">Delete</ActionButton>
                 ) : null}
               </span>
               {canDelete && isFinal ? <p className="empty-requirements">{FINAL_LOCATION_MESSAGE}</p> : null}
@@ -135,15 +163,6 @@ export function CustomerLocationsTab({
                   <div><h5>Additional requirements</h5><RequirementList emptyLabel="No additional requirements." items={location.additionalRequirements} /></div>
                   <div><h5>Location Notes</h5><p>{location.notes || "No location notes recorded."}</p></div>
                   <div><h5>Location contacts</h5><ul>{(location.contacts ?? []).map((contact, index) => <li key={contact.id ?? index}>{contact.name}{contact.role ? ` · ${contact.role}` : ""}{contact.phone ? ` · ${contact.phone}` : ""}{contact.email ? ` · ${contact.email}` : ""}</li>)}</ul></div>
-                  <ul aria-label={`Assets at ${location.name}`}>
-                    {locationAssets.map((asset) => (
-                      <li key={asset.id}>
-                        <button aria-label={`Open asset ${assetAccessibleName(asset)}`} className="customer-location-asset-link" onClick={() => onAssetOpen(asset.id)} type="button">
-                          <AssetIdentity asset={asset} />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
                 </div>
               ) : null}
             </article>
