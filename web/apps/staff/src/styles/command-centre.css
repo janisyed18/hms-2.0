@@ -4494,6 +4494,12 @@ button:active:not(:disabled) {
   background: var(--panel);
 }
 
+/* A sticky cell is its own stacking context, so the open menu inside it would sit under the
+   Manage buttons of the rows below. Lift the cell that holds the menu above them. */
+.user-directory-table td:last-child:has(.user-action-menu) {
+  z-index: 10;
+}
+
 @media (max-width: 1180px) {
   .user-directory-table th,
   .user-directory-table td { padding: 10px 8px; }
