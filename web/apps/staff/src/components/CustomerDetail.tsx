@@ -16,7 +16,8 @@ interface CustomerDetailProps {
   /** Super Admin: the only role that may archive, restore or delete, and delete locations and contacts. */
   canDelete?: boolean;
   customer: CustomerRecord | null;
-  onAssetOpen: (assetId: string) => void;
+  /** Opens the Assets register narrowed to one location of this customer. */
+  onLocationAssetsOpen: (customerId: string, locationId: string) => void;
   /** Called with the customer as the server now has it, after a location or contact changed. */
   onCustomerChange?: (customer: CustomerRecord) => void;
   onClose: () => void;
@@ -60,7 +61,7 @@ export function CustomerDetail({
   canWrite,
   canDelete = false,
   customer,
-  onAssetOpen,
+  onLocationAssetsOpen,
   onCustomerChange,
   onClose,
   onEdit,
@@ -252,7 +253,7 @@ export function CustomerDetail({
                 canWrite={canWrite && customer.status === "Active"}
                 customer={customer}
                 isLoadingAssets={isLoadingAssets}
-                onAssetOpen={(assetId) => { onClose(); onAssetOpen(assetId); }}
+                onLocationAssetsOpen={(locationId) => { onClose(); onLocationAssetsOpen(customer.id, locationId); }}
                 onChanged={(fresh) => onCustomerChange?.(fresh)}
                 onNotice={(title, message) => setNotice({ title, message })}
               />

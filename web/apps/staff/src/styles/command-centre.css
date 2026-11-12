@@ -355,7 +355,7 @@ button:active:not(:disabled) {
 }
 
 .customer-location-map-link:focus-visible,
-.customer-location-asset-link:focus-visible {
+.customer-location-count-link:focus-visible {
   outline: 0;
   box-shadow: var(--focus);
 }
@@ -424,7 +424,8 @@ button:active:not(:disabled) {
   min-width: 0;
 }
 
-.customer-location-assets > strong {
+.customer-location-assets > strong,
+.customer-location-assets > .customer-location-count-link {
   display: grid;
   justify-items: end;
   text-align: right;
@@ -433,59 +434,34 @@ button:active:not(:disabled) {
   font-variant-numeric: tabular-nums;
 }
 
-.customer-location-assets > strong small {
+.customer-location-assets > strong small,
+.customer-location-assets > .customer-location-count-link small {
   color: var(--soft);
   font-size: 11px;
   font-weight: 650;
 }
 
-.customer-location-grid .customer-location-asset-chips {
-  display: grid;
-  justify-items: stretch;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.customer-location-grid li {
-  border-radius: 5px;
-  overflow: hidden;
-}
-
-.customer-location-asset-link {
-  display: inline-flex;
-  min-height: 26px;
-  align-items: center;
+/* The count is the link: it opens the register already narrowed to this customer and location. */
+.customer-location-assets > .customer-location-count-link {
   border: 0;
-  border-radius: 5px;
-  background: var(--panel);
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--accent-2);
-  padding: 4px 7px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 760;
-  text-decoration: none;
 }
 
-.customer-location-asset-link:hover {
-  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
-  color: var(--ink);
-}
+.customer-location-assets > .customer-location-count-link:hover { text-decoration: underline; }
+
+.customer-location-assets > .customer-location-count-link small { text-decoration: none; }
 
 .customer-location-assets > .customer-location-no-assets {
   margin: 0;
   text-align: right;
   color: var(--soft);
   font-size: 12px;
-}
-
-.customer-location-asset-more {
-  font-family: inherit;
-}
-
-.customer-location-asset-link {
-  cursor: pointer;
 }
 
 .customer-location-empty {
@@ -4208,12 +4184,7 @@ button:active:not(:disabled) {
   color: var(--soft) !important;
 }
 
-:root:not([data-theme="light"]) .customer-detail-dialog .customer-location-grid li {
-  background: var(--panel);
-  color: var(--color-neutral-700);
-}
-
-:root:not([data-theme="light"]) .customer-drawer,
+:root:not([data-theme="light"]) .customer-detail-dialog :root:not([data-theme="light"]) .customer-drawer,
 :root:not([data-theme="light"]) .customer-location-entry {
   background: var(--panel);
   border-color: var(--border);
@@ -4435,20 +4406,6 @@ button:active:not(:disabled) {
   .management-metric { min-height: 92px; }
 }
 
-/* Asset links on a location card: name with number, stacked right under the count. */
-.customer-location-asset-chips li,
-.customer-location-asset-chips .customer-location-asset-link {
-  width: 100%;
-}
-
-.customer-location-asset-chips .customer-location-asset-link {
-  justify-content: flex-start;
-  border: 1px solid var(--border);
-  text-align: left;
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 600;
-}
 
 /* Users & Roles: the directory takes the full width, and its table fits it without sideways scrolling
  * on a desktop screen. Cells wrap instead of forcing the table wider; narrow screens scroll the frame. */

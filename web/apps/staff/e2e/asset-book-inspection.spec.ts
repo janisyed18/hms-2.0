@@ -7,6 +7,24 @@ import { activatedAccounts, activePasswords, authenticatorSecrets, permanentPass
 const navigate = (page: Page, name: string) =>
   page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name, exact: true }).click();
 
+/**
+ * From a customer's Locations tab, follow the first location's asset count to the register narrowed to that
+ * location, then open the asset at `index` in it. Returns the asset's number as the detail shows it.
+ */
+async function openLocationAsset(page: Page, index = 0) {
+  await navigate(page, "Customers");
+  await page.getByRole("button", { name: /Vopak/ }).first().click();
+  await page.getByRole("tab", { name: /Locations/ }).click();
+  await page.getByRole("button", { name: /^View \d+ assets? at / }).first().click();
+  await expect(page).toHaveURL(/view=assets.*customer=.*location=/);
+  const row = page.locator(".asset-register-table tbody tr").nth(index);
+  await expect(row).toBeVisible();
+  await row.click();
+  const detail = page.getByRole("complementary", { name: "Asset detail" });
+  await expect(detail).toBeVisible();
+  return (await detail.getByText("Asset number", { exact: true }).locator("xpath=following-sibling::*[1]").innerText()).trim();
+}
+
 test.describe("Customer location to asset to booking", () => {
   test.beforeAll(async () => {
     await waitForApiHealth();
@@ -22,19 +40,9 @@ test.describe("Customer location to asset to booking", () => {
   test("a location's asset link opens that asset, and Book Inspection opens the booking form prefilled from it", async ({ browser }) => {
     test.setTimeout(180_000);
     const { page } = await signedInPage(browser, "hms.admin@example.test", permanentPasswords.admin);
-    await navigate(page, "Customers");
-    await page.getByRole("button", { name: /Vopak/ }).first().click();
-    await page.getByRole("tab", { name: /Locations/ }).click();
-
-    // The link is on the location card itself, not behind View.
-    const link = page.getByRole("button", { name: /^Open asset/ }).first();
-    await expect(link).toBeVisible();
-    const accessibleName = (await link.getAttribute("aria-label")) ?? "";
-    await link.click();
-
+    // The location's asset count is the link; it opens the register narrowed to that customer and location.
+    const assetNumber = await openLocationAsset(page);
     const detail = page.getByRole("complementary", { name: "Asset detail" });
-    await expect(detail).toBeVisible();
-    const assetNumber = accessibleName.replace(/^Open asset /, "").split(", ").pop() ?? "";
     await expect(detail).toContainText(assetNumber);
     await page.screenshot({ path: process.env.SHOT_DIR ? `${process.env.SHOT_DIR}/asset-detail.png` : undefined });
 
@@ -84,12 +92,7 @@ test.describe("Customer location to asset to booking", () => {
     test.setTimeout(240_000);
     prepareSchedulingFixture();
     const { page } = await signedInPage(browser, "hms.admin@example.test", permanentPasswords.admin);
-    await navigate(page, "Customers");
-    await page.getByRole("button", { name: /Vopak/ }).first().click();
-    await page.getByRole("tab", { name: /Locations/ }).click();
-    const link = page.getByRole("button", { name: /^Open asset/ }).first();
-    const assetNumber = ((await link.getAttribute("aria-label")) ?? "").replace(/^Open asset /, "").split(", ").pop() ?? "";
-    await link.click();
+    const assetNumber = await openLocationAsset(page);
     await page.getByRole("complementary", { name: "Asset detail" }).getByRole("button", { name: "Book Inspection" }).click();
 
     const form = page.locator("form.inspection-booking-form");
@@ -116,13 +119,7 @@ test.describe("Customer location to asset to booking", () => {
     test.setTimeout(180_000);
     const { page } = await signedInPage(browser, "hms.admin@example.test", permanentPasswords.admin);
     const idOf = async (index: number) => {
-      await navigate(page, "Customers");
-      await page.getByRole("button", { name: /Vopak/ }).first().click();
-      await page.getByRole("tab", { name: /Locations/ }).click();
-      const links = page.getByRole("button", { name: /^Open asset/ });
-      await expect(links.nth(index)).toBeVisible();
-      await links.nth(index).click();
-      await expect(page.getByRole("complementary", { name: "Asset detail" })).toBeVisible();
+      await openLocationAsset(page, index);
       const id = new URL(page.url()).searchParams.get("asset");
       await page.goBack();
       return id;

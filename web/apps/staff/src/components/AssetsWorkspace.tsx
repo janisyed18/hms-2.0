@@ -1,6 +1,7 @@
 import { BadgeAlert, Boxes, CircleOff, UsersRound } from "lucide-react";
 import { useEffect, useRef } from "react";
 
+import { createHmsClient } from "../api/hmsClient";
 import { AssetDetail } from "./AssetDetail";
 import { AssetForm } from "./AssetForm";
 import { ActionButton } from "./interaction/ActionButton";
@@ -72,8 +73,10 @@ export function AssetsWorkspace({
   routeAssetId,
   routeCustomerId,
   routeCustomerLabel,
+  routeLocationId,
   onAssetRouteChange,
   onCustomerRouteChange,
+  onLocationRouteChange,
   onBookInspection,
   workflowNavigation
 }: {
@@ -91,6 +94,9 @@ export function AssetsWorkspace({
   routeCustomerId?: string | null;
   routeCustomerLabel?: string;
   onCustomerRouteChange?: (customerId: string | null) => void;
+  /** A location of that customer the URL narrows the register to; removing the filter clears it from the URL. */
+  routeLocationId?: string | null;
+  onLocationRouteChange?: (locationId: string | null) => void;
 }) {
   const workspace = useAssetsWorkspace();
   const { customerFilter, setCustomerFilter } = workspace;
@@ -108,6 +114,42 @@ export function AssetsWorkspace({
       setCustomerFilter("ALL");
     }
   }, [routeCustomerId, routeCustomerLabel, setCustomerFilter]);
+  // The location filter follows the URL the same way. The names come from the customer record, because a
+  // link carries only ids and a bare id is no use as a chip label.
+  const { locationFilter, setLocationFilter } = workspace;
+  const appliedLocation = useRef<string | null>(null);
+  // The setters are new functions on every render; the effect must depend on the ids alone, or it would
+  // cancel its own customer lookup before the names arrive.
+  const filterSetters = useRef({ setCustomerFilter, setLocationFilter });
+  useEffect(() => { filterSetters.current = { setCustomerFilter, setLocationFilter }; });
+  useEffect(() => {
+    if (routeLocationId && routeCustomerId && routeLocationId !== appliedLocation.current) {
+      appliedLocation.current = routeLocationId;
+      filterSetters.current.setLocationFilter(routeLocationId, undefined);
+      let active = true;
+      void createHmsClient().getCustomer(routeCustomerId)
+        .then((customer) => {
+          if (!active) return;
+          filterSetters.current.setCustomerFilter(routeCustomerId, customer.name);
+          filterSetters.current.setLocationFilter(routeLocationId, customer.locations.find((location) => location.id === routeLocationId)?.name);
+        })
+        .catch(() => undefined);
+      return () => { active = false; };
+    }
+    if (!routeLocationId && appliedLocation.current) {
+      appliedLocation.current = null;
+      filterSetters.current.setLocationFilter("ALL");
+    }
+    return undefined;
+  }, [routeLocationId, routeCustomerId]);
+  const previousLocation = useRef("ALL");
+  useEffect(() => {
+    if (locationFilter === "ALL" && previousLocation.current !== "ALL" && appliedLocation.current) {
+      appliedLocation.current = null;
+      onLocationRouteChange?.(null);
+    }
+    previousLocation.current = locationFilter;
+  }, [locationFilter, onLocationRouteChange]);
   const previousFilter = useRef("ALL");
   useEffect(() => {
     // Only a filter that was on and is now off counts as "cleared"; not the render before the URL's filter lands.
@@ -288,6 +330,7 @@ export function AssetsWorkspace({
         columns={assetColumns}
         activeFilters={activeFilterList([
           { id: "customer", label: "Customer", value: workspace.customerFilter !== "ALL" && (workspace.filterLabels.customer ?? "Selected customer"), onRemove: () => workspace.setCustomerFilter("ALL") },
+          { id: "location", label: "Location", value: workspace.locationFilter !== "ALL" && (workspace.filterLabels.location ?? "Selected location"), onRemove: () => workspace.setLocationFilter("ALL") },
           { id: "product", label: "Product", value: workspace.productFilter !== "ALL" && (workspace.filterLabels.product ?? "Selected product"), onRemove: () => workspace.setProductFilter("ALL") },
           { id: "lifecycle", label: "Lifecycle", value: workspace.lifecycleFilter !== "ALL" && (lifecycleStatusLabel(workspace.lifecycleFilter)), onRemove: () => workspace.setLifecycleFilter("ALL") },
           { id: "dueFrom", label: "Due from", value: workspace.dueFrom, onRemove: () => workspace.setDueFrom("") },

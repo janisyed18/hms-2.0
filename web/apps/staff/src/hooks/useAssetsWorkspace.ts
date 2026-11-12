@@ -25,9 +25,10 @@ export function useAssetsWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [customerFilter, setCustomerFilterId] = useState("ALL");
+  const [locationFilter, setLocationFilterId] = useState("ALL");
   const [productFilter, setProductFilterId] = useState("ALL");
   // What each chosen filter is called, kept from when it was picked: the option lists are searched, not complete.
-  const [filterLabels, setFilterLabels] = useState<{ customer?: string; product?: string }>({});
+  const [filterLabels, setFilterLabels] = useState<{ customer?: string; location?: string; product?: string }>({});
   const [lifecycleFilter, setLifecycleFilter] = useState("ALL");
   const [dueFrom, setDueFrom] = useState("");
   const [dueTo, setDueTo] = useState("");
@@ -74,11 +75,12 @@ export function useAssetsWorkspace() {
   const filters = useMemo(() => ({
     search: query,
     customerId: customerFilter === "ALL" ? undefined : customerFilter,
+    locationId: locationFilter === "ALL" ? undefined : locationFilter,
     productId: productFilter === "ALL" ? undefined : productFilter,
     status: lifecycleFilter === "ALL" ? undefined : lifecycleFilter,
     dueFrom: dueFrom || undefined,
     dueTo: dueTo || undefined
-  }), [query, customerFilter, productFilter, lifecycleFilter, dueFrom, dueTo]);
+  }), [query, customerFilter, locationFilter, productFilter, lifecycleFilter, dueFrom, dueTo]);
   useEffect(() => {
     let active = true;
     // Only the first load replaces the table; a new search or filter keeps the rows until the answer arrives.
@@ -108,7 +110,9 @@ export function useAssetsWorkspace() {
   }
 
   const visibleAssets = assets;
-  function setCustomerFilter(id: string, label?: string) { setCustomerFilterId(id); setFilterLabels((current) => ({ ...current, customer: label })); }
+  function setCustomerFilter(id: string, label?: string) { setCustomerFilterId(id); setLocationFilterId("ALL"); setFilterLabels((current) => ({ ...current, customer: label, location: undefined })); }
+  // A location belongs to one customer, so changing the customer drops it.
+  function setLocationFilter(id: string, label?: string) { setLocationFilterId(id); setFilterLabels((current) => ({ ...current, location: label })); }
   function setProductFilter(id: string, label?: string) { setProductFilterId(id); setFilterLabels((current) => ({ ...current, product: label })); }
   function openCreate() { formSession.current += 1; setEditingAsset(null); setFormAsset(null); setIsCopy(false); setFormOpen(true); }
   function openEdit(asset: AssetRecord) { formSession.current += 1; setViewingAsset(null); setEditingAsset(asset); setFormAsset(asset); setIsCopy(false); setFormOpen(true); }
@@ -168,7 +172,7 @@ export function useAssetsWorkspace() {
       setDeleteError(friendlyApiError(reason, { fallback: `${assetLabel(asset)} could not be deleted. Try again.` }).message);
     } finally { setDeleting(false); }
   }
-  function clearAssetFilters() { setCustomerFilter("ALL"); setProductFilter("ALL"); setLifecycleFilter("ALL"); setDueFrom(""); setDueTo(""); }
-  const activeFilterCount = [customerFilter !== "ALL", productFilter !== "ALL", lifecycleFilter !== "ALL", Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
-  return { serverTotal, activeFilterCount, deleteError, deleteTarget, cancelDelete, confirmDelete, dismissNotice, isDeleting, notice, requestDelete, assets, clearAssetFilters, closeDetail, copyAsset, counts, customerFilter, customerSearch, filterLabels, isLoadingMore, loadMore, productSearch, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, closeForm, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
+  function clearAssetFilters() { setCustomerFilter("ALL"); setLocationFilter("ALL"); setProductFilter("ALL"); setLifecycleFilter("ALL"); setDueFrom(""); setDueTo(""); }
+  const activeFilterCount = [customerFilter !== "ALL", locationFilter !== "ALL", productFilter !== "ALL", lifecycleFilter !== "ALL", Boolean(dueFrom), Boolean(dueTo)].filter(Boolean).length;
+  return { serverTotal, activeFilterCount, deleteError, deleteTarget, cancelDelete, confirmDelete, dismissNotice, isDeleting, notice, requestDelete, assets, clearAssetFilters, closeDetail, copyAsset, counts, customerFilter, locationFilter, setLocationFilter, customerSearch, filterLabels, isLoadingMore, loadMore, productSearch, configurationOptions, dueFrom, dueTo, editingAsset, formAsset, isCopy, isFormOpen, lifecycleFilter, openCreate, openDetail, openEdit, reportOpenFailure, resolveAsset, productFilter, query, saveAsset, setCustomerFilter, setDueFrom, setDueTo, closeForm, setLifecycleFilter, setProductFilter, setQuery, isLoading, error, viewingAsset, visibleAssets };
 }

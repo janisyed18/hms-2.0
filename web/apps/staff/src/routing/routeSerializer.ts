@@ -12,6 +12,7 @@ export function serializeRoute(route: HmsRoute, surface: RouteSurface): string {
   if (surface === "portal" && route.customer) params.set("customer", route.customer);
   if (route.view === "assets" && route.asset) params.set("asset", route.asset);
   if (route.view === "assets" && surface === "staff" && !route.asset && route.customer) params.set("customer", route.customer);
+  if (route.view === "assets" && surface === "staff" && !route.asset && route.customer && route.location) params.set("location", route.location);
   if (route.view === "inspections" && surface === "staff") {
     if (route.bookAsset) params.set("book_asset", route.bookAsset);
     else if (route.inspection) params.set("inspection", route.inspection);

@@ -12,6 +12,7 @@ const client = vi.hoisted(() => ({
   listAssets: vi.fn(),
   getAsset: vi.fn(),
   getAssetWorkflow: vi.fn(),
+  getCustomer: vi.fn(),
   listCustomers: vi.fn(),
   listProducts: vi.fn(),
   getAssetConfigurationOptions: vi.fn()
@@ -45,6 +46,22 @@ beforeEach(() => {
   client.listCustomers.mockResolvedValue(list([]));
   client.listProducts.mockResolvedValue(list([]));
   client.getAssetConfigurationOptions.mockResolvedValue({ materials: [], couplings: [], couplingAddOns: [], attachMethods: [], nominalBores: [] });
+});
+
+describe("Staff asset register narrowed to a location", () => {
+  it("asks the server for that customer's location only, names both filters, and clears the URL when the location chip is removed", async () => {
+    const user = userEvent.setup();
+    const onLocationRouteChange = vi.fn();
+    client.getCustomer.mockResolvedValue({ id: "cust-1", name: "Orica", locations: [{ id: "loc-1", name: "Kooragang" }] });
+    render(<AssetsWorkspace canWrite onAssetRouteChange={vi.fn()} onLocationRouteChange={onLocationRouteChange} routeAssetId={null} routeCustomerId="cust-1" routeLocationId="loc-1" />);
+    await waitFor(() => expect(client.listAssets).toHaveBeenCalledWith(expect.objectContaining({ customerId: "cust-1", locationId: "loc-1" })));
+    // Both filters are named from the customer record, not shown as ids.
+    expect(await screen.findByRole("button", { name: "Remove filter Location: Kooragang" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove filter Customer: Orica" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove filter Location: Kooragang" }));
+    expect(onLocationRouteChange).toHaveBeenCalledWith(null);
+    await waitFor(() => expect(client.listAssets).toHaveBeenLastCalledWith(expect.objectContaining({ customerId: "cust-1", locationId: undefined })));
+  });
 });
 
 describe("Staff asset register", () => {
@@ -106,44 +123,30 @@ describe("Staff customer detail and cards", () => {
     metrics: { assetCount: 2, inServiceCount: 2, inspectionDueCount: null, inspectionDueLabel: "", certificateValidPercent: null, certificateStatusLabel: "", recentInspections: [], activity: [] }
   } as unknown as CustomerRecord;
 
-  it("lists a location's assets by name with the number, and opens them with a label naming both", async () => {
+  it("shows each location's asset count as one link that opens the register for that customer and location", async () => {
     const user = userEvent.setup();
-    const onAssetOpen = vi.fn();
+    const onLocationAssetsOpen = vi.fn();
     client.listAssets.mockResolvedValue(list([asset("1", "HMS-373CEBA88", "Main Transfer Hose"), asset("3", "HMS-333", null)]));
-    render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onAssetOpen={onAssetOpen} onClose={vi.fn()} onEdit={vi.fn()} onTabChange={vi.fn()} />);
-    const link = await screen.findByRole("button", { name: "Open asset Main Transfer Hose, HMS-373CEBA88" });
-    expect(link).toHaveTextContent("Main Transfer Hose");
-    expect(link).toHaveTextContent("Asset #HMS-373CEBA88");
-    expect(screen.getByRole("button", { name: "Open asset HMS-333" })).toBeInTheDocument();
+    render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onClose={vi.fn()} onEdit={vi.fn()} onLocationAssetsOpen={onLocationAssetsOpen} onTabChange={vi.fn()} />);
+    const link = await screen.findByRole("button", { name: `View 2 assets at ${location.name}` });
+    expect(link).toHaveTextContent("2assets");
+    // Individual assets are no longer listed on the card.
+    expect(screen.queryByRole("button", { name: /^Open asset/ })).toBeNull();
     await user.click(link);
-    expect(onAssetOpen).toHaveBeenCalledWith("1");
+    expect(onLocationAssetsOpen).toHaveBeenCalledWith("cust-1", location.id);
   });
 
-  it("links a single asset under the count, by the asset's real id", async () => {
-    const user = userEvent.setup();
-    const onAssetOpen = vi.fn();
+  it("says 1 asset, in the singular, for a location with a single asset", async () => {
     client.listAssets.mockResolvedValue(list([asset("real-id-9", "HMS-9", null)]));
-    render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onAssetOpen={onAssetOpen} onClose={vi.fn()} onEdit={vi.fn()} onTabChange={vi.fn()} />);
-    const link = await screen.findByRole("button", { name: "Open asset HMS-9" });
-    expect(screen.getByText("asset")).toBeInTheDocument();
-    await user.click(link);
-    expect(onAssetOpen).toHaveBeenCalledWith("real-id-9");
-  });
-
-  it("opens each of several assets from its own link without opening the View panel", async () => {
-    const user = userEvent.setup();
-    const onAssetOpen = vi.fn();
-    render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onAssetOpen={onAssetOpen} onClose={vi.fn()} onEdit={vi.fn()} onTabChange={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Open asset HMS-333" }));
-    await user.click(screen.getByRole("button", { name: "Open asset Main Transfer Hose, HMS-373CEBA88" }));
-    expect(onAssetOpen.mock.calls.map(([id]) => id)).toEqual(["3", "1"]);
+    render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onClose={vi.fn()} onEdit={vi.fn()} onLocationAssetsOpen={vi.fn()} onTabChange={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: `View 1 asset at ${location.name}` })).toHaveTextContent("1asset");
   });
 
   it("shows an empty state, and no link, for a location with no assets", async () => {
     client.listAssets.mockResolvedValue(list([]));
-    render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onAssetOpen={vi.fn()} onClose={vi.fn()} onEdit={vi.fn()} onTabChange={vi.fn()} />);
+    render(<CustomerDetail activeTab="Locations" canWrite={false} customer={customer} onClose={vi.fn()} onEdit={vi.fn()} onLocationAssetsOpen={vi.fn()} onTabChange={vi.fn()} />);
     expect(await screen.findByText("No assets at this location.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Open asset/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^View \d+ assets? at/ })).toBeNull();
   });
 
   it("derives a card's initials from the first two words of the customer's name", () => {
