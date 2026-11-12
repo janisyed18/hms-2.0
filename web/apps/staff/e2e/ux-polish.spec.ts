@@ -118,11 +118,17 @@ test.describe("usability polish", () => {
       const card = customer.page.locator(".portal-booking-card").first();
       // The booking belongs to one of this user's organisations; walk them until it shows.
       const organisation = customer.page.getByLabel("Organisation");
-      for (const name of await optionTexts(organisation)) {
-        if (await card.count()) break;
-        await chooseOption(organisation, { label: name.trim() });
-        await customer.page.waitForTimeout(800);
+      // A user with one organisation has no selector at all (the portal draws it only for several), so wait
+      // for either the booking or the selector instead of clicking a control that may not exist.
+      await expect(card.or(organisation).first(), "the portal shows a booking or an organisation selector").toBeVisible({ timeout: 60_000 });
+      if (!(await card.count()) && (await organisation.count())) {
+        for (const name of await optionTexts(organisation)) {
+          if (await card.count()) break;
+          await chooseOption(organisation, { label: name.trim() });
+          await customer.page.waitForTimeout(800);
+        }
       }
+      await expect(card, "the booking is listed in the portal").toBeVisible({ timeout: 60_000 });
       await expect(card.locator(".portal-zone")).toHaveText("Australia/Sydney · AEDT");
       await expect(card.locator(".portal-when strong")).toContainText("8:00");
       for (const [width, height] of WIDTHS) {
