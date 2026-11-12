@@ -85,9 +85,9 @@ describe("CustomerDetail locations", () => {
     listAssets.mockResolvedValue({ total: 1, items: [asset] });
   });
 
-  it("opens a recorded address in Google Maps and routes an assigned asset to its detail", async () => {
+  it("opens a recorded address in Google Maps and opens the register filtered to the location from its asset count", async () => {
     const user = userEvent.setup();
-    const onAssetOpen = vi.fn();
+    const onLocationAssetsOpen = vi.fn();
     const onClose = vi.fn();
 
     render(
@@ -95,7 +95,7 @@ describe("CustomerDetail locations", () => {
         activeTab="Locations"
         canWrite={false}
         customer={customer}
-        onAssetOpen={onAssetOpen}
+        onLocationAssetsOpen={onLocationAssetsOpen}
         onClose={onClose}
         onEdit={vi.fn()}
         onTabChange={vi.fn()}
@@ -114,9 +114,9 @@ describe("CustomerDetail locations", () => {
     expect(screen.getByText("High Vis")).toBeVisible();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Overview", "Locations (1)", "Contacts (0)"]);
 
-    await user.click(screen.getByRole("button", { name: "Open asset HMS-798BBD74CE" }));
+    await user.click(screen.getByRole("button", { name: "View 1 asset at Norwest" }));
     expect(onClose).toHaveBeenCalledOnce();
-    expect(onAssetOpen).toHaveBeenCalledWith("asset-west-1");
+    expect(onLocationAssetsOpen).toHaveBeenCalledWith(customer.id, "location-west");
   });
 
   it("agrees with the customer card and shows unavailable metrics as a dash, not zero", async () => {
@@ -136,7 +136,7 @@ describe("CustomerDetail locations", () => {
             certificateStatusLabel: "Not available"
           }
         }}
-        onAssetOpen={vi.fn()}
+        onLocationAssetsOpen={vi.fn()}
         onClose={vi.fn()}
         onEdit={vi.fn()}
         onTabChange={vi.fn()}

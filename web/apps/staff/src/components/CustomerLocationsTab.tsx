@@ -3,16 +3,11 @@ import { useState } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
 import type { AssetRecord, CustomerLocation, CustomerRecord } from "../domain/types";
-import { assetAccessibleName } from "../utils/identity";
-import { AssetIdentity } from "./AssetIdentity";
 import { ActionButton } from "./interaction/ActionButton";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
 import { friendlyApiError } from "./interaction/friendlyApiError";
 import { LocationEditor } from "./LocationEditor";
 import { scheduleSummary } from "./LocationFields";
-
-/** Asset links shown on a location card before "+N more"; the rest are one click away. */
-const ASSET_LINK_PREVIEW = 4;
 
 export const FINAL_LOCATION_MESSAGE = "A customer must have at least one location. Add another location before deleting this one.";
 
@@ -44,7 +39,7 @@ export function CustomerLocationsTab({
   canWrite,
   customer,
   isLoadingAssets,
-  onAssetOpen,
+  onLocationAssetsOpen,
   onChanged,
   onNotice
 }: {
@@ -54,7 +49,8 @@ export function CustomerLocationsTab({
   canWrite: boolean;
   customer: CustomerRecord;
   isLoadingAssets: boolean;
-  onAssetOpen: (assetId: string) => void;
+  /** Opens the Assets register narrowed to this customer and the given location. */
+  onLocationAssetsOpen: (locationId: string) => void;
   onChanged: (customer: CustomerRecord) => void;
   onNotice: (title: string, message: string) => void;
 }) {
@@ -122,28 +118,19 @@ export function CustomerLocationsTab({
               <div className="customer-location-assets">
                 {isLoadingAssets ? (
                   <strong aria-label="Loading assets" className="customer-location-asset-count">…</strong>
+                ) : locationAssets.length > 0 ? (
+                  <button
+                    aria-label={`View ${locationAssets.length} ${locationAssets.length === 1 ? "asset" : "assets"} at ${location.name}`}
+                    className="customer-location-asset-count customer-location-count-link"
+                    onClick={() => onLocationAssetsOpen(location.id)}
+                    type="button"
+                  >
+                    {locationAssets.length}<small>{locationAssets.length === 1 ? "asset" : "assets"}</small>
+                  </button>
                 ) : (
-                  <strong className="customer-location-asset-count">{locationAssets.length}<small>{locationAssets.length === 1 ? "asset" : "assets"}</small></strong>
+                  <strong className="customer-location-asset-count">0<small>assets</small></strong>
                 )}
                 {!isLoadingAssets && locationAssets.length === 0 ? <p className="customer-location-no-assets">No assets at this location.</p> : null}
-                {locationAssets.length > 0 ? (
-                  <ul aria-label={`Assets at ${location.name}`} className="customer-location-asset-chips">
-                    {(isOpen ? locationAssets : locationAssets.slice(0, ASSET_LINK_PREVIEW)).map((asset) => (
-                      <li key={asset.id}>
-                        <button aria-label={`Open asset ${assetAccessibleName(asset)}`} className="customer-location-asset-link" onClick={() => onAssetOpen(asset.id)} type="button">
-                          <AssetIdentity asset={asset} />
-                        </button>
-                      </li>
-                    ))}
-                    {!isOpen && locationAssets.length > ASSET_LINK_PREVIEW ? (
-                      <li>
-                        <button aria-label={`Show all ${locationAssets.length} assets at ${location.name}`} className="customer-location-asset-link customer-location-asset-more" onClick={() => setExpanded(location.id)} type="button">
-                          +{locationAssets.length - ASSET_LINK_PREVIEW} more
-                        </button>
-                      </li>
-                    ) : null}
-                  </ul>
-                ) : null}
               </div>
               <span className="row-actions">
                 <ActionButton aria-expanded={isOpen} aria-label={`View ${location.name}`} onClick={() => setExpanded(isOpen ? null : location.id)} variant="ghost">

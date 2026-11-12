@@ -51,6 +51,12 @@ describe("parsing", () => {
     expect(staff("?view=assets&asset=a1").asset).toBe("a1");
     expect(staff("?view=inspections&inspection=i1").inspection).toBe("i1");
     expect(staff("?view=customers&customer=c1").customer).toBe("c1");
+    // The register can be narrowed to one location, but only together with its customer.
+    expect(staff("?view=assets&customer=c1&location=l1")).toMatchObject({ view: "assets", customer: "c1", location: "l1" });
+    expect(staff("?view=assets&location=l1").location).toBeNull();
+    expect(staff("?view=assets&customer=c1&location=../x").location).toBeNull();
+    expect(staff("?view=assets&customer=c1&location=l1&asset=a1")).toMatchObject({ asset: "a1", customer: null, location: null });
+    expect(canonical("?location=l1&customer=c1&view=assets")).toBe("?view=assets&customer=c1&location=l1");
     expect(staff("?view=assets&users=1&q=x").users).toEqual(DEFAULT_USERS_QUERY);
   });
 

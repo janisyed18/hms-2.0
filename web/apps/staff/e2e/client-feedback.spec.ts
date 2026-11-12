@@ -95,12 +95,14 @@ test.describe("client feedback: customer counts and asset identity", () => {
       // The detail agrees with the card, and lists the asset by name with its number.
       await refreshedCard.click();
       await expect(page.getByLabel("Customer asset summary")).toContainText(new RegExp(`Assets\\s*${before + 1}`));
-      // Assets are listed under the location they are installed at.
+      // The location's asset count links to the register narrowed to that location, where the asset is listed by name.
       await page.getByRole("tab", { name: /Locations/ }).click();
-      await page.getByRole("button", { name: /^View / }).first().click();
-      const link = page.getByRole("button", { name: `Open asset ${ASSET_NAME}, ${ASSET_NUMBER}` });
-      await expect(link).toBeVisible();
-      await expect(link).toContainText(`Asset #${ASSET_NUMBER}`);
+      await page.getByRole("button", { name: /^View \d+ assets? at / }).first().click();
+      await expect(page).toHaveURL(/view=assets.*location=/);
+      const row = page.locator(".asset-register-table tbody tr", { hasText: ASSET_NUMBER });
+      await expect(row).toBeVisible();
+      await expect(row).toContainText(ASSET_NAME);
+      await page.goBack();
 
       // A hard reload reads the same figure.
       // The address names the open customer, so the reload comes back to Customers by itself.

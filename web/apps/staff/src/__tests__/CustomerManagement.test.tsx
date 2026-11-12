@@ -49,7 +49,7 @@ function renderDetail(customer: CustomerRecord, props: { tab?: string; canDelete
       canDelete={props.canDelete ?? false}
       canWrite={props.canWrite ?? true}
       customer={customer}
-      onAssetOpen={vi.fn()}
+      onLocationAssetsOpen={vi.fn()}
       onClose={vi.fn()}
       onCustomerChange={props.onCustomerChange}
       onEdit={vi.fn()}

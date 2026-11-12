@@ -615,7 +615,8 @@
     justify-items: stretch;
   }
 
-  .customer-location-assets > strong {
+  .customer-location-assets > strong,
+  .customer-location-assets > .customer-location-count-link {
     justify-items: start;
     text-align: left;
   }

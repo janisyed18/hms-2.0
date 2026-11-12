@@ -851,7 +851,9 @@ describe("App", () => {
     await user.click(screen.getByRole("tab", { name: /Locations/i }));
     expect(await screen.findByRole("heading", { level: 4, name: "API Terminal" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "View API Terminal" }));
-    expect(await screen.findByText("API-777")).toBeVisible();
+    // The location's asset count is the link into the register; individual assets are not listed on the card.
+    expect(await screen.findByRole("button", { name: "View 1 asset at API Terminal" })).toBeVisible();
+    expect(screen.queryByText("API-777")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close customer detail" }));
     expect(screen.queryByRole("dialog", { name: /Vopak API/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Select customer Vopak API/i }));

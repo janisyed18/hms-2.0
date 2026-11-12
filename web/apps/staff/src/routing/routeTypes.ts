@@ -74,11 +74,13 @@ export interface HmsRoute {
   bookAsset: string | null;
   /** Staff customer detail, or the portal's selected organisation. */
   customer: string | null;
+  /** Staff asset register: narrowed to one location of `customer`. */
+  location: string | null;
   /** The staff customer detail tab, by display name; null is the default. */
   tab: string | null;
   users: UsersRouteQuery;
 }
 
 export function emptyRoute(view: string): HmsRoute {
-  return { view, asset: null, inspection: null, bookAsset: null, customer: null, tab: null, users: DEFAULT_USERS_QUERY };
+  return { view, asset: null, inspection: null, bookAsset: null, customer: null, location: null, tab: null, users: DEFAULT_USERS_QUERY };
 }

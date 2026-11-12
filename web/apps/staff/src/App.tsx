@@ -621,7 +621,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                   activeTab={workspace.activeTab}
                   canWrite={hasPermission(session, "customer:write")}
                   canDelete={isSuperAdmin}
-                  onAssetOpen={handleAssetOpen}
+                  onLocationAssetsOpen={(customerId, locationId) => navigate({ ...emptyRoute("assets"), customer: customerId, location: locationId })}
                   onCustomerChange={workspace.replaceCustomer}
                   onLifecycle={workspace.requestLifecycle}
                   onClose={workspace.closeDetail}
@@ -678,7 +678,9 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                       onAssetRouteChange={onAssetRouteChange}
                       routeAssetId={route.asset}
                       routeCustomerId={portalMode ? null : route.customer}
-                      onCustomerRouteChange={() => navigate({ customer: null }, { replace: true })}
+                      onCustomerRouteChange={() => navigate({ customer: null, location: null }, { replace: true })}
+                      routeLocationId={portalMode ? null : route.location}
+                      onLocationRouteChange={() => navigate({ location: null }, { replace: true })}
                       workflowNavigation={workflowNavigation}
                       onBookInspection={
                         !portalMode && visibleModules.includes("inspections") && hasPermission(session, "inspection:book")
