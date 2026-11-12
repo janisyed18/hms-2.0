@@ -405,6 +405,8 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
     (inspectionId: string | null, options?: { replace?: boolean }) => navigate({ inspection: inspectionId }, options),
     [navigate]
   );
+  // The booking form opened from an asset has been closed (or could not open): the address forgets the asset.
+  const onBookAssetHandled = useCallback(() => navigate({ bookAsset: null }, { replace: true }), [navigate]);
   const onUsersRouteChange = useCallback(
     (patch: Partial<UsersRouteQuery>, options?: { replace?: boolean }) =>
       navigate((current) => ({ ...current, users: { ...current.users, ...patch } }), options),
@@ -678,6 +680,11 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                       routeCustomerId={portalMode ? null : route.customer}
                       onCustomerRouteChange={() => navigate({ customer: null }, { replace: true })}
                       workflowNavigation={workflowNavigation}
+                      onBookInspection={
+                        !portalMode && visibleModules.includes("inspections") && hasPermission(session, "inspection:book")
+                          ? (asset) => navigate({ ...emptyRoute("inspections"), bookAsset: asset.id })
+                          : undefined
+                      }
                     />
                   ) : null}
                   {renderedActiveModule === "analytics" ? (
@@ -707,6 +714,8 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                       canWrite={hasPermission(session, "inspection:write")}
                       onInspectionRouteChange={onInspectionRouteChange}
                       routeInspectionId={route.inspection}
+                      bookAssetId={route.bookAsset}
+                      onBookAssetHandled={onBookAssetHandled}
                     />
                   ) : null}
                   {renderedActiveModule === "certificates" ? (

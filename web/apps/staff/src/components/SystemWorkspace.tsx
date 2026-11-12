@@ -1,11 +1,10 @@
 import {
-  BadgeCheck,
+  ChevronDown,
   Clock3,
   Edit3,
   KeyRound,
   Laptop,
   LockKeyhole,
-  MoreHorizontal,
   Plus,
   RotateCcw,
   ServerCog,
@@ -20,7 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
-import { createHmsClient, type AdminUserSummary } from "../api/hmsClient";
+import { createHmsClient } from "../api/hmsClient";
 import type {
   AdminUserRecord,
   DeviceRecord,
@@ -57,15 +56,6 @@ interface SystemWorkspaceProps {
   /** The Users & Roles query as the URL holds it, and how to change it. Without it the view keeps its own. */
   usersRoute?: UsersRouteControl;
 }
-
-const roles: StaffRole[] = [
-  "SUPER_ADMIN",
-  "HMS_ADMIN",
-  "REVIEWER",
-  "INSPECTOR",
-  "ASSEMBLY",
-  "CUSTOMER_USER"
-];
 
 export function SystemWorkspace({
   module,
@@ -111,7 +101,6 @@ export function SystemWorkspace({
     };
   }, [module]);
 
-  const roleRows = useMemo(() => roleSummary(directory.summary), [directory.summary]);
 
   async function saveUser(values: UserAdminValues) {
     const session = dialogSession.current;
@@ -297,7 +286,7 @@ export function SystemWorkspace({
         <ManagementMetric icon={LockKeyhole} label="Restricted Users" value={directory.summary ? directory.summary.byRole.CUSTOMER_USER ?? 0 : "-"} detail="Scoped customer access" tone="red" />
       </ManagementMetricStrip>
 
-      <div className="system-layout">
+      <div className="system-layout system-layout-single">
         <section className="data-panel">
           <div className="panel-heading">
             <div>
@@ -329,24 +318,6 @@ export function SystemWorkspace({
           />
         </section>
 
-        <section className="data-panel">
-          <div className="panel-heading compact">
-            <h2>Role Matrix</h2>
-          </div>
-          <div className="role-matrix">
-            {roleRows.map((row) => (
-              <article key={row.role}>
-                <BadgeCheck aria-hidden="true" size={17} />
-                <div>
-                  <strong>{row.role}</strong>
-                  <span>{row.scope}</span>
-                  <p>{row.permissions}</p>
-                </div>
-                <em>{row.count === null ? "-" : `${row.count} users`}</em>
-              </article>
-            ))}
-          </div>
-        </section>
       </div>
       <UserAdminDialog
         actorRoles={actorRoles}
@@ -470,7 +441,7 @@ function UserTable({
         </WorkspaceState>
       ) : null}
       <div aria-busy={status === "loading"} className="table-frame" hidden={!showTable}>
-        <table className="console-table" aria-label="User access records">
+        <table className="console-table user-directory-table" aria-label="User access records">
           <thead>
             <tr>
               <th>User</th>
@@ -508,15 +479,17 @@ function UserTable({
                     <div className="user-actions">
                       <button
                         aria-label={`Manage ${user.email}`}
-                        className="icon-button light user-manage-button"
+                        aria-expanded={managedUserId === user.id}
+                        aria-haspopup="menu"
+                        className="secondary-button user-manage-button"
                         type="button"
                         onClick={(event) => {
                           placeMenu(event.currentTarget);
                           onManage(managedUserId === user.id ? null : user.id);
                         }}
                       >
-                        <MoreHorizontal aria-hidden="true" size={17} />
-                        <span aria-hidden="true">Manage</span>
+                        Manage
+                        <ChevronDown aria-hidden="true" size={15} />
                       </button>
                       {managedUserId === user.id ? (
                         <div className="user-action-menu" role="menu" style={menuPosition}>
@@ -647,26 +620,6 @@ function scopeLabel(user: AdminUserRecord, customerNames: Map<string, string>): 
   // Names when every one is known; otherwise a count, never a raw id or a guess.
   if (names.every((name): name is string => Boolean(name))) return names.join(", ");
   return `${ids.length} ${ids.length === 1 ? "customer" : "customers"}`;
-}
-
-function roleSummary(summary: AdminUserSummary | null) {
-  return roles.map((role) => ({
-    role,
-    count: summary ? summary.byRole[role] ?? 0 : null,
-    scope: role === "CUSTOMER_USER" ? "Customer scoped" : "Staff workspace",
-    permissions:
-      role === "SUPER_ADMIN"
-        ? "Full system administration and security controls"
-        : role === "HMS_ADMIN"
-        ? "Administer records, users, devices, and audit"
-        : role === "REVIEWER"
-          ? "Review inspections and issue certificates"
-          : role === "INSPECTOR"
-            ? "Create and submit inspection records"
-            : role === "ASSEMBLY"
-              ? "Maintain asset and assembly records"
-              : "Read assigned customer records"
-  }));
 }
 
 function syncHealth(devices: DeviceRecord[]): number {

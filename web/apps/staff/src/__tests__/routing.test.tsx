@@ -16,6 +16,14 @@ describe("parsing", () => {
     expect(canonical("?view=my-work")).toBe("?view=my-work");
   });
 
+  it("reads the asset a booking is started from, only on the staff inspections view", () => {
+    expect(staff("?view=inspections&book_asset=a1").bookAsset).toBe("a1");
+    expect(canonical("?view=inspections&book_asset=a1")).toBe("?view=inspections&book_asset=a1");
+    expect(staff("?view=inspections&book_asset=../x").bookAsset).toBeNull();
+    expect(staff("?view=assets&book_asset=a1").bookAsset).toBeNull();
+    expect(parseRoute("?view=inspections&book_asset=a1", "portal").bookAsset).toBeNull();
+  });
+
   it("opens the dashboard for no query, an unknown view, or junk", () => {
     expect(staff("").view).toBe("dashboard");
     expect(staff("?view=nope").view).toBe("dashboard");

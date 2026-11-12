@@ -1,10 +1,11 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-export type ActionVariant = "primary" | "secondary" | "ghost" | "danger" | "icon";
+export type ActionVariant = "primary" | "secondary" | "ghost" | "destructive" | "danger" | "icon";
 
 /**
  * The one button contract. primary: Save/Create/Submit/Approve/Issue. secondary: Edit/Retry/
- * Reschedule. ghost: Close/Cancel/Back and other minor actions. danger: only the confirming
+ * Reschedule. ghost: Close/Cancel/Back and other minor actions. destructive: Delete/Remove, where the
+ * action starts something that can be undone or is still to be confirmed. danger: only the confirming
  * step of a destructive action. icon: compact toolbar and close controls (give it an aria-label).
  * While `pending` it is disabled, marked busy, and says what it is doing ("Saving…").
  */

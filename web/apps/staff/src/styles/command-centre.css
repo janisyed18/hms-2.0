@@ -414,12 +414,36 @@ button:active:not(:disabled) {
   font-weight: 650;
 }
 
-.customer-location-grid ul {
-  display: flex;
-  grid-column: 2 / -1;
-  flex-wrap: wrap;
+.customer-location-assets {
+  grid-column: 3;
+  grid-row: 1;
+  display: grid;
+  justify-items: stretch;
   gap: 6px;
-  margin: 2px 0 0;
+  width: 210px;
+  min-width: 0;
+}
+
+.customer-location-assets > strong {
+  display: grid;
+  justify-items: end;
+  text-align: right;
+  color: var(--ink);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.customer-location-assets > strong small {
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.customer-location-grid .customer-location-asset-chips {
+  display: grid;
+  justify-items: stretch;
+  gap: 4px;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -447,6 +471,21 @@ button:active:not(:disabled) {
 .customer-location-asset-link:hover {
   background: color-mix(in srgb, var(--accent) 14%, var(--panel));
   color: var(--ink);
+}
+
+.customer-location-assets > .customer-location-no-assets {
+  margin: 0;
+  text-align: right;
+  color: var(--soft);
+  font-size: 12px;
+}
+
+.customer-location-asset-more {
+  font-family: inherit;
+}
+
+.customer-location-asset-link {
+  cursor: pointer;
 }
 
 .customer-location-empty {
@@ -4231,7 +4270,6 @@ button:active:not(:disabled) {
   color: var(--soft);
 }
 
-.asset-detail-page .secondary-button,
 .certificate-download-link {
   background: var(--panel);
   color: var(--ink);
@@ -4315,7 +4353,7 @@ button:active:not(:disabled) {
 :root:not([data-theme="light"]) .auth-field input,
 :root:not([data-theme="light"]) .auth-field select,
 :root:not([data-theme="light"]) .auth-field textarea {
-  background: var(--panel-subtle);
+  background-color: var(--panel-subtle);
   border-color: var(--border-strong);
   color: var(--ink);
   color-scheme: dark;
@@ -4396,3 +4434,75 @@ button:active:not(:disabled) {
   .management-metric-strip { grid-template-columns: minmax(0, 1fr); }
   .management-metric { min-height: 92px; }
 }
+
+/* Asset links on a location card: name with number, stacked right under the count. */
+.customer-location-asset-chips li,
+.customer-location-asset-chips .customer-location-asset-link {
+  width: 100%;
+}
+
+.customer-location-asset-chips .customer-location-asset-link {
+  justify-content: flex-start;
+  border: 1px solid var(--border);
+  text-align: left;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Users & Roles: the directory takes the full width, and its table fits it without sideways scrolling
+ * on a desktop screen. Cells wrap instead of forcing the table wider; narrow screens scroll the frame. */
+.system-layout.system-layout-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.user-directory-table {
+  min-width: 0;
+  table-layout: auto;
+}
+
+.user-directory-table th,
+.user-directory-table td {
+  height: auto;
+  padding: 10px 12px;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+.user-directory-table th:first-child,
+.user-directory-table td:first-child {
+  padding-left: 18px;
+}
+
+.user-directory-table th:last-child,
+.user-directory-table td:last-child {
+  width: 1%;
+  padding-right: 18px;
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.user-directory-table .user-identity {
+  min-width: 190px;
+}
+
+/* Where the table is still wider than its frame, Manage stays pinned in view rather than scrolling away. */
+.user-directory-table th:last-child,
+.user-directory-table td:last-child {
+  position: sticky;
+  right: 0;
+  background: var(--panel);
+}
+
+@media (max-width: 1180px) {
+  .user-directory-table th,
+  .user-directory-table td { padding: 10px 8px; }
+  .user-directory-table .user-identity { min-width: 150px; }
+}
+
+@media (max-width: 760px) {
+  .user-directory-table {
+    min-width: 720px;
+  }
+}
+

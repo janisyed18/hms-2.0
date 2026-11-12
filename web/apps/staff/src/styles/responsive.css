@@ -607,6 +607,19 @@
     flex-direction: column;
   }
 
+  /* On a phone the assets drop under the address, full width, instead of squeezing it into a sliver. */
+  .customer-location-grid article > .customer-location-assets {
+    grid-column: 2 / -1;
+    grid-row: auto;
+    width: auto;
+    justify-items: stretch;
+  }
+
+  .customer-location-assets > strong {
+    justify-items: start;
+    text-align: left;
+  }
+
   .modal-grid {
     grid-template-columns: 1fr;
   }

@@ -54,7 +54,7 @@ export function ProductsWorkspace({ canManage = true, canDelete = false, embedde
             {workspace.statusFilter === "ACTIVE" ? "Disable" : "Enable"}
           </ActionButton>
           {canDelete ? (
-            <ActionButton aria-label={`Delete ${product.name}`} onClick={() => workspace.requestDelete(product)} variant="ghost">
+            <ActionButton aria-label={`Delete ${product.name}`} onClick={() => workspace.requestDelete(product)} variant="destructive">
               Delete
             </ActionButton>
           ) : null}

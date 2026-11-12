@@ -5,7 +5,7 @@ import {
   ClipboardCheck,
   Clock3
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { InspectionDetail } from "./InspectionDetail";
 import { InspectionBookingCard } from "./InspectionBookingCard";
@@ -19,7 +19,9 @@ import {
   type InspectionStatusFilter,
   useInspectionsWorkspace
 } from "../hooks/useInspectionsWorkspace";
-import type { InspectionRecord } from "../domain/types";
+import { createHmsClient } from "../api/hmsClient";
+import type { AssetRecord, InspectionRecord } from "../domain/types";
+import { friendlyApiError } from "./interaction/friendlyApiError";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { assetLabel } from "../utils/identity";
 import { inspectionStatusLabel } from "../utils/inspectionStatus";
@@ -70,7 +72,9 @@ export function InspectionsWorkspace({
   canBook,
   canWrite,
   routeInspectionId,
-  onInspectionRouteChange
+  onInspectionRouteChange,
+  bookAssetId = null,
+  onBookAssetHandled
 }: {
   canApprove: boolean;
   canApproveBookings: boolean;
@@ -78,8 +82,61 @@ export function InspectionsWorkspace({
   canWrite: boolean;
   routeInspectionId?: string | null;
   onInspectionRouteChange?: (inspectionId: string | null, options?: { replace?: boolean }) => void;
+  /** An asset to start a booking from (from the address bar); the form opens once, prefilled from it. */
+  bookAssetId?: string | null;
+  /** Called once the asset-started booking has been opened, closed or has failed, so the address can drop it. */
+  onBookAssetHandled?: () => void;
 }) {
   const workspace = useInspectionsWorkspace(canApproveBookings, routeInspectionId, onInspectionRouteChange);
+  const [bookingAsset, setBookingAsset] = useState<{ asset: AssetRecord | null; opened: boolean } | null>(null);
+  const [bookingAssetError, setBookingAssetError] = useState<string | null>(null);
+  const handled = useRef(onBookAssetHandled);
+  const openBookingRef = useRef(workspace.openBooking);
+  // These are recreated on every render; the asset-started booking below must call the latest of each.
+  useEffect(() => {
+    handled.current = onBookAssetHandled;
+    openBookingRef.current = workspace.openBooking;
+  });
+
+  // Asset to booking form: load the asset, then open the one booking form with it. An asset that cannot
+  // be loaded (gone, mistyped, or the request failed) leaves the form open and blank, with the reason.
+  useEffect(() => {
+    if (!bookAssetId || !canBook) {
+      if (bookAssetId) handled.current?.();
+      return;
+    }
+    let active = true;
+    setBookingAssetError(null);
+    void (async () => {
+      let asset: AssetRecord | null = null;
+      try {
+        asset = await createHmsClient().getAsset(bookAssetId);
+      } catch (reason) {
+        if (!active) return;
+        setBookingAssetError(`${friendlyApiError(reason, { fallback: "The asset could not be loaded." }).message} Choose the customer and assets below instead.`);
+      }
+      if (!active) return;
+      setBookingAsset({ asset, opened: false });
+      const opened = await openBookingRef.current();
+      // Opening waits on the inspector list; by then the address may have moved to another asset, and a
+      // late failure for this one must not clear that one's booking context.
+      if (!active) return;
+      if (!opened) {
+        setBookingAsset(null);
+        handled.current?.();
+      }
+    })();
+    return () => { active = false; };
+  }, [bookAssetId, canBook]);
+  // Once the form has been seen open and is then closed (saved or cancelled), the asset context ends.
+  useEffect(() => {
+    if (!bookingAsset) return;
+    if (workspace.isBookingFormOpen && !bookingAsset.opened) setBookingAsset({ ...bookingAsset, opened: true });
+    else if (!workspace.isBookingFormOpen && bookingAsset.opened) {
+      setBookingAsset(null);
+      handled.current?.();
+    }
+  }, [bookingAsset, workspace.isBookingFormOpen]);
   /** The booking whose inspector the open "Change inspector" dialog is for. */
   const [changingInspector, setChangingInspector] = useState<string | null>(null);
   const [showAllBookings, setShowAllBookings] = useState(false);
@@ -170,6 +227,11 @@ export function InspectionsWorkspace({
             ) : null}
           </div>
         </header>
+        {bookingAssetError ? (
+          <ActionNotice kind="error" onDismiss={() => setBookingAssetError(null)} title="Asset not loaded">
+            {bookingAssetError}
+          </ActionNotice>
+        ) : null}
         {workspace.notice ? (
           <ActionNotice kind={workspace.notice.kind} onDismiss={workspace.dismissNotice} title={workspace.notice.title}>
             {workspace.notice.message}
@@ -388,6 +450,7 @@ export function InspectionsWorkspace({
         <InspectionBookingForm
           open={workspace.isBookingFormOpen}
           rescheduleBooking={workspace.rescheduleBooking}
+          initialAsset={bookingAsset?.asset ?? null}
           inspectors={workspace.inspectors}
           requiresInspector={canApproveBookings}
           onClose={() => workspace.setBookingFormOpen(false)}

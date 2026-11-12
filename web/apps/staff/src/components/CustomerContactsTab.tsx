@@ -74,7 +74,7 @@ export function CustomerContactsTab({
               <p>{contact.receivesRetestReminders ? "Receives retest reminders" : "Does not receive retest reminders"}</p>
               <span className="row-actions">
                 {canWrite ? <ActionButton aria-label={`Edit ${contact.name}`} onClick={() => setEditing(contact)} variant="secondary">Edit</ActionButton> : null}
-                {canDelete ? <ActionButton aria-label={`Delete ${contact.name}`} onClick={() => { setDeleteError(null); setDeleting(contact); }} variant="ghost">Delete</ActionButton> : null}
+                {canDelete ? <ActionButton aria-label={`Delete ${contact.name}`} onClick={() => { setDeleteError(null); setDeleting(contact); }} variant="destructive">Delete</ActionButton> : null}
               </span>
             </article>
           ))}

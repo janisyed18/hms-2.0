@@ -31,6 +31,8 @@ interface InspectionBookingFormProps {
   requiresInspector?: boolean;
   /** A date (YYYY-MM-DD) to offer first, e.g. the day being viewed in the calendar. */
   initialDate?: string;
+  /** Start a new booking from this asset: its customer, location and the asset itself are chosen up front. */
+  initialAsset?: AssetRecord | null;
   onClose: () => void;
   onSubmit: (values: InspectionBookingCreateValues) => Promise<void>;
   onReschedule?: (
@@ -49,6 +51,7 @@ export function InspectionBookingForm({
   inspectors = [],
   requiresInspector = false,
   initialDate = "",
+  initialAsset = null,
   onClose,
   onSubmit,
   onReschedule
@@ -113,17 +116,19 @@ export function InspectionBookingForm({
   );
   const seed = useFormSeed({
     dirty,
-    sourceKey: open ? (rescheduleKey ?? "new") : null,
+    sourceKey: open ? (rescheduleKey ?? (initialAsset ? `asset:${initialAsset.id}` : "new")) : null,
     sourceSignature: "",
     seed: () => {
-      // A new booking starts blank: the user must choose the location and the assets.
+      // A new booking starts blank: the user must choose the location and the assets, unless it was
+      // opened from an asset, which supplies its own customer, location and itself (and nothing else).
       // A reschedule keeps the booking's own location and assets.
-      setCustomerId("");
-      setChosenCustomer(null);
+      const fromAsset = rescheduleBooking ? null : initialAsset;
+      setCustomerId(fromAsset?.customer.id ?? "");
+      setChosenCustomer(fromAsset ? { value: fromAsset.customer.id, label: fromAsset.customer.name, description: fromAsset.customer.code || undefined } : null);
       setCustomerLocations([]);
-      setLocationId(rescheduleBooking ? rescheduleBooking.location.id : "");
-      setAssetIds(rescheduleBooking ? rescheduleBooking.assets.map((asset) => asset.id) : []);
-      setPickedAssets({});
+      setLocationId(rescheduleBooking ? rescheduleBooking.location.id : fromAsset?.location?.id ?? "");
+      setAssetIds(rescheduleBooking ? rescheduleBooking.assets.map((asset) => asset.id) : fromAsset?.location ? [fromAsset.id] : []);
+      setPickedAssets(fromAsset?.location ? { [fromAsset.id]: fromAsset } : {});
       setAssetQuery("");
       setAssetPage({ items: [], total: 0, loading: false, error: null });
       setBookingDate(rescheduleBooking ? "" : initialDate);
@@ -188,7 +193,8 @@ export function InspectionBookingForm({
       .then((customer) => { if (active) setCustomerLocations((customer.locations ?? []).filter((location): location is CustomerLocation => Boolean(location))); })
       .catch(() => { if (active) setCustomerLocations([]); });
     return () => { active = false; };
-  }, [open, rescheduleBooking, customerId]);
+    // A different source asset reseeds the form (and empties the list), so the same customer's locations are read again.
+  }, [open, rescheduleBooking, customerId, initialAsset?.id]);
 
   // The assets at the chosen location are searched and paged on the server. Only assets that can take new
   // work are offered: an archived customer's are not.
@@ -363,6 +369,11 @@ export function InspectionBookingForm({
               )}
             </Field>
           )}
+          {initialAsset && !initialAsset.location && !rescheduleBooking ? (
+            <p className="field-hint" role="status">
+              Asset {initialAsset.assetNumber} has no location recorded, so it cannot be booked yet. Add a location to the asset, then book it from the asset page.
+            </p>
+          ) : null}
           <Field label="Location" name="locationId" required>
             {(props) => (
               <Select

@@ -70,6 +70,8 @@ export interface HmsRoute {
   /** Staff and portal asset detail. */
   asset: string | null;
   inspection: string | null;
+  /** Staff inspections: open the booking form for this asset, prefilled from its records. */
+  bookAsset: string | null;
   /** Staff customer detail, or the portal's selected organisation. */
   customer: string | null;
   /** The staff customer detail tab, by display name; null is the default. */
@@ -78,5 +80,5 @@ export interface HmsRoute {
 }
 
 export function emptyRoute(view: string): HmsRoute {
-  return { view, asset: null, inspection: null, customer: null, tab: null, users: DEFAULT_USERS_QUERY };
+  return { view, asset: null, inspection: null, bookAsset: null, customer: null, tab: null, users: DEFAULT_USERS_QUERY };
 }
