@@ -356,8 +356,11 @@ class BrowserAuthService:
         Two tabs refreshing together send the same cookie; one rotates it and the other
         arrives a moment later holding the now-rotated token. Within a short window (off
         by default) that second request gets a fresh access token but no new refresh
-        token: the browser already holds the successor from the winning response, so
-        nothing a thief could keep is issued. Anything else is reuse.
+        token: the browser already holds the successor from the winning response. The
+        access token is still a usable credential, so someone replaying a stolen,
+        just-rotated token inside the window would obtain one (for its short lifetime,
+        without any way to renew it). That exposure is why the window is off by
+        default. Anything else is reuse.
         """
         grace = self._settings.auth_browser_refresh_reuse_grace_seconds
         if (
