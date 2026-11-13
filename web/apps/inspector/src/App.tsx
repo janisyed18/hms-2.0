@@ -79,6 +79,7 @@ function InspectorWorkspace({ userId }: { userId: string }) {
     });
 
   let content;
+  const storageNotice = workspace.storageNotice;
 
   if (workspace.view === "capture") {
     content = (
@@ -137,6 +138,11 @@ function InspectorWorkspace({ userId }: { userId: string }) {
       sourceLabel={sourceLabel}
       view={workspace.view}
     >
+      {storageNotice ? (
+        <p className="storage-notice" role="alert">
+          {storageNotice}
+        </p>
+      ) : null}
       {content}
       {pendingLeave ? (
         <UnsavedChangesDialog

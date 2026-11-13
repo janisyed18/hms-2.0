@@ -10,8 +10,66 @@ import type {
 
 export const OUTBOX_STORAGE_KEY = "bat-hms-inspector-outbox";
 
-const RESET_WARNING =
-  "Local queue was reset because stored data was unreadable.";
+/** What the inspector is told when a save did not reach this device's storage. */
+export const SAVE_FAILED_MESSAGE =
+  "Inspection couldn't be saved on this device. Keep this page open and try again.";
+export const LOAD_FAILED_MESSAGE =
+  "This device's saved inspection work couldn't be read, so it may not be shown. Keep this page open, don't clear site data, and try again.";
+const UNREADABLE_KEPT_MESSAGE =
+  "Saved inspection data on this device was unreadable. A copy was kept for recovery.";
+const UNREADABLE_BLOCKED_MESSAGE =
+  "Saved inspection data on this device is unreadable and could not be copied for recovery, so nothing new can be saved here. Keep this page open and contact support.";
+
+/** A write to the device's offline storage did not happen. Nothing was saved. */
+export class OutboxStorageError extends Error {
+  /** "full" when the device is out of space, "unavailable" when storage is blocked or broken. */
+  readonly reason: "full" | "unavailable" | "unreadable";
+
+  constructor(reason: "full" | "unavailable" | "unreadable", message = SAVE_FAILED_MESSAGE) {
+    super(message);
+    this.name = "OutboxStorageError";
+    this.reason = reason;
+  }
+}
+
+function isQuotaError(error: unknown): boolean {
+  return (
+    error instanceof DOMException &&
+    (error.name === "QuotaExceededError" ||
+      error.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+      error.code === 22 ||
+      error.code === 1014)
+  );
+}
+
+/** Where an unreadable queue is copied before anything can overwrite it. */
+function recoveryKey(storageKey: string): string {
+  return `${storageKey}:unreadable`;
+}
+
+/**
+ * Called when the stored queue cannot be parsed. It is never deleted: a copy is kept under a
+ * recovery key (once; an existing copy is not replaced), and only then may a new queue be written.
+ * Returns false when no copy could be made, in which case nothing may overwrite the original.
+ */
+function keepUnreadableCopy(storageKey: string, raw: string): boolean {
+  try {
+    const key = recoveryKey(storageKey);
+    if (localStorage.getItem(key) === null) localStorage.setItem(key, raw);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isReadable(raw: string): boolean {
+  try {
+    JSON.parse(raw);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -51,8 +109,23 @@ export function outboxStorageKey(userId: string): string {
 }
 
 function removeLegacyOutbox() {
-  // Never attribute pre-authentication development data to a real inspector.
-  localStorage.removeItem(OUTBOX_STORAGE_KEY);
+  // Never attribute pre-authentication development data to a real inspector. Tidying only: a
+  // device that refuses it must not stop a save or a load.
+  try {
+    localStorage.removeItem(OUTBOX_STORAGE_KEY);
+  } catch {
+    // Ignored on purpose.
+  }
+}
+
+/**
+ * The queue to change and write back. When it could not be read, writing back what was read
+ * (nothing) would erase the real queue, so the change is refused instead.
+ */
+function loadWritable(userId: string): OutboxState {
+  const state = loadOutbox(userId);
+  if (state.loadFailed) throw new OutboxStorageError("unavailable", state.warning ?? LOAD_FAILED_MESSAGE);
+  return state;
 }
 
 function replaceOperation(
@@ -60,7 +133,7 @@ function replaceOperation(
   opId: string,
   update: (operation: OutboxOperation) => OutboxOperation
 ) {
-  const state = loadOutbox(userId);
+  const state = loadWritable(userId);
   saveOutbox(
     userId,
     state.operations.map((operation) =>
@@ -69,10 +142,20 @@ function replaceOperation(
   );
 }
 
+/**
+ * The queue stored for this inspector. Never throws and never deletes: storage that cannot be read
+ * comes back as `loadFailed` (callers keep what they already hold), and a queue that is there but
+ * unparseable is copied aside and reported, not discarded.
+ */
 export function loadOutbox(userId: string): OutboxState {
   removeLegacyOutbox();
   const storageKey = outboxStorageKey(userId);
-  const raw = localStorage.getItem(storageKey);
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(storageKey);
+  } catch {
+    return { operations: [], loadFailed: true, warning: LOAD_FAILED_MESSAGE };
+  }
 
   if (!raw) {
     return { operations: [] };
@@ -85,14 +168,30 @@ export function loadOutbox(userId: string): OutboxState {
     );
     return { operations };
   } catch {
-    localStorage.removeItem(storageKey);
-    return { operations: [], warning: RESET_WARNING };
+    const kept = keepUnreadableCopy(storageKey, raw);
+    return {
+      operations: [],
+      loadFailed: !kept,
+      warning: kept ? UNREADABLE_KEPT_MESSAGE : UNREADABLE_BLOCKED_MESSAGE
+    };
   }
 }
 
+/** Throws {@link OutboxStorageError}, having changed nothing, when the queue cannot be stored. */
 export function saveOutbox(userId: string, operations: OutboxOperation[]) {
   removeLegacyOutbox();
-  localStorage.setItem(outboxStorageKey(userId), JSON.stringify({ operations }));
+  const storageKey = outboxStorageKey(userId);
+  try {
+    // An unreadable queue is copied aside before a new one replaces it.
+    const existing = localStorage.getItem(storageKey);
+    if (existing !== null && !isReadable(existing) && !keepUnreadableCopy(storageKey, existing)) {
+      throw new OutboxStorageError("unreadable", UNREADABLE_BLOCKED_MESSAGE);
+    }
+    localStorage.setItem(storageKey, JSON.stringify({ operations }));
+  } catch (error) {
+    if (error instanceof OutboxStorageError) throw error;
+    throw new OutboxStorageError(isQuotaError(error) ? "full" : "unavailable");
+  }
 }
 
 export function createInspectionOperation(
@@ -197,7 +296,7 @@ export function createPressureTestOperation(
 }
 
 export function upsertOutboxOperation(userId: string, operation: OutboxOperation) {
-  const state = loadOutbox(userId);
+  const state = loadWritable(userId);
   const existingIndex = state.operations.findIndex(
     (item) => item.entity === operation.entity && item.entityId === operation.entityId &&
       item.workContext?.appointment_id === operation.workContext?.appointment_id &&
