@@ -79,6 +79,7 @@ function InspectorWorkspace({ userId }: { userId: string }) {
     });
 
   let content;
+  const storageNotice = workspace.storageNotice;
 
   if (workspace.view === "capture") {
     content = (
@@ -108,6 +109,7 @@ function InspectorWorkspace({ userId }: { userId: string }) {
       <SyncQueue
         hasPreservedDrafts={workspace.hasPreservedDrafts}
         isOnline={workspace.isOnline}
+        isPushing={workspace.isPushing}
         onPull={workspace.pullChanges}
         onPush={workspace.pushQueuedOperations}
         onResolveConflict={workspace.resolveConflict}
@@ -137,6 +139,11 @@ function InspectorWorkspace({ userId }: { userId: string }) {
       sourceLabel={sourceLabel}
       view={workspace.view}
     >
+      {storageNotice ? (
+        <p className="storage-notice" role="alert">
+          {storageNotice}
+        </p>
+      ) : null}
       {content}
       {pendingLeave ? (
         <UnsavedChangesDialog

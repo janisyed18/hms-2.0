@@ -23,6 +23,7 @@ import {
   markOperationConflict,
   markOperationPushing,
   markOperationRejected,
+  OutboxStorageError,
   resolveOperationConflict,
   upsertOutboxOperation
 } from "../offline/outboxStore";
@@ -116,6 +117,20 @@ function operationIsAssigned(operation: OutboxOperation, records: SyncRecordRead
   return true;
 }
 
+/** Run an outbox write; a device-storage failure is reported to `onFailure`, never thrown. */
+function tolerateStorageFailure(change: () => void, onFailure: (message: string) => void): boolean {
+  try {
+    change();
+    return true;
+  } catch (error) {
+    if (error instanceof OutboxStorageError) {
+      onFailure(error.message);
+      return false;
+    }
+    throw error;
+  }
+}
+
 function applyResultToOutbox(userId: string, result: SyncOperationResult) {
   if (result.status === "applied" && result.version !== null) {
     markOperationApplied(userId, result.op_id, result.version);
@@ -198,6 +213,14 @@ export function useInspectorWorkspace(userId: string) {
   const [syncRecords, setSyncRecords] = useState<SyncRecordRead[]>([]);
   const [workContexts, setWorkContexts] = useState<SyncWorkContext[]>([]);
   const [outbox, setOutbox] = useState<OutboxState>(() => loadOutbox(userId));
+  // The last failure to write to this device's storage. Cleared by the next write that works.
+  const [storageError, setStorageError] = useState<string | null>(null);
+  // A push is in flight in this page. An operation still marked "pushing" when none is has been
+  // interrupted (the result could not be recorded, or the page was reloaded) and is sent again.
+  const [isPushing, setIsPushing] = useState(false);
+  const pushInProgress = useRef(false);
+  const outboxRef = useRef(outbox);
+  outboxRef.current = outbox;
   const [selectedItem, setSelectedWorkItem] = useState<WorkItem | null>(
     null
   );
@@ -325,13 +348,33 @@ export function useInspectorWorkspace(userId: string) {
     };
   }, [refreshAssignments]);
 
+  /** The queue on this device; if it cannot be read, the copy already held, never an empty one. */
+  function readOutbox(): OutboxState {
+    const stored = loadOutbox(userId);
+    return stored.loadFailed ? outboxRef.current : stored;
+  }
+
   function refreshOutbox() {
-    setOutbox(loadOutbox(userId));
+    const stored = loadOutbox(userId);
+    if (stored.loadFailed) {
+      // Keep showing what is held; the real queue is still on the device.
+      setStorageError(stored.warning ?? null);
+      return;
+    }
+    setOutbox(stored);
+  }
+
+  /** Save to the outbox. False means nothing was saved: the caller must not treat it as saved. */
+  function persist(change: () => void): boolean {
+    const saved = tolerateStorageFailure(change, setStorageError);
+    if (saved) setStorageError(null);
+    refreshOutbox();
+    return saved;
   }
 
   function localInspectionId(item: WorkItem): string {
     if (item.inspectionId) return item.inspectionId;
-    const matching = loadOutbox(userId).operations.filter((operation) =>
+    const matching = readOutbox().operations.filter((operation) =>
       sameWorkContext(operation.workContext, item.workContext)
     );
     const inspection = matching.find((operation) => operation.entity === "Inspection");
@@ -345,7 +388,7 @@ export function useInspectorWorkspace(userId: string) {
 
   /** What to show when this assignment is opened: the unsent local edit if any, else the server's. */
   function draftFor(item: WorkItem): SavedInspectionForm | null {
-    const local = loadOutbox(userId).operations
+    const local = readOutbox().operations
       .filter((operation) =>
         operation.status !== "applied" &&
         (operation.entity === "Inspection" || operation.entity === "PressureTestResult") &&
@@ -360,7 +403,7 @@ export function useInspectorWorkspace(userId: string) {
     setView("capture");
   }
 
-  function saveInspection(input: SaveInspectionInput) {
+  function saveInspection(input: SaveInspectionInput): boolean {
     const operation = createInspectionOperation({
       workContext: input.workItem.workContext,
       assetId: input.workItem.assetId,
@@ -377,11 +420,10 @@ export function useInspectorWorkspace(userId: string) {
       inspectionType: "SERVICE"
     });
 
-    upsertOutboxOperation(userId, operation);
-    refreshOutbox();
+    return persist(() => upsertOutboxOperation(userId, operation));
   }
 
-  function queueAssetUpdate(input: QueueAssetUpdateInput) {
+  function queueAssetUpdate(input: QueueAssetUpdateInput): boolean {
     const operation = createAssetUpdateOperation({
       workContext: input.workItem.workContext,
       assetId: input.workItem.assetId,
@@ -393,63 +435,26 @@ export function useInspectorWorkspace(userId: string) {
       tag: input.tag
     });
 
-    upsertOutboxOperation(userId, operation);
-    refreshOutbox();
+    return persist(() => upsertOutboxOperation(userId, operation));
   }
 
   async function pushQueuedOperations() {
-    if (!isOnline) {
+    if (!isOnline || pushInProgress.current) {
       return;
     }
-
-    let permitted: { records: SyncRecordRead[]; work_contexts?: SyncWorkContext[] };
+    // Taken before the first await, so a second click during assignment verification is refused.
+    pushInProgress.current = true;
+    setIsPushing(true);
+    let sent = false;
     try {
-      permitted = await refreshAssignments();
-    } catch {
-      setSyncRecords([]);
-      setWorkContexts([]);
-      setSelectedWorkItem(null);
-      setLastSyncLabel("Unable to verify assignments");
-      return;
-    }
-    const localOperations = loadOutbox(userId).operations;
-    const queue = pendingOperations(localOperations).filter(
-      (operation) =>
-        // A pressure test made against an inspection that has not reached the server yet is
-        // still assigned: its inspection is queued here, and goes first.
-        operationIsAssigned(operation, permitted.records, permitted.work_contexts ?? [], localOperations) &&
-        (operation.status === "pending" || operation.status === "rejected")
-    );
-
-    if (queue.length === 0) {
-      return;
-    }
-    // An inspection must exist before anything that refers to it, whatever order it was
-    // queued in: the inspection first, then asset details, then standalone pressure tests
-    // (left over from app 0.2.0). The sort is stable, so equal kinds keep their order.
-    queue.sort((left, right) => PUSH_RANK[left.entity] - PUSH_RANK[right.entity]);
-
-    for (const operation of queue) {
-      markOperationPushing(userId, operation.opId);
-    }
-    refreshOutbox();
-
-    try {
-      const result = await createSyncClient({ userId }).push(queue);
-      for (const item of result.results) {
-        applyResultToOutbox(userId, item);
-      }
-      setLastSyncLabel("Last sync just now");
-    } catch (error) {
-      for (const operation of queue) {
-        markOperationRejected(
-          userId,
-          operation.opId,
-          error instanceof Error ? error.message : "Sync push failed."
-        );
-      }
+      sent = await sendQueuedOperations();
     } finally {
+      pushInProgress.current = false;
+      setIsPushing(false);
       refreshOutbox();
+    }
+    if (!sent) {
+      return;
     }
     try {
       await refreshAssignments();
@@ -459,6 +464,78 @@ export function useInspectorWorkspace(userId: string) {
       setSelectedWorkItem(null);
       setLastSyncLabel("Unable to load assigned work");
     }
+  }
+
+  /** The push itself; the caller holds the in-flight guard. True when a push was attempted. */
+  async function sendQueuedOperations(): Promise<boolean> {
+    let permitted: { records: SyncRecordRead[]; work_contexts?: SyncWorkContext[] };
+    try {
+      permitted = await refreshAssignments();
+    } catch {
+      setSyncRecords([]);
+      setWorkContexts([]);
+      setSelectedWorkItem(null);
+      setLastSyncLabel("Unable to verify assignments");
+      return false;
+    }
+    const localOperations = readOutbox().operations;
+    const queue = pendingOperations(localOperations).filter(
+      (operation) =>
+        // A pressure test made against an inspection that has not reached the server yet is
+        // still assigned: its inspection is queued here, and goes first.
+        operationIsAssigned(operation, permitted.records, permitted.work_contexts ?? [], localOperations) &&
+        // "pushing" with no push in flight is an interrupted send. It keeps its idempotency
+        // key, so the server treats a replay of one it already applied as that same result.
+        (operation.status === "pending" ||
+          operation.status === "rejected" ||
+          operation.status === "pushing")
+    );
+
+    if (queue.length === 0) {
+      return false;
+    }
+    // An inspection must exist before anything that refers to it, whatever order it was
+    // queued in: the inspection first, then asset details, then standalone pressure tests
+    // (left over from app 0.2.0). The sort is stable, so equal kinds keep their order.
+    queue.sort((left, right) => PUSH_RANK[left.entity] - PUSH_RANK[right.entity]);
+
+    // If the device will not record that a push is under way, nothing is sent: a result that
+    // could not be recorded afterwards would otherwise leave the queue disagreeing with the server.
+    const marked = tolerateStorageFailure(() => {
+      for (const operation of queue) {
+        markOperationPushing(userId, operation.opId);
+      }
+    }, setStorageError);
+    refreshOutbox();
+    if (!marked) {
+      return false;
+    }
+    // The device is accepting writes again; any later failure sets the notice afresh.
+    setStorageError(null);
+
+    try {
+      const result = await createSyncClient({ userId }).push(queue);
+      // Each result is recorded on its own so one failed write does not hide the others. An
+      // unrecorded "applied" leaves the operation pushing; it is sent again with the same
+      // idempotency key, which the server treats as already applied.
+      for (const item of result.results) {
+        tolerateStorageFailure(() => applyResultToOutbox(userId, item), setStorageError);
+      }
+      setLastSyncLabel("Last sync just now");
+    } catch (error) {
+      for (const operation of queue) {
+        tolerateStorageFailure(
+          () =>
+            markOperationRejected(
+              userId,
+              operation.opId,
+              error instanceof Error ? error.message : "Sync push failed."
+            ),
+          setStorageError
+        );
+      }
+    }
+    return true;
   }
 
   async function pullChanges() {
@@ -473,8 +550,7 @@ export function useInspectorWorkspace(userId: string) {
   }
 
   function resolveConflict(opId: string, resolution: "keep-local" | "accept-server") {
-    resolveOperationConflict(userId, opId, resolution);
-    refreshOutbox();
+    persist(() => resolveOperationConflict(userId, opId, resolution));
   }
 
   return {
@@ -483,10 +559,13 @@ export function useInspectorWorkspace(userId: string) {
     workItems,
     selectedWorkItem,
     outbox: visibleOutbox,
+    /** Why this device's storage is not holding the inspector's work, if it is not. */
+    storageNotice: storageError ?? outbox.warning ?? null,
     hasPreservedDrafts: pendingOperations(outbox.operations).some(
       (operation) => !operationIsAssigned(operation, syncRecords, workContexts, outbox.operations)
     ),
     isOnline,
+    isPushing,
     lastSyncLabel,
     queuedCount,
     openWorkItem,
