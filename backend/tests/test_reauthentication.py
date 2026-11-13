@@ -408,3 +408,56 @@ def test_dev_header_mode_alone_is_exempt(monkeypatch: pytest.MonkeyPatch) -> Non
             user_id="u", roles=frozenset({Role.HMS_ADMIN}), customer_ids=frozenset()
         )
     )
+
+
+def _cookie(client: httpx.AsyncClient) -> str:
+    value = client.cookies.get("hms_staff_refresh")
+    assert value is not None
+    return value
+
+
+@pytest.mark.asyncio
+async def test_a_rotated_cookie_is_accepted_only_while_its_family_is_live(
+    session_factory: SessionFactory, seeded: dict[str, str]
+) -> None:
+    async with _client(session_factory) as client:
+        token = await _sign_in(client, session_factory)
+        old_cookie = _cookie(client)
+        await client.post(f"{BASE}/refresh")  # rotates; old_cookie is now spent
+        newest = _cookie(client)
+        assert newest != old_cookie
+
+        async def reauth_with(cookie: str) -> int:
+            client.cookies.clear()
+            client.cookies.set("hms_staff_refresh", cookie)
+            return (
+                await _reauth(client, token, code=await _next_code(session_factory))
+            ).status_code
+
+        assert await reauth_with(old_cookie) == 200  # live family, same user
+        # Logging the live session out leaves the family with nothing to freshen.
+        client.cookies.clear()
+        client.cookies.set("hms_staff_refresh", newest)
+        await client.post(f"{BASE}/logout")
+        assert await reauth_with(old_cookie) == 401
+
+
+@pytest.mark.asyncio
+async def test_a_rotated_cookie_is_refused_after_a_credential_change(
+    session_factory: SessionFactory, seeded: dict[str, str]
+) -> None:
+    from hms_backend.app.modules.identity.credentials import rotate_credentials
+
+    async with _client(session_factory) as client:
+        token = await _sign_in(client, session_factory)
+        old_cookie = _cookie(client)
+        await client.post(f"{BASE}/refresh")
+        async with session_factory() as session:
+            user = await session.get(User, seeded["admin"])
+            assert user is not None
+            await rotate_credentials(session, user)
+            await session.commit()
+        client.cookies.clear()
+        client.cookies.set("hms_staff_refresh", old_cookie)
+        response = await _reauth(client, token, code=await _next_code(session_factory))
+    assert response.status_code == 401
