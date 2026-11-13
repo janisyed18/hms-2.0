@@ -368,8 +368,9 @@ its access tokens work as bearer credentials:
 curl -H "Authorization: Bearer $ACCESS_TOKEN" http://127.0.0.1:8000/api/v1/auth/me
 ```
 
-Endpoints: `POST /auth/password` (change own, verifies current),
-`POST /auth/users/{id}/password` (admin reset), `GET /auth/me`.
+Endpoints: `POST /auth/password` (change own: verifies the current password, applies the central
+password policy, ends the user's other sessions), `GET /auth/me`. An administrator resets someone
+else's password only through `POST /admin/users/{id}/password-reset`.
 
 Settings: `AUTH_MODE`, `AUTH_BEARER_HMAC_SECRET`, `AUTH_BEARER_ISSUER`,
 `AUTH_BEARER_AUDIENCE`; OIDC: `AUTH_OIDC_ISSUER`, `AUTH_OIDC_AUDIENCE`,

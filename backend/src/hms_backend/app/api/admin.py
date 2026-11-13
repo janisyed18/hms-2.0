@@ -40,6 +40,7 @@ from hms_backend.app.core.rbac import Permission, Principal, Role, require_permi
 from hms_backend.app.core.repository import record_create, record_update, soft_delete
 from hms_backend.app.models.foundation import AuditEvent, Device
 from hms_backend.app.modules.identity.browser_auth import BrowserAuthService
+from hms_backend.app.modules.identity.credentials import rotate_credentials
 from hms_backend.app.modules.identity.models import (
     AccountStatus,
     MfaRecoveryCode,
@@ -538,7 +539,9 @@ async def reset_user_password(
     temporary_password = generate_temporary_password()
     user.password_hash = hash_password(temporary_password)
     user.must_change_password = True
-    await _auth_service.revoke_all_sessions(session, user.id)
+    # Marks the credential change; access tokens issued before it stop working.
+    user.password_changed_at = datetime.now(UTC)
+    await rotate_credentials(session, user)
     await append_audit_event(
         session,
         actor_id=principal.user_id,

@@ -19,9 +19,9 @@ from hms_backend.app.core.password_reset_tokens import (
 from hms_backend.app.core.passwords import hash_password, validate_password_policy
 from hms_backend.app.core.rate_limit import LoginRateLimiter
 from hms_backend.app.core.sync_ledger import stage_sync_change
+from hms_backend.app.modules.identity.credentials import rotate_credentials
 from hms_backend.app.modules.identity.models import (
     AccountStatus,
-    BrowserRefreshSession,
     PasswordResetDelivery,
     PasswordResetToken,
     User,
@@ -186,14 +186,7 @@ class PasswordResetService:
         )
         if delivery is not None:
             delivery.ciphertext = None
-        await session.execute(
-            update(BrowserRefreshSession)
-            .where(
-                BrowserRefreshSession.user_id == user.id,
-                BrowserRefreshSession.revoked_at.is_(None),
-            )
-            .values(revoked_at=now)
-        )
+        await rotate_credentials(session, user, now=now)
         await stage_sync_change(
             session,
             entity="User",

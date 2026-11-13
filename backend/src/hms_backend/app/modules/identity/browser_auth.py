@@ -40,6 +40,7 @@ from hms_backend.app.core.session_tokens import (
     digest_opaque_token,
     generate_opaque_token,
 )
+from hms_backend.app.modules.identity.credentials import rotate_credentials
 from hms_backend.app.modules.identity.models import (
     AccountStatus,
     BrowserAuthChallenge,
@@ -105,7 +106,7 @@ class BrowserAuthService:
         user_agent: str | None = None,
         ip: str | None = None,
     ) -> IssuedChallenge | AuthenticatedSession:
-        user = await self._user_by_email(session, email)
+        user = await self._user_by_email(session, email, for_update=True)
         if (
             user is None
             or user.password_hash is None
@@ -154,7 +155,7 @@ class BrowserAuthService:
         user.password_hash = hash_password(new_password)
         user.must_change_password = False
         user.password_changed_at = self._now()
-        await self.revoke_all_sessions(session, user.id)
+        await rotate_credentials(session, user)
         await self._audit(
             session, user, email=user.email, action="auth.password.changed"
         )
@@ -298,8 +299,13 @@ class BrowserAuthService:
         if now >= _aware(current.expires_at) or now >= _aware(current.idle_expires_at):
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
 
-        user = await session.get(User, current.user_id)
+        # Serialise with credential changes (see ``_load_challenge``), then re-read the
+        # session: one revoked while this waited must not be rotated into a new one.
+        user = await self._locked_user(session, current.user_id)
         if user is None:
+            raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
+        await session.refresh(current)
+        if current.revoked_at is not None:
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
         self._ensure_usable(user)
 
@@ -345,12 +351,25 @@ class BrowserAuthService:
     # -- internals ---------------------------------------------------------------
 
     async def _user_by_email(
-        self, session: AsyncSession, email: str
+        self, session: AsyncSession, email: str, *, for_update: bool = False
     ) -> User | None:
-        user: User | None = await session.scalar(
-            select(User).where(
-                User.email == email.strip().lower(), User.deleted_at.is_(None)
+        statement = select(User).where(
+            User.email == email.strip().lower(), User.deleted_at.is_(None)
+        )
+        if for_update:
+            statement = statement.with_for_update().execution_options(
+                populate_existing=True
             )
+        user: User | None = await session.scalar(statement)
+        return user
+
+    async def _locked_user(self, session: AsyncSession, user_id: str) -> User | None:
+        """The user, row-locked and freshly read (credential version included)."""
+        user: User | None = await session.scalar(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return user
 
@@ -389,6 +408,7 @@ class BrowserAuthService:
                 token_hash=token.digest,
                 user_id=user.id,
                 stage=stage,
+                credential_version=user.credential_version,
                 expires_at=self._now() + timedelta(seconds=ttl),
             )
         )
@@ -411,8 +431,12 @@ class BrowserAuthService:
             or _aware(record.expires_at) <= self._now()
         ):
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
-        user = await session.get(User, record.user_id)
-        if user is None:
+        # Row-lock the user: a credential change takes the same lock, so it either
+        # finishes before this reads the version (and the challenge is refused) or
+        # waits until this commits (and then revokes the session created here).
+        user = await self._locked_user(session, record.user_id)
+        if user is None or record.credential_version != user.credential_version:
+            # Issued before the user's credentials last changed.
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
         self._ensure_usable(user)
         return record, user
@@ -513,6 +537,7 @@ class BrowserAuthService:
                 "client": "staff-web",
                 "auth_time": int(now.timestamp()),
                 "hms_roles": [user.role],
+                "cv": user.credential_version,
             },
         )
         return token, ttl
