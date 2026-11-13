@@ -51,6 +51,7 @@ jobs:
           tests/test_notification_claims_postgres.py
           tests/test_delivery_receipts_postgres.py
           tests/test_retest_scheduler_postgres.py
+          tests/test_reporting_postgres.py
           tests/test_notification_readiness_postgres.py
           tests/test_rc_product_flow_postgres.py
           tests/test_sync_bootstrap_paging.py

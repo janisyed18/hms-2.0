@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -17,6 +17,9 @@ from sqlalchemy.sql import Select
 from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.api.history import batch_summary
 from hms_backend.app.api.schemas import (
+    ActivityBucketRead,
+    ActivityRead,
+    ActivityTotalsRead,
     AdditionalRequirement,
     AnalyticsCertificateCoverageRead,
     AnalyticsCustomerRiskRead,
@@ -64,6 +67,7 @@ from hms_backend.app.api.schemas import (
     DashboardRead,
     DashboardRetestRead,
     DashboardReviewRead,
+    FleetStatusRead,
     InspectionAppointmentChangeRequestApproval,
     InspectionAppointmentChangeRequestCreate,
     InspectionAppointmentChangeRequestRead,
@@ -223,6 +227,23 @@ from hms_backend.app.modules.reference.models import (
     NominalBore,
     Standard,
 )
+from hms_backend.app.modules.reporting.activity import SERIES, activity_counts
+from hms_backend.app.modules.reporting.periods import (
+    PeriodError,
+    build_buckets,
+    choose_granularity,
+)
+from hms_backend.app.modules.reporting.periods import reference as reporting_reference
+from hms_backend.app.modules.reporting.service import (
+    certificate_coverage,
+    customer_risk,
+    due_soon_conditions,
+    escalation_conditions,
+    fleet_status,
+    inspection_outcomes,
+    overdue_conditions,
+    retest_counts,
+)
 from hms_backend.app.modules.scheduling.models import (
     RetestSchedule,
     RetestScheduleStatus,
@@ -352,29 +373,6 @@ def _reporting_window(
             detail="end_at must be later than start_at",
         )
     return start, end
-
-
-def _reporting_dates(
-    window: tuple[datetime, datetime] | None,
-) -> tuple[date, date] | None:
-    if window is None:
-        return None
-    start, end = window
-    # Retest deadlines are dates, so a partial-day range includes that calendar day.
-    return start.date(), end.date()
-
-
-def _inspection_in_reporting_window(
-    inspection: Inspection,
-    window: tuple[datetime, datetime],
-) -> bool:
-    timestamp = {
-        InspectionStatus.IN_PROGRESS.value: inspection.started_at,
-        InspectionStatus.SUBMITTED.value: inspection.submitted_at,
-        InspectionStatus.APPROVED.value: inspection.approved_at,
-        InspectionStatus.REJECTED.value: inspection.rejected_at,
-    }.get(inspection.status) or inspection.created_at
-    return window[0] <= timestamp < window[1]
 
 
 def _etag_for_version(version: int) -> str:
@@ -1610,104 +1608,110 @@ async def get_dashboard(
     start_at: ReportingStartParam = None,
     end_at: ReportingEndParam = None,
 ) -> DashboardRead:
+    """Current operational snapshot.
+
+    The reporting period is still validated, but it selects activity only (see
+    ``/reporting/activity``). Overdue work, the review queue and fleet status are
+    "right now" figures and must not disappear because of the period.
+    """
     _require_asset_read(principal)
     if is_inspector_scoped(principal):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Dashboard is not available to inspectors",
         )
-    reporting_window = _reporting_window(start_at, end_at)
-    reporting_dates = _reporting_dates(reporting_window)
-    today = datetime.now(UTC).date()
-    reference_date = min(today, reporting_dates[1]) if reporting_dates else today
-    week_end = reference_date + timedelta(days=7)
+    _reporting_window(start_at, end_at)
+    ref = reporting_reference()
 
-    assets = _apply_asset_scope(
-        select(Asset).where(Asset.deleted_at.is_(None)), principal
-    )
-    asset_period_filters = (
-        (
-            Asset.created_at >= reporting_window[0],
-            Asset.created_at < reporting_window[1],
-        )
-        if reporting_window
-        else ()
-    )
-    if reporting_window:
-        assets = assets.where(*asset_period_filters)
-    schedules = _apply_asset_scope(_retest_schedule_statement(), principal)
-    if reporting_dates:
-        schedules = schedules.where(
-            RetestSchedule.due_at >= reporting_dates[0],
-            RetestSchedule.due_at <= reporting_dates[1],
-        )
-    active_schedules = schedules.where(
-        RetestSchedule.status != RetestScheduleStatus.SUSPENDED.value
-    )
-    overdue_schedules = active_schedules.where(RetestSchedule.due_at < reference_date)
-    due_soon_schedules = active_schedules.where(
-        RetestSchedule.due_at.between(reference_date, week_end)
-    )
-    reviews = _apply_asset_scope(_inspection_statement(), principal).where(
-        Inspection.status == InspectionStatus.SUBMITTED.value
-    )
-    if reporting_window:
-        reviews = reviews.where(
-            func.coalesce(Inspection.submitted_at, Inspection.created_at)
-            >= reporting_window[0],
-            func.coalesce(Inspection.submitted_at, Inspection.created_at)
-            < reporting_window[1],
-        )
+    def scope(statement: Select[Any]) -> Select[Any]:
+        return _apply_asset_scope(statement, principal)
 
-    customers = _apply_customer_scope(
-        select(Customer).where(Customer.deleted_at.is_(None)), principal
+    counts = await retest_counts(session, scope, ref)
+    fleet = await fleet_status(session, scope, ref)
+    _, awaiting_review_inspections = await inspection_outcomes(session, scope, None)
+    total_assets = await _count(
+        session,
+        _apply_asset_scope(
+            select(Asset.id)
+            .join(Customer, Customer.id == Asset.customer_id)
+            .where(Asset.deleted_at.is_(None), Customer.deleted_at.is_(None)),
+            principal,
+        ),
     )
-    if reporting_window:
-        customers = customers.where(
-            Customer.created_at >= reporting_window[0],
-            Customer.created_at < reporting_window[1],
-        )
-
-    total_assets = await _count(session, assets)
-    total_customers = await _count(session, customers)
     in_service_assets = await _count(
         session,
-        assets.where(Asset.lifecycle_status == "IN_SERVICE"),
+        _apply_asset_scope(
+            select(Asset.id)
+            .join(Customer, Customer.id == Asset.customer_id)
+            .where(
+                Asset.deleted_at.is_(None),
+                Customer.deleted_at.is_(None),
+                Asset.lifecycle_status == "IN_SERVICE",
+            ),
+            principal,
+        ),
     )
-    overdue_total = await _count(session, overdue_schedules)
-    due_soon_assets = await _count(session, due_soon_schedules)
-    awaiting_review_inspections = await _count(session, reviews)
+    total_customers = await _count(
+        session,
+        _apply_customer_scope(
+            select(Customer.id).where(Customer.deleted_at.is_(None)), principal
+        ),
+    )
 
+    queue = _apply_asset_scope(_retest_schedule_statement(), principal).where(
+        *overdue_conditions(ref)
+    )
     overdue_items = (
         await session.scalars(
-            overdue_schedules.order_by(RetestSchedule.due_at, Asset.asset_number)
+            queue.order_by(RetestSchedule.due_at, Asset.asset_number, RetestSchedule.id)
             .offset(offset)
             .limit(limit)
         )
     ).all()
     due_items = (
         await session.scalars(
-            due_soon_schedules.order_by(
-                RetestSchedule.due_at, Asset.asset_number
-            ).limit(4)
+            _apply_asset_scope(_retest_schedule_statement(), principal)
+            .where(*due_soon_conditions(ref))
+            .order_by(RetestSchedule.due_at, Asset.asset_number, RetestSchedule.id)
+            .limit(4)
         )
     ).all()
     review_items = (
         await session.scalars(
-            reviews.order_by(
-                desc(Inspection.submitted_at), desc(Inspection.created_at)
-            ).limit(3)
+            _apply_asset_scope(_inspection_statement(), principal)
+            .where(Inspection.status == InspectionStatus.SUBMITTED.value)
+            .order_by(
+                desc(Inspection.submitted_at),
+                desc(Inspection.created_at),
+                Inspection.id,
+            )
+            .limit(3)
         )
     ).all()
 
     return DashboardRead(
+        as_of=ref.as_of,
+        timezone=ref.timezone,
         total_assets=total_assets,
         total_customers=total_customers,
         in_service_assets=in_service_assets,
-        due_soon_assets=due_soon_assets,
-        overdue_assets=overdue_total,
+        fleet_status=FleetStatusRead(
+            on_track=fleet.on_track,
+            due_soon=fleet.due_soon,
+            overdue=fleet.overdue,
+            suspended=fleet.suspended,
+            unscheduled=fleet.unscheduled,
+            total=fleet.total,
+            on_track_percent=fleet.on_track_percent,
+        ),
+        due_soon_assets=counts.due_soon_assets,
+        overdue_assets=counts.overdue_assets,
+        overdue_schedules=counts.overdue_schedules,
+        overdue_escalated=counts.overdue_escalated,
+        escalation_eligible_total=counts.escalation_eligible,
+        escalated_today=counts.escalated_today,
         awaiting_review_inspections=awaiting_review_inspections,
-        overdue_total=overdue_total,
+        overdue_total=counts.overdue_schedules,
         overdue_limit=limit,
         overdue_offset=offset,
         overdue_retests=[
@@ -1718,7 +1722,7 @@ async def get_dashboard(
                 customer_name=schedule.asset.customer.name,
                 product_name=schedule.asset.product.name,
                 due_at=schedule.due_at,
-                days_overdue=(reference_date - schedule.due_at).days,
+                days_overdue=(ref.today - schedule.due_at).days,
                 status="ESCALATED" if schedule.escalated_at else "OVERDUE",
             )
             for schedule in overdue_items
@@ -1805,7 +1809,12 @@ async def get_analytics_overview(
     start_at: ReportingStartParam = None,
     end_at: ReportingEndParam = None,
 ) -> AnalyticsOverviewRead:
-    """Return scoped operational analytics for the requested reporting window."""
+    """Scoped analytics: a current snapshot plus activity for the reporting period.
+
+    Fleet status, certificate coverage, customer risk and the review queue are snapshots
+    and use the same definitions as the Dashboard. Only ``inspection_outcomes`` and
+    ``certificate_coverage.issued_in_period`` follow the selected period.
+    """
     _require_asset_read(principal)
     if is_inspector_scoped(principal):
         raise HTTPException(
@@ -1813,192 +1822,148 @@ async def get_analytics_overview(
             detail="Analytics is not available to inspectors",
         )
     reporting_window = _reporting_window(start_at, end_at)
-    reporting_dates = _reporting_dates(reporting_window)
-    today = datetime.now(UTC).date()
-    reference_date = min(today, reporting_dates[1]) if reporting_dates else today
-    week_end = reference_date + timedelta(days=7)
-    certificate_expiry = reference_date + timedelta(days=60)
+    ref = reporting_reference()
 
-    assets = _apply_asset_scope(
-        select(Asset).where(Asset.deleted_at.is_(None)), principal
-    )
-    asset_period_filters = (
-        (
-            Asset.created_at >= reporting_window[0],
-            Asset.created_at < reporting_window[1],
-        )
-        if reporting_window
-        else ()
-    )
-    if reporting_window:
-        assets = assets.where(*asset_period_filters)
-    in_service_asset_ids = set(
-        (
-            await session.scalars(
-                _apply_asset_scope(
-                    select(Asset.id).where(
-                        Asset.deleted_at.is_(None),
-                        Asset.lifecycle_status == "IN_SERVICE",
-                        *asset_period_filters,
-                    ),
-                    principal,
-                )
-            )
-        ).all()
-    )
-    fleet_asset_ids = set(
-        (
-            await session.scalars(
-                _apply_asset_scope(
-                    select(Asset.id).where(
-                        Asset.deleted_at.is_(None),
-                        Asset.lifecycle_status.not_in(
-                            {"DRAFT", "CONDEMNED", "RETIRED"}
-                        ),
-                        *asset_period_filters,
-                    ),
-                    principal,
-                )
-            )
-        ).all()
-    )
-    schedules = _apply_asset_scope(_retest_schedule_statement(), principal).where(
-        RetestSchedule.status != RetestScheduleStatus.SUSPENDED.value
-    )
-    if reporting_dates:
-        schedules = schedules.where(
-            RetestSchedule.due_at >= reporting_dates[0],
-            RetestSchedule.due_at <= reporting_dates[1],
-        )
-    inspections = await session.scalars(
-        _apply_asset_scope(_inspection_statement(), principal)
-    )
-    certificate_statement = _apply_asset_scope(_certificate_statement(), principal)
-    if reporting_window:
-        certificate_statement = certificate_statement.where(
-            Certificate.issued_at >= reporting_window[0],
-            Certificate.issued_at < reporting_window[1],
-        )
-    certificates = await session.scalars(certificate_statement)
-    schedule_items = (await session.scalars(schedules)).all()
+    def scope(statement: Select[Any]) -> Select[Any]:
+        return _apply_asset_scope(statement, principal)
 
-    overdue_asset_ids = {
-        schedule.asset_id
-        for schedule in schedule_items
-        if schedule.due_at < reference_date
-    }
-    due_soon_asset_ids = {
-        schedule.asset_id
-        for schedule in schedule_items
-        if reference_date <= schedule.due_at <= week_end
-    }
-    overdue_assets = len(overdue_asset_ids)
-    due_soon_assets = len(due_soon_asset_ids)
-    active_certificates = [
-        certificate
-        for certificate in certificates
-        if certificate.status == CertificateStatus.ISSUED.value
-    ]
-    valid_certificate_asset_ids = {
-        certificate.asset_id
-        for certificate in active_certificates
-        if certificate.valid_until is None or certificate.valid_until >= reference_date
-    }
-    covered_assets = len(in_service_asset_ids & valid_certificate_asset_ids)
-    expiring_soon = sum(
-        certificate.valid_until is not None
-        and reference_date <= certificate.valid_until <= certificate_expiry
-        for certificate in active_certificates
+    counts = await retest_counts(session, scope, ref)
+    fleet = await fleet_status(session, scope, ref)
+    coverage = await certificate_coverage(session, scope, ref, reporting_window)
+    risk_rows = await customer_risk(session, scope, ref)
+    outcomes, awaiting_review = await inspection_outcomes(
+        session, scope, reporting_window
     )
-    expired = sum(
-        certificate.valid_until is not None and certificate.valid_until < reference_date
-        for certificate in active_certificates
+    total_assets = await _count(
+        session,
+        _apply_asset_scope(
+            select(Asset.id)
+            .join(Customer, Customer.id == Asset.customer_id)
+            .where(Asset.deleted_at.is_(None), Customer.deleted_at.is_(None)),
+            principal,
+        ),
     )
-
-    customer_risk: dict[str, dict[str, Any]] = {}
-    for schedule in schedule_items:
-        if schedule.due_at > week_end:
-            continue
-        customer = schedule.asset.customer
-        row = customer_risk.setdefault(
-            customer.id,
-            {
-                "customer_id": customer.id,
-                "customer_name": customer.name,
-                "overdue": 0,
-                "due_soon": 0,
-            },
-        )
-        if schedule.due_at < reference_date:
-            row["overdue"] += 1
-        else:
-            row["due_soon"] += 1
-
-    inspection_outcomes: dict[str, AnalyticsInspectionOutcomeRead] = {}
-    awaiting_review = 0
-    for inspection in inspections:
-        if reporting_window and not _inspection_in_reporting_window(
-            inspection, reporting_window
-        ):
-            continue
-        if inspection.status == InspectionStatus.SUBMITTED.value:
-            awaiting_review += 1
-        if inspection.status not in {
-            InspectionStatus.SUBMITTED.value,
-            InspectionStatus.APPROVED.value,
-            InspectionStatus.REJECTED.value,
-        }:
-            continue
-        outcome = inspection_outcomes.setdefault(
-            inspection.inspection_type,
-            AnalyticsInspectionOutcomeRead(
-                inspection_type=inspection.inspection_type,
-                submitted=0,
-                approved=0,
-                rejected=0,
+    in_service_assets = await _count(
+        session,
+        _apply_asset_scope(
+            select(Asset.id)
+            .join(Customer, Customer.id == Asset.customer_id)
+            .where(
+                Asset.deleted_at.is_(None),
+                Customer.deleted_at.is_(None),
+                Asset.lifecycle_status == "IN_SERVICE",
             ),
-        )
-        if inspection.status == InspectionStatus.SUBMITTED.value:
-            outcome.submitted += 1
-        elif inspection.status == InspectionStatus.APPROVED.value:
-            outcome.approved += 1
-        else:
-            outcome.rejected += 1
-
-    risk_rows = sorted(
-        customer_risk.values(),
-        key=lambda row: (-row["overdue"], -row["due_soon"], row["customer_name"]),
-    )[:6]
+            principal,
+        ),
+    )
     return AnalyticsOverviewRead(
         generated_at=datetime.now(UTC),
-        total_assets=await _count(session, assets),
-        in_service_assets=len(in_service_asset_ids),
-        due_soon_assets=due_soon_assets,
-        overdue_assets=overdue_assets,
+        as_of=ref.as_of,
+        timezone=ref.timezone,
+        total_assets=total_assets,
+        in_service_assets=in_service_assets,
+        due_soon_assets=counts.due_soon_assets,
+        overdue_assets=counts.overdue_assets,
         awaiting_review_inspections=awaiting_review,
+        fleet_status=FleetStatusRead(
+            on_track=fleet.on_track,
+            due_soon=fleet.due_soon,
+            overdue=fleet.overdue,
+            suspended=fleet.suspended,
+            unscheduled=fleet.unscheduled,
+            total=fleet.total,
+            on_track_percent=fleet.on_track_percent,
+        ),
         fleet_posture=AnalyticsFleetPostureRead(
-            clear=len(fleet_asset_ids - overdue_asset_ids - due_soon_asset_ids),
-            due_soon=len(fleet_asset_ids & due_soon_asset_ids),
-            overdue=len(fleet_asset_ids & overdue_asset_ids),
+            clear=fleet.on_track,
+            due_soon=fleet.due_soon,
+            overdue=fleet.overdue,
         ),
         certificate_coverage=AnalyticsCertificateCoverageRead(
-            issued=len(active_certificates),
-            covered_assets=covered_assets,
-            missing_assets=max(0, len(in_service_asset_ids) - covered_assets),
-            coverage_percent=round(covered_assets / len(in_service_asset_ids) * 100)
-            if in_service_asset_ids
-            else 0,
-            expiring_soon=expiring_soon,
-            expired=expired,
+            eligible_assets=coverage.eligible_assets,
+            covered_assets=coverage.covered_assets,
+            unverified_assets=coverage.unverified_assets,
+            expired_assets=coverage.expired_assets,
+            missing_assets=coverage.missing_assets,
+            expiring_assets=coverage.expiring_assets,
+            coverage_percent=coverage.coverage_percent,
+            issued=coverage.issued,
+            expiring_soon=coverage.expiring_soon,
+            expired=coverage.expired,
+            issued_in_period=coverage.issued_in_period,
         ),
         customer_risk=[
             AnalyticsCustomerRiskRead(
-                **row,
-                risk="HIGH" if row["overdue"] else "WATCH",
+                customer_id=row.customer_id,
+                customer_name=row.customer_name,
+                overdue=row.overdue,
+                due_soon=row.due_soon,
+                risk="HIGH" if row.overdue else "WATCH",
             )
             for row in risk_rows
         ],
-        inspection_outcomes=[row for _, row in sorted(inspection_outcomes.items())],
+        inspection_outcomes=[
+            AnalyticsInspectionOutcomeRead(
+                inspection_type=row.inspection_type,
+                submitted=row.submitted,
+                approved=row.approved,
+                rejected=row.rejected,
+            )
+            for row in outcomes
+        ],
+    )
+
+
+@router.get("/reporting/activity", response_model=ActivityRead)
+async def get_reporting_activity(
+    session: SessionDep,
+    principal: PrincipalDep,
+    start_at: Annotated[datetime, Query()],
+    end_at: Annotated[datetime, Query()],
+    granularity: Annotated[
+        Literal["auto", "hour", "day", "week"], Query()
+    ] = "auto",
+) -> ActivityRead:
+    """Complete, scoped activity counts for ``[start_at, end_at)``.
+
+    Aggregate counts only: no audit records are returned, so the endpoint is open to
+    every role that can read the Dashboard, limited to the assets they can see.
+    """
+    _require_asset_read(principal)
+    if is_inspector_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Activity reporting is not available to inspectors",
+        )
+    window = _reporting_window(start_at, end_at)
+    assert window is not None
+    chosen = granularity if granularity != "auto" else choose_granularity(*window)
+    try:
+        buckets = build_buckets(window[0], window[1], chosen)
+    except PeriodError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+
+    def scope(statement: Select[Any]) -> Select[Any]:
+        return _apply_asset_scope(statement, principal)
+
+    series = await activity_counts(session, scope, buckets)
+    return ActivityRead(
+        generated_at=datetime.now(UTC),
+        start_at=window[0],
+        end_at=window[1],
+        timezone=reporting_reference().timezone,
+        granularity=chosen,
+        buckets=[
+            ActivityBucketRead(
+                start=bucket.start,
+                end=bucket.end,
+                **{name: series[name][index] for name in SERIES},
+            )
+            for index, bucket in enumerate(buckets)
+        ],
+        totals=ActivityTotalsRead(**{name: sum(series[name]) for name in SERIES}),
     )
 
 
@@ -2072,22 +2037,22 @@ async def escalate_overdue_retests(
     principal: PrincipalDep,
 ) -> RetestEscalationResponse:
     _require_asset_write(principal)
-    today = datetime.now(UTC).date()
+    ref = reporting_reference()
+    today = ref.today
     now = utc_now()
+    # The same predicate the Dashboard uses for its confirmation count, so the number a
+    # user approves is the number this endpoint acts on.
     schedules = (
         await session.scalars(
             _apply_asset_scope(_retest_schedule_statement(), principal)
-            .where(
-                RetestSchedule.status != RetestScheduleStatus.SUSPENDED.value,
-                RetestSchedule.due_at < today,
-            )
-            .with_for_update()
+            .where(*escalation_conditions(ref))
+            .order_by(RetestSchedule.id)
+            .with_for_update(of=RetestSchedule)
         )
     ).all()
+    eligible = len(schedules)
     dispatched = 0
     for schedule in schedules:
-        if schedule.escalated_at and schedule.escalated_at.date() == today:
-            continue
         asset = schedule.asset
         event = await emit_event_if_absent(
             session,
@@ -2119,7 +2084,7 @@ async def escalate_overdue_retests(
         )
         dispatched += 1
     await session.commit()
-    return RetestEscalationResponse(dispatched=dispatched)
+    return RetestEscalationResponse(dispatched=dispatched, eligible=eligible)
 
 
 @router.get("/retest-schedules/{schedule_id}", response_model=RetestScheduleRead)

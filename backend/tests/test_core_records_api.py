@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from typing import cast
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -17,6 +18,7 @@ from hms_backend.app.api.records import (
     _location_availability_slots,
 )
 from hms_backend.app.core.audit import verify_audit_chain
+from hms_backend.app.core.config import settings
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base, utc_now
@@ -64,6 +66,11 @@ from hms_backend.app.modules.scheduling.models import (
     RetestSchedule,
     RetestScheduleStatus,
 )
+
+
+def org_today() -> date:
+    """Today in the reporting timezone: what Dashboard day counts are measured from."""
+    return datetime.now(ZoneInfo(settings.reporting_timezone)).date()
 
 
 def utc_today() -> date:
@@ -437,7 +444,25 @@ async def test_dashboard_returns_live_operational_data_and_respects_customer_sco
         scoped_response = await client.get("/api/v1/dashboard", params={"limit": 5})
 
     assert admin_response.status_code == 200
-    assert admin_response.json() == {
+    admin_body = admin_response.json()
+    # Snapshot metadata and the new status fields; their semantics are covered in
+    # test_dashboard_reporting.py.
+    assert admin_body.pop("as_of")
+    assert admin_body.pop("timezone") == "Australia/Sydney"
+    assert admin_body.pop("fleet_status") == {
+        "on_track": 0,
+        "due_soon": 1,
+        "overdue": 1,
+        "suspended": 0,
+        "unscheduled": 0,
+        "total": 2,
+        "on_track_percent": 0,
+    }
+    assert admin_body.pop("overdue_schedules") == 1
+    assert admin_body.pop("overdue_escalated") == 0
+    assert admin_body.pop("escalation_eligible_total") == 1
+    assert admin_body.pop("escalated_today") == 0
+    assert admin_body == {
         "total_assets": 2,
         "total_customers": 2,
         "in_service_assets": 1,
@@ -455,7 +480,7 @@ async def test_dashboard_returns_live_operational_data_and_respects_customer_sco
                 "customer_name": "Vopak",
                 "product_name": "FUELFLEX GREEN",
                 "due_at": "2023-11-02",
-                "days_overdue": (utc_today() - date(2023, 11, 2)).days,
+                "days_overdue": (org_today() - date(2023, 11, 2)).days,
                 "status": "OVERDUE",
             }
         ],
@@ -569,13 +594,20 @@ async def test_analytics_overview_uses_live_records_and_respects_customer_scope(
         "due_soon": 1,
         "overdue": 1,
     }
+    # Coverage is measured over the eligible fleet (both assets), so the Vopak asset
+    # without a certificate is missing coverage rather than being left out.
     assert admin_data["certificate_coverage"] == {
-        "issued": 1,
+        "eligible_assets": 2,
         "covered_assets": 1,
-        "missing_assets": 0,
-        "coverage_percent": 100,
+        "unverified_assets": 0,
+        "expired_assets": 0,
+        "missing_assets": 1,
+        "expiring_assets": 1,
+        "coverage_percent": 50,
+        "issued": 1,
         "expiring_soon": 1,
         "expired": 0,
+        "issued_in_period": None,
     }
     assert admin_data["customer_risk"] == [
         {
@@ -663,13 +695,15 @@ async def test_dashboard_and_analytics_filter_to_the_requested_reporting_window(
             },
         )
 
+    # The period selects activity only: the fleet and overdue work are current state.
     assert dashboard_response.status_code == 200
-    assert dashboard_response.json()["total_assets"] == 0
-    assert dashboard_response.json()["overdue_retests"] == []
+    assert dashboard_response.json()["total_assets"] == 2
+    assert len(dashboard_response.json()["overdue_retests"]) == 1
     assert dashboard_response.json()["awaiting_review"] == []
     assert analytics_response.status_code == 200
-    assert analytics_response.json()["total_assets"] == 0
+    assert analytics_response.json()["total_assets"] == 2
     assert analytics_response.json()["inspection_outcomes"] == []
+    assert analytics_response.json()["certificate_coverage"]["issued_in_period"] == 0
     assert invalid_response.status_code == 422
 
 
@@ -689,9 +723,9 @@ async def test_manual_overdue_escalation_queues_one_event_per_schedule_per_day(
         second_response = await client.post("/api/v1/retest-schedules/escalate-overdue")
 
     assert first_response.status_code == 200
-    assert first_response.json() == {"dispatched": 1}
+    assert first_response.json() == {"dispatched": 1, "eligible": 1}
     assert second_response.status_code == 200
-    assert second_response.json() == {"dispatched": 0}
+    assert second_response.json() == {"dispatched": 0, "eligible": 0}
 
     async with session_factory() as session:
         schedule = await session.scalar(
