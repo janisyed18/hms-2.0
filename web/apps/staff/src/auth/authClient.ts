@@ -107,6 +107,25 @@ export function createBrowserAuthClient(options: BrowserAuthClientOptions = {}) 
         headers: { Origin: origin() }
       }).then((response) => parse<BrowserAuthenticatedResponse>(response));
     },
+    /** Step-up for this browser session; returns a token with a fresh auth time. */
+    reauth(
+      accessToken: string,
+      password: string,
+      code: string | null
+    ): Promise<{ access_token: string }> {
+      return post(
+        "/reauth",
+        { password, code },
+        {
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+            Origin: origin()
+          }
+        }
+      );
+    },
     logout(): Promise<void> {
       return fetcher(`${baseUrl}${PREFIX}/logout`, {
         method: "POST",

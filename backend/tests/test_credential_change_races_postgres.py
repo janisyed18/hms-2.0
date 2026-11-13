@@ -268,3 +268,114 @@ async def test_a_refresh_that_arrives_mid_reset_is_refused_and_creates_nothing(
         await session.commit()
     await reset
     assert await _live_sessions(factory, user_id) == 0
+
+
+async def _live_auth_times(factory: Factory, user_id: str) -> list[object]:
+    async with factory() as session:
+        return list(
+            (
+                await session.scalars(
+                    select(BrowserRefreshSession.auth_time).where(
+                        BrowserRefreshSession.user_id == user_id,
+                        BrowserRefreshSession.revoked_at.is_(None),
+                    )
+                )
+            ).all()
+        )
+
+
+async def _subject(factory: Factory, user_id: str) -> str:
+    async with factory() as session:
+        row = await session.get(User, user_id)
+        assert row is not None
+        return row.oidc_subject
+
+
+async def _reauth(factory: Factory, user_id: str, token: str) -> None:
+    subject = await _subject(factory, user_id)
+    code = await _fresh_code(factory, user_id)
+    async with factory() as session:
+        await SERVICE.reauthenticate(
+            session,
+            refresh_token=token,
+            user_subject=subject,
+            password=PASSWORD,
+            code=code,
+        )
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_step_up_that_overlaps_a_refresh_succeeds_and_stamps_the_new_session(
+    factory: Factory, account: tuple[str, str]
+) -> None:
+    user_id, email = account
+    token = (await _sign_in(factory, user_id, email)).refresh_token
+    before = await _live_auth_times(factory, user_id)
+    rotated, release = asyncio.Event(), asyncio.Event()
+    refresh = asyncio.create_task(
+        _hold_then_commit(
+            factory,
+            lambda s: SERVICE.refresh(s, refresh_token=token),
+            rotated,
+            release,
+        )
+    )
+    await rotated.wait()
+    # The cookie this step-up carries is rotated away while it waits for the lock.
+    step_up = asyncio.create_task(_reauth(factory, user_id, token))
+    await asyncio.sleep(0.5)
+    assert not step_up.done()
+    release.set()
+    await asyncio.gather(refresh, step_up)  # no session loss
+
+    after = await _live_auth_times(factory, user_id)
+    assert len(after) == 1 and after != before
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_that_overlaps_a_step_up_keeps_the_new_time(
+    factory: Factory, account: tuple[str, str]
+) -> None:
+    user_id, email = account
+    token = (await _sign_in(factory, user_id, email)).refresh_token
+    subject = await _subject(factory, user_id)
+    code = await _fresh_code(factory, user_id)
+    stamped, release = asyncio.Event(), asyncio.Event()
+    step_up = asyncio.create_task(
+        _hold_then_commit(
+            factory,
+            lambda s: SERVICE.reauthenticate(
+                s,
+                refresh_token=token,
+                user_subject=subject,
+                password=PASSWORD,
+                code=code,
+            ),
+            stamped,
+            release,
+        )
+    )
+    await stamped.wait()
+    refresh = asyncio.create_task(_refresh_once(factory, token))
+    await asyncio.sleep(0.5)
+    assert not refresh.done()
+    release.set()
+    await asyncio.gather(step_up, refresh)
+
+    async with factory() as session:
+        rows = (
+            await session.scalars(
+                select(BrowserRefreshSession.auth_time).where(
+                    BrowserRefreshSession.user_id == user_id
+                )
+            )
+        ).all()
+    # Every row of the session, the rotated one included, carries the step-up time.
+    assert len(set(rows)) == 1 and rows[0] is not None
+
+
+async def _refresh_once(factory: Factory, token: str) -> None:
+    async with factory() as session:
+        await SERVICE.refresh(session, refresh_token=token)
+        await session.commit()

@@ -23,6 +23,20 @@ def test_production_browser_auth_rejects_missing_security_secrets() -> None:
     assert "AUTH_BROWSER_ALLOWED_ORIGINS must list the staff origin" in errors
 
 
+def test_browser_login_is_refused_with_oidc_mode() -> None:
+    configured = production_settings(
+        auth_mode="oidc",
+        auth_oidc_issuer="https://idp.example.com",
+        auth_oidc_audience="hms",
+        auth_bearer_hmac_secret="signing-secret",
+    )
+    assert (
+        "AUTH_MODE=oidc is not supported with browser login; "
+        "Staff web supports AUTH_MODE=bearer only"
+        in configured.browser_auth_config_errors()
+    )
+
+
 def test_deployed_dev_browser_auth_is_validated() -> None:
     configured = Settings.model_validate(
         {"environment": "dev", "auth_browser_login_enabled": True}

@@ -316,6 +316,13 @@ class Settings(BaseSettings):
         if not self.auth_browser_login_enabled or self.is_local_or_test:
             return []
         errors: list[str] = []
+        if self.auth_mode == "oidc":
+            # Staff web signs in with a local password and mints its own bearer
+            # tokens; it has no identity-provider login or step-up flow.
+            errors.append(
+                "AUTH_MODE=oidc is not supported with browser login; "
+                "Staff web supports AUTH_MODE=bearer only"
+            )
         if not self.auth_bearer_hmac_secret:
             errors.append("AUTH_BEARER_HMAC_SECRET is required")
         if self.auth_mfa_required:

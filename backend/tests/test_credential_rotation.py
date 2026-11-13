@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
+from datetime import UTC, datetime
 
 import fakeredis.aioredis
 import httpx
@@ -196,7 +197,11 @@ async def _change_by_admin_reset(
         await session.commit()
         assert target is not None
         target_id = target.id
-    token = encode_hs256_bearer_token(subject="boss-sub", secret=SECRET)
+    token = encode_hs256_bearer_token(
+        subject="boss-sub",
+        secret=SECRET,
+        extra_claims={"auth_time": int(datetime.now(UTC).timestamp())},
+    )
     r = await client.post(
         f"/api/v1/admin/users/{target_id}/password-reset",
         headers={"Authorization": f"Bearer {token}"},
