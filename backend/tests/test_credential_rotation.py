@@ -9,7 +9,7 @@ after the change, must keep working.
 from __future__ import annotations
 
 import base64
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 
 import fakeredis.aioredis
 import httpx
@@ -169,6 +169,11 @@ async def _unfinished_login(client: httpx.AsyncClient) -> str:
     return str(login.json()["challenge"])
 
 
+ChangeCredentials = Callable[
+    [httpx.AsyncClient, SessionFactory, "Enrolled"], Awaitable[None]
+]
+
+
 async def _change_by_self_service(
     client: httpx.AsyncClient, session_factory: SessionFactory, who: Enrolled
 ) -> None:
@@ -242,8 +247,10 @@ async def test_an_unfinished_login_completes_when_nothing_changed(
     "change", [_change_by_self_service, _change_by_admin_reset, _change_by_reset_link]
 )
 async def test_a_login_challenge_from_before_a_credential_change_cannot_finish(
-    client: httpx.AsyncClient, session_factory: SessionFactory, change
-) -> None:  # type: ignore[no-untyped-def]
+    client: httpx.AsyncClient,
+    session_factory: SessionFactory,
+    change: ChangeCredentials,
+) -> None:
     who = await _enrol(client, session_factory)
     challenge = await _unfinished_login(client)
 
