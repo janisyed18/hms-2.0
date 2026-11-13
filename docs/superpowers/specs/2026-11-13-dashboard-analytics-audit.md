@@ -249,3 +249,39 @@ status, valid_until)` and `retest_schedules(due_at)` (the latter exists). No mig
 unless EXPLAIN shows a need. Consumers: only `hmsClient.ts` and the two workspaces plus
 `test_core_records_api.py`, `DashboardAssetIdentity.test.tsx`, `AppRouting.test.tsx`,
 `hmsClient.test.ts`. Customer portal does not call these endpoints (to be confirmed in Phase B).
+
+## 9. Phase B outcome (backend) and decisions applied
+
+Approved decisions: organisation timezone `REPORTING_TIMEZONE` (default `Australia/Sydney`,
+separate from `CustomerLocation.scheduling_timezone`, no migration); undated certificates are
+*unverified*; assets without a schedule are *unscheduled*; `Asset.lifecycle_status` untouched;
+activity is scoped by visible assets, never by actor.
+
+Implemented in `backend/src/hms_backend/app/modules/reporting/`:
+
+- `periods.py`: `Reference` (one as-of instant and organisation date per request), half-open
+  UTC intervals, DST-safe day/week/hour buckets, bucket cap (`MAX_BUCKETS = 120`).
+- `service.py`: the shared predicates and counts used by Dashboard, Analytics and the
+  escalation action. Fleet status is a single `CASE` over the eligible fleet, so each asset
+  is in exactly one of on_track / due_soon / overdue / suspended / unscheduled.
+- `activity.py`: scoped, complete activity counts per bucket; one conditional-aggregate query
+  per series. Series come only from exact timestamps; escalations come from the audit trail
+  because `RetestSchedule.escalated_at` keeps only the latest one. Only counts leave the module.
+
+Contract changes (additive unless stated):
+
+| Endpoint | Change |
+|---|---|
+| `GET /dashboard` | Adds `as_of`, `timezone`, `fleet_status`, `overdue_schedules`, `overdue_escalated`, `escalation_eligible_total`, `escalated_today`. **Behaviour change:** the reporting period no longer filters totals, overdue work, review queue or customers; it is validated only. |
+| `GET /analytics/overview` | Adds `as_of`, `timezone`, `fleet_status`; certificate coverage now has `eligible_assets`, `unverified_assets`, `expired_assets`, `expiring_assets`, `issued_in_period`. **Behaviour change:** coverage denominator is the eligible fleet (was IN_SERVICE assets created in the period), certificates are no longer filtered by issue date, and `expiring_soon`/`expired` remain certificate-level counts. |
+| `POST /retest-schedules/escalate-overdue` | Adds `eligible`. **Behaviour change:** condemned, retired and draft assets are no longer escalated; "already escalated today" uses the organisation day. |
+| `GET /reporting/activity` | New. Required `start_at`, `end_at`, optional `granularity`. |
+
+Retest on-track rate is `on_track / eligible fleet`, with suspended and unscheduled assets
+in the denominator; it is `null` for an empty fleet.
+
+Query analysis (PostgreSQL 16, 16,000 assets, 4,000 inspections, unscoped admin): every
+snapshot and activity statement ran in 0.01 to 36 ms; the only sequential scans were on tiny
+tables (`customers`, four rows) or on the table being counted. No index was added because the
+plans give no evidence one is needed at this volume. `audit_events.timestamp` is not indexed;
+re-check the escalation series if the audit table grows far beyond a few hundred thousand rows.
