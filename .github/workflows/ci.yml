@@ -57,6 +57,7 @@ jobs:
           tests/test_migration_transaction_per_migration.py
           tests/test_admin_user_keyset_postgres.py
           tests/test_credential_version_postgres.py
+          tests/test_credential_change_races_postgres.py
           tests/test_inspection_lifecycle_postgres.py
           tests/test_notification_center_postgres.py -v
           tests/test_my_work_postgres.py
