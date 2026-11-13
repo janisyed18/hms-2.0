@@ -220,4 +220,6 @@ export interface NotificationFeed {
 export interface OutboxState {
   operations: OutboxOperation[];
   warning?: string;
+  /** Device storage could not be read: `operations` is not the real queue, so keep what you hold. */
+  loadFailed?: boolean;
 }
