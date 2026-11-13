@@ -2,30 +2,38 @@
 
 The SQLite suite proves the definitions; this proves the same SQL (CASE aggregation,
 DATE/TIMESTAMPTZ comparisons, FOR UPDATE ... OF) behaves identically on the production
-engine, at a volume far above any row limit, and stays scoped to one customer in a
-shared database.
+engine, at a volume far above any row limit.
+
+These tests run in their own disposable database, migrated to head and dropped
+afterwards. They must not share the CI database: they insert thousands of assets, and
+the escalation endpoint acts on every eligible overdue schedule an admin can see, so in
+a shared database they would both skew bounded projections (My Work) and escalate other
+tests' records. Audit events are only ever written by the application's own writer
+through the API, so the hash chain stays valid; this module asserts that too.
 """
 
 # ruff: noqa: F811
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 from sqlalchemy import select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from test_core_records_api import api_client, org_today
 
 import hms_backend.app.main  # noqa: F401  (registers every ORM model)
+from hms_backend.app.core.audit import verify_audit_chain
 from hms_backend.app.core.rbac import Principal, Role
-from hms_backend.app.models.foundation import AuditEvent
+from hms_backend.app.models.base import Base
 from hms_backend.app.modules.assets.models import Asset, AssetLifecycleStatus
 from hms_backend.app.modules.customers.models import Customer
 from hms_backend.app.modules.inspections.models import (
@@ -39,6 +47,7 @@ from hms_backend.app.modules.scheduling.models import (
     RetestScheduleStatus,
 )
 
+BACKEND = Path(__file__).resolve().parents[1]
 POSTGRES_URL = os.environ.get("POSTGRES_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(
     not POSTGRES_URL, reason="POSTGRES_TEST_DATABASE_URL is not configured"
@@ -48,28 +57,62 @@ ASSETS = 4_000
 START = datetime(2026, 5, 1, 0, 0, tzinfo=UTC)
 END = datetime(2026, 5, 31, 0, 0, tzinfo=UTC)
 
+ADMIN = Principal(
+    user_id="admin-1", roles=frozenset({Role.HMS_ADMIN}), customer_ids=frozenset()
+)
+
+
+@pytest_asyncio.fixture(scope="module")
+async def disposable_database() -> AsyncIterator[str]:
+    """A database of this module's own, migrated to head and dropped afterwards."""
+    assert POSTGRES_URL is not None
+    base = make_url(POSTGRES_URL)
+    name = f"hms_reporting_{uuid4().hex[:10]}_test"
+    admin = create_async_engine(base, isolation_level="AUTOCOMMIT")
+    async with admin.connect() as connection:
+        await connection.execute(text(f'CREATE DATABASE "{name}"'))
+    url = base.set(database=name).render_as_string(hide_password=False)
+    migrate = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=BACKEND,
+        env={**os.environ, "DATABASE_URL": url},
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert migrate.returncode == 0, migrate.stderr
+    try:
+        yield url
+    finally:
+        async with admin.connect() as connection:
+            await connection.execute(
+                text(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datname = :name AND pid <> pg_backend_pid()"
+                ),
+                {"name": name},
+            )
+            await connection.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
+        await admin.dispose()
+
 
 @pytest_asyncio.fixture
-async def database() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    assert POSTGRES_URL is not None
-    database_name = make_url(POSTGRES_URL).database
-    if database_name is None or not database_name.endswith("_test"):
-        raise ValueError("These tests require a database name ending in _test")
-    engine = create_async_engine(POSTGRES_URL, pool_size=4)
+async def database(
+    disposable_database: str,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """An empty schema per test, so each one's counts are exact."""
+    engine = create_async_engine(disposable_database, pool_size=4)
+    tables = ", ".join(f'"{table.name}"' for table in Base.metadata.sorted_tables)
+    async with engine.begin() as connection:
+        await connection.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     try:
-        async with engine.connect() as connection:
-            version = await connection.scalar(
-                text("SELECT version_num FROM alembic_version")
-            )
-            head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
-            assert version == head, "Migrate the test database first"
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
         await engine.dispose()
 
 
 async def _seed(database: async_sessionmaker[AsyncSession]) -> dict[str, object]:
-    """One private customer: created/inspected on a known, awkward cadence."""
+    """One customer, created and inspected on a known, awkward cadence."""
     tag = uuid4().hex[:10]
     async with database() as session:
         product = Product(category="C", code=f"P{tag}", name=f"Product {tag}")
@@ -122,26 +165,11 @@ async def _seed(database: async_sessionmaker[AsyncSession]) -> dict[str, object]
                 select(RetestSchedule).where(RetestSchedule.customer_id == customer.id)
             )
         ).all()
-        escalated: list[datetime] = []
-        for index, schedule in enumerate(schedules[:300]):
-            stamp = START + timedelta(hours=2 * index + 1)
-            escalated.append(stamp)
-            session.add(
-                AuditEvent(
-                    actor_id="seed",
-                    action="retest_schedule.escalated",
-                    entity="RetestSchedule",
-                    entity_id=schedule.id,
-                    timestamp=stamp,
-                    hash=f"seed-{tag}-{index}",
-                )
-            )
         await session.commit()
         return {
             "customer_id": customer.id,
             "created": created,
             "submitted": submitted,
-            "escalated": escalated,
             "overdue": sum(1 for s in schedules if s.due_at < today),
             "due_soon": sum(
                 1 for s in schedules if today <= s.due_at <= today + timedelta(days=7)
@@ -175,23 +203,16 @@ async def test_activity_reconciles_with_records_on_postgres(
     body = response.json()
 
     assert response.status_code == 200
-    created, submitted, escalated = (
-        seeded["created"],
-        seeded["submitted"],
-        seeded["escalated"],
-    )
+    created, submitted = seeded["created"], seeded["submitted"]
     assert isinstance(created, list) and isinstance(submitted, list)
-    assert isinstance(escalated, list)
     assert _inside(created, START, END) > 3_000  # not capped at any page size
     assert body["totals"]["assets_added"] == _inside(created, START, END)
     assert body["totals"]["inspections_submitted"] == _inside(submitted, START, END)
-    assert body["totals"]["retests_escalated"] == _inside(escalated, START, END)
     for bucket in body["buckets"]:
         b_start = datetime.fromisoformat(bucket["start"])
         b_end = datetime.fromisoformat(bucket["end"])
         assert bucket["assets_added"] == _inside(created, b_start, b_end)
         assert bucket["inspections_submitted"] == _inside(submitted, b_start, b_end)
-        assert bucket["retests_escalated"] == _inside(escalated, b_start, b_end)
     assert (
         sum(b["assets_added"] for b in body["buckets"])
         == body["totals"]["assets_added"]
@@ -208,7 +229,7 @@ async def test_snapshot_matches_between_dashboard_and_analytics_on_postgres(
         roles=frozenset({Role.CUSTOMER_USER}),
         customer_ids=frozenset({str(seeded["customer_id"])}),
     )
-    windows = [
+    windows: list[dict[str, str]] = [
         {},
         {"start_at": "2026-05-01T00:00:00Z", "end_at": "2026-05-08T00:00:00Z"},
         {"start_at": "2099-01-01T00:00:00Z", "end_at": "2099-01-02T00:00:00Z"},
@@ -221,19 +242,6 @@ async def test_snapshot_matches_between_dashboard_and_analytics_on_postgres(
             )
             for window in windows
         ]
-        eligible_before = pairs[0][0]["escalation_eligible_total"]
-    admin = Principal(
-        user_id="admin-1",
-        roles=frozenset({Role.HMS_ADMIN}),
-        customer_ids=frozenset(),
-    )
-    async with api_client(database, admin) as client:
-        # Exercises SELECT ... FOR UPDATE OF on PostgreSQL. The database is shared, so
-        # other tests' overdue schedules may be included: assert at least ours.
-        escalation = await client.post("/api/v1/retest-schedules/escalate-overdue")
-        repeat = await client.post("/api/v1/retest-schedules/escalate-overdue")
-    async with api_client(database, user) as client:
-        after = (await client.get("/api/v1/dashboard")).json()
 
     status = pairs[0][0]["fleet_status"]
     assert status["overdue"] == seeded["overdue"]
@@ -250,10 +258,42 @@ async def test_snapshot_matches_between_dashboard_and_analytics_on_postgres(
             dashboard["awaiting_review_inspections"]
             == (analytics["awaiting_review_inspections"])
         )
-    assert eligible_before == seeded["overdue"]
-    assert escalation.status_code == 200
-    assert escalation.json()["dispatched"] == escalation.json()["eligible"]
-    assert escalation.json()["dispatched"] >= seeded["overdue"]
+
+
+@pytest.mark.asyncio
+async def test_escalation_counts_every_event_and_keeps_the_audit_chain_valid(
+    database: async_sessionmaker[AsyncSession],
+) -> None:
+    """Escalation writes through the application's audit writer, never around it.
+
+    Each escalation is a separate audit event, which is why the activity series counts
+    them from the chain rather than from ``RetestSchedule.escalated_at`` (that column
+    keeps only the latest one).
+    """
+    seeded = await _seed(database)
+    overdue = int(str(seeded["overdue"]))
+    window_start = datetime.now(UTC) - timedelta(minutes=5)
+
+    async with api_client(database, ADMIN) as client:
+        first = await client.post("/api/v1/retest-schedules/escalate-overdue")
+        repeat = await client.post("/api/v1/retest-schedules/escalate-overdue")
+        dashboard = (await client.get("/api/v1/dashboard")).json()
+        activity = (
+            await client.get(
+                "/api/v1/reporting/activity",
+                params={
+                    "start_at": window_start.isoformat(),
+                    "end_at": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
+                },
+            )
+        ).json()
+
+    assert first.json() == {"dispatched": overdue, "eligible": overdue}
     assert repeat.json() == {"dispatched": 0, "eligible": 0}
-    assert after["escalation_eligible_total"] == 0
-    assert after["escalated_today"] == seeded["overdue"]
+    assert dashboard["escalation_eligible_total"] == 0
+    assert dashboard["escalated_today"] == overdue
+    assert activity["totals"]["retests_escalated"] == overdue
+    assert sum(b["retests_escalated"] for b in activity["buckets"]) == overdue
+
+    async with database() as session:
+        assert await verify_audit_chain(session) is True

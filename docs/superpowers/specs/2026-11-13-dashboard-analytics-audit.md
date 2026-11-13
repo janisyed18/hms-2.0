@@ -285,3 +285,28 @@ snapshot and activity statement ran in 0.01 to 36 ms; the only sequential scans 
 tables (`customers`, four rows) or on the table being counted. No index was added because the
 plans give no evidence one is needed at this volume. `audit_events.timestamp` is not indexed;
 re-check the escalation series if the audit table grows far beyond a few hundred thousand rows.
+
+### Phase B CI correction
+
+CI on 8dd0bbc failed the backend job: 9 failed, 186 passed. Cause confirmed, and it was in the
+new test, not in the application. `test_reporting_postgres.py` inserted 300 `AuditEvent` rows
+directly with placeholder hashes (`seed-…`), which broke the shared hash chain for every later
+test that calls `verify_audit_chain` (7 inspection-lifecycle tests and the booking-to-certificate
+flow). Its 4,000-asset fixture also pushed the expected inspection out of the bounded My Work
+projection, and its admin-wide escalation acted on other tests' overdue schedules.
+
+Corrections, all in the test:
+
+- The module now creates its own disposable database, migrates it to head and drops it
+  afterwards (the pattern `test_migration_booking_schedule_index.py` already uses), with each
+  test starting from an empty schema. Nothing it writes can reach the shared CI database, so
+  the volume and the admin-wide escalation are contained.
+- No audit row is written by hand. Escalation events now come from the real endpoint through
+  `append_audit_event`, and a new test asserts `verify_audit_chain` is still true afterwards.
+  Because `timestamp` is part of the audit hash, a valid event cannot be back-dated; the
+  escalation series is therefore asserted over a window around now.
+- No assertion was weakened, no limit raised, and the audit implementation is unchanged.
+
+Verification: the exact CI PostgreSQL file list, in CI order, against one shared migrated
+database: 196 passed, 0 failed. The chain in that database verifies as valid, it holds no
+placeholder hashes, and no `hms_reporting_*` database is left behind.
