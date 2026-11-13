@@ -20,6 +20,7 @@ import {
   type BrowserMeResponse
 } from "./authTypes";
 import { capturePasswordResetToken } from "./passwordReset";
+import { ReauthDialog } from "./ReauthDialog";
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -96,19 +97,89 @@ export function AuthProvider({ client, children }: AuthProviderProps) {
     return promise;
   }, [authClient]);
 
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const reauthWaiter = useRef<{
+    promise: Promise<void>;
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null>(null);
+
   const handleAuthFailure = useCallback(() => {
     tokenRef.current = null;
     apply({ status: "signed-out", message: "Your session has expired. Please sign in again." });
   }, [apply]);
+
+  const finishReauth = useCallback((error?: Error) => {
+    const waiter = reauthWaiter.current;
+    reauthWaiter.current = null;
+    setReauthOpen(false);
+    if (error) waiter?.reject(error);
+    else waiter?.resolve();
+  }, []);
+
+  // One prompt at a time: requests that hit the same refusal share it.
+  const requestReauth = useCallback(
+    (method: string): Promise<void> => {
+      if (method !== "password") {
+        // Sessions confirmed at an identity provider cannot be stepped up here.
+        handleAuthFailure();
+        return Promise.reject(new Error("Sign in again to continue."));
+      }
+      if (reauthWaiter.current) return reauthWaiter.current.promise;
+      let resolve!: () => void;
+      let reject!: (error: Error) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      reauthWaiter.current = { promise, resolve, reject };
+      setReauthOpen(true);
+      return promise;
+    },
+    [handleAuthFailure]
+  );
+
+  const submitReauth = useCallback(
+    async (password: string, code: string) => {
+      const token = tokenRef.current;
+      if (token === null) {
+        finishReauth(new Error("Your session has expired."));
+        handleAuthFailure();
+        return;
+      }
+      try {
+        const response = await authClient.reauth(token, password, code || null);
+        tokenRef.current = response.access_token;
+        finishReauth();
+      } catch (error) {
+        if (error instanceof BrowserAuthError && error.status === 401) {
+          // The session itself is gone, not just stale.
+          finishReauth(error);
+          handleAuthFailure();
+          return;
+        }
+        throw new Error(errorMessage(error));
+      }
+    },
+    [authClient, finishReauth, handleAuthFailure]
+  );
+
+  // A prompt for a session that has since ended has nothing left to confirm.
+  useEffect(() => {
+    if (reauthOpen && state.status !== "authenticated") {
+      finishReauth(new Error("Your session has expired."));
+    }
+  }, [reauthOpen, state.status, finishReauth]);
 
   useEffect(
     () =>
       configureHmsRuntimeAuth({
         getAccessToken: () => tokenRef.current,
         refreshAccessToken,
-        onAuthFailure: handleAuthFailure
+        onAuthFailure: handleAuthFailure,
+        requestReauth
       }),
-    [handleAuthFailure, refreshAccessToken]
+    [handleAuthFailure, refreshAccessToken, requestReauth]
   );
 
   const enterAuthenticated = useCallback(
@@ -358,7 +429,17 @@ export function AuthProvider({ client, children }: AuthProviderProps) {
     ]
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      {reauthOpen ? (
+        <ReauthDialog
+          onCancel={() => finishReauth(new Error("Confirmation cancelled."))}
+          onSubmit={submitReauth}
+        />
+      ) : null}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthContextValue {

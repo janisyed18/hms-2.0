@@ -87,13 +87,22 @@ def _guard(action: Any, *args: Any, **kwargs: Any) -> Any:
         ) from exc
 
 
+REAUTH_REQUIRED = "REAUTH_REQUIRED"
+
+
 def _require_recent_auth(principal: Principal) -> None:
-    """Require a recent sign-in for privileged actions. Only enforced for
-    token-based identities; dev-header principals (local only) carry no
-    ``auth_time`` and are exempt."""
-    if principal.auth_time is None:
+    """Require a recent credential presentation for privileged actions.
+
+    Fails closed: a token with no ``auth_time`` is treated as stale. The only
+    exemption is dev-header mode (``auth_mode == "dev"``, refused outside
+    local/test), whose principals cannot carry one. Answers 403 REAUTH_REQUIRED,
+    distinct from the 401 that means the session itself is gone.
+    """
+    if settings.auth_mode == "dev":
         return
     try:
+        if principal.auth_time is None:
+            raise PrivilegeError("Confirm your password to continue.")
         ensure_recent_auth(
             principal.auth_time,
             now=datetime.now(UTC),
@@ -101,7 +110,13 @@ def _require_recent_auth(principal: Principal) -> None:
         )
     except PrivilegeError as exc:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": REAUTH_REQUIRED,
+                "message": "Confirm your password to continue.",
+                # OIDC sessions are refreshed at the identity provider.
+                "method": "oidc" if settings.auth_mode == "oidc" else "password",
+            },
         ) from exc
 
 

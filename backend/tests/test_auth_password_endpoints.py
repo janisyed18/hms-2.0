@@ -92,8 +92,11 @@ def _refresh_session(user_id: str, token: str) -> BrowserRefreshSession:
 
 
 def _token(subject: str, *, credential_version: int | None = None) -> str:
-    """A token as sign-in issues it; ``cv`` is the user's credential version."""
-    extra = None if credential_version is None else {"cv": credential_version}
+    """A token as sign-in issues it; ``cv`` is the user's credential version and
+    ``auth_time`` is a just-now sign-in."""
+    extra: dict[str, object] = {"auth_time": int(datetime.now(UTC).timestamp())}
+    if credential_version is not None:
+        extra["cv"] = credential_version
     return encode_hs256_bearer_token(
         subject=subject, secret=_SECRET, extra_claims=extra
     )
@@ -235,7 +238,7 @@ async def test_an_admin_reset_also_refuses_the_users_older_access_token(
             f"/api/v1/admin/users/{users['member']}/password-reset",
             headers={"Authorization": f"Bearer {admin}"},
         )
-        # These tokens carry no auth_time, so the recent sign-in check does not apply;
+        # The admin's token was minted just now, so the recent sign-in check passes;
         # the reset and its effect on the user's older token are what is under test.
         assert reset.status_code == 200, reset.text
         stale = await client.get(

@@ -137,7 +137,13 @@ async def _oidc_principal(
 
     principal = await _persisted_user_principal(session, claims.subject)
     if principal is not None:
-        return principal
+        # The identity provider's own record of when the user authenticated.
+        # Absent means unknown, which the recent-sign-in guard refuses.
+        oidc_auth_time = claims.raw.get("auth_time")
+        return replace(
+            principal,
+            auth_time=oidc_auth_time if isinstance(oidc_auth_time, int) else None,
+        )
     if settings.auth_oidc_jit_provisioning and claims.email:
         return await _provision_oidc_user(session, claims.subject, claims.email)
     raise HTTPException(

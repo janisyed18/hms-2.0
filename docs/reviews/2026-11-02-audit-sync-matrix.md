@@ -30,6 +30,7 @@ Exception model (AGENTS.md, "Audit and sync"):
 | `POST /api/v1/auth/browser/password` | browser_change_password → change_password → _audit → append_audit_event | n/a (server-only data) |
 | `POST /api/v1/auth/browser/password/reset-confirm` | browser_password_reset_confirm → confirm → append_audit_event | browser_password_reset_confirm → confirm → stage_sync_change |
 | `POST /api/v1/auth/browser/password/reset-request` | browser_password_reset_request → request → append_audit_event | n/a (server-only data) |
+| `POST /api/v1/auth/browser/reauth` | browser_reauth → reauthenticate → _audit → append_audit_event | n/a (server-only data) |
 | `POST /api/v1/auth/browser/recovery/verify` | browser_verify_recovery → verify_recovery_code → _audit → append_audit_event | n/a (server-only data) |
 | `POST /api/v1/auth/browser/refresh` | browser_refresh → refresh → _audit → append_audit_event | n/a (server-only data) |
 | `POST /api/v1/auth/password` | change_password → append_audit_event | n/a (server-only data) |

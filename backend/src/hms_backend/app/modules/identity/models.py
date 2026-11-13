@@ -187,6 +187,12 @@ class BrowserRefreshSession(Base):
     idle_expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    # When this browser session last presented its credentials (sign-in or
+    # step-up). Carried unchanged through refresh rotation; NULL (rows from
+    # before this column) counts as "never", so sensitive actions ask again.
+    auth_time: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
