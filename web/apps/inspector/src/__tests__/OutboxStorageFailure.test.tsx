@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -362,6 +362,44 @@ describe("an inspector's work when the device will not store it", () => {
       await waitFor(() => expect(button("Push Changes")).toBeDisabled());
       expect(pushes).toHaveLength(1);
       release();
+    });
+
+    it("refuses a second push requested while assignments are still being verified", async () => {
+      const user = userEvent.setup();
+      let verifying = false;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const pushes: unknown[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          withChangeFeed(async (url: RequestInfo | URL, init?: RequestInit) => {
+            if (String(url).endsWith("/api/v1/sync/push")) {
+              pushes.push(init?.body);
+              return new Response(JSON.stringify({ cursor: 3, results: [] }), { status: 200 });
+            }
+            if (verifying) await gate; // assignment verification is slow
+            return new Response(JSON.stringify(mockBootstrapResponse), { status: 200 });
+          })
+        )
+      );
+      render(<App initialAccessToken="test-access-token" />);
+      await open(user, "HOS-2024-0891");
+      await user.click(button("Start inspection"));
+      await user.click(nav("Queue"));
+      const push = await screen.findByRole("button", { name: "Push Changes" });
+
+      verifying = true;
+      fireEvent.click(push);
+      fireEvent.click(push); // a second request while the first is still verifying assignments
+      await new Promise((resolve) => setTimeout(resolve, 50)); // the first is now waiting
+      // The push is already under way, so the control is locked while assignments are verified.
+      expect(button("Push Changes")).toBeDisabled();
+      release();
+
+      await waitFor(() => expect(pushes.length).toBeGreaterThan(0));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(pushes).toHaveLength(1);
     });
   });
 });

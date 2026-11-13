@@ -442,7 +442,32 @@ export function useInspectorWorkspace(userId: string) {
     if (!isOnline || pushInProgress.current) {
       return;
     }
+    // Taken before the first await, so a second click during assignment verification is refused.
+    pushInProgress.current = true;
+    setIsPushing(true);
+    let sent = false;
+    try {
+      sent = await sendQueuedOperations();
+    } finally {
+      pushInProgress.current = false;
+      setIsPushing(false);
+      refreshOutbox();
+    }
+    if (!sent) {
+      return;
+    }
+    try {
+      await refreshAssignments();
+    } catch {
+      setSyncRecords([]);
+      setWorkContexts([]);
+      setSelectedWorkItem(null);
+      setLastSyncLabel("Unable to load assigned work");
+    }
+  }
 
+  /** The push itself; the caller holds the in-flight guard. True when a push was attempted. */
+  async function sendQueuedOperations(): Promise<boolean> {
     let permitted: { records: SyncRecordRead[]; work_contexts?: SyncWorkContext[] };
     try {
       permitted = await refreshAssignments();
@@ -451,7 +476,7 @@ export function useInspectorWorkspace(userId: string) {
       setWorkContexts([]);
       setSelectedWorkItem(null);
       setLastSyncLabel("Unable to verify assignments");
-      return;
+      return false;
     }
     const localOperations = readOutbox().operations;
     const queue = pendingOperations(localOperations).filter(
@@ -467,15 +492,13 @@ export function useInspectorWorkspace(userId: string) {
     );
 
     if (queue.length === 0) {
-      return;
+      return false;
     }
     // An inspection must exist before anything that refers to it, whatever order it was
     // queued in: the inspection first, then asset details, then standalone pressure tests
     // (left over from app 0.2.0). The sort is stable, so equal kinds keep their order.
     queue.sort((left, right) => PUSH_RANK[left.entity] - PUSH_RANK[right.entity]);
 
-    pushInProgress.current = true;
-    setIsPushing(true);
     // If the device will not record that a push is under way, nothing is sent: a result that
     // could not be recorded afterwards would otherwise leave the queue disagreeing with the server.
     const marked = tolerateStorageFailure(() => {
@@ -485,9 +508,7 @@ export function useInspectorWorkspace(userId: string) {
     }, setStorageError);
     refreshOutbox();
     if (!marked) {
-      pushInProgress.current = false;
-      setIsPushing(false);
-      return;
+      return false;
     }
     // The device is accepting writes again; any later failure sets the notice afresh.
     setStorageError(null);
@@ -513,19 +534,8 @@ export function useInspectorWorkspace(userId: string) {
           setStorageError
         );
       }
-    } finally {
-      pushInProgress.current = false;
-      setIsPushing(false);
-      refreshOutbox();
     }
-    try {
-      await refreshAssignments();
-    } catch {
-      setSyncRecords([]);
-      setWorkContexts([]);
-      setSelectedWorkItem(null);
-      setLastSyncLabel("Unable to load assigned work");
-    }
+    return true;
   }
 
   async function pullChanges() {

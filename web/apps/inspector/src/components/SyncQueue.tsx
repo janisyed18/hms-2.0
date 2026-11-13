@@ -94,7 +94,7 @@ export function SyncQueue({
       <div className="action-row">
         <button
           className="primary-action"
-          disabled={!isOnline || pushableCount === 0}
+          disabled={!isOnline || isPushing || pushableCount === 0}
           onClick={onPush}
           type="button"
         >
