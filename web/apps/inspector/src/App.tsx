@@ -109,6 +109,7 @@ function InspectorWorkspace({ userId }: { userId: string }) {
       <SyncQueue
         hasPreservedDrafts={workspace.hasPreservedDrafts}
         isOnline={workspace.isOnline}
+        isPushing={workspace.isPushing}
         onPull={workspace.pullChanges}
         onPush={workspace.pushQueuedOperations}
         onResolveConflict={workspace.resolveConflict}

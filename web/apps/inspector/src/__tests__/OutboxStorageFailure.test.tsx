@@ -213,7 +213,7 @@ describe("an inspector's work when the device will not store it", () => {
     render(<App initialAccessToken="test-access-token" />);
     expect(await screen.findByRole("alert")).toHaveTextContent(/copy was kept for recovery/);
     expect(dev.values.get(KEY)).toBe("{bad");
-    expect(dev.values.get(`${KEY}:unreadable`)).toBe("{bad");
+    expect([...dev.values.entries()].filter(([k]) => k.startsWith(`${KEY}:unreadable:`)).map(([, v]) => v)).toEqual(["{bad"]);
   });
 
   it("does not push when the device cannot record that a push is under way", async () => {
@@ -246,5 +246,122 @@ describe("an inspector's work when the device will not store it", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(SAVE_FAILED);
     expect(pushed).toEqual([]);
     expect(queued(dev)).toHaveLength(1);
+  });
+
+  describe("an interrupted push", () => {
+    /** A server that applies each idempotency key once and answers a replay with the same result. */
+    function server(onPush?: () => void) {
+      const requests: Array<{ op_id: string; idempotency_key: string }> = [];
+      const applied = new Set<string>();
+      const fetchMock = vi.fn(
+        withChangeFeed(async (url: RequestInfo | URL, init?: RequestInit) => {
+          const path = String(url);
+          if (path.endsWith("/api/v1/sync/push")) {
+            onPush?.();
+            const body = JSON.parse(String(init?.body)) as {
+              operations: Array<{ op_id: string; idempotency_key: string; entity_id: string }>;
+            };
+            for (const operation of body.operations) {
+              requests.push({ op_id: operation.op_id, idempotency_key: operation.idempotency_key });
+              applied.add(operation.idempotency_key);
+            }
+            return new Response(JSON.stringify({
+              cursor: 3,
+              results: body.operations.map((operation) => ({
+                op_id: operation.op_id, idempotency_key: operation.idempotency_key, entity: "Inspection",
+                entity_id: operation.entity_id, status: "applied", version: 3, current_version: 3,
+                payload: null, error: null
+              }))
+            }), { status: 200 });
+          }
+          return new Response(JSON.stringify(mockBootstrapResponse), { status: 200 });
+        })
+      );
+      return { fetchMock, requests, applied };
+    }
+
+    async function startAndPushWithDeviceFailingAfterTheServerApplied(user: User) {
+      let firstPush = true;
+      const api = server(() => {
+        if (!firstPush) return;
+        firstPush = false;
+        dev.state.full = true; // the server has the work; the device cannot record that
+      });
+      vi.stubGlobal("fetch", api.fetchMock);
+      render(<App initialAccessToken="test-access-token" />);
+      await open(user, "HOS-2024-0891");
+      await user.click(button("Start inspection"));
+      await user.click(nav("Queue"));
+      await user.click(await screen.findByRole("button", { name: "Push Changes" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(SAVE_FAILED);
+      return api;
+    }
+
+    it("is sent again once the device recovers, with the same idempotency key, and applied once", async () => {
+      const user = userEvent.setup();
+      const api = await startAndPushWithDeviceFailingAfterTheServerApplied(user);
+      // The outbox still says it is being sent, but nothing is running: it can be pushed.
+      await waitFor(() => expect(button("Push Changes")).toBeEnabled());
+      expect(queued(dev)).toHaveLength(1);
+      const [{ idempotencyKey, opId }] = JSON.parse(dev.values.get(KEY) as string).operations;
+
+      dev.state.full = false;
+      await user.click(button("Push Changes"));
+      expect(await screen.findByText("Applied")).toBeInTheDocument();
+
+      expect(api.requests).toHaveLength(2);
+      expect(api.requests.map((r) => r.idempotency_key)).toEqual([idempotencyKey, idempotencyKey]);
+      expect(api.requests.map((r) => r.op_id)).toEqual([opId, opId]);
+      expect(api.applied.size).toBe(1); // a replay is the same operation, not a second effect
+      expect(notice()).toBeNull();
+    });
+
+    it("is sent again after the page is reloaded", async () => {
+      const user = userEvent.setup();
+      const api = await startAndPushWithDeviceFailingAfterTheServerApplied(user);
+      const [{ idempotencyKey }] = JSON.parse(dev.values.get(KEY) as string).operations;
+      expect(JSON.parse(dev.values.get(KEY) as string).operations[0].status).toBe("pushing");
+
+      // Reload: a fresh page over the same device storage, which now works.
+      document.body.innerHTML = "";
+      dev.state.full = false;
+      resetDefaultSyncStore();
+      const reloaded = userEvent.setup();
+      render(<App initialAccessToken="test-access-token" />);
+      await reloaded.click(await screen.findByRole("button", { name: /queue/i }));
+      await waitFor(() => expect(button("Push Changes")).toBeEnabled());
+      await reloaded.click(button("Push Changes"));
+      expect(await screen.findByText("Applied")).toBeInTheDocument();
+      expect(api.requests.at(-1)?.idempotency_key).toBe(idempotencyKey);
+      expect(api.applied.size).toBe(1);
+    });
+
+    it("cannot be pushed twice at once while a push is running", async () => {
+      const user = userEvent.setup();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const pushes: unknown[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          withChangeFeed(async (url: RequestInfo | URL, init?: RequestInit) => {
+            if (String(url).endsWith("/api/v1/sync/push")) {
+              pushes.push(init?.body);
+              await gate;
+              return new Response(JSON.stringify({ cursor: 3, results: [] }), { status: 200 });
+            }
+            return new Response(JSON.stringify(mockBootstrapResponse), { status: 200 });
+          })
+        )
+      );
+      render(<App initialAccessToken="test-access-token" />);
+      await open(user, "HOS-2024-0891");
+      await user.click(button("Start inspection"));
+      await user.click(nav("Queue"));
+      await user.click(await screen.findByRole("button", { name: "Push Changes" }));
+      await waitFor(() => expect(button("Push Changes")).toBeDisabled());
+      expect(pushes).toHaveLength(1);
+      release();
+    });
   });
 });

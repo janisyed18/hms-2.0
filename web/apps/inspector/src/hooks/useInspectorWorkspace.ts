@@ -215,6 +215,10 @@ export function useInspectorWorkspace(userId: string) {
   const [outbox, setOutbox] = useState<OutboxState>(() => loadOutbox(userId));
   // The last failure to write to this device's storage. Cleared by the next write that works.
   const [storageError, setStorageError] = useState<string | null>(null);
+  // A push is in flight in this page. An operation still marked "pushing" when none is has been
+  // interrupted (the result could not be recorded, or the page was reloaded) and is sent again.
+  const [isPushing, setIsPushing] = useState(false);
+  const pushInProgress = useRef(false);
   const outboxRef = useRef(outbox);
   outboxRef.current = outbox;
   const [selectedItem, setSelectedWorkItem] = useState<WorkItem | null>(
@@ -435,7 +439,7 @@ export function useInspectorWorkspace(userId: string) {
   }
 
   async function pushQueuedOperations() {
-    if (!isOnline) {
+    if (!isOnline || pushInProgress.current) {
       return;
     }
 
@@ -455,7 +459,11 @@ export function useInspectorWorkspace(userId: string) {
         // A pressure test made against an inspection that has not reached the server yet is
         // still assigned: its inspection is queued here, and goes first.
         operationIsAssigned(operation, permitted.records, permitted.work_contexts ?? [], localOperations) &&
-        (operation.status === "pending" || operation.status === "rejected")
+        // "pushing" with no push in flight is an interrupted send. It keeps its idempotency
+        // key, so the server treats a replay of one it already applied as that same result.
+        (operation.status === "pending" ||
+          operation.status === "rejected" ||
+          operation.status === "pushing")
     );
 
     if (queue.length === 0) {
@@ -466,6 +474,8 @@ export function useInspectorWorkspace(userId: string) {
     // (left over from app 0.2.0). The sort is stable, so equal kinds keep their order.
     queue.sort((left, right) => PUSH_RANK[left.entity] - PUSH_RANK[right.entity]);
 
+    pushInProgress.current = true;
+    setIsPushing(true);
     // If the device will not record that a push is under way, nothing is sent: a result that
     // could not be recorded afterwards would otherwise leave the queue disagreeing with the server.
     const marked = tolerateStorageFailure(() => {
@@ -474,7 +484,13 @@ export function useInspectorWorkspace(userId: string) {
       }
     }, setStorageError);
     refreshOutbox();
-    if (!marked) return;
+    if (!marked) {
+      pushInProgress.current = false;
+      setIsPushing(false);
+      return;
+    }
+    // The device is accepting writes again; any later failure sets the notice afresh.
+    setStorageError(null);
 
     try {
       const result = await createSyncClient({ userId }).push(queue);
@@ -498,6 +514,8 @@ export function useInspectorWorkspace(userId: string) {
         );
       }
     } finally {
+      pushInProgress.current = false;
+      setIsPushing(false);
       refreshOutbox();
     }
     try {
@@ -537,6 +555,7 @@ export function useInspectorWorkspace(userId: string) {
       (operation) => !operationIsAssigned(operation, syncRecords, workContexts, outbox.operations)
     ),
     isOnline,
+    isPushing,
     lastSyncLabel,
     queuedCount,
     openWorkItem,

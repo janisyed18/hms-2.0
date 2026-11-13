@@ -9,6 +9,7 @@ import {
   markOperationRejected,
   OutboxStorageError,
   outboxStorageKey,
+  recoveryKeyPrefix,
   resolveOperationConflict,
   saveOutbox
   , upsertOutboxOperation
@@ -216,7 +217,10 @@ describe("outboxStore", () => {
     });
     // Nothing is deleted: the original is untouched and a copy is kept for recovery.
     expect(localStorage.getItem(outboxStorageKey(INSPECTOR_A))).toBe("{bad");
-    expect(localStorage.getItem(`${outboxStorageKey(INSPECTOR_A)}:unreadable`)).toBe("{bad");
+    const copies = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i) ?? "")
+      .filter((k) => k.startsWith(recoveryKeyPrefix(outboxStorageKey(INSPECTOR_A))))
+      .map((k) => localStorage.getItem(k));
+    expect(copies).toEqual(["{bad"]);
   });
 
   it("keeps offline work private to the authenticated inspector", () => {
@@ -422,7 +426,7 @@ describe("device storage failures", () => {
 
   it("does not let a new save overwrite unreadable data that could not be copied aside", () => {
     device.values.set(key, "{bad");
-    device.fail.setItem = (k) => { if (k.endsWith(":unreadable")) throw quota(); };
+    device.fail.setItem = (k) => { if (k.startsWith(recoveryKeyPrefix(key))) throw quota(); };
 
     expect(loadOutbox(INSPECTOR_A)).toMatchObject({ loadFailed: true });
     expect(() => saveOutbox(INSPECTOR_A, [makeDraftOperation()])).toThrowError(OutboxStorageError);
@@ -432,7 +436,54 @@ describe("device storage failures", () => {
   it("copies unreadable data aside before a new queue replaces it", () => {
     device.values.set(key, "{bad");
     saveOutbox(INSPECTOR_A, [makeDraftOperation()]);
-    expect(device.values.get(`${key}:unreadable`)).toBe("{bad");
+    expect(copiesOf(device.values, key)).toEqual(["{bad"]);
     expect(loadOutbox(INSPECTOR_A).operations).toHaveLength(1);
   });
+
+  it("keeps a separate copy for each different damaged queue, never covering a second with the first", () => {
+    device.values.set(key, "{first damage");
+    saveOutbox(INSPECTOR_A, [makeDraftOperation()]); // first damage copied, then replaced
+    device.values.set(key, "{second, different damage");
+    saveOutbox(INSPECTOR_A, [makeDraftOperation()]);
+
+    expect(copiesOf(device.values, key).sort()).toEqual(["{first damage", "{second, different damage"]);
+  });
+
+  it("treats valid JSON holding a damaged record as damaged: kept whole, not trimmed and overwritten", () => {
+    const good = makeDraftOperation();
+    const damaged = JSON.stringify({
+      operations: [good, { opId: 42, entityId: "x" }, "not an operation", null]
+    });
+    device.values.set(key, damaged);
+
+    const state = loadOutbox(INSPECTOR_A);
+    expect(state.operations).toMatchObject([{ opId: good.opId }]);
+    expect(state.warning).toMatch(/damaged/);
+    expect(copiesOf(device.values, key)).toEqual([damaged]);
+
+    // A later save may replace the live queue, but the whole damaged value is still on the device.
+    saveOutbox(INSPECTOR_A, [good]);
+    expect(copiesOf(device.values, key)).toEqual([damaged]);
+  });
+
+  it("treats a stored value that is not a queue at all as damaged", () => {
+    device.values.set(key, "123");
+    expect(loadOutbox(INSPECTOR_A).warning).toMatch(/damaged/);
+    saveOutbox(INSPECTOR_A, []);
+    expect(copiesOf(device.values, key)).toEqual(["123"]);
+  });
+
+  it("refuses to overwrite a damaged queue when its copy cannot be verified", () => {
+    const damaged = JSON.stringify({ operations: [{ opId: 1 }] });
+    device.values.set(key, damaged);
+    device.fail.setItem = (k) => { if (k.startsWith(recoveryKeyPrefix(key))) throw quota(); };
+    expect(() => saveOutbox(INSPECTOR_A, [makeDraftOperation()])).toThrowError(OutboxStorageError);
+    expect(device.values.get(key)).toBe(damaged);
+  });
 });
+
+function copiesOf(values: Map<string, string>, key: string): string[] {
+  return [...values.entries()]
+    .filter(([k]) => k.startsWith(recoveryKeyPrefix(key)))
+    .map(([, v]) => v);
+}

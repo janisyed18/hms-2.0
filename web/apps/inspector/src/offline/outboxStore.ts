@@ -17,6 +17,8 @@ export const LOAD_FAILED_MESSAGE =
   "This device's saved inspection work couldn't be read, so it may not be shown. Keep this page open, don't clear site data, and try again.";
 const UNREADABLE_KEPT_MESSAGE =
   "Saved inspection data on this device was unreadable. A copy was kept for recovery.";
+const DAMAGED_KEPT_MESSAGE =
+  "Some saved inspection records on this device were damaged. A copy was kept for recovery.";
 const UNREADABLE_BLOCKED_MESSAGE =
   "Saved inspection data on this device is unreadable and could not be copied for recovery, so nothing new can be saved here. Keep this page open and contact support.";
 
@@ -42,33 +44,78 @@ function isQuotaError(error: unknown): boolean {
   );
 }
 
-/** Where an unreadable queue is copied before anything can overwrite it. */
-function recoveryKey(storageKey: string): string {
-  return `${storageKey}:unreadable`;
+/** A short fingerprint, so each different damaged queue gets its own recovery key. */
+function fingerprint(raw: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < raw.length; index += 1) {
+    hash ^= raw.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${hash.toString(16)}-${raw.length}`;
+}
+
+/** Where a damaged queue is copied before anything can overwrite it. */
+export function recoveryKeyPrefix(storageKey: string): string {
+  return `${storageKey}:unreadable:`;
 }
 
 /**
- * Called when the stored queue cannot be parsed. It is never deleted: a copy is kept under a
- * recovery key (once; an existing copy is not replaced), and only then may a new queue be written.
- * Returns false when no copy could be made, in which case nothing may overwrite the original.
+ * Keeps a copy of a damaged queue under a key of its own, and confirms the copy holds exactly
+ * these bytes: a different damaged queue is never covered by an earlier copy. Returns false when
+ * no verified copy exists, in which case nothing may overwrite the original.
  */
 function keepUnreadableCopy(storageKey: string, raw: string): boolean {
   try {
-    const key = recoveryKey(storageKey);
-    if (localStorage.getItem(key) === null) localStorage.setItem(key, raw);
-    return true;
+    const base = `${recoveryKeyPrefix(storageKey)}${fingerprint(raw)}`;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const key = attempt === 0 ? base : `${base}-${attempt}`;
+      const existing = localStorage.getItem(key);
+      if (existing === raw) return true;
+      if (existing === null) {
+        localStorage.setItem(key, raw);
+        return localStorage.getItem(key) === raw;
+      }
+    }
+    return false;
   } catch {
     return false;
   }
 }
 
-function isReadable(raw: string): boolean {
+function isOperationRecord(value: unknown): value is OutboxOperation {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.opId === "string" &&
+    typeof record.entityId === "string" &&
+    typeof record.status === "string"
+  );
+}
+
+interface StoredQueue {
+  /** The operations that are whole. */
+  operations: OutboxOperation[];
+  /** Every byte of the stored queue is accounted for: it parses and no record was dropped. */
+  intact: boolean;
+  unparseable: boolean;
+}
+
+/** Reads a stored queue without discarding anything: damage is reported, not filtered away. */
+function readStored(raw: string): StoredQueue {
+  let parsed: unknown;
   try {
-    JSON.parse(raw);
-    return true;
+    parsed = JSON.parse(raw);
   } catch {
-    return false;
+    return { operations: [], intact: false, unparseable: true };
   }
+  const list = Array.isArray(parsed)
+    ? parsed
+    : typeof parsed === "object" && parsed !== null
+      ? (parsed as { operations?: unknown }).operations
+      : undefined;
+  if (!Array.isArray(list)) return { operations: [], intact: false, unparseable: false };
+  const operations = list.filter(isOperationRecord);
+  return { operations, intact: operations.length === list.length, unparseable: false };
 }
 
 function nowIso() {
@@ -81,22 +128,6 @@ function makeId(prefix: string) {
   }
 
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function normalizeOperations(value: unknown): OutboxOperation[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((operation): operation is OutboxOperation => {
-    return (
-      typeof operation === "object" &&
-      operation !== null &&
-      "opId" in operation &&
-      "entityId" in operation &&
-      "status" in operation
-    );
-  });
 }
 
 export function outboxStorageKey(userId: string): string {
@@ -161,20 +192,19 @@ export function loadOutbox(userId: string): OutboxState {
     return { operations: [] };
   }
 
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    const operations = normalizeOperations(
-      Array.isArray(parsed) ? parsed : (parsed as { operations?: unknown }).operations
-    );
-    return { operations };
-  } catch {
-    const kept = keepUnreadableCopy(storageKey, raw);
-    return {
-      operations: [],
-      loadFailed: !kept,
-      warning: kept ? UNREADABLE_KEPT_MESSAGE : UNREADABLE_BLOCKED_MESSAGE
-    };
-  }
+  const stored = readStored(raw);
+  if (stored.intact) return { operations: stored.operations };
+  // Damaged: what is whole is returned, and the whole stored value is copied aside first.
+  const kept = keepUnreadableCopy(storageKey, raw);
+  return {
+    operations: stored.operations,
+    loadFailed: !kept,
+    warning: !kept
+      ? UNREADABLE_BLOCKED_MESSAGE
+      : stored.unparseable
+        ? UNREADABLE_KEPT_MESSAGE
+        : DAMAGED_KEPT_MESSAGE
+  };
 }
 
 /** Throws {@link OutboxStorageError}, having changed nothing, when the queue cannot be stored. */
@@ -182,9 +212,10 @@ export function saveOutbox(userId: string, operations: OutboxOperation[]) {
   removeLegacyOutbox();
   const storageKey = outboxStorageKey(userId);
   try {
-    // An unreadable queue is copied aside before a new one replaces it.
+    // A damaged queue (unparseable, or with records that are not whole) is copied aside, and the
+    // copy verified, before a new one replaces it.
     const existing = localStorage.getItem(storageKey);
-    if (existing !== null && !isReadable(existing) && !keepUnreadableCopy(storageKey, existing)) {
+    if (existing !== null && !readStored(existing).intact && !keepUnreadableCopy(storageKey, existing)) {
       throw new OutboxStorageError("unreadable", UNREADABLE_BLOCKED_MESSAGE);
     }
     localStorage.setItem(storageKey, JSON.stringify({ operations }));
