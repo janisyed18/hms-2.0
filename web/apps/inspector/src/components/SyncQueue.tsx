@@ -7,6 +7,8 @@ interface SyncQueueProps {
   hasPreservedDrafts: boolean;
   outbox: OutboxOperation[];
   isOnline: boolean;
+  /** A push is running in this page. */
+  isPushing?: boolean;
   onPush: () => void;
   onPull: () => void;
   onResolveConflict: (
@@ -61,6 +63,7 @@ export function SyncQueue({
   hasPreservedDrafts,
   outbox,
   isOnline,
+  isPushing = false,
   onPush,
   onPull,
   onResolveConflict
@@ -68,9 +71,12 @@ export function SyncQueue({
   const visibleOperations = outbox;
   const pendingCount = outbox.filter((operation) => operation.status !== "applied")
     .length;
+  // "Sending now" with no push running is an interrupted send, and can be sent again.
   const pushableCount = outbox.filter(
     (operation) =>
-      operation.status === "pending" || operation.status === "rejected"
+      operation.status === "pending" ||
+      operation.status === "rejected" ||
+      (operation.status === "pushing" && !isPushing)
   ).length;
 
   return (
@@ -88,7 +94,7 @@ export function SyncQueue({
       <div className="action-row">
         <button
           className="primary-action"
-          disabled={!isOnline || pushableCount === 0}
+          disabled={!isOnline || isPushing || pushableCount === 0}
           onClick={onPush}
           type="button"
         >

@@ -21,25 +21,29 @@ interface InspectionCaptureProps {
   onBack: () => void;
   /** Whether the screen holds edits that have not reached the outbox. */
   onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * The save handlers say whether the device kept the work. False leaves the screen as it is, still
+   * marked unsaved, so nothing is treated as saved that is not.
+   */
   onQueueAssetUpdate: (values: {
     workItem: WorkItem;
     customerSerialNo: string;
     tag: string;
-  }) => void;
+  }) => boolean;
   /** DRAFT -> IN_PROGRESS. Queues a bare start: no form data goes with it. */
-  onStart: (workItem: WorkItem) => void;
+  onStart: (workItem: WorkItem) => boolean;
   /** REJECTED -> IN_PROGRESS, explicitly. */
-  onBeginRework: (workItem: WorkItem) => void;
+  onBeginRework: (workItem: WorkItem) => boolean;
   onSaveProgress: (values: {
     workItem: WorkItem;
     result: string | null;
     pressureTest: PressureTestDraft;
-  }) => void;
+  }) => boolean;
   onSubmit: (values: {
     workItem: WorkItem;
     result: string | null;
     pressureTest: PressureTestDraft;
-  }) => void;
+  }) => boolean;
 }
 
 const formSnapshot = (state: InspectionFormState) => JSON.stringify(state);
@@ -155,8 +159,9 @@ export function InspectionCapture({
             <button
               className="secondary-action secondary-action--full"
               onClick={() => {
-                onQueueAssetUpdate({ workItem, customerSerialNo, tag });
-                setSavedAsset(assetSnapshot(customerSerialNo, tag));
+                if (onQueueAssetUpdate({ workItem, customerSerialNo, tag })) {
+                  setSavedAsset(assetSnapshot(customerSerialNo, tag));
+                }
               }}
               type="button"
             >
@@ -236,8 +241,9 @@ export function InspectionCapture({
               disabled={!built}
               onClick={() => {
                 if (!built) return;
-                onSaveProgress({ workItem, result: built.result, pressureTest: built.pressureTest });
-                setSavedForm(formSnapshot(form));
+                if (onSaveProgress({ workItem, result: built.result, pressureTest: built.pressureTest })) {
+                  setSavedForm(formSnapshot(form));
+                }
               }}
               type="button"
             >
@@ -248,8 +254,9 @@ export function InspectionCapture({
               disabled={!built || submitMissing.length > 0}
               onClick={() => {
                 if (!built) return;
-                onSubmit({ workItem, result: built.result, pressureTest: built.pressureTest });
-                setSavedForm(formSnapshot(form));
+                if (onSubmit({ workItem, result: built.result, pressureTest: built.pressureTest })) {
+                  setSavedForm(formSnapshot(form));
+                }
               }}
               type="button"
             >
