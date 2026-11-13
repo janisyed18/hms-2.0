@@ -23,10 +23,10 @@ def _config(db_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
     return cfg
 
 
-def _user_columns(db_path: Path) -> set[str]:
+def _columns(db_path: Path, table: str) -> set[str]:
     engine = create_engine(f"sqlite:///{db_path}")
     try:
-        return {column["name"] for column in inspect(engine).get_columns("users")}
+        return {column["name"] for column in inspect(engine).get_columns(table)}
     finally:
         engine.dispose()
 
@@ -38,7 +38,10 @@ def test_existing_users_start_at_version_zero_and_the_column_can_be_removed(
     config = _config(db_path, monkeypatch)
 
     command.upgrade(config, BEFORE)
-    assert "credential_version" not in _user_columns(db_path)
+    assert "credential_version" not in _columns(db_path, "users")
+    assert "credential_version" not in _columns(
+        db_path, "browser_auth_challenges"
+    )
     engine = create_engine(f"sqlite:///{db_path}")
     try:
         # A user row as the previous release wrote it: every required column filled.
@@ -75,4 +78,7 @@ def test_existing_users_start_at_version_zero_and_the_column_can_be_removed(
     assert version == 0
 
     command.downgrade(config, BEFORE)
-    assert "credential_version" not in _user_columns(db_path)
+    assert "credential_version" not in _columns(db_path, "users")
+    assert "credential_version" not in _columns(
+        db_path, "browser_auth_challenges"
+    )

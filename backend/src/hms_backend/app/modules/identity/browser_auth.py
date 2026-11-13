@@ -40,6 +40,7 @@ from hms_backend.app.core.session_tokens import (
     digest_opaque_token,
     generate_opaque_token,
 )
+from hms_backend.app.modules.identity.credentials import rotate_credentials
 from hms_backend.app.modules.identity.models import (
     AccountStatus,
     BrowserAuthChallenge,
@@ -154,8 +155,7 @@ class BrowserAuthService:
         user.password_hash = hash_password(new_password)
         user.must_change_password = False
         user.password_changed_at = self._now()
-        user.credential_version += 1
-        await self.revoke_all_sessions(session, user.id)
+        await rotate_credentials(session, user)
         await self._audit(
             session, user, email=user.email, action="auth.password.changed"
         )
@@ -390,6 +390,7 @@ class BrowserAuthService:
                 token_hash=token.digest,
                 user_id=user.id,
                 stage=stage,
+                credential_version=user.credential_version,
                 expires_at=self._now() + timedelta(seconds=ttl),
             )
         )
@@ -413,7 +414,8 @@ class BrowserAuthService:
         ):
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
         user = await session.get(User, record.user_id)
-        if user is None:
+        if user is None or record.credential_version != user.credential_version:
+            # Issued before the user's credentials last changed.
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
         self._ensure_usable(user)
         return record, user

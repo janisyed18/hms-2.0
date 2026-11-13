@@ -32,7 +32,7 @@ from hms_backend.app.core.passwords import (
     verify_password,
 )
 from hms_backend.app.core.rbac import ROLE_PERMISSIONS, Principal
-from hms_backend.app.modules.identity.browser_auth import BrowserAuthService
+from hms_backend.app.modules.identity.credentials import rotate_credentials
 from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.identity.password_reset import (
     GENERIC_RESET_MESSAGE,
@@ -42,8 +42,6 @@ from hms_backend.app.modules.identity.password_reset import (
 )
 
 router = APIRouter(prefix="/auth")
-
-_auth_service = BrowserAuthService()
 
 PrincipalDep = Annotated[Principal, Depends(get_current_principal)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -119,11 +117,10 @@ async def change_password(
         )
     user.password_hash = hash_password(payload.new_password)
     user.password_changed_at = datetime.now(UTC)
-    user.credential_version += 1
     user.must_change_password = False
     # Every browser session signed in with the old password ends here; access
     # tokens issued before this moment are refused by the bearer check.
-    await _auth_service.revoke_all_sessions(session, user.id)
+    await rotate_credentials(session, user)
     await append_audit_event(
         session,
         actor_id=principal.user_id,

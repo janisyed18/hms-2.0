@@ -1,8 +1,10 @@
-"""Give each user a credential version that access tokens are checked against.
+"""Give each user a credential version that access tokens and sign-in challenges
+are checked against.
 
-Additive: one non-null integer column defaulting to 0. Access tokens issued
-before this change carry no version and count as 0, so every existing session
-stays valid until the user's credentials next change.
+Additive: a non-null integer column defaulting to 0 on users, and the same on
+browser_auth_challenges (the version the user had when the challenge was issued).
+Access tokens issued before this change carry no version and count as 0, so every
+existing session stays valid until the user's credentials next change.
 """
 
 import sqlalchemy as sa
@@ -27,5 +29,17 @@ def upgrade() -> None:
     )
 
 
+    op.add_column(
+        "browser_auth_challenges",
+        sa.Column(
+            "credential_version",
+            sa.Integer(),
+            nullable=False,
+            server_default="0",
+        ),
+    )
+
+
 def downgrade() -> None:
+    op.drop_column("browser_auth_challenges", "credential_version")
     op.drop_column("users", "credential_version")

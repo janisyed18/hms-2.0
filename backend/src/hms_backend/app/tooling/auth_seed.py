@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hms_backend.app.core.passwords import generate_temporary_password, hash_password
 from hms_backend.app.core.rbac import Role
 from hms_backend.app.modules.customers.models import Customer
+from hms_backend.app.modules.identity.credentials import bump_credential_version
 from hms_backend.app.modules.identity.models import (
     AccountStatus,
     BrowserAuthChallenge,
@@ -115,7 +116,7 @@ async def seed_auth_test_accounts(
             user.password_hash = hash_password(temporary_password)
             user.must_change_password = True
             user.password_changed_at = None
-            user.credential_version += 1
+            await bump_credential_version(session, user)
             user.mfa_enabled = False
             user.mfa_secret_ciphertext = None
             user.mfa_secret_key_version = None
