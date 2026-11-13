@@ -190,6 +190,10 @@ class Settings(BaseSettings):
     auth_browser_access_ttl_seconds: int = 900
     auth_browser_refresh_idle_ttl_seconds: int = 60 * 60 * 8
     auth_browser_refresh_absolute_ttl_seconds: int = 60 * 60 * 24 * 30
+    # How long after a refresh token is rotated a second request carrying it (two tabs
+    # refreshing together) is answered with an access token instead of being treated as
+    # theft. 0 keeps strict reuse detection: any reuse revokes the family.
+    auth_browser_refresh_reuse_grace_seconds: int = 0
     # Refresh cookie attributes.
     auth_browser_cookie_name: str = "hms_staff_refresh"
     auth_browser_cookie_path: str = "/api/v1/auth/browser"

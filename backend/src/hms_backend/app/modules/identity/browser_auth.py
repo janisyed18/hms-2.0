@@ -81,7 +81,21 @@ class AuthenticatedSession:
     access_token: str
     expires_in: int
     refresh_token: str
+    # Seconds of absolute session life left, for the cookie lifetime.
+    refresh_max_age: int
     recovery_codes: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class RefreshResult:
+    access_token: str
+    expires_in: int
+    # None only when a refresh lands in the rotation grace window: the caller keeps the
+    # cookie it already holds, which belongs to the successor session.
+    refresh_token: str | None
+    # Seconds of absolute session life left. Rotation never extends it past the family's
+    # original absolute expiry.
+    refresh_max_age: int
 
 
 class BrowserAuthService:
@@ -274,17 +288,24 @@ class BrowserAuthService:
         refresh_token: str,
         user_agent: str | None = None,
         ip: str | None = None,
-    ) -> AuthenticatedSession:
+    ) -> RefreshResult:
         digest = digest_opaque_token(refresh_token)
+        # The row lock makes rotation atomic: concurrent requests presenting the same
+        # token are serialised, exactly one rotates it, and the rest see it as already
+        # rotated (reuse, or the grace window below) instead of minting a second child.
         current = await session.scalar(
-            select(BrowserRefreshSession).where(
-                BrowserRefreshSession.token_hash == digest
-            )
+            select(BrowserRefreshSession)
+            .where(BrowserRefreshSession.token_hash == digest)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if current is None:
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
         now = self._now()
         if current.revoked_at is not None:
+            graced = await self._refresh_within_rotation_grace(session, current, now)
+            if graced is not None:
+                return graced
             # Presenting an already-rotated token means it was stolen: burn the
             # whole family so neither party keeps a valid session.
             await self._revoke_family(session, current.family_id)
@@ -303,17 +324,80 @@ class BrowserAuthService:
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
         self._ensure_usable(user)
 
-        new_token = self._new_refresh_session(
-            session, user, family_id=current.family_id, user_agent=user_agent, ip=ip
+        new_token, new_id = self._new_refresh_session(
+            session,
+            user,
+            family_id=current.family_id,
+            user_agent=user_agent,
+            ip=ip,
+            # Rotation inherits the family's absolute expiry; it never renews it.
+            absolute_expires_at=_aware(current.expires_at),
         )
+        await session.flush()  # the successor row must exist before it is referenced
         current.revoked_at = now
         current.last_used_at = now
+        current.replaced_by_id = new_id
         access_token, expires_in = self._mint_access(user)
-        return AuthenticatedSession(
+        return RefreshResult(
             access_token=access_token,
             expires_in=expires_in,
             refresh_token=new_token,
+            refresh_max_age=self._remaining_seconds(_aware(current.expires_at), now),
         )
+
+    async def _refresh_within_rotation_grace(
+        self,
+        session: AsyncSession,
+        rotated: BrowserRefreshSession,
+        now: datetime,
+    ) -> RefreshResult | None:
+        """Answer a request that raced the rotation of its own token, or None for reuse.
+
+        Two tabs refreshing together send the same cookie; one rotates it and the other
+        arrives a moment later holding the now-rotated token. Within a short window (off
+        by default) that second request gets a fresh access token but no new refresh
+        token: the browser already holds the successor from the winning response, so
+        nothing a thief could keep is issued. Anything else is reuse.
+        """
+        grace = self._settings.auth_browser_refresh_reuse_grace_seconds
+        if (
+            grace <= 0
+            or rotated.replaced_by_id is None
+            or rotated.last_used_at is None
+            or now - _aware(rotated.last_used_at) > timedelta(seconds=grace)
+            or now >= _aware(rotated.expires_at)
+        ):
+            return None
+        successor = await session.scalar(
+            select(BrowserRefreshSession)
+            .where(BrowserRefreshSession.id == rotated.replaced_by_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if (
+            successor is None
+            or successor.revoked_at is not None  # out, rotated on, or burned
+            or successor.family_id != rotated.family_id
+            or successor.user_id != rotated.user_id
+            or now >= _aware(successor.expires_at)
+            or now >= _aware(successor.idle_expires_at)
+        ):
+            return None
+        user = await session.get(User, rotated.user_id)
+        if user is None:
+            return None
+        self._ensure_usable(user)
+        access_token, expires_in = self._mint_access(user)
+        return RefreshResult(
+            access_token=access_token,
+            expires_in=expires_in,
+            refresh_token=None,
+            refresh_max_age=self._remaining_seconds(_aware(rotated.expires_at), now),
+        )
+
+    @staticmethod
+    def _remaining_seconds(expires_at: datetime, now: datetime) -> int:
+        return max(int((expires_at - now).total_seconds()), 0)
 
     async def logout(self, session: AsyncSession, *, refresh_token: str) -> None:
         digest = digest_opaque_token(refresh_token)
@@ -465,9 +549,19 @@ class BrowserAuthService:
         family_id: str | None,
         user_agent: str | None,
         ip: str | None,
-    ) -> str:
+        absolute_expires_at: datetime | None = None,
+    ) -> tuple[str, str]:
         token = generate_opaque_token()
         now = self._now()
+        # A new sign-in starts a full lifetime; a rotation inherits the family's expiry.
+        expires_at = absolute_expires_at or now + timedelta(
+            seconds=self._settings.auth_browser_refresh_absolute_ttl_seconds
+        )
+        idle_expires_at = min(
+            now
+            + timedelta(seconds=self._settings.auth_browser_refresh_idle_ttl_seconds),
+            expires_at,
+        )
         session_id = str(uuid7())
         session.add(
             BrowserRefreshSession(
@@ -475,19 +569,13 @@ class BrowserAuthService:
                 user_id=user.id,
                 family_id=family_id or session_id,
                 token_hash=token.digest,
-                expires_at=now
-                + timedelta(
-                    seconds=self._settings.auth_browser_refresh_absolute_ttl_seconds
-                ),
-                idle_expires_at=now
-                + timedelta(
-                    seconds=self._settings.auth_browser_refresh_idle_ttl_seconds
-                ),
+                expires_at=expires_at,
+                idle_expires_at=idle_expires_at,
                 user_agent=user_agent,
                 ip_address=ip,
             )
         )
-        return token.raw
+        return token.raw, session_id
 
     async def _revoke_family(self, session: AsyncSession, family_id: str) -> None:
         await session.execute(
@@ -528,7 +616,7 @@ class BrowserAuthService:
     ) -> AuthenticatedSession:
         user.last_login_at = self._now()
         user.failed_mfa_attempts = 0
-        refresh_raw = self._new_refresh_session(
+        refresh_raw, _ = self._new_refresh_session(
             session, user, family_id=None, user_agent=user_agent, ip=ip
         )
         await session.flush()
@@ -537,6 +625,7 @@ class BrowserAuthService:
             access_token=access_token,
             expires_in=expires_in,
             refresh_token=refresh_raw,
+            refresh_max_age=self._settings.auth_browser_refresh_absolute_ttl_seconds,
             recovery_codes=recovery_codes,
         )
 

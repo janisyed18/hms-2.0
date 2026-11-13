@@ -151,11 +151,11 @@ def _client_meta(request: Request) -> tuple[str | None, str | None]:
     return user_agent, client_address(request)
 
 
-def _set_refresh_cookie(response: Response, token: str) -> None:
+def _set_refresh_cookie(response: Response, token: str, max_age: int) -> None:
     response.set_cookie(
         key=settings.auth_browser_cookie_name,
         value=token,
-        max_age=settings.auth_browser_refresh_absolute_ttl_seconds,
+        max_age=max_age,
         httponly=True,
         secure=settings.auth_browser_cookie_secure,
         samesite="strict",
@@ -189,7 +189,7 @@ def _require_allowed_origin(request: Request) -> None:
 def _authenticated_body(
     authed: AuthenticatedSession, response: Response
 ) -> BrowserAuthenticatedResponse | BrowserRecoveryCodesResponse:
-    _set_refresh_cookie(response, authed.refresh_token)
+    _set_refresh_cookie(response, authed.refresh_token, authed.refresh_max_age)
     if authed.recovery_codes is not None:
         return BrowserRecoveryCodesResponse(
             access_token=authed.access_token,
@@ -477,7 +477,13 @@ async def browser_refresh(
         _clear_refresh_cookie(response)
         raise _unauthorized(exc) from exc
     await session.commit()
-    return _authenticated_body(authed, response)
+    if authed.refresh_token is not None:
+        _set_refresh_cookie(response, authed.refresh_token, authed.refresh_max_age)
+    # Otherwise this request raced a rotation of the same cookie; the browser already
+    # holds the winner's successor, so no cookie is written.
+    return BrowserAuthenticatedResponse(
+        access_token=authed.access_token, expires_in=authed.expires_in
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
