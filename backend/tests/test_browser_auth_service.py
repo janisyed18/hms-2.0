@@ -363,3 +363,252 @@ async def test_logout_is_idempotent(session: AsyncSession) -> None:
     await service.logout(session, refresh_token=authed.refresh_token)  # no error
     with pytest.raises(BrowserAuthError):
         await service.refresh(session, refresh_token=authed.refresh_token)
+
+
+# --- absolute lifetime and rotation grace ----------------------------------------
+
+
+async def _signed_in(session: AsyncSession, at: datetime = NOW) -> AuthenticatedSession:
+    secret = pyotp.random_base32()
+    await _make_user(session, totp_secret=secret)
+    service = _service(at)
+    challenge = _issued_challenge(
+        await service.login(session, email=EMAIL, password=PASSWORD)
+    )
+    return await service.verify_mfa(
+        session, challenge=challenge.raw, code=pyotp.TOTP(secret).at(at)
+    )
+
+
+def _long_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep idle expiry out of the way so the absolute lifetime is what is tested."""
+    monkeypatch.setattr(
+        settings, "auth_browser_refresh_idle_ttl_seconds", 60 * 60 * 24 * 60
+    )
+
+
+def _absolute() -> timedelta:
+    return timedelta(seconds=settings.auth_browser_refresh_absolute_ttl_seconds)
+
+
+def _naive_utc(value: datetime) -> datetime:
+    return value.astimezone(UTC).replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_rotation_never_extends_the_absolute_expiry(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _long_idle(monkeypatch)
+    authed = await _signed_in(session)
+    original = NOW + _absolute()
+    token = authed.refresh_token
+    assert token is not None
+    when = NOW
+    for _ in range(5):  # a session used every day for five days
+        when += timedelta(days=1)
+        rotated = await _service(when).refresh(session, refresh_token=token)
+        assert rotated.refresh_token is not None
+        token = rotated.refresh_token
+    rows = (await session.scalars(select(BrowserRefreshSession))).all()
+    assert len(rows) == 6
+    assert {_naive_utc(_aware_utc(row.expires_at)) for row in rows} == {
+        _naive_utc(original)
+    }
+    # The cookie only ever lives for what is left, not a fresh full lifetime.
+    assert rotated.refresh_max_age == int((original - when).total_seconds())
+    assert rotated.refresh_max_age < settings.auth_browser_refresh_absolute_ttl_seconds
+
+
+def _aware_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_absolute_expiry_boundary_is_exclusive(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _long_idle(monkeypatch)
+    authed = await _signed_in(session)
+    token = authed.refresh_token
+    assert token is not None
+    deadline = NOW + _absolute()
+    just_before = await _service(deadline - timedelta(seconds=1)).refresh(
+        session, refresh_token=token
+    )
+    assert just_before.refresh_max_age == 1
+    assert just_before.refresh_token is not None
+    # The successor is no longer valid at the original deadline, however recently used.
+    with pytest.raises(BrowserAuthError):
+        await _service(deadline).refresh(
+            session, refresh_token=just_before.refresh_token
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_past_the_absolute_expiry_is_refused_even_if_active(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _long_idle(monkeypatch)
+    authed = await _signed_in(session)
+    token = authed.refresh_token
+    assert token is not None
+    when = NOW
+    # Daily activity keeps the idle window open all month, but not past day 30.
+    for _ in range(29):
+        when += timedelta(days=1)
+        result = await _service(when).refresh(session, refresh_token=token)
+        assert result.refresh_token is not None
+        token = result.refresh_token
+    with pytest.raises(BrowserAuthError):
+        await _service(NOW + _absolute()).refresh(session, refresh_token=token)
+
+
+@pytest.mark.asyncio
+async def test_idle_expiry_never_outlives_the_absolute_expiry(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _long_idle(monkeypatch)
+    authed = await _signed_in(session)
+    token = authed.refresh_token
+    assert token is not None
+    when = NOW + _absolute() - timedelta(minutes=5)
+    await _service(when).refresh(session, refresh_token=token)
+    newest = await session.scalar(
+        select(BrowserRefreshSession).where(
+            BrowserRefreshSession.revoked_at.is_(None)
+        )
+    )
+    assert newest is not None
+    assert _aware_utc(newest.idle_expires_at) == NOW + _absolute()
+
+
+@pytest.mark.asyncio
+async def test_rotation_records_the_successor(session: AsyncSession) -> None:
+    authed = await _signed_in(session)
+    assert authed.refresh_token is not None
+    await _service().refresh(session, refresh_token=authed.refresh_token)
+    old = await session.scalar(
+        select(BrowserRefreshSession).where(
+            BrowserRefreshSession.revoked_at.is_not(None)
+        )
+    )
+    new = await session.scalar(
+        select(BrowserRefreshSession).where(
+            BrowserRefreshSession.revoked_at.is_(None)
+        )
+    )
+    assert old is not None and new is not None
+    assert old.replaced_by_id == new.id
+    assert old.family_id == new.family_id
+
+
+def _graced(monkeypatch: pytest.MonkeyPatch, seconds: int = 5) -> None:
+    monkeypatch.setattr(
+        settings, "auth_browser_refresh_reuse_grace_seconds", seconds, raising=False
+    )
+
+
+async def _live_count(session: AsyncSession) -> int:
+    return int(
+        await session.scalar(
+            select(func.count())
+            .select_from(BrowserRefreshSession)
+            .where(BrowserRefreshSession.revoked_at.is_(None))
+        )
+        or 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_grace_answers_a_raced_refresh_without_a_second_refresh_token(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _graced(monkeypatch)
+    authed = await _signed_in(session)
+    assert authed.refresh_token is not None
+    winner = await _service().refresh(session, refresh_token=authed.refresh_token)
+    raced = await _service(NOW + timedelta(seconds=5)).refresh(
+        session, refresh_token=authed.refresh_token
+    )
+    assert raced.access_token
+    assert raced.refresh_token is None  # nothing a thief could keep
+    assert winner.refresh_token is not None
+    assert await _live_count(session) == 1  # one live successor, no second child
+    # The winner's token still works afterwards.
+    await _service(NOW + timedelta(seconds=6)).refresh(
+        session, refresh_token=winner.refresh_token
+    )
+
+
+@pytest.mark.asyncio
+async def test_reuse_after_the_grace_window_still_burns_the_family(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _graced(monkeypatch)
+    authed = await _signed_in(session)
+    assert authed.refresh_token is not None
+    await _service().refresh(session, refresh_token=authed.refresh_token)
+    with pytest.raises(BrowserAuthError):
+        await _service(NOW + timedelta(seconds=6)).refresh(
+            session, refresh_token=authed.refresh_token
+        )
+    assert await _live_count(session) == 0
+
+
+@pytest.mark.asyncio
+async def test_grace_is_off_by_default_so_reuse_is_strict(
+    session: AsyncSession,
+) -> None:
+    assert settings.auth_browser_refresh_reuse_grace_seconds == 0
+    authed = await _signed_in(session)
+    assert authed.refresh_token is not None
+    await _service().refresh(session, refresh_token=authed.refresh_token)
+    with pytest.raises(BrowserAuthError):
+        await _service().refresh(session, refresh_token=authed.refresh_token)
+    assert await _live_count(session) == 0
+
+
+@pytest.mark.asyncio
+async def test_grace_never_applies_after_logout_or_a_security_event(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _graced(monkeypatch)
+    authed = await _signed_in(session)
+    assert authed.refresh_token is not None
+    winner = await _service().refresh(session, refresh_token=authed.refresh_token)
+    assert winner.refresh_token is not None
+    # The successor was signed out (or the family revoked) inside the window.
+    await _service().logout(session, refresh_token=winner.refresh_token)
+    with pytest.raises(BrowserAuthError):
+        await _service().refresh(session, refresh_token=authed.refresh_token)
+
+
+@pytest.mark.asyncio
+async def test_grace_does_not_apply_to_a_token_revoked_by_logout(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _graced(monkeypatch)
+    authed = await _signed_in(session)
+    assert authed.refresh_token is not None
+    await _service().logout(session, refresh_token=authed.refresh_token)
+    with pytest.raises(BrowserAuthError):
+        await _service().refresh(session, refresh_token=authed.refresh_token)
+
+
+@pytest.mark.asyncio
+async def test_grace_respects_an_account_that_became_unusable(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _graced(monkeypatch)
+    authed = await _signed_in(session)
+    assert authed.refresh_token is not None
+    await _service().refresh(session, refresh_token=authed.refresh_token)
+    user = await session.scalar(select(User))
+    assert user is not None
+    user.account_status = "DISABLED"
+    await session.flush()
+    with pytest.raises(BrowserAuthError):
+        await _service(NOW + timedelta(seconds=1)).refresh(
+            session, refresh_token=authed.refresh_token
+        )

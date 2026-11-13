@@ -266,6 +266,58 @@ async def test_refresh_rotates_and_reuse_is_rejected(
     assert reuse.status_code == 401
 
 
+def _max_age(response: httpx.Response) -> int:
+    header = response.headers.get("set-cookie", "")
+    for part in header.split(";"):
+        if part.strip().lower().startswith("max-age="):
+            return int(part.split("=", 1)[1])
+    raise AssertionError(f"no Max-Age in {header!r}")
+
+
+@pytest.mark.asyncio
+async def test_refresh_cookie_lifetime_shrinks_and_never_renews(
+    client: httpx.AsyncClient,
+    session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "auth_browser_refresh_absolute_ttl_seconds", 1000)
+    await _seed_user(session_factory)
+    await _authenticate(client)
+    first = await client.post(
+        "/api/v1/auth/browser/refresh", headers={"Origin": "http://t"}
+    )
+    second = await client.post(
+        "/api/v1/auth/browser/refresh", headers={"Origin": "http://t"}
+    )
+    assert first.status_code == second.status_code == 200
+    assert 0 < _max_age(second) <= _max_age(first) <= 1000
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_that_raced_a_rotation_gets_a_token_but_no_cookie(
+    client: httpx.AsyncClient,
+    session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "auth_browser_refresh_reuse_grace_seconds", 30)
+    await _seed_user(session_factory)
+    await _authenticate(client)
+    old_cookie = client.cookies.get(COOKIE)
+    assert old_cookie is not None
+    winner = await client.post(
+        "/api/v1/auth/browser/refresh", headers={"Origin": "http://t"}
+    )
+    assert winner.status_code == 200
+    raced = await client.post(
+        "/api/v1/auth/browser/refresh",
+        headers={"Origin": "http://t"},
+        cookies={COOKIE: old_cookie},
+    )
+    assert raced.status_code == 200, raced.text
+    assert raced.json()["access_token"]
+    assert "set-cookie" not in raced.headers  # the winner's cookie stays in place
+
+
 @pytest.mark.asyncio
 async def test_me_returns_identity_with_bearer_token(
     client: httpx.AsyncClient, session_factory: SessionFactory
