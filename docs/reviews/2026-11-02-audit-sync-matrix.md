@@ -35,7 +35,6 @@ Exception model (AGENTS.md, "Audit and sync"):
 | `POST /api/v1/auth/password` | change_password → append_audit_event | n/a (server-only data) |
 | `POST /api/v1/auth/password/reset-confirm` | confirm_password_reset → confirm → append_audit_event | confirm_password_reset → confirm → stage_sync_change |
 | `POST /api/v1/auth/password/reset-request` | request_password_reset → request → append_audit_event | n/a (server-only data) |
-| `POST /api/v1/auth/users/{user_id}/password` | admin_set_password → append_audit_event | n/a (server-only data) |
 | `POST /api/v1/certificates/bulk-generate` | bulk_generate_certificates → append_audit_event | n/a (server-only data) |
 | `POST /api/v1/certificates/{certificate_id}/revoke` | revoke_certificate → _transition_certificate_status → record_update | revoke_certificate → _transition_certificate_status → record_update |
 | `POST /api/v1/certificates/{certificate_id}/supersede` | supersede_certificate → _transition_certificate_status → record_update | supersede_certificate → _transition_certificate_status → record_update |

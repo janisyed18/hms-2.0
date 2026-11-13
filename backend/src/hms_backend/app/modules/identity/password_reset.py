@@ -163,6 +163,7 @@ class PasswordResetService:
         before = _credential_safe_snapshot(user)
         user.password_hash = hash_password(new_password)
         user.password_changed_at = now
+        user.credential_version += 1
         user.must_change_password = False
         user.failed_password_attempts = 0
         user.locked_until = None

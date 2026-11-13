@@ -538,6 +538,9 @@ async def reset_user_password(
     temporary_password = generate_temporary_password()
     user.password_hash = hash_password(temporary_password)
     user.must_change_password = True
+    # Marks the credential change; access tokens issued before it stop working.
+    user.password_changed_at = datetime.now(UTC)
+    user.credential_version += 1
     await _auth_service.revoke_all_sessions(session, user.id)
     await append_audit_event(
         session,

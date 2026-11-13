@@ -194,6 +194,11 @@ async def test_reset_confirm_changes_password_and_returns_safe_message(
     )
     assert confirmed.status_code == 200
     assert confirmed.json() == {"message": "Password reset. You can now sign in."}
+    async with session_factory() as session:
+        changed = await session.scalar(select(User).where(User.email == EMAIL))
+        assert changed is not None
+        # A reset ends the sessions and access tokens signed in under the old password.
+        assert changed.credential_version == 1
 
     reused = await client.post(
         "/api/v1/auth/browser/password/reset-confirm",
@@ -201,3 +206,33 @@ async def test_reset_confirm_changes_password_and_returns_safe_message(
     )
     assert reused.status_code == 400
     assert reused.json()["detail"] == "Invalid or expired reset link."
+
+
+@pytest.mark.asyncio
+async def test_reset_confirm_applies_the_central_password_policy(
+    client: httpx.AsyncClient,
+    session_factory: SessionFactory,
+) -> None:
+    await seed(session_factory)
+    await client.post(
+        "/api/v1/auth/browser/password/reset-request", json={"email": EMAIL}
+    )
+    async with session_factory() as session:
+        delivery = await session.scalar(select(PasswordResetDelivery))
+        assert delivery is not None and delivery.ciphertext is not None
+        user = await session.scalar(select(User).where(User.email == EMAIL))
+        assert user is not None
+        token = decrypt_password_reset_delivery(
+            EncryptedPasswordResetDelivery(delivery.ciphertext, delivery.key_version),
+            reset_id=delivery.reset_id,
+            user_id=user.id,
+        )
+    # Long enough for the request schema's own minimum, short of the policy's.
+    weak = await client.post(
+        "/api/v1/auth/browser/password/reset-confirm",
+        json={"token": token, "new_password": "Abcdefgh1!x"},
+    )
+    assert weak.status_code == 400, weak.text
+    async with session_factory() as session:
+        unchanged = await session.scalar(select(User).where(User.email == EMAIL))
+        assert unchanged is not None and unchanged.credential_version == 0

@@ -115,6 +115,7 @@ async def seed_auth_test_accounts(
             user.password_hash = hash_password(temporary_password)
             user.must_change_password = True
             user.password_changed_at = None
+            user.credential_version += 1
             user.mfa_enabled = False
             user.mfa_secret_ciphertext = None
             user.mfa_secret_key_version = None

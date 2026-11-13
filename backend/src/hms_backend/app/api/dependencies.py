@@ -98,7 +98,12 @@ async def _bearer_principal(
             detail=str(exc),
         ) from exc
 
-    principal = await _persisted_user_principal(session, claims.subject)
+    principal = await _persisted_user_principal(
+        session,
+        claims.subject,
+        token_credential_version=claims.credential_version,
+        check_credential=True,
+    )
     if principal is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -166,6 +171,9 @@ async def _provision_oidc_user(
 async def _persisted_user_principal(
     session: AsyncSession,
     user_id: str,
+    *,
+    token_credential_version: int | None = None,
+    check_credential: bool = False,
 ) -> Principal | None:
     user = await session.scalar(
         select(User).where(
@@ -175,6 +183,17 @@ async def _persisted_user_principal(
     )
     if user is None:
         return None
+
+    # A credential change ends every session signed in before it. Refresh sessions
+    # are revoked at the change itself; this also refuses the access token that
+    # was already issued. The comparison is on the user's credential version, not
+    # on time, so a token issued in the same second as the change is refused too.
+    # A token minted before versions existed carries none and counts as version 0.
+    if check_credential and (token_credential_version or 0) < user.credential_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session ended by a password change. Sign in again.",
+        )
 
     # Reject disabled and currently-locked accounts across every auth mode; active
     # users (incl. the native inspector app) are unaffected.

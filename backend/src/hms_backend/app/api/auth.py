@@ -2,7 +2,10 @@
 
 * ``/auth/me`` — the resolved principal (roles + permissions) for any auth mode.
 * ``/auth/password`` — change your own password (verifying the current one).
-* ``/auth/users/{user_id}/password`` — admin reset of another user's password.
+
+An administrator resets someone else's password only through
+``/admin/users/{user_id}/password-reset``, which enforces the role hierarchy and
+a recent sign-in, revokes the user's sessions and forces a change at next sign-in.
 
 Passwords are Argon2-hashed and never returned in any response. Sign-in itself is the
 browser flow under ``/auth/browser`` (lockout, MFA, refresh sessions).
@@ -10,6 +13,7 @@ browser flow under ``/auth/browser`` (lockout, MFA, refresh sessions).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -22,13 +26,13 @@ from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.core.audit import append_audit_event
 from hms_backend.app.core.client_identity import client_address
 from hms_backend.app.core.config import settings
-from hms_backend.app.core.passwords import hash_password, verify_password
-from hms_backend.app.core.rbac import (
-    ROLE_PERMISSIONS,
-    Permission,
-    Principal,
-    require_permission,
+from hms_backend.app.core.passwords import (
+    hash_password,
+    validate_password_policy,
+    verify_password,
 )
+from hms_backend.app.core.rbac import ROLE_PERMISSIONS, Principal
+from hms_backend.app.modules.identity.browser_auth import BrowserAuthService
 from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.identity.password_reset import (
     GENERIC_RESET_MESSAGE,
@@ -38,6 +42,8 @@ from hms_backend.app.modules.identity.password_reset import (
 )
 
 router = APIRouter(prefix="/auth")
+
+_auth_service = BrowserAuthService()
 
 PrincipalDep = Annotated[Principal, Depends(get_current_principal)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
@@ -59,11 +65,9 @@ class AuthMeResponse(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=_MIN_PASSWORD_LEN)
-
-
-class SetPasswordRequest(BaseModel):
-    new_password: str = Field(min_length=_MIN_PASSWORD_LEN)
+    # Length and common-password rules belong to the central policy
+    # (validate_password_policy), not to a second, weaker contract here.
+    new_password: str
 
 
 class MessageResponse(BaseModel):
@@ -108,7 +112,18 @@ async def change_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect",
         )
+    policy = validate_password_policy(payload.new_password)
+    if not policy.valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=" ".join(policy.errors)
+        )
     user.password_hash = hash_password(payload.new_password)
+    user.password_changed_at = datetime.now(UTC)
+    user.credential_version += 1
+    user.must_change_password = False
+    # Every browser session signed in with the old password ends here; access
+    # tokens issued before this moment are refused by the bearer check.
+    await _auth_service.revoke_all_sessions(session, user.id)
     await append_audit_event(
         session,
         actor_id=principal.user_id,
@@ -120,38 +135,6 @@ async def change_password(
     )
     await session.commit()
     return MessageResponse(message="Password updated")
-
-
-@router.post("/users/{user_id}/password", response_model=MessageResponse)
-async def admin_set_password(
-    user_id: str,
-    payload: SetPasswordRequest,
-    session: SessionDep,
-    principal: PrincipalDep,
-) -> MessageResponse:
-    try:
-        require_permission(principal, Permission.USER_ADMIN)
-    except PermissionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
-        ) from exc
-    user = await session.get(User, user_id)
-    if user is None or user.deleted_at is not None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-        )
-    user.password_hash = hash_password(payload.new_password)
-    await append_audit_event(
-        session,
-        actor_id=principal.user_id,
-        action="auth.password.admin_set",
-        entity="user",
-        entity_id=user.id,
-        before=None,
-        after={"email": user.email},
-    )
-    await session.commit()
-    return MessageResponse(message=f"Password set for {user.email}")
 
 
 @router.post("/password/reset-request", response_model=MessageResponse)

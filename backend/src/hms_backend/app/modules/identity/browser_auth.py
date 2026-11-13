@@ -154,6 +154,7 @@ class BrowserAuthService:
         user.password_hash = hash_password(new_password)
         user.must_change_password = False
         user.password_changed_at = self._now()
+        user.credential_version += 1
         await self.revoke_all_sessions(session, user.id)
         await self._audit(
             session, user, email=user.email, action="auth.password.changed"
@@ -513,6 +514,7 @@ class BrowserAuthService:
                 "client": "staff-web",
                 "auth_time": int(now.timestamp()),
                 "hms_roles": [user.role],
+                "cv": user.credential_version,
             },
         )
         return token, ttl
