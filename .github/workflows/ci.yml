@@ -40,6 +40,7 @@ jobs:
         run: >-
           uv run pytest tests/test_inspector_postgres_races.py
           tests/test_refresh_rotation_postgres_races.py
+          tests/test_refresh_lock_order_postgres.py
           tests/test_certificate_postgres_races.py
           tests/test_persisted_user_ids_postgres.py
           tests/test_customer_access_postgres.py
@@ -57,6 +58,8 @@ jobs:
           tests/test_migration_booking_schedule_index.py
           tests/test_migration_transaction_per_migration.py
           tests/test_admin_user_keyset_postgres.py
+          tests/test_credential_version_postgres.py
+          tests/test_credential_change_races_postgres.py
           tests/test_inspection_lifecycle_postgres.py
           tests/test_notification_center_postgres.py -v
           tests/test_my_work_postgres.py

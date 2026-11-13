@@ -77,6 +77,12 @@ class User(SyncableMixin, Base):
     password_changed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Bumped on every credential change. Access tokens carry the value they were
+    # issued under, so a token from before a change is refused exactly, with no
+    # dependence on clock precision.
+    credential_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     mfa_secret_ciphertext: Mapped[str | None] = mapped_column(
         String(1000), nullable=True
@@ -147,6 +153,11 @@ class BrowserAuthChallenge(Base):
         DateTime(timezone=True), nullable=False
     )
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # The user's credential version when this challenge was issued. A challenge from
+    # before a credential change can no longer be completed.
+    credential_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     consumed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -175,6 +186,12 @@ class BrowserRefreshSession(Base):
     )
     idle_expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    # When this browser session last presented its credentials (sign-in or
+    # step-up). Carried unchanged through refresh rotation; NULL (rows from
+    # before this column) counts as "never", so sensitive actions ask again.
+    auth_time: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     last_used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

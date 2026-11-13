@@ -40,6 +40,7 @@ from hms_backend.app.core.session_tokens import (
     digest_opaque_token,
     generate_opaque_token,
 )
+from hms_backend.app.modules.identity.credentials import rotate_credentials
 from hms_backend.app.modules.identity.models import (
     AccountStatus,
     BrowserAuthChallenge,
@@ -50,11 +51,16 @@ from hms_backend.app.modules.identity.models import (
 )
 
 _GENERIC_LOGIN_ERROR = "Invalid email or password"
+_REAUTH_ERROR = "That password or code was not correct."
 _GENERIC_CHALLENGE_ERROR = "Your session has expired; please sign in again."
 
 
 class BrowserAuthError(Exception):
     """Auth failure surfaced to clients without detail leakage."""
+
+
+class SessionEndedError(BrowserAuthError):
+    """The browser session cannot be used any more (revoked, expired, mismatched)."""
 
 
 class RateLimitedError(BrowserAuthError):
@@ -119,7 +125,7 @@ class BrowserAuthService:
         user_agent: str | None = None,
         ip: str | None = None,
     ) -> IssuedChallenge | AuthenticatedSession:
-        user = await self._user_by_email(session, email)
+        user = await self._user_by_email(session, email, for_update=True)
         if (
             user is None
             or user.password_hash is None
@@ -168,7 +174,7 @@ class BrowserAuthService:
         user.password_hash = hash_password(new_password)
         user.must_change_password = False
         user.password_changed_at = self._now()
-        await self.revoke_all_sessions(session, user.id)
+        await rotate_credentials(session, user)
         await self._audit(
             session, user, email=user.email, action="auth.password.changed"
         )
@@ -290,6 +296,19 @@ class BrowserAuthService:
         ip: str | None = None,
     ) -> RefreshResult:
         digest = digest_opaque_token(refresh_token)
+        # Lock order is always user, then refresh session (as in credential changes and
+        # reauthentication). The session is found without a lock only to learn whose it
+        # is; it is locked and revalidated once the user lock is held.
+        peek = await session.scalar(
+            select(BrowserRefreshSession).where(
+                BrowserRefreshSession.token_hash == digest
+            )
+        )
+        if peek is None:
+            raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
+        user = await self._locked_user(session, peek.user_id)
+        if user is None:
+            raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
         # The row lock makes rotation atomic: concurrent requests presenting the same
         # token are serialised, exactly one rotates it, and the rest see it as already
         # rotated (reuse, or the grace window below) instead of minting a second child.
@@ -303,7 +322,9 @@ class BrowserAuthService:
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
         now = self._now()
         if current.revoked_at is not None:
-            graced = await self._refresh_within_rotation_grace(session, current, now)
+            graced = await self._refresh_within_rotation_grace(
+                session, current, user, now
+            )
             if graced is not None:
                 return graced
             # Presenting an already-rotated token means it was stolen: burn the
@@ -311,33 +332,31 @@ class BrowserAuthService:
             await self._revoke_family(session, current.family_id)
             await self._audit(
                 session,
-                await session.get(User, current.user_id),
+                user,
                 email=None,
                 action="auth.refresh.reuse",
             )
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
         if now >= _aware(current.expires_at) or now >= _aware(current.idle_expires_at):
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
-
-        user = await session.get(User, current.user_id)
-        if user is None:
-            raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
         self._ensure_usable(user)
 
+        # Rotation never refreshes the credential-presentation time (only a sign-in or
+        # a step-up does) and never renews the absolute expiry.
         new_token, new_id = self._new_refresh_session(
             session,
             user,
             family_id=current.family_id,
             user_agent=user_agent,
             ip=ip,
-            # Rotation inherits the family's absolute expiry; it never renews it.
+            auth_time=current.auth_time,
             absolute_expires_at=_aware(current.expires_at),
         )
         await session.flush()  # the successor row must exist before it is referenced
         current.revoked_at = now
         current.last_used_at = now
         current.replaced_by_id = new_id
-        access_token, expires_in = self._mint_access(user)
+        access_token, expires_in = self._mint_access(user, auth_time=current.auth_time)
         return RefreshResult(
             access_token=access_token,
             expires_in=expires_in,
@@ -345,10 +364,103 @@ class BrowserAuthService:
             refresh_max_age=self._remaining_seconds(_aware(current.expires_at), now),
         )
 
+    async def reauthenticate(
+        self,
+        session: AsyncSession,
+        *,
+        refresh_token: str,
+        user_subject: str,
+        password: str,
+        code: str | None,
+    ) -> tuple[str, int]:
+        """Step-up: re-check the password (and TOTP when enrolled) for the
+        browser session identified by its refresh cookie, then stamp that one
+        session's ``auth_time``. Grants no roles or permissions, only freshness.
+        """
+        current = await session.scalar(
+            select(BrowserRefreshSession).where(
+                BrowserRefreshSession.token_hash == digest_opaque_token(refresh_token)
+            )
+        )
+        now = self._now()
+        if (
+            current is None
+            or now >= _aware(current.expires_at)
+            or now >= _aware(current.idle_expires_at)
+        ):
+            raise SessionEndedError(_GENERIC_CHALLENGE_ERROR)
+        # Serialise with refresh and credential changes (see ``_load_challenge``).
+        user = await self._locked_user(session, current.user_id)
+        await session.refresh(current)
+        if current.revoked_at is not None:
+            # A refresh that finished while this waited rotated the cookie this
+            # request carries. That is not a lost session: carry on if the family is
+            # still live. Logout, reuse detection and credential changes leave none.
+            rotated = current.last_used_at is not None
+            live = await session.scalar(
+                select(BrowserRefreshSession.id).where(
+                    BrowserRefreshSession.family_id == current.family_id,
+                    BrowserRefreshSession.revoked_at.is_(None),
+                )
+            )
+            if not rotated or live is None:
+                raise SessionEndedError(_GENERIC_CHALLENGE_ERROR)
+        # The cookie and the bearer token must describe the same account.
+        if user is None or user.oidc_subject != user_subject:
+            raise SessionEndedError(_GENERIC_CHALLENGE_ERROR)
+        try:
+            self._ensure_usable(user)
+        except BrowserAuthError as exc:
+            raise SessionEndedError(_GENERIC_CHALLENGE_ERROR) from exc
+
+        failure: str | None = None
+        step: int | None = None
+        if user.password_hash is None or not verify_password(
+            user.password_hash, password
+        ):
+            failure = _REAUTH_ERROR
+        elif user.mfa_enabled:
+            step = (
+                mfa.verify_totp(self._decrypt_user_secret(user), code, now=now)
+                if code
+                else None
+            )
+            if step is None or (
+                user.mfa_last_accepted_step is not None
+                and step <= user.mfa_last_accepted_step
+            ):
+                failure = _REAUTH_ERROR
+        if failure is not None:
+            user.failed_password_attempts += 1
+            self._maybe_lock(user)
+            await self._audit(
+                session,
+                user,
+                email=user.email,
+                action="auth.reauth.failed",
+            )
+            raise BrowserAuthError(failure)
+
+        user.failed_password_attempts = 0
+        if step is not None:
+            user.mfa_last_accepted_step = step
+        # Stamp every live token of this browser session (its family) only.
+        await session.execute(
+            update(BrowserRefreshSession)
+            .where(
+                BrowserRefreshSession.family_id == current.family_id,
+                BrowserRefreshSession.revoked_at.is_(None),
+            )
+            .values(auth_time=now)
+        )
+        await self._audit(session, user, email=user.email, action="auth.reauth")
+        return self._mint_access(user, auth_time=now)
+
     async def _refresh_within_rotation_grace(
         self,
         session: AsyncSession,
         rotated: BrowserRefreshSession,
+        user: User,
         now: datetime,
     ) -> RefreshResult | None:
         """Answer a request that raced the rotation of its own token, or None for reuse.
@@ -386,11 +498,12 @@ class BrowserAuthService:
             or now >= _aware(successor.idle_expires_at)
         ):
             return None
-        user = await session.get(User, rotated.user_id)
-        if user is None:
-            return None
         self._ensure_usable(user)
-        access_token, expires_in = self._mint_access(user)
+        # The successor carries the browser session's current authentication time (a
+        # step-up stamps live tokens only), never "now": a refresh is not a sign-in.
+        access_token, expires_in = self._mint_access(
+            user, auth_time=successor.auth_time
+        )
         return RefreshResult(
             access_token=access_token,
             expires_in=expires_in,
@@ -432,12 +545,25 @@ class BrowserAuthService:
     # -- internals ---------------------------------------------------------------
 
     async def _user_by_email(
-        self, session: AsyncSession, email: str
+        self, session: AsyncSession, email: str, *, for_update: bool = False
     ) -> User | None:
-        user: User | None = await session.scalar(
-            select(User).where(
-                User.email == email.strip().lower(), User.deleted_at.is_(None)
+        statement = select(User).where(
+            User.email == email.strip().lower(), User.deleted_at.is_(None)
+        )
+        if for_update:
+            statement = statement.with_for_update().execution_options(
+                populate_existing=True
             )
+        user: User | None = await session.scalar(statement)
+        return user
+
+    async def _locked_user(self, session: AsyncSession, user_id: str) -> User | None:
+        """The user, row-locked and freshly read (credential version included)."""
+        user: User | None = await session.scalar(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         return user
 
@@ -476,6 +602,7 @@ class BrowserAuthService:
                 token_hash=token.digest,
                 user_id=user.id,
                 stage=stage,
+                credential_version=user.credential_version,
                 expires_at=self._now() + timedelta(seconds=ttl),
             )
         )
@@ -498,8 +625,12 @@ class BrowserAuthService:
             or _aware(record.expires_at) <= self._now()
         ):
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
-        user = await session.get(User, record.user_id)
-        if user is None:
+        # Row-lock the user: a credential change takes the same lock, so it either
+        # finishes before this reads the version (and the challenge is refused) or
+        # waits until this commits (and then revokes the session created here).
+        user = await self._locked_user(session, record.user_id)
+        if user is None or record.credential_version != user.credential_version:
+            # Issued before the user's credentials last changed.
             raise BrowserAuthError(_GENERIC_CHALLENGE_ERROR)
         self._ensure_usable(user)
         return record, user
@@ -552,6 +683,7 @@ class BrowserAuthService:
         family_id: str | None,
         user_agent: str | None,
         ip: str | None,
+        auth_time: datetime | None,
         absolute_expires_at: datetime | None = None,
     ) -> tuple[str, str]:
         token = generate_opaque_token()
@@ -572,6 +704,7 @@ class BrowserAuthService:
                 user_id=user.id,
                 family_id=family_id or session_id,
                 token_hash=token.digest,
+                auth_time=auth_time,
                 expires_at=expires_at,
                 idle_expires_at=idle_expires_at,
                 user_agent=user_agent,
@@ -590,7 +723,9 @@ class BrowserAuthService:
             .values(revoked_at=self._now())
         )
 
-    def _mint_access(self, user: User) -> tuple[str, int]:
+    def _mint_access(
+        self, user: User, *, auth_time: datetime | None
+    ) -> tuple[str, int]:
         ttl = self._settings.auth_browser_access_ttl_seconds
         now = self._now()
         token = encode_hs256_bearer_token(
@@ -602,8 +737,15 @@ class BrowserAuthService:
             now=now,
             extra_claims={
                 "client": "staff-web",
-                "auth_time": int(now.timestamp()),
+                # Omitted (not faked) when unknown, so the recent-sign-in guard
+                # fails closed for the session.
+                **(
+                    {"auth_time": int(_aware(auth_time).timestamp())}
+                    if auth_time is not None
+                    else {}
+                ),
                 "hms_roles": [user.role],
+                "cv": user.credential_version,
             },
         )
         return token, ttl
@@ -617,13 +759,14 @@ class BrowserAuthService:
         ip: str | None,
         recovery_codes: tuple[str, ...] | None = None,
     ) -> AuthenticatedSession:
-        user.last_login_at = self._now()
+        now = self._now()
+        user.last_login_at = now
         user.failed_mfa_attempts = 0
         refresh_raw, _ = self._new_refresh_session(
-            session, user, family_id=None, user_agent=user_agent, ip=ip
+            session, user, family_id=None, user_agent=user_agent, ip=ip, auth_time=now
         )
         await session.flush()
-        access_token, expires_in = self._mint_access(user)
+        access_token, expires_in = self._mint_access(user, auth_time=now)
         return AuthenticatedSession(
             access_token=access_token,
             expires_in=expires_in,

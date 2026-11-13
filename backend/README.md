@@ -350,6 +350,16 @@ Three modes, selected by `AUTH_MODE`:
   `aud` and `exp`. Identity comes from the token; the **HMS role comes from the
   persisted user**, so authorization stays DB-authoritative.
 
+**Staff web supports `AUTH_MODE=bearer` only.** It signs in with a local password and
+MFA, holds an access token in memory and a refresh cookie, and has no identity-provider
+(authorization-code/PKCE) sign-in or provider-based step-up. The AWS Dev Terraform and
+Docker Compose both set `bearer`. The API refuses to start with `AUTH_MODE=oidc` while
+browser login is enabled outside local/test. `oidc` remains for API clients that present
+provider tokens; end-user OIDC for Staff web would be a separate, security-reviewed
+feature. Sensitive admin actions ask for a recent sign-in: a stale or missing
+`auth_time` answers `403 REAUTH_REQUIRED`, and the Staff UI confirms with
+`POST /auth/browser/reauth` (password and, when enrolled, a TOTP code) and retries once.
+
 **Fail-closed startup.** `ENVIRONMENT` must be set explicitly. Header-based `dev`
 auth is only permitted when `ENVIRONMENT` is explicitly `local` or `test`; any other
 value, **including an unset `ENVIRONMENT`**, is treated as a deployment and the API
@@ -368,8 +378,9 @@ its access tokens work as bearer credentials:
 curl -H "Authorization: Bearer $ACCESS_TOKEN" http://127.0.0.1:8000/api/v1/auth/me
 ```
 
-Endpoints: `POST /auth/password` (change own, verifies current),
-`POST /auth/users/{id}/password` (admin reset), `GET /auth/me`.
+Endpoints: `POST /auth/password` (change own: verifies the current password, applies the central
+password policy, ends the user's other sessions), `GET /auth/me`. An administrator resets someone
+else's password only through `POST /admin/users/{id}/password-reset`.
 
 Settings: `AUTH_MODE`, `AUTH_BEARER_HMAC_SECRET`, `AUTH_BEARER_ISSUER`,
 `AUTH_BEARER_AUDIENCE`; OIDC: `AUTH_OIDC_ISSUER`, `AUTH_OIDC_AUDIENCE`,

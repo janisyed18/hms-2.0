@@ -30,6 +30,7 @@ from hms_backend.app.modules.identity.browser_auth import (
     BrowserAuthError,
     BrowserAuthService,
     RateLimitedError,
+    SessionEndedError,
 )
 from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.identity.password_reset import (
@@ -82,6 +83,11 @@ class BrowserChallengeRequest(BaseModel):
 class BrowserCodeRequest(BaseModel):
     challenge: str
     code: str
+
+
+class BrowserReauthRequest(BaseModel):
+    password: str
+    code: str | None = None
 
 
 class BrowserPasswordResetRequest(BaseModel):
@@ -484,6 +490,72 @@ async def browser_refresh(
     return BrowserAuthenticatedResponse(
         access_token=authed.access_token, expires_in=authed.expires_in
     )
+
+
+class BrowserReauthResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_in: int
+
+
+@router.post("/reauth", response_model=BrowserReauthResponse)
+async def browser_reauth(
+    payload: BrowserReauthRequest,
+    request: Request,
+    session: SessionDep,
+    principal: PrincipalDep,
+) -> BrowserReauthResponse:
+    """Step-up for the calling browser session only.
+
+    Needs both the bearer token (who is asking) and this browser's refresh cookie
+    (which session to freshen). It re-checks the password and, when enrolled, a
+    TOTP code, then issues a new access token carrying the new ``auth_time``. It
+    grants nothing: roles and permissions are re-read, and every retried action
+    still passes its normal authorization.
+    """
+    _require_allowed_origin(request)
+    if settings.auth_mode != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Confirm your sign-in with your identity provider.",
+        )
+    token = request.cookies.get(settings.auth_browser_cookie_name)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="No session"
+        )
+    _, ip = _client_meta(request)
+    for limiter, key in (
+        (_account_login_limiter, f"reauth:{principal.user_id}"),
+        (_ip_login_limiter, f"ip:{rate_limit_key(ip)}"),
+    ):
+        decision = await limiter.hit(key)
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many attempts; please wait and try again.",
+                headers={"Retry-After": str(decision.retry_after_seconds)},
+            )
+    try:
+        access_token, expires_in = await _service.reauthenticate(
+            session,
+            refresh_token=token,
+            user_subject=principal.user_id,
+            password=payload.password,
+            code=payload.code,
+        )
+    except SessionEndedError as exc:
+        raise _unauthorized(exc) from exc
+    except BrowserAuthError as exc:
+        await session.commit()  # keep the failure audit and attempt counter
+        # 400, not 401: the session is fine, only the confirmation was wrong,
+        # and a 401 would make the client drop the session.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    await _account_login_limiter.reset(f"reauth:{principal.user_id}")
+    await session.commit()
+    return BrowserReauthResponse(access_token=access_token, expires_in=expires_in)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

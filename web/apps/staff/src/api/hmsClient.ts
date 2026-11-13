@@ -651,6 +651,18 @@ interface HmsRuntimeAuth {
   getAccessToken: () => string | null;
   refreshAccessToken: () => Promise<string>;
   onAuthFailure: () => void;
+  /**
+   * Ask the user to confirm their password (and code) again. Resolves once this
+   * browser session is fresh, rejects if they decline or the session is gone.
+   */
+  requestReauth?: (method: string) => Promise<void>;
+}
+
+/** The server's "confirm your password first" answer, distinct from a lost session. */
+function reauthMethod(status: number, details: unknown): string | null {
+  if (status !== 403 || typeof details !== "object" || details === null) return null;
+  const { code, method } = details as { code?: unknown; method?: unknown };
+  return code === "REAUTH_REQUIRED" ? (typeof method === "string" ? method : "password") : null;
 }
 
 let runtimeAuth: HmsRuntimeAuth | null = null;
@@ -1726,7 +1738,8 @@ export function createHmsClient(options: HmsClientOptions = {}) {
   async function request<T>(
     path: string,
     init: RequestInit = {},
-    params: Record<string, string | number | boolean | undefined> = {}
+    params: Record<string, string | number | boolean | undefined> = {},
+    reauthAttempted = false
   ): Promise<HmsApiResponse<T>> {
     const url = buildUrl(baseUrl, path, params);
     const send = () =>
@@ -1778,6 +1791,25 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       if (response.status === 429) {
         const wait = Number(response.headers?.get?.("retry-after"));
         if (Number.isFinite(wait) && wait > 0) details = { retryAfterSeconds: wait };
+      }
+      const method = reauthMethod(response.status, details);
+      if (
+        method !== null &&
+        !reauthAttempted &&
+        options.identity === undefined &&
+        runtimeAuth?.requestReauth
+      ) {
+        // The caller is still awaiting this request, so whatever it has open (a
+        // destructive confirmation, a half-filled form) stays as it was. It is
+        // retried once, with the fresh token, and never repeated.
+        let confirmed = false;
+        try {
+          await runtimeAuth.requestReauth(method);
+          confirmed = true;
+        } catch {
+          // Declined or the session ended: surface the original refusal.
+        }
+        if (confirmed) return request<T>(path, init, params, true);
       }
       throw new HmsApiError(response.status, code, message, details);
     }
