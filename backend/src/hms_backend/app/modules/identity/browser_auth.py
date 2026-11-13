@@ -354,12 +354,26 @@ class BrowserAuthService:
         now = self._now()
         if (
             current is None
-            or current.revoked_at is not None
             or now >= _aware(current.expires_at)
             or now >= _aware(current.idle_expires_at)
         ):
             raise SessionEndedError(_GENERIC_CHALLENGE_ERROR)
-        user = await session.get(User, current.user_id)
+        # Serialise with refresh and credential changes (see ``_load_challenge``).
+        user = await self._locked_user(session, current.user_id)
+        await session.refresh(current)
+        if current.revoked_at is not None:
+            # A refresh that finished while this waited rotated the cookie this
+            # request carries. That is not a lost session: carry on if the family is
+            # still live. Logout, reuse detection and credential changes leave none.
+            rotated = current.last_used_at is not None
+            live = await session.scalar(
+                select(BrowserRefreshSession.id).where(
+                    BrowserRefreshSession.family_id == current.family_id,
+                    BrowserRefreshSession.revoked_at.is_(None),
+                )
+            )
+            if not rotated or live is None:
+                raise SessionEndedError(_GENERIC_CHALLENGE_ERROR)
         # The cookie and the bearer token must describe the same account.
         if user is None or user.oidc_subject != user_subject:
             raise SessionEndedError(_GENERIC_CHALLENGE_ERROR)
