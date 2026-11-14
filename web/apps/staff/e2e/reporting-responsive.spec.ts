@@ -80,7 +80,7 @@ test.describe("reporting workspaces fit every supported width", () => {
           await expect(
             page.getByRole("table", { name: /Recorded activity by/ })
           ).toBeAttached();
-          await expect(page.getByLabel("Operational trend legend")).toBeVisible();
+          await expect(page.getByRole("group", { name: "Activity series" })).toBeVisible();
         } else {
           await expect(page.getByText("Fleet retest status")).toBeVisible();
         }
