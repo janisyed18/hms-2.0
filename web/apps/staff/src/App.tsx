@@ -709,7 +709,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                   {renderedActiveModule === "inspections" ? (
                     <InspectionsWorkspace
                       canBook={hasPermission(session, "inspection:book")}
-                      canApprove={hasPermission(session, "certificate:approve")}
+                      canApprove={hasPermission(session, "certificate:approve") || session.roles.includes("HMS_ADMIN")}
                       canApproveBookings={session.roles.some((role) =>
                         role === "SUPER_ADMIN" || role === "HMS_ADMIN"
                       )}

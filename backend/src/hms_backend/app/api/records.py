@@ -136,6 +136,7 @@ from hms_backend.app.core.object_storage import (
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
+    Role,
     has_permission,
     is_customer_scoped,
     require_permission,
@@ -349,6 +350,19 @@ def _require_certificate_approve(principal: Principal) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+
+
+def _require_inspection_review(principal: Principal) -> None:
+    # HMS admins may review inspection work, but this does NOT grant the separate
+    # certificate-approval permission. Inspectors remain unable to approve themselves.
+    if Role.HMS_ADMIN in principal.roles or has_permission(
+        principal, Permission.CERTIFICATE_APPROVE
+    ):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Inspection review requires an admin or reviewer role",
+    )
 
 
 async def _count(session: AsyncSession, statement: Select[Any]) -> int:
@@ -3447,7 +3461,7 @@ async def approve_inspection(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> InspectionRead:
-    _require_certificate_approve(principal)
+    _require_inspection_review(principal)
     inspection = await _get_inspection_or_404(
         session, inspection_id, principal, lock=True
     )
@@ -3493,7 +3507,7 @@ async def reject_inspection(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> InspectionRead:
-    _require_certificate_approve(principal)
+    _require_inspection_review(principal)
     inspection = await _get_inspection_or_404(
         session, inspection_id, principal, lock=True
     )
