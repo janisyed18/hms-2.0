@@ -102,6 +102,30 @@ async def rejected(
     return inspection_id
 
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("actor", [SUPER, ADMIN, REVIEWER])
+async def test_admin_and_review_roles_cannot_execute_inspection_work(
+    actor: Principal,
+    session_factory: async_sessionmaker[AsyncSession],  # noqa: F811
+    seeded_sync_session: dict[str, str],  # noqa: F811
+    assigned_inspector_booking: str,  # noqa: F811
+) -> None:
+    """Review and management permissions do not permit creating, starting or editing physical work."""
+    async with api_client(session_factory, INSPECTOR) as inspector:
+        inspection_id = await draft(inspector, seeded_sync_session)
+    async with api_client(session_factory, actor) as client:
+        requests = [
+            await create_draft(client, seeded_sync_session["vopak_asset_id"], test=None),
+            await client.post(url(inspection_id, "start")),
+            await client.patch(url(inspection_id), json={"result": "PASS"}),
+            await client.post(url(inspection_id, "submit")),
+            await client.post(url(inspection_id, "rework")),
+        ]
+    for response in requests:
+        assert response.status_code == 403, response.text
+
+
 # --- the forward path ---
 @pytest.mark.asyncio
 async def test_start_moves_a_draft_to_in_progress_and_sets_started_at(
