@@ -72,16 +72,18 @@ async def disposable_database() -> AsyncIterator[str]:
     async with admin.connect() as connection:
         await connection.execute(text(f'CREATE DATABASE "{name}"'))
     url = base.set(database=name).render_as_string(hide_password=False)
-    migrate = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        cwd=BACKEND,
-        env={**os.environ, "DATABASE_URL": url},
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    assert migrate.returncode == 0, migrate.stderr
     try:
+        # Inside the try: a failed or timed-out migration must still drop the database,
+        # or a broken run would leave one behind on every attempt.
+        migrate = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=BACKEND,
+            env={**os.environ, "DATABASE_URL": url},
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        assert migrate.returncode == 0, migrate.stderr
         yield url
     finally:
         async with admin.connect() as connection:

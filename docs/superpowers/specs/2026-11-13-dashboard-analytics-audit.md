@@ -310,3 +310,60 @@ Corrections, all in the test:
 Verification: the exact CI PostgreSQL file list, in CI order, against one shared migrated
 database: 196 passed, 0 failed. The chain in that database verifies as valid, it holds no
 placeholder hashes, and no `hms_reporting_*` database is left behind.
+
+## 10. Phase C outcome (frontend correctness)
+
+The Staff app now reads the corrected contracts. No chart library was added; the trend SVG is
+still the Phase B placeholder, pending the Phase D charts.
+
+**Contracts** (`domain/types.ts`, `api/hmsClient.ts`): `FleetStatus`, the new certificate
+coverage fields, `asOf`/`timezone`, the escalation counts, `ActivityReport` and
+`getReportingActivity`. `escalateOverdueRetests` now returns `{dispatched, eligible}`.
+
+**KPIs.** "Healthy Fleet" is replaced by **Retest on-track rate**, showing `onTrackPercent`
+with "60 of 100 eligible assets on track" beneath it, and **N/A** (never a green 0%) for an
+empty eligible fleet. "Total Assets" stays a separate all-assets snapshot and says so.
+"Escalations" is now "Escalated", counting the whole queue rather than the visible page; it
+reads `overdueEscalated` and `escalatedToday`. The header states the as-of time in the
+organisation timezone and that the period changes activity figures only. Sparklines appear
+only where a series actually describes the metric, so the on-track rate and overdue counts no
+longer carry an unrelated line.
+
+**Fleet panel.** Driven by `fleetStatus`: the five mutually exclusive categories, each with
+its meaning spelled out, over one denominator. Analytics uses the same field, so the pages
+cannot disagree.
+
+**Certificate coverage (Analytics).** Asset-level categories over the eligible fleet
+(covered, expired, none, unverified) with certificate-record counts and
+`issuedInPeriod` listed separately underneath.
+
+**Reporting periods.** A custom range is now whole calendar days in the organisation
+timezone: `reportingPeriodFromDates(start, end, timeZone)` converts via `Intl`, with a
+correction pass so a daylight-saving day is 23 or 25 hours. `withReportingTimeZone`
+re-anchors a range chosen before the server's zone was known. The custom control states the
+zone.
+
+**Escalation and export.** The confirmation dialog quotes `escalationEligibleTotal` and names
+what is excluded; the button is disabled when nothing is eligible. The sent count comes from
+the server response, not from what was displayed. A ref guard taken before the first await
+makes a double click send once. Export pages the queue (100 at a time, capped at 5,000) and
+the notice says whether it covered all records or the first N; the filename carries the as-of
+date.
+
+**Reliability.** Both pages ignore superseded replies via a request token. A failed refresh
+keeps the last good figures with a warning instead of blanking the page, and only a failed
+first load shows the error state. Activity failure says so rather than drawing an empty chart.
+The audit-events call (Recent Activity only) reports missing audit access instead of claiming
+no activity. Recent Activity icon selection now matches on the action's entity prefix, not on
+substrings, and is presentation only.
+
+**Verification.** Staff app: 877 tests pass (70 files), including new
+`DashboardReporting.test.tsx` (21) and `AnalyticsReporting.test.tsx` (4); `eslint` clean,
+`tsc --noEmit` clean, `vite build` succeeds. Existing fixtures were updated because the API
+changed; no assertion was weakened. Backend: `test_reporting_postgres.py` passes (3) with the
+fixture now dropping its database even when the migration fails.
+
+**Not done in Phase C.** Rendered-output and responsive checks at 390/768/1024/1440, which
+belong with the Phase D charts and Phase E polish; the trend chart has no tooltips, series
+toggles or keyboard inspection yet (Phase D), though it does ship an accessible data table
+and dash patterns so the lines are separable without colour.

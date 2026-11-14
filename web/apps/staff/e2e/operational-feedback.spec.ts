@@ -115,6 +115,10 @@ test.describe("Operational interaction feedback", () => {
         const response = await route.fetch();
         const body = await response.json();
         body.overdue_total = 1;
+        body.overdue_schedules = 1;
+        body.overdue_assets = 1;
+        // The Send Escalation control follows what is actually eligible, not the queue total.
+        body.escalation_eligible_total = 1;
         body.overdue_retests = [{ asset_id: "a1", asset_number: "997950", customer_name: "Vopak", product_name: "Fuel hose", due_at: "2026-01-01", days_overdue: 30, status: "OVERDUE" }];
         await route.fulfill({ response, json: body });
       });

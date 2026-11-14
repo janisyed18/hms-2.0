@@ -11,7 +11,7 @@ import {
   UsersRound
 } from "lucide-react";
 import { m, useReducedMotion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
@@ -19,7 +19,11 @@ import type { AnalyticsOverview } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { motionTokens } from "../motion/motionTokens";
 import { formatDateTime } from "../utils/dateTime";
-import { reportingPeriodForPreset } from "../utils/reportingPeriod";
+import {
+  REPORTING_PERIOD_SCOPE_NOTE,
+  reportingPeriodForPreset,
+  withReportingTimeZone
+} from "../utils/reportingPeriod";
 import type { ReportingPeriod } from "../utils/reportingPeriod";
 import type { AppModule } from "./AppShell";
 import { ReportingPeriodControl } from "./ReportingPeriodControl";
@@ -29,12 +33,14 @@ interface AnalyticsWorkspaceProps {
   onModuleChange: (module: AppModule) => void;
 }
 
-type FleetPosture = "clear" | "dueSoon" | "overdue";
+type FleetPosture = "onTrack" | "dueSoon" | "overdue" | "suspended" | "unscheduled";
 
 const fleetLabels: Record<FleetPosture, string> = {
-  clear: "Clear for service",
+  onTrack: "On track",
   dueSoon: "Due this week",
-  overdue: "Overdue"
+  overdue: "Overdue",
+  suspended: "Suspended",
+  unscheduled: "Unscheduled"
 };
 
 export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) {
@@ -44,27 +50,30 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
   const [refreshKey, setRefreshKey] = useState(0);
   const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>(() => reportingPeriodForPreset("last_month"));
   const reducedMotion = useReducedMotion();
+  const latestRequest = useRef(0);
 
   useEffect(() => {
-    let active = true;
+    // Only the newest request may write state: a slow reply from a previous period
+    // must not replace the figures for the one now selected.
+    const token = ++latestRequest.current;
     setLoading(true);
-    setError(null);
 
     createHmsClient()
       .getAnalyticsOverview(reportingPeriod)
       .then((result) => {
-        if (!active) return;
+        if (token !== latestRequest.current) return;
         setOverview(result);
+        setError(null);
         setLoading(false);
       })
       .catch((cause: unknown) => {
-        if (!active) return;
+        if (token !== latestRequest.current) return;
         setError(cause instanceof Error ? cause.message : "Analytics data could not be loaded.");
         setLoading(false);
       });
 
     return () => {
-      active = false;
+      // Nothing to abort: the token check above already ignores a superseded reply.
     };
   }, [refreshKey, reportingPeriod]);
 
@@ -95,7 +104,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
 
   if (overview === null) return null;
 
-  const fleetHealth = percentage(overview.fleetPosture.clear, fleetPostureTotal(overview));
+  const onTrackRate = overview.fleetStatus.onTrackPercent;
   const reviewRate = percentage(
     overview.inspectionOutcomes.reduce((total, outcome) => total + outcome.approved, 0),
     overview.inspectionOutcomes.reduce(
@@ -119,14 +128,20 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
         <div>
           <span className="analytics-eyebrow">Operational intelligence</span>
           <h2>Fleet performance at a glance</h2>
-          <p>Operational health, risk exposure, inspection throughput, and certificate coverage for {reportingPeriod.label.toLowerCase()}.</p>
+          <p>
+            Fleet status and certificate coverage are current as at {formatDateTime(overview.asOf)}. Inspection throughput is for {reportingPeriod.label.toLowerCase()}. {REPORTING_PERIOD_SCOPE_NOTE}
+          </p>
           <span className="analytics-updated">
             <CalendarClock aria-hidden="true" size={14} />
             Last updated {formatDateTime(overview.generatedAt)}
           </span>
         </div>
         <div className="analytics-header-actions">
-          <ReportingPeriodControl onChange={setReportingPeriod} period={reportingPeriod} />
+              <ReportingPeriodControl
+            onChange={(period) => setReportingPeriod(withReportingTimeZone(period, overview.timezone))}
+            period={reportingPeriod}
+            timeZone={overview.timezone}
+          />
           <button
             aria-label="Refresh analytics"
             className="analytics-refresh"
@@ -140,18 +155,29 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
         </div>
       </header>
 
-      {error ? <p className="analytics-inline-error" role="status">Showing the most recently loaded results. {error}</p> : null}
+      {error ? (
+        <p className="analytics-inline-error" role="status">
+          These figures are from the last successful load. {error}{" "}
+          <button className="analytics-inline-retry" onClick={() => setRefreshKey((value) => value + 1)} type="button">
+            Retry
+          </button>
+        </p>
+      ) : null}
 
       <div className="kpi-grid" aria-label="Live analytics highlights">
         <StaggerGroup className="kpi-grid-motion">
           <StaggerItem>
             <AnalyticsMetric
-              helper={`${overview.fleetPosture.clear} clear for service`}
+              helper={
+                onTrackRate === null
+                  ? "No eligible assets to measure"
+                  : `${overview.fleetStatus.onTrack} of ${overview.fleetStatus.total} eligible assets on track`
+              }
               icon={<ShieldCheck aria-hidden="true" size={18} />}
-              label="Fleet health"
-              onClick={() => onModuleChange("assets")}
-              tone="green"
-              value={`${fleetHealth}%`}
+              label="Retest on-track rate"
+              onClick={() => onModuleChange("retest")}
+              tone={onTrackRate === null ? "blue" : "green"}
+              value={onTrackRate === null ? "N/A" : `${onTrackRate}%`}
             />
           </StaggerItem>
           <StaggerItem>
@@ -176,7 +202,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
           </StaggerItem>
           <StaggerItem>
             <AnalyticsMetric
-              helper={`${overview.certificateCoverage.missingAssets} service assets without coverage`}
+              helper={`${overview.certificateCoverage.missingAssets} eligible assets without a certificate`}
               icon={<FileCheck2 aria-hidden="true" size={18} />}
               label="Certificate coverage"
               onClick={() => onModuleChange("certificates")}
@@ -328,13 +354,17 @@ function AnalyticsMetric({
 
 function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOverview; onNavigate: () => void }) {
   const [selected, setSelected] = useState<FleetPosture | null>(null);
-  const posture = overview.fleetPosture;
-  const total = fleetPostureTotal(overview);
+  // The same partition the Dashboard shows, from the same field, so the two pages
+  // cannot disagree about what is overdue or on track.
+  const posture = overview.fleetStatus;
+  const total = posture.total;
   const activePosture = selected ?? initialFleetPosture(posture);
   const segments: Array<{ key: FleetPosture; value: number; className: string }> = [
-    { key: "clear", value: posture.clear, className: "fleet-segment-active" },
+    { key: "onTrack", value: posture.onTrack, className: "fleet-segment-on-track" },
     { key: "dueSoon", value: posture.dueSoon, className: "fleet-segment-due-soon" },
-    { key: "overdue", value: posture.overdue, className: "fleet-segment-overdue" }
+    { key: "overdue", value: posture.overdue, className: "fleet-segment-overdue" },
+    { key: "suspended", value: posture.suspended, className: "fleet-segment-suspended" },
+    { key: "unscheduled", value: posture.unscheduled, className: "fleet-segment-unscheduled" }
   ];
   let offset = 0;
 
@@ -342,8 +372,8 @@ function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOvervi
     <section className="data-panel health-panel analytics-fleet-panel">
       <div className="panel-heading">
         <div>
-          <h2>Fleet posture</h2>
-          <p>Serviceable assets classified by current retest position.</p>
+          <h2>Fleet retest status</h2>
+          <p>Every eligible asset in exactly one category. Condemned, retired and draft assets are excluded.</p>
         </div>
         <BarChart3 aria-hidden="true" size={19} />
       </div>
@@ -385,7 +415,7 @@ function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOvervi
         <span className="fleet-ring-core">
           <span>{fleetLabels[activePosture]}</span>
           <strong>{posture[activePosture]}</strong>
-          <small>{total} total assets</small>
+          <small>{total} eligible assets</small>
         </span>
       </div>
       <div className="health-legend">
@@ -409,8 +439,8 @@ function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOvervi
         <div className="analytics-posture-alert">
           <AlertTriangle aria-hidden="true" size={18} />
           <span>
-            <strong>{percentage(posture.overdue, total)}% of assets are overdue</strong>
-            {posture.overdue} asset{posture.overdue === 1 ? "" : "s"} require immediate attention.
+            <strong>{percentage(posture.overdue, total)}% of eligible assets are overdue</strong>
+            {posture.overdue} asset{posture.overdue === 1 ? "" : "s"} past a retest due date.
           </span>
         </div>
       ) : null}
@@ -423,10 +453,12 @@ function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOvervi
 
 function CertificateCoveragePanel({ overview, onNavigate }: { overview: AnalyticsOverview; onNavigate: () => void }) {
   const coverage = overview.certificateCoverage;
-  const rows = [
-    { label: "Covered service assets", value: coverage.coveredAssets, max: overview.inServiceAssets, tone: "coverage-valid" },
-    { label: "Expiring within 60 days", value: coverage.expiringSoon, max: Math.max(coverage.issued, 1), tone: "coverage-expiring" },
-    { label: "Expired certificates", value: coverage.expired, max: Math.max(coverage.issued, 1), tone: "coverage-expired" }
+  // Asset-level categories over one denominator: they partition the eligible fleet.
+  const assetRows = [
+    { label: "Covered by a valid certificate", value: coverage.coveredAssets, tone: "coverage-valid" },
+    { label: "Certificate expired", value: coverage.expiredAssets, tone: "coverage-expired" },
+    { label: "No certificate", value: coverage.missingAssets, tone: "coverage-expired" },
+    { label: "Validity unverified (no expiry recorded)", value: coverage.unverifiedAssets, tone: "coverage-expiring" }
   ];
 
   return (
@@ -434,24 +466,38 @@ function CertificateCoveragePanel({ overview, onNavigate }: { overview: Analytic
       <div className="panel-heading">
         <div>
           <h2>Certificate coverage</h2>
-          <p>Current issued-certificate status across the in-service fleet.</p>
+          <p>Assets holding a certificate that is valid today, whenever it was issued.</p>
         </div>
         <FileCheck2 aria-hidden="true" size={19} />
       </div>
       <div className="analytics-coverage-score">
         <strong>{coverage.coveragePercent}%</strong>
-        <span>{coverage.coveredAssets} of {overview.inServiceAssets} in-service assets covered</span>
+        <span>{coverage.coveredAssets} of {coverage.eligibleAssets} eligible assets covered</span>
         <i style={{ "--coverage": `${coverage.coveragePercent}%` } as CSSProperties} />
       </div>
       <div className="analytics-coverage-bars">
-        {rows.map((row) => (
+        {assetRows.map((row) => (
           <div key={row.label}>
             <span>{row.label}</span>
             <strong>{row.value}</strong>
-            <i className={row.tone} style={{ "--coverage": `${percentage(row.value, row.max)}%` } as CSSProperties} />
+            <i className={row.tone} style={{ "--coverage": `${percentage(row.value, coverage.eligibleAssets)}%` } as CSSProperties} />
           </div>
         ))}
       </div>
+      <dl className="analytics-coverage-certificates">
+        <div>
+          <dt>Assets with a certificate expiring within 60 days</dt>
+          <dd>{coverage.expiringAssets}</dd>
+        </div>
+        <div>
+          <dt>Issued certificate records</dt>
+          <dd>{coverage.issued}</dd>
+        </div>
+        <div>
+          <dt>Issued in this period</dt>
+          <dd>{coverage.issuedInPeriod === null ? "—" : coverage.issuedInPeriod}</dd>
+        </div>
+      </dl>
       <button className="analytics-panel-link" onClick={onNavigate} type="button">
         Open certificates <ArrowUpRight aria-hidden="true" size={14} />
       </button>
@@ -463,15 +509,10 @@ function EmptyPanel({ message }: { message: string }) {
   return <p className="analytics-empty">{message}</p>;
 }
 
-function fleetPostureTotal(overview: AnalyticsOverview) {
-  const posture = overview.fleetPosture;
-  return posture.clear + posture.dueSoon + posture.overdue;
-}
-
-function initialFleetPosture(posture: AnalyticsOverview["fleetPosture"]): FleetPosture {
+function initialFleetPosture(posture: AnalyticsOverview["fleetStatus"]): FleetPosture {
   if (posture.overdue > 0) return "overdue";
   if (posture.dueSoon > 0) return "dueSoon";
-  return "clear";
+  return "onTrack";
 }
 
 function percentage(value: number, total: number) {

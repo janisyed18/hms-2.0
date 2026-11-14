@@ -17,14 +17,20 @@ import {
   BellRing
 } from "lucide-react";
 import { m, useReducedMotion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 
 import {
   createHmsClient,
   HmsApiError
 } from "../api/hmsClient";
-import type { AuditEventRecord, DashboardRecord } from "../domain/types";
+import type {
+  ActivityReport,
+  AuditEventRecord,
+  DashboardRecord,
+  DashboardRetestRecord,
+  FleetStatus
+} from "../domain/types";
 import { PresencePanel, StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { motionTokens } from "../motion/motionTokens";
 import { ActionButton } from "./interaction/ActionButton";
@@ -38,7 +44,11 @@ import { downloadCsv } from "./ModuleTable";
 import { PaginationControls, usePagination } from "./Pagination";
 import { ReportingPeriodControl } from "./ReportingPeriodControl";
 import type { AppModule } from "./AppShell";
-import { reportingPeriodForPreset } from "../utils/reportingPeriod";
+import {
+  REPORTING_PERIOD_SCOPE_NOTE,
+  reportingPeriodForPreset,
+  withReportingTimeZone
+} from "../utils/reportingPeriod";
 import type { ReportingPeriod } from "../utils/reportingPeriod";
 
 export type OperationalModule = "dashboard" | "sync";
@@ -68,65 +78,111 @@ export function OperationalWorkspace({
   userName
 }: OperationalWorkspaceProps) {
   const [dashboardEvents, setDashboardEvents] = useState<AuditEventRecord[]>([]);
+  const [eventsError, setEventsError] = useState<string | null>(null);
+  const [activity, setActivity] = useState<ActivityReport | null>(null);
+  const [activityError, setActivityError] = useState<string | null>(null);
   const [overduePage, setOverduePage] = useState(1);
   const [overduePageSize, setOverduePageSize] = useState(overduePageSizes[0]);
   const overdueStart = (overduePage - 1) * overduePageSize;
   const [dashboard, setDashboard] = useState<DashboardRecord | null>(null);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardStale, setDashboardStale] = useState<string | null>(null);
   const [dashboardNotice, setDashboardNotice] = useState<string | null>(null);
   const [dashboardActionError, setDashboardActionError] = useState<string | null>(null);
   const [isEscalating, setEscalating] = useState(false);
+  const [isExporting, setExporting] = useState(false);
   const [isConfirmingEscalation, setConfirmingEscalation] = useState(false);
   const [escalationError, setEscalationError] = useState<string | null>(null);
   const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>(() => reportingPeriodForPreset("last_month"));
   const [dashboardNow] = useState(() => Date.now());
   const reducedMotion = useReducedMotion();
+  // Only the newest request may write state, so a slow reply from an earlier filter
+  // cannot overwrite a newer one.
+  const latestRequest = useRef(0);
+  // Whether anything is on screen to keep: a failed refresh then leaves the last good
+  // figures visible with a warning, instead of replacing the page with an error.
+  const hasDashboard = useRef(false);
+  // Set before the first await, so two fast clicks cannot both start a request.
+  const escalationInFlight = useRef(false);
 
   useEffect(() => {
     if (module !== "dashboard") {
       return;
     }
 
-    let active = true;
-      setDashboardLoading(true);
-      setDashboardError(null);
-    createHmsClient()
+    const token = ++latestRequest.current;
+    const current = () => token === latestRequest.current;
+    const client = createHmsClient();
+    setDashboardLoading(true);
+
+    client
       .getDashboard(overduePageSize, overdueStart, reportingPeriod)
       .then((result) => {
-        if (!active) {
-          return;
-        }
-        const pageCount = Math.max(1, Math.ceil(result.overdueTotal / overduePageSize));
-        if (overduePage > pageCount) {
-          setOverduePage(pageCount);
+        if (!current()) {
           return;
         }
         setDashboard(result);
+        setDashboardError(null);
+        setDashboardStale(null);
+        hasDashboard.current = true;
         setDashboardLoading(false);
+        // The queue may have shrunk under the current page: clamp, which refetches.
+        const pageCount = Math.max(1, Math.ceil(result.overdueTotal / overduePageSize));
+        if (overduePage > pageCount) {
+          setOverduePage(pageCount);
+        }
       })
       .catch((error: unknown) => {
-        if (active) {
-          setDashboardError(errorMessage(error));
-          setDashboardLoading(false);
+        if (!current()) {
+          return;
+        }
+        setDashboardLoading(false);
+        if (hasDashboard.current) {
+          setDashboardStale(
+            `${errorMessage(error, "The dashboard could not be refreshed.")} These figures are from the last successful load.`
+          );
+        } else {
+          setDashboardError(errorMessage(error, "Dashboard data could not be loaded."));
         }
       });
 
-    createHmsClient()
-      .listAuditEvents({ limit: 100, sort: "-sequence" })
+    client
+      .getReportingActivity(reportingPeriod)
       .then((result) => {
-        if (active) {
-          setDashboardEvents(result.items);
+        if (current()) {
+          setActivity(result);
+          setActivityError(null);
         }
       })
-      .catch(() => {
-        if (active) {
+      .catch((error: unknown) => {
+        if (current()) {
+          setActivity(null);
+          setActivityError(errorMessage(error, "Activity could not be loaded."));
+        }
+      });
+
+    client
+      .listAuditEvents({ limit: 100, sort: "-sequence" })
+      .then((result) => {
+        if (current()) {
+          setDashboardEvents(result.items);
+          setEventsError(null);
+        }
+      })
+      .catch((error: unknown) => {
+        if (current()) {
           setDashboardEvents([]);
+          setEventsError(
+            error instanceof HmsApiError && (error.status === 403 || error.status === 401)
+              ? "Recent activity needs audit access."
+              : errorMessage(error, "Recent activity could not be loaded.")
+          );
         }
       });
 
     return () => {
-      active = false;
+      // Nothing to abort: the token check above already ignores a superseded reply.
     };
   }, [module, overduePage, overduePageSize, overdueStart, reportingPeriod]);
 
@@ -168,57 +224,73 @@ export function OperationalWorkspace({
     1,
     Math.ceil(dashboard.overdueTotal / overduePageSize)
   );
-  const healthTotal =
-    dashboard.inServiceAssets + dashboard.dueSoonAssets + dashboard.overdueAssets;
-  const fleetHealth = healthTotal
-    ? Math.round((dashboard.inServiceAssets / healthTotal) * 100)
-    : 0;
-  const activityEvents = dashboardEvents.filter((event) => {
-    const timestamp = new Date(event.timestamp).getTime();
-    return timestamp >= new Date(reportingPeriod.startAt).getTime()
-      && timestamp < new Date(reportingPeriod.endAt).getTime();
-  });
-  const activityWindowDays = Math.max(
-    1,
-    Math.ceil((new Date(reportingPeriod.endAt).getTime() - new Date(reportingPeriod.startAt).getTime()) / 86_400_000)
-  );
-  const activityTrend = buildActivityTrend(activityEvents, activityWindowDays, new Date(reportingPeriod.endAt).getTime());
-  const escalationTotal = dashboard.overdueRetests.filter((retest) => retest.status === "ESCALATED").length;
-  function exportOverdueRetests() {
-    if (!dashboard) {
+  const fleet = dashboard.fleetStatus;
+  const onTrackRate = fleet.onTrackPercent;
+  const series = activitySeries(activity);
+  // Escalations awaiting nobody: what has actually been escalated, across the whole
+  // queue rather than the page on screen.
+  const escalationTotal = dashboard.overdueEscalated;
+
+  async function exportOverdueRetests() {
+    if (!dashboard || isExporting) {
       return;
     }
-    downloadCsv("overdue-retests.csv", [
-      ["Asset", "Customer", "Product", "Due date", "Days overdue", "Status"],
-      ...dashboard.overdueRetests.map((retest) => [
-        retest.assetNumber,
-        retest.customerName,
-        retest.productName,
-        retest.dueAt,
-        String(retest.daysOverdue),
-        retest.status
-      ])
-    ]);
+    setExporting(true);
     setDashboardActionError(null);
-    setDashboardNotice("Downloaded the current overdue retest page.");
+    setDashboardNotice(null);
+    try {
+      const rows = await fetchAllOverdueRetests(dashboard.overdueTotal, reportingPeriod);
+      downloadCsv(overdueExportName(dashboard.asOf), [
+        ["Asset", "Customer", "Product", "Due date", "Days overdue", "Status"],
+        ...rows.map((retest) => [
+          retest.assetNumber,
+          retest.customerName,
+          retest.productName,
+          retest.dueAt,
+          String(retest.daysOverdue),
+          retest.status
+        ])
+      ]);
+      setDashboardNotice(
+        rows.length === dashboard.overdueTotal
+          ? `Exported all ${formatNumber(rows.length)} overdue ${rows.length === 1 ? "retest" : "retests"}.`
+          : `Exported the first ${formatNumber(rows.length)} of ${formatNumber(dashboard.overdueTotal)} overdue retests.`
+      );
+    } catch (error: unknown) {
+      setDashboardActionError(
+        friendlyApiError(error, { fallback: "The overdue retests could not be exported. Try again." }).message
+      );
+    } finally {
+      setExporting(false);
+    }
   }
 
   async function sendOverdueEscalation() {
     const currentDashboard = dashboard;
-    if (!canEscalate || !currentDashboard || currentDashboard.overdueTotal === 0 || isEscalating) {
+    // The ref is checked and set in the same tick, so a second click during the same
+    // render cannot start a second request.
+    if (
+      !canEscalate
+      || !currentDashboard
+      || currentDashboard.escalationEligibleTotal === 0
+      || escalationInFlight.current
+    ) {
       return;
     }
+    escalationInFlight.current = true;
     setEscalating(true);
     setDashboardNotice(null);
     setDashboardActionError(null);
     setEscalationError(null);
     try {
       const client = createHmsClient();
-      const dispatched = await client.escalateOverdueRetests();
+      // The server count is authoritative: what was eligible may have changed since
+      // this page was drawn, so report what it actually sent, not what we displayed.
+      const { dispatched } = await client.escalateOverdueRetests();
       setConfirmingEscalation(false);
       setDashboardNotice(
         dispatched
-          ? `${dispatched} overdue retest${dispatched === 1 ? "" : "s"} escalated successfully.`
+          ? `${formatNumber(dispatched)} overdue retest${dispatched === 1 ? "" : "s"} escalated successfully.`
           : "All overdue retests have already been escalated today."
       );
       try {
@@ -231,6 +303,7 @@ export function OperationalWorkspace({
       // Nothing was sent: keep the dialog open and say why.
       setEscalationError(friendlyApiError(error, { fallback: "The overdue retest escalations could not be sent. Try again." }).message);
     } finally {
+      escalationInFlight.current = false;
       setEscalating(false);
     }
   }
@@ -241,19 +314,25 @@ export function OperationalWorkspace({
         <div>
           <span className="dashboard-context">Dashboard</span>
           <h2>Good {greetingForCurrentTime(dashboardNow)}{userName ? `, ${userName}` : ""}</h2>
-          <p>Operational records for {reportingPeriod.label.toLowerCase()}.</p>
+          <p>
+            Current status as at {formatAsOf(dashboard.asOf, dashboard.timezone)}. Activity shown for {reportingPeriod.label.toLowerCase()}. {REPORTING_PERIOD_SCOPE_NOTE}
+          </p>
         </div>
         <div className="dashboard-hero-actions">
           <span className="dashboard-date"><CalendarClock aria-hidden="true" size={18} />{formatDashboardDate(dashboardNow)}</span>
           <ReportingPeriodControl
             onChange={(period) => {
-              setReportingPeriod(period);
+              setReportingPeriod(withReportingTimeZone(period, dashboard.timezone));
               setOverduePage(1);
             }}
             period={reportingPeriod}
+            timeZone={dashboard.timezone}
           />
         </div>
       </header>
+      {dashboardStale ? (
+        <ActionNotice kind="error" onDismiss={() => setDashboardStale(null)}>{dashboardStale}</ActionNotice>
+      ) : null}
       <div className="kpi-grid" aria-label="Operational highlights" role="group">
         <StaggerGroup className="kpi-grid-motion">
           <StaggerItem>
@@ -261,23 +340,26 @@ export function OperationalWorkspace({
               icon={<Activity aria-hidden="true" size={18} />}
               label="Total Assets"
               value={formatNumber(dashboard.totalAssets)}
-              helper={`Across ${formatNumber(dashboard.totalCustomers)} customers`}
+              helper={`Every asset on record, across ${formatNumber(dashboard.totalCustomers)} customers`}
               action="Open asset register"
               onClick={() => onModuleChange("assets")}
               tone="blue"
-              trend={activityTrend.assets}
+              trend={series ? series.assetsAdded.values : undefined}
             />
           </StaggerItem>
           <StaggerItem>
             <MetricCard
               icon={<CheckCircle2 aria-hidden="true" size={18} />}
-              label="Healthy Fleet"
-              value={formatNumber(dashboard.inServiceAssets)}
-              helper={`${fleetHealth}% fleet health`}
-              action="View in-service assets"
-              onClick={() => onModuleChange("assets")}
-              tone="green"
-              trend={activityTrend.assets}
+              label="Retest on-track rate"
+              value={onTrackRate === null ? "N/A" : `${onTrackRate}%`}
+              helper={
+                onTrackRate === null
+                  ? "No eligible assets to measure"
+                  : `${formatNumber(fleet.onTrack)} of ${formatNumber(fleet.total)} eligible assets on track`
+              }
+              action="View the retest schedule"
+              onClick={() => onModuleChange("retest")}
+              tone={onTrackRate === null ? "blue" : "green"}
             />
           </StaggerItem>
           <StaggerItem>
@@ -285,11 +367,14 @@ export function OperationalWorkspace({
               icon={<AlertTriangle aria-hidden="true" size={18} />}
               label="Overdue"
               value={formatNumber(dashboard.overdueAssets)}
-              helper={dashboard.overdueAssets ? "Requires immediate action" : "No overdue retests"}
+              helper={
+                dashboard.overdueAssets
+                  ? `${assetCountLabel(dashboard.overdueAssets)} past a retest due date`
+                  : "No overdue retests"
+              }
               action="Review overdue retests"
               onClick={() => onModuleChange("retest")}
               tone="red"
-              trend={activityTrend.retests}
             />
           </StaggerItem>
           <StaggerItem>
@@ -301,19 +386,23 @@ export function OperationalWorkspace({
               action="Review submitted inspections"
               onClick={() => onModuleChange("inspections")}
               tone="amber"
-              trend={activityTrend.inspections}
+              trend={series ? series.inspectionsSubmitted.values : undefined}
             />
           </StaggerItem>
           <StaggerItem>
             <MetricCard
               icon={<BellRing aria-hidden="true" size={18} />}
-              label="Escalations"
+              label="Escalated"
               value={formatNumber(escalationTotal)}
-              helper={escalationTotal ? "Needs attention" : "No active escalations"}
+              helper={
+                escalationTotal
+                  ? `${formatNumber(dashboard.escalatedToday)} sent today`
+                  : "No overdue retest has been escalated"
+              }
               action="Review overdue retests"
               onClick={() => onModuleChange("retest")}
               tone="violet"
-              trend={activityTrend.escalations}
+              trend={series ? series.retestsEscalated.values : undefined}
             />
           </StaggerItem>
         </StaggerGroup>
@@ -324,20 +413,20 @@ export function OperationalWorkspace({
           <div className="panel-heading compact">
             <div>
               <h2>Operational Trends</h2>
-              <p>Recorded asset, inspection, and retest activity over time.</p>
+              <p>
+                {activity
+                  ? `Recorded activity for ${reportingPeriod.label.toLowerCase()}, by ${activity.granularity}.`
+                  : "Recorded activity for the selected period."}
+              </p>
             </div>
             <button className="subtle-link-button" onClick={() => onModuleChange("analytics")} type="button">
               <ChartNoAxesCombined aria-hidden="true" size={17} />
               Analytics
             </button>
           </div>
-          <OperationalTrendPanel trend={activityTrend} />
+          <OperationalTrendPanel activity={activity} error={activityError} series={series} />
         </section>
-        <FleetHealthPanel
-          dueSoonAssets={dashboard.dueSoonAssets}
-          inServiceAssets={dashboard.inServiceAssets}
-          overdueAssets={dashboard.overdueAssets}
-        />
+        <FleetStatusPanel fleet={fleet} onModuleChange={onModuleChange} />
       </div>
 
       <div className="dashboard-layout">
@@ -349,12 +438,18 @@ export function OperationalWorkspace({
                 <p>{assetCountLabel(dashboard.overdueTotal)} past {dashboard.overdueTotal === 1 ? "its" : "their"} retest due date</p>
               </div>
               <div className="panel-actions">
-                <button className="secondary-button" onClick={exportOverdueRetests} type="button">
-                  <Download aria-hidden="true" size={15} />
-                  Export
-                </button>
                 <ActionButton
-                  disabled={!canEscalate || dashboard.overdueTotal === 0}
+                  disabled={dashboard.overdueTotal === 0}
+                  onClick={() => void exportOverdueRetests()}
+                  pending={isExporting}
+                  pendingLabel="Exporting…"
+                  variant="secondary"
+                >
+                  <Download aria-hidden="true" size={15} />
+                  Export all
+                </ActionButton>
+                <ActionButton
+                  disabled={!canEscalate || dashboard.escalationEligibleTotal === 0}
                   onClick={() => { setEscalationError(null); setConfirmingEscalation(true); }}
                   variant="secondary"
                 >
@@ -368,7 +463,7 @@ export function OperationalWorkspace({
             <ConfirmDialog
               confirmLabel="Send escalations"
               error={escalationError}
-              message={`This notifies the owners of ${dashboard.overdueTotal} overdue asset${dashboard.overdueTotal === 1 ? "" : "s"}. Assets already escalated today are skipped.`}
+              message={`This notifies the owners of ${formatNumber(dashboard.escalationEligibleTotal)} overdue asset${dashboard.escalationEligibleTotal === 1 ? "" : "s"}. Assets already escalated today, suspended schedules, and condemned, retired or draft assets are not included.`}
               onCancel={() => { if (!isEscalating) { setConfirmingEscalation(false); setEscalationError(null); } }}
               onConfirm={() => void sendOverdueEscalation()}
               open={isConfirmingEscalation}
@@ -464,7 +559,7 @@ export function OperationalWorkspace({
             </div>
             <button className="schedule-link" onClick={() => onModuleChange("retest")} type="button">Open retest schedule <ArrowRight aria-hidden="true" size={15} /></button>
           </section>
-          <RecentActivityPanel events={activityEvents} now={dashboardNow} />
+          <RecentActivityPanel error={eventsError} events={dashboardEvents} now={dashboardNow} period={reportingPeriod} />
         </aside>
       </div>
 
@@ -545,50 +640,94 @@ function formatDashboardDate(now: number): string {
   }).format(new Date(now));
 }
 
-type ActivitySeriesName = "assets" | "inspections" | "retests" | "escalations";
+/**
+ * The six series the reporting API returns, each counted by the server from an exact
+ * timestamp. Nothing here is inferred from an audit action's wording, and there is no
+ * "retests completed" series: completing a retest only moves its due date, leaving no
+ * timestamp to count.
+ */
+const activitySeriesOrder = [
+  { key: "assetsAdded", label: "Assets added", className: "trend-assets" },
+  { key: "inspectionsSubmitted", label: "Inspections submitted", className: "trend-inspections" },
+  { key: "inspectionsApproved", label: "Inspections approved", className: "trend-approved" },
+  { key: "inspectionsRejected", label: "Inspections rejected", className: "trend-rejected" },
+  { key: "certificatesIssued", label: "Certificates issued", className: "trend-certificates" },
+  { key: "retestsEscalated", label: "Retests escalated", className: "trend-escalations" }
+] as const;
 
-interface ActivityTrend {
-  assets: number[];
-  escalations: number[];
-  inspections: number[];
-  labels: string[];
-  retests: number[];
+type ActivitySeriesKey = (typeof activitySeriesOrder)[number]["key"];
+
+interface ActivitySeries {
+  label: string;
+  className: string;
+  values: number[];
+  total: number;
 }
 
-function activitySeriesFor(event: AuditEventRecord): ActivitySeriesName | null {
-  const source = `${event.action} ${event.entity}`.toLowerCase();
-  if (source.includes("escalat")) return "escalations";
-  if (source.includes("retest") || source.includes("schedule")) return "retests";
-  if (source.includes("inspection")) return "inspections";
-  if (source.includes("asset")) return "assets";
-  return null;
-}
+type ActivitySeriesSet = Record<ActivitySeriesKey, ActivitySeries> & { labels: string[] };
 
-function buildActivityTrend(events: AuditEventRecord[], days: number, now: number): ActivityTrend {
-  const bucketCount = 8;
-  const bucketDuration = (days * 86_400_000) / bucketCount;
-  const start = now - days * 86_400_000;
-  const trend: ActivityTrend = {
-    assets: Array.from({ length: bucketCount }, () => 0),
-    escalations: Array.from({ length: bucketCount }, () => 0),
-    inspections: Array.from({ length: bucketCount }, () => 0),
-    labels: Array.from({ length: bucketCount }, (_, index) =>
-      new Intl.DateTimeFormat("en-AU", { day: "numeric", month: "short" }).format(
-        new Date(start + bucketDuration * (index + 1))
-      )
-    ),
-    retests: Array.from({ length: bucketCount }, () => 0)
-  };
-
-  events.forEach((event) => {
-    const series = activitySeriesFor(event);
-    const timestamp = new Date(event.timestamp).getTime();
-    if (!series || Number.isNaN(timestamp)) return;
-    const bucket = Math.min(bucketCount - 1, Math.max(0, Math.floor((timestamp - start) / bucketDuration)));
-    trend[series][bucket] += 1;
+function activitySeries(activity: ActivityReport | null): ActivitySeriesSet | null {
+  if (!activity || activity.buckets.length === 0) {
+    return null;
+  }
+  const labels = activity.buckets.map((bucket) =>
+    formatBucketLabel(bucket.start, activity.granularity, activity.timezone)
+  );
+  const entries = activitySeriesOrder.map((series) => {
+    const values = activity.buckets.map((bucket) => bucket[series.key]);
+    return [
+      series.key,
+      {
+        label: series.label,
+        className: series.className,
+        values,
+        total: activity.totals[series.key]
+      }
+    ] as const;
   });
+  return { ...Object.fromEntries(entries), labels } as ActivitySeriesSet;
+}
 
-  return trend;
+function formatBucketLabel(start: string, granularity: string, timeZone: string): string {
+  const options: Intl.DateTimeFormatOptions =
+    granularity === "hour"
+      ? { hour: "numeric", timeZone }
+      : { day: "numeric", month: "short", timeZone };
+  return new Intl.DateTimeFormat("en-AU", options).format(new Date(start));
+}
+
+function formatAsOf(asOf: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-AU", {
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+    timeZoneName: "short"
+  }).format(new Date(asOf));
+}
+
+function overdueExportName(asOf: string): string {
+  return `overdue-retests-${asOf.slice(0, 10)}.csv`;
+}
+
+/** Every overdue row, not just the page on screen, read through the same queue. */
+async function fetchAllOverdueRetests(
+  total: number,
+  period: ReportingPeriod
+): Promise<DashboardRetestRecord[]> {
+  const pageSize = 100;
+  const maxRows = 5_000;
+  const client = createHmsClient();
+  const rows: DashboardRetestRecord[] = [];
+  while (rows.length < Math.min(total, maxRows)) {
+    const page = await client.getDashboard(pageSize, rows.length, period);
+    if (page.overdueRetests.length === 0) {
+      break;
+    }
+    rows.push(...page.overdueRetests);
+  }
+  return rows;
 }
 
 function chartPath(values: number[], maxValue: number, width: number, height: number): string {
@@ -641,7 +780,8 @@ function MetricCard({
   label: string;
   onClick: () => void;
   tone: "blue" | "green" | "amber" | "red" | "violet";
-  trend: number[];
+  /** Activity for the period. Omitted where no series describes this metric. */
+  trend?: number[];
   value: string;
 }) {
   const reducedMotion = useReducedMotion();
@@ -660,7 +800,7 @@ function MetricCard({
       <span className="kpi-label">{label}</span>
       <strong>{value}</strong>
       <small>{helper}</small>
-      <MetricSparkline values={trend} />
+      {trend && trend.some((value) => value > 0) ? <MetricSparkline values={trend} /> : null}
       <span className="kpi-action">
         {action}
         <ArrowUpRight aria-hidden="true" size={15} />
@@ -678,37 +818,103 @@ function MetricSparkline({ values }: { values: number[] }) {
   );
 }
 
-function OperationalTrendPanel({ trend }: { trend: ActivityTrend }) {
-  const series = [
-    { className: "trend-assets", label: "Assets", values: trend.assets },
-    { className: "trend-inspections", label: "Inspections", values: trend.inspections },
-    { className: "trend-retests", label: "Retests", values: trend.retests },
-    { className: "trend-escalations", label: "Escalations", values: trend.escalations }
-  ];
-  const maxValue = Math.max(...series.flatMap((entry) => entry.values), 1);
-  const hasActivity = series.some((entry) => entry.values.some((value) => value > 0));
+function OperationalTrendPanel({
+  activity,
+  error,
+  series
+}: {
+  activity: ActivityReport | null;
+  error: string | null;
+  series: ActivitySeriesSet | null;
+}) {
+  if (error) {
+    return (
+      <div className="operational-trend">
+        <p className="trend-empty">{error}</p>
+      </div>
+    );
+  }
+  if (!series || !activity) {
+    return (
+      <div className="operational-trend">
+        <p className="trend-empty">Loading recorded activity…</p>
+      </div>
+    );
+  }
+
+  const lines = activitySeriesOrder.map((entry) => series[entry.key]);
+  const maxValue = Math.max(...lines.flatMap((line) => line.values), 1);
+  const hasActivity = lines.some((line) => line.total > 0);
+  const labelStep = Math.max(1, Math.ceil(series.labels.length / 6));
 
   return (
     <div className="operational-trend">
       {hasActivity ? (
-        <svg aria-label="Operational activity trend" className="operational-trend-chart" role="img" viewBox="0 0 640 240">
-          <desc>Recorded operational events grouped across the selected time range.</desc>
-          {[0.25, 0.5, 0.75, 1].map((ratio) => <line className="trend-grid-line" key={ratio} x1="12" x2="628" y1={212 - 196 * ratio} y2={212 - 196 * ratio} />)}
-          {series.map((entry) => <path className={`trend-line ${entry.className}`} d={chartPath(entry.values, maxValue, 640, 240)} key={entry.label} pathLength="1" />)}
-          {trend.labels.map((label, index) => (
-            <text key={label} x={12 + (616 * index) / Math.max(1, trend.labels.length - 1)} y="235">{label}</text>
-          ))}
-        </svg>
-      ) : <p className="trend-empty">No recorded operational activity in this range.</p>}
+        <>
+          <svg aria-hidden="true" className="operational-trend-chart" viewBox="0 0 640 240">
+            {[0.25, 0.5, 0.75, 1].map((ratio) => <line className="trend-grid-line" key={ratio} x1="12" x2="628" y1={212 - 196 * ratio} y2={212 - 196 * ratio} />)}
+            {lines.map((line) => <path className={`trend-line ${line.className}`} d={chartPath(line.values, maxValue, 640, 240)} key={line.label} pathLength="1" />)}
+            {series.labels.map((label, index) => (
+              index % labelStep === 0 ? (
+                <text key={`${label}-${index}`} x={12 + (616 * index) / Math.max(1, series.labels.length - 1)} y="235">{label}</text>
+              ) : null
+            ))}
+          </svg>
+          {/* The chart is decorative beside this table, which carries the same numbers
+              for anyone reading with assistive technology or unable to tell the lines
+              apart by colour. */}
+          <table className="sr-only">
+            <caption>
+              Recorded activity by {activity.granularity}, {activity.timezone}
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Period starting</th>
+                {lines.map((line) => <th key={line.label} scope="col">{line.label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {series.labels.map((label, index) => (
+                <tr key={`${label}-${index}`}>
+                  <th scope="row">{label}</th>
+                  {lines.map((line) => <td key={line.label}>{line.values[index]}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : <p className="trend-empty">No activity was recorded in this period.</p>}
       <div className="trend-legend" aria-label="Operational trend legend">
-        {series.map((entry) => <span className={entry.className} key={entry.label}><i aria-hidden="true" />{entry.label}</span>)}
+        {lines.map((line) => (
+          <span className={line.className} key={line.label}>
+            <i aria-hidden="true" />
+            {line.label} {formatNumber(line.total)}
+          </span>
+        ))}
       </div>
     </div>
   );
 }
 
-function RecentActivityPanel({ events, now }: { events: AuditEventRecord[]; now: number }) {
-  const recentEvents = events.slice(0, 3);
+function RecentActivityPanel({
+  error,
+  events,
+  now,
+  period
+}: {
+  error: string | null;
+  events: AuditEventRecord[];
+  now: number;
+  period: ReportingPeriod;
+}) {
+  const start = new Date(period.startAt).getTime();
+  const end = new Date(period.endAt).getTime();
+  const recentEvents = events
+    .filter((event) => {
+      const timestamp = new Date(event.timestamp).getTime();
+      return timestamp >= start && timestamp < end;
+    })
+    .slice(0, 3);
   return (
     <section className="data-panel recent-activity-panel">
       <div className="panel-heading compact">
@@ -717,20 +923,34 @@ function RecentActivityPanel({ events, now }: { events: AuditEventRecord[]; now:
       </div>
       <div className="recent-activity-list">
         {recentEvents.map((event) => {
-          const series = activitySeriesFor(event);
-          const Icon = series === "inspections" ? ClipboardCheck : series === "retests" ? CalendarClock : series === "escalations" ? AlertTriangle : Boxes;
+          const kind = auditEventKind(event);
+          const Icon = kind === "inspections" ? ClipboardCheck : kind === "retests" ? CalendarClock : kind === "escalations" ? AlertTriangle : Boxes;
           return (
-            <article className={`recent-activity-item ${series ?? "other"}`} key={`${event.sequence}-${event.hash}`}>
+            <article className={`recent-activity-item ${kind ?? "other"}`} key={`${event.sequence}-${event.hash}`}>
               <span className="recent-activity-icon"><Icon aria-hidden="true" size={16} /></span>
               <div><strong>{formatAuditAction(event.action)}</strong><span>{event.entity} record</span></div>
               <time dateTime={event.timestamp}>{formatRelativeTime(event.timestamp, now)}</time>
             </article>
           );
         })}
-        {recentEvents.length === 0 ? <p className="dashboard-empty">No recent activity has been recorded.</p> : null}
+        {error ? <p className="dashboard-empty">{error}</p> : null}
+        {!error && recentEvents.length === 0 ? <p className="dashboard-empty">No activity was recorded in this period.</p> : null}
       </div>
     </section>
   );
+}
+
+/**
+ * Which icon a single audit entry gets in the Recent Activity list. Presentation only:
+ * the activity figures come from the reporting API, never from matching words here.
+ */
+function auditEventKind(event: AuditEventRecord): string | null {
+  const [entity] = event.action.split(".");
+  if (event.action.endsWith(".escalated")) return "escalations";
+  if (entity === "retest_schedule") return "retests";
+  if (entity.startsWith("inspection")) return "inspections";
+  if (entity === "asset") return "assets";
+  return null;
 }
 
 function formatRelativeTime(value: string, now: number): string {
@@ -740,32 +960,67 @@ function formatRelativeTime(value: string, now: number): string {
   return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(Math.round(elapsedSeconds / seconds), unit);
 }
 
-function FleetHealthPanel({
-  dueSoonAssets,
-  inServiceAssets,
-  overdueAssets
+/**
+ * The fleet's retest status as one partition: every eligible asset is in exactly one
+ * category, so the segments and the percentages can be read against the whole fleet.
+ */
+function FleetStatusPanel({
+  fleet,
+  onModuleChange
 }: {
-  dueSoonAssets: number;
-  inServiceAssets: number;
-  overdueAssets: number;
+  fleet: FleetStatus;
+  onModuleChange: (module: AppModule) => void;
 }) {
-  const [selection, setSelectedStatus] = useState<FleetStatus | null>(null);
-  const selectedStatus = selection ?? (overdueAssets > 0 ? "overdue" : dueSoonAssets > 0 ? "due-soon" : "active");
-  const total = inServiceAssets + dueSoonAssets + overdueAssets;
   const segments: FleetSegment[] = [
-    { id: "active", label: "Active fleet", value: inServiceAssets },
-    { id: "due-soon", label: "Due soon", value: dueSoonAssets },
-    { id: "overdue", label: "Overdue", value: overdueAssets }
+    {
+      id: "on-track",
+      label: "On track",
+      description: "Scheduled, with more than a week until the retest is due",
+      value: fleet.onTrack,
+      module: "retest"
+    },
+    {
+      id: "due-soon",
+      label: "Due soon",
+      description: "Retest due within the next 7 days",
+      value: fleet.dueSoon,
+      module: "retest"
+    },
+    {
+      id: "overdue",
+      label: "Overdue",
+      description: "Past the retest due date",
+      value: fleet.overdue,
+      module: "retest"
+    },
+    {
+      id: "suspended",
+      label: "Suspended",
+      description: "Retest schedule suspended, so no retest is expected",
+      value: fleet.suspended,
+      module: "retest"
+    },
+    {
+      id: "unscheduled",
+      label: "Unscheduled",
+      description: "No retest schedule, so no retest date is being tracked",
+      value: fleet.unscheduled,
+      module: "assets"
+    }
   ];
+  const total = fleet.total;
+  const [selection, setSelectedStatus] = useState<FleetSegmentId | null>(null);
+  const selectedStatus = selection
+    ?? (fleet.overdue > 0 ? "overdue" : fleet.dueSoon > 0 ? "due-soon" : "on-track");
   const selectedSegment = segments.find((segment) => segment.id === selectedStatus) ?? segments[0];
   const circumference = 2 * Math.PI * 48;
   let offset = 0;
 
-  function selectSegment(status: FleetStatus) {
+  function selectSegment(status: FleetSegmentId) {
     setSelectedStatus(status);
   }
 
-  function selectWithKeyboard(event: KeyboardEvent<SVGCircleElement>, status: FleetStatus) {
+  function selectWithKeyboard(event: KeyboardEvent<SVGCircleElement>, status: FleetSegmentId) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       selectSegment(status);
@@ -776,11 +1031,11 @@ function FleetHealthPanel({
     <section className="data-panel health-panel">
       <div className="panel-heading compact">
         <div>
-          <h2>Fleet Health</h2>
-          <p>{assetCountLabel(total)} monitored for retest</p>
+          <h2>Fleet Retest Status</h2>
+          <p>{assetCountLabel(total)} eligible for retest{total ? "" : ". Condemned, retired and draft assets are not counted"}</p>
         </div>
       </div>
-      <div className="fleet-ring" aria-label="Fleet health distribution" role="group">
+      <div className="fleet-ring" aria-label="Fleet retest status distribution" role="group">
         <svg className="fleet-ring-chart" viewBox="0 0 120 120">
           <circle className="fleet-ring-track" cx="60" cy="60" r="48" />
           <g transform="rotate(-90 60 60)">
@@ -789,10 +1044,10 @@ function FleetHealthPanel({
               const dashOffset = -offset;
               offset += segmentLength;
               const percentage = total ? Math.round((segment.value / total) * 100) : 0;
-              const assetLabel = assetCountLabel(segment.value);
+              const countLabel = assetCountLabel(segment.value);
               return segmentLength > 0 ? (
                 <circle
-                  aria-label={`${segment.label}: ${assetLabel}, ${percentage}% of fleet`}
+                  aria-label={`${segment.label}: ${countLabel}, ${percentage}% of the eligible fleet`}
                   aria-pressed={selectedStatus === segment.id}
                   className={`fleet-segment fleet-segment-${segment.id}${selectedStatus === segment.id ? " is-selected" : ""}`}
                   cx="60"
@@ -815,15 +1070,16 @@ function FleetHealthPanel({
         <div className="fleet-ring-core" aria-live="polite">
           <span>{selectedSegment.label}</span>
           <strong>{formatNumber(selectedSegment.value)}</strong>
-          <small>{total ? `${Math.round((selectedSegment.value / total) * 100)}% of fleet` : "No monitored assets"}</small>
+          <small>{total ? `${Math.round((selectedSegment.value / total) * 100)}% of the fleet` : "No eligible assets"}</small>
         </div>
       </div>
+      <p className="fleet-status-meaning">{selectedSegment.description}.</p>
       <div className="health-legend">
         {segments.map((segment) => {
           const percentage = total ? Math.round((segment.value / total) * 100) : 0;
           return (
             <button
-              aria-pressed={selectedStatus === segment.id}
+        aria-label={`${segment.label}: ${assetCountLabel(segment.value)}, ${percentage}% of the eligible fleet`}
               className={`fleet-legend-button fleet-legend-${segment.id}${selectedStatus === segment.id ? " is-selected" : ""}`}
               key={segment.id}
               onClick={() => selectSegment(segment.id)}
@@ -832,10 +1088,7 @@ function FleetHealthPanel({
               type="button"
             >
               <span>
-                <i
-                  aria-hidden="true"
-                  className={`dot ${segment.id === "active" ? "success" : segment.id === "due-soon" ? "warning" : "danger"}-dot`}
-                />
+                <i aria-hidden="true" className={`dot fleet-segment-${segment.id}`} />
                 {segment.label}
                 <small>{percentage}%</small>
               </span>
@@ -844,16 +1097,22 @@ function FleetHealthPanel({
           );
         })}
       </div>
+      <button className="schedule-link" onClick={() => onModuleChange(selectedSegment.module)} type="button">
+        {selectedSegment.id === "unscheduled" ? "Open asset register" : "Open retest schedule"} <ArrowRight aria-hidden="true" size={15} />
+      </button>
     </section>
   );
 }
 
-type FleetStatus = "active" | "due-soon" | "overdue";
+type FleetSegmentId = "on-track" | "due-soon" | "overdue" | "suspended" | "unscheduled";
 
 interface FleetSegment {
-  id: FleetStatus;
+  id: FleetSegmentId;
   label: string;
+  /** What this category means, so a reader never has to guess the rule. */
+  description: string;
   value: number;
+  module: AppModule;
 }
 
 function assetCountLabel(value: number): string {

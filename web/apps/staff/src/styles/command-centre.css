@@ -599,7 +599,66 @@ button:active:not(:disabled) {
   margin-top: 16px;
 }
 
-.analytics-fleet-panel .health-legend {
+.analytics-fleet-panel .fleet-legend-button i.dot.fleet-segment-on-track { background: var(--success); }
+.fleet-legend-button i.dot.fleet-segment-due-soon { background: var(--warning); }
+.fleet-legend-button i.dot.fleet-segment-overdue { background: var(--danger); }
+.fleet-legend-button i.dot.fleet-segment-suspended { background: var(--muted); }
+.fleet-legend-button i.dot.fleet-segment-unscheduled { background: var(--border-strong, var(--border)); }
+
+.fleet-status-meaning {
+  margin: 0;
+  padding: 0 18px 4px;
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.analytics-coverage-certificates {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 12px 18px 0;
+  border-top: 1px solid var(--border);
+}
+
+.analytics-coverage-certificates > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.analytics-coverage-certificates dt {
+  color: var(--soft);
+  font-size: 12px;
+}
+
+.analytics-coverage-certificates dd {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.analytics-inline-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.reporting-period-zone {
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.health-legend {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   padding: 0 20px 18px;
@@ -636,8 +695,17 @@ button:active:not(:disabled) {
   border-radius: 50%;
 }
 
-.fleet-legend-button i.fleet-segment-active {
+.fleet-legend-button i.fleet-segment-active,
+.fleet-legend-button i.fleet-segment-on-track {
   background: var(--success);
+}
+
+.fleet-legend-button i.fleet-segment-suspended {
+  background: var(--muted);
+}
+
+.fleet-legend-button i.fleet-segment-unscheduled {
+  background: var(--border-strong, var(--border));
 }
 
 .fleet-legend-button i.fleet-segment-due-soon {
@@ -1176,7 +1244,8 @@ button:active:not(:disabled) {
   stroke-width: 15;
 }
 
-.fleet-segment-active {
+.fleet-segment-active,
+.fleet-segment-on-track {
   stroke: var(--success);
 }
 
@@ -1186,6 +1255,15 @@ button:active:not(:disabled) {
 
 .fleet-segment-overdue {
   stroke: var(--danger);
+}
+
+/* Neither a risk nor a pass: these assets are simply not being tracked for retest. */
+.fleet-segment-suspended {
+  stroke: var(--muted);
+}
+
+.fleet-segment-unscheduled {
+  stroke: var(--border-strong, var(--border));
 }
 
 .fleet-segment:not(.is-selected) {
@@ -1855,10 +1933,18 @@ button:active:not(:disabled) {
   stroke-width: 2.5;
 }
 
+/* Each series carries a dash pattern as well as a colour, so the lines stay separable
+   without relying on colour vision. */
 .trend-assets { color: var(--accent-2); stroke: var(--accent-2); }
-.trend-inspections { color: var(--success); stroke: var(--success); }
-.trend-retests { color: var(--danger); stroke: var(--danger); }
-.trend-escalations { color: var(--warning); stroke: var(--warning); }
+.trend-inspections { color: var(--success); stroke: var(--success); stroke-dasharray: 7 4; }
+.trend-approved { color: var(--accent); stroke: var(--accent); stroke-dasharray: 2 3; }
+.trend-rejected { color: var(--warning); stroke: var(--warning); stroke-dasharray: 10 4 2 4; }
+.trend-certificates { color: var(--muted); stroke: var(--muted); stroke-dasharray: 1 4; }
+.trend-escalations { color: var(--danger); stroke: var(--danger); stroke-dasharray: 12 5; }
+
+.trend-legend i {
+  background: currentColor;
+}
 
 .operational-trend-chart text {
   fill: var(--soft);
