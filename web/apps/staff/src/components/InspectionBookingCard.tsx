@@ -162,11 +162,23 @@ export function InspectionBookingCard({
           {canApproveBookings && booking.status === "PENDING_APPROVAL" ? (
             <ActionButton disabled={busy} onClick={() => onDecline(booking)} variant="ghost">Reject request</ActionButton>
           ) : null}
-          {canBook && confirmed && !openChange ? (
+          {canApproveBookings && confirmed && !openChange ? (
+            <ActionButton
+              aria-label={`Change inspector for ${booking.location.name}`}
+              disabled={busy}
+              onClick={() => onChangeInspector(booking)}
+              variant="secondary"
+            >
+              <RefreshCw aria-hidden="true" size={14} /> Change inspector
+            </ActionButton>
+          ) : null}
+          {canBook && (booking.status === "PENDING_APPROVAL" || confirmed) ? (
             <details className="booking-action-menu">
               <summary aria-label={`Actions for ${booking.location.name}`}>Actions <ChevronDown aria-hidden="true" size={14}/></summary>
               <div className="booking-action-menu__items">
-                <ActionButton disabled={busy} onClick={() => onRequestReschedule(booking)} variant="secondary">Request reschedule</ActionButton>
+                {confirmed && !openChange ? (
+                  <ActionButton disabled={busy} onClick={() => onRequestReschedule(booking)} variant="secondary">Request reschedule</ActionButton>
+                ) : null}
                 <ActionButton disabled={busy} onClick={() => onCancel(booking)} variant="ghost">Cancel booking</ActionButton>
               </div>
             </details>
@@ -181,16 +193,7 @@ export function InspectionBookingCard({
           <strong className="assigned-inspector__name">{inspectorName}</strong>
           {openChange ? (
             <small className="field-hint">Cannot change inspector while a reschedule is pending.</small>
-          ) : (
-            <ActionButton
-              aria-label={`Change inspector for ${booking.location.name}`}
-              disabled={busy}
-              onClick={() => onChangeInspector(booking)}
-              variant="secondary"
-            >
-              <RefreshCw aria-hidden="true" size={14} /> Change inspector
-            </ActionButton>
-          )}
+          ) : null}
         </div>
       ) : null}
 
