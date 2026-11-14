@@ -87,6 +87,9 @@ export function InspectionBookingCard({
   const byStatus = (status: InspectionBookingChangeRequest["status"]) => booking.changeRequests.filter((change) => change.status === status);
   const awaitingAdmin = byStatus("PENDING_ADMIN_APPROVAL");
   const awaitingCustomer = byStatus("PENDING_CUSTOMER_CONFIRMATION");
+  // Existing API states encode the two supported reschedule origins:
+  // a customer request needs admin approval; an admin proposal needs customer confirmation.
+  const rescheduleRequester = awaitingAdmin.length ? "Customer" : awaitingCustomer.length ? "Admin" : null;
   const inspectorName =
     inspectors.find((inspector) => inspector.id === booking.inspectorUserId)?.displayName ??
     (booking.inspectorUserId ? "Assigned" : "Not assigned");
@@ -126,6 +129,7 @@ export function InspectionBookingCard({
         <div className="booking-card__status">
           <span className="booking-card__status-label">Status</span>
           <span className={bookingStatusClass(openChange ? "PENDING_APPROVAL" : booking.status)}>{displayedStatus}</span>
+          {rescheduleRequester ? <small className="booking-card__status-origin">Requested by: {rescheduleRequester}</small> : null}
         </div>
         <div className="booking-card__actions">
           {pendingAssignment ? (
@@ -195,7 +199,6 @@ export function InspectionBookingCard({
           <CalendarClock aria-hidden="true" size={16} />
           <span className="booking-card__row-text">
             <strong>Reschedule request:</strong>
-            <span>Requested by: Customer</span>
             <time dateTime={change.startsAt}>{when(change.startsAt)}</time>
           </span>
           <span className="booking-card__row-actions">
@@ -224,7 +227,6 @@ export function InspectionBookingCard({
           <CalendarClock aria-hidden="true" size={16} />
           <span className="booking-card__row-text">
             <strong>Reschedule request:</strong>
-            <span>Requested by: Admin</span>
             <time dateTime={change.startsAt}>{when(change.startsAt)}</time>
           </span>
           <span className="booking-status booking-status--pending">Awaiting customer confirmation</span>
@@ -236,7 +238,6 @@ export function InspectionBookingCard({
           <CalendarClock aria-hidden="true" size={16} />
           <span className="booking-card__row-text">
             <strong>Reschedule request:</strong>
-            <span>Requested by: Customer</span>
             <time dateTime={change.startsAt}>{when(change.startsAt)}</time>
           </span>
           <span className="booking-status booking-status--pending">Awaiting admin approval</span>
@@ -248,7 +249,6 @@ export function InspectionBookingCard({
           <CalendarClock aria-hidden="true" size={16} />
           <span className="booking-card__row-text">
             <strong>Reschedule request:</strong>
-            <span>Requested by: Admin</span>
             <time dateTime={change.startsAt}>{when(change.startsAt)}</time>
           </span>
           <ActionButton
