@@ -116,6 +116,7 @@ export function InspectionsWorkspace({
   }, [bookingAsset, workspace.isBookingFormOpen]);
   /** The booking whose inspector the open "Change inspector" dialog is for. */
   const [changingInspector, setChangingInspector] = useState<string | null>(null);
+  const [recordView, setRecordView] = useState<"bookings" | "reports">("bookings");
   const [bookingStatus, setBookingStatus] = useState<BookingViewStatus>("ALL");
   const [customerFilter, setCustomerFilter] = useState("ALL");
   const [assetFilter, setAssetFilter] = useState("ALL");
@@ -207,6 +208,11 @@ export function InspectionsWorkspace({
             <InspectionMetric icon={AlertTriangle} label="Rejected" value={rejectedCount} detail="Not approved" tone="red" />
           </StaggerGroup>
         </section>
+        <div className="inspection-record-view-tabs" role="group" aria-label="Inspection records view">
+          <button type="button" className={recordView === "bookings" ? "is-active" : ""} aria-pressed={recordView === "bookings"} onClick={() => setRecordView("bookings")}>Bookings ({workspace.bookingTotal})</button>
+          <button type="button" className={recordView === "reports" ? "is-active" : ""} aria-pressed={recordView === "reports"} onClick={() => setRecordView("reports")}>Inspection reports ({workspace.serverTotal ?? workspace.inspections.length})</button>
+        </div>
+        {recordView === "bookings" ? (
         <div className="inspection-booking-filters" role="group" aria-label="Filter inspection bookings">
           <label>Status
             <select aria-label="Booking status" value={bookingStatus} onChange={(event) => setBookingStatus(event.target.value as BookingViewStatus)}>
@@ -238,16 +244,18 @@ export function InspectionsWorkspace({
           </label>
           <button className="secondary-button" type="button" onClick={clearBookingFilters}>Clear filters</button>
         </div>
+        ) : null}
         <section className="inspection-bookings-panel" aria-labelledby="inspection-bookings-heading">
           <header className="inspection-bookings-heading">
             <div className="inspection-bookings-title">
               <span className="inspection-bookings-icon"><CalendarDays aria-hidden="true" size={20} /></span>
               <div>
-                <h3 id="inspection-bookings-heading">Inspection bookings</h3>
-                <p>One place to manage booking requests, assignments and approved work.</p>
+                <h3 id="inspection-bookings-heading">{recordView === "bookings" ? "Inspection bookings" : "Inspection reports"}</h3>
+                <p>{recordView === "bookings" ? "Manage booking requests, assignments and approved work." : "Open inspection reports for the appropriate inspector or reviewer action."}</p>
               </div>
             </div>
           </header>
+          {recordView === "bookings" ? (<>
           <p className="inspection-booking-filter-count" role="status">Showing {visibleBookings.length} of {workspace.bookings.length} loaded bookings{workspace.bookingTotal > workspace.bookings.length ? ` (${workspace.bookingTotal} total; load more to search older bookings)` : ""}.</p>
           {visibleBookings.length ? (
             <div className="inspection-booking-list" aria-label="Inspection bookings">
@@ -295,18 +303,30 @@ export function InspectionsWorkspace({
               <span><strong>No bookings match these filters.</strong> Clear filters or load more bookings to find older records.</span>
             </p>
           )}
+          </>) : (
+            <div className="inspection-booking-list" aria-label="Inspection reports">
+              {workspace.inspections.length ? workspace.inspections.map((inspection) => (
+                <article className="inspection-booking-card inspection-report-card" key={inspection.id}>
+                  <div className="booking-card__site">
+                    <span className="booking-card__icon"><ClipboardCheck aria-hidden="true" size={18}/></span>
+                    <span className="booking-card__text">
+                      <strong>{assetLabel(inspection.asset)}</strong>
+                      <span>{inspection.customer.name} · {inspection.inspectionType.replaceAll("_", " ").toLowerCase()}</span>
+                    </span>
+                  </div>
+                  <div className="booking-card__status">
+                    <span className="booking-card__status-label">Inspection report status</span>
+                    <span className={inspection.status === "APPROVED" ? "booking-status booking-status--approved" : inspection.status === "REJECTED" ? "booking-status booking-status--rejected" : "booking-status booking-status--pending"}>{inspection.status.replaceAll("_", " ").toLowerCase()}</span>
+                  </div>
+                  <button className="secondary-button" type="button" onClick={() => workspace.openDetail(inspection)}>{canApprove ? "Review report" : "Open report"}</button>
+                </article>
+              )) : <p>No inspection reports are available.</p>}
+              {canWrite && !canApproveBookings ? (
+                <button className="primary-button" type="button" onClick={workspace.openCreate}>Create inspection</button>
+              ) : null}
+            </div>
+          )}
         </section>
-        {canApprove && workspace.inspections.some((inspection) => inspection.status === "SUBMITTED") ? (
-          <div className="inspection-booking-review-links" aria-label="Submitted inspection reports">
-            <strong>Inspection reports awaiting review</strong>
-            <p>Report approval is separate from booking approval. Open a submitted report to review its findings.</p>
-            {workspace.inspections.filter((inspection) => inspection.status === "SUBMITTED").map((inspection) => (
-              <button key={inspection.id} className="secondary-button" type="button" onClick={() => workspace.openDetail(inspection)}>
-                Review {assetLabel(inspection.asset)} — {inspection.customer.name}
-              </button>
-            ))}
-          </div>
-        ) : null}
         {workspace.selectedInspection && workspace.ratingReady ? (
           <InspectionDetail
             canApprove={canApprove}
