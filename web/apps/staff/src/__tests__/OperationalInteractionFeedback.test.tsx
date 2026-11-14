@@ -350,7 +350,6 @@ describe("A successful booking action is never reported as a failure because a l
     await screen.findByText("Kooragang", { selector: ".booking-card__text strong" });
     await user.click(screen.getByRole("button", { name: "Assign inspector" }));
     await choose(user, screen.getByLabelText("Assign inspector for Kooragang"), "ins-1");
-    await user.click(screen.getByRole("button", { name: "Assign inspector" }));
     await user.click(screen.getByRole("button", { name: "Confirm assignment & approve" }));
 
     const notice = (await screen.findByText(/approved and an inspector assigned, but the latest view could not be refreshed/)).closest('[role="status"]');
