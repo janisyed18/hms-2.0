@@ -158,7 +158,7 @@ describe("InspectionBookingCard", () => {
     expect(onConfirmReschedule).toHaveBeenCalledWith("ch-1");
   });
 
-  it("disables every action while another is running, and labels the one in progress", () => {
+  it("disables every action while another is running, and labels the one in progress", async () => {
     setup(booking(), { pendingAction: "approve:bk-1" });
     expect(screen.getByRole("button", { name: "Approving…" })).toBeDisabled();
     await userEvent.setup().click(screen.getByText("Actions"));
