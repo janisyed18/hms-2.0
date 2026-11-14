@@ -139,8 +139,10 @@ export function InspectionsWorkspace({
   // Bookings and inspection records are distinct objects. Show one management view at a time
   // rather than duplicate full-height sections; retain the inspector/reviewer records workflow.
   const [managementView, setManagementView] = useState<"bookings" | "records">(
-    canBook || canApproveBookings ? "bookings" : "records"
+    routeInspectionId ? "records" : canBook || canApproveBookings ? "bookings" : "records"
   );
+  // A direct inspection link must open the record even for admins whose default view is bookings.
+  useEffect(() => { if (routeInspectionId) setManagementView("records"); }, [routeInspectionId]);
   const [bookingStatusFilter, setBookingStatusFilter] = useState("ALL");
   const [bookingCustomerFilter, setBookingCustomerFilter] = useState("ALL");
   const [bookingAssetFilter, setBookingAssetFilter] = useState("ALL");
