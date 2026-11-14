@@ -1214,10 +1214,10 @@ describe("App", () => {
     expect(await screen.findByRole("row", { name: /API Standard/i })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Inspections" }));
-    expect((await screen.findAllByRole("row", { name: /API-777/i }))[0]).toBeVisible();
     const inspectionOverview = screen.getByRole("region", { name: "Inspection overview" });
-    expect(inspectionOverview).toHaveTextContent("Draft1");
-    expect(inspectionOverview).toHaveTextContent("Awaiting review0");
+    expect(inspectionOverview).toHaveTextContent("Requested0");
+    await user.click(await screen.findByRole("button", { name: /Inspection reports \(1\)/ }));
+    expect(await screen.findByText("API-777", { selector: ".inspection-report-card .booking-card__text strong" })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Certificates" }));
     expect(await screen.findByRole("row", { name: /CERT-API-777-1/i })).toBeVisible();
