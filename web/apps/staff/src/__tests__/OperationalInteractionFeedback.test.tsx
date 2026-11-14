@@ -283,7 +283,7 @@ describe("Inspection bookings", () => {
     client.listAdminUsers.mockResolvedValue({ total: 1, etag: null, items: [{ id: "ins-1", displayName: "Ben Brook", role: "INSPECTOR", accountStatus: "ACTIVE" }] });
     const user = userEvent.setup();
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    await screen.findByText("Kooragang");
+    await screen.findByText("Kooragang", { selector: ".booking-card__text strong" });
     return user;
   }
 
@@ -291,12 +291,13 @@ describe("Inspection bookings", () => {
     client.approveInspectionBooking.mockRejectedValueOnce(api(409, "Only pending inspection bookings can be approved."));
     client.listInspections.mockResolvedValue({ total: 0, etag: null, items: [] });
     const user = await renderBookings();
-    await user.click(screen.getByRole("button", { name: "Assign & approve" }));
+    await user.click(screen.getByRole("button", { name: "Assign inspector" }));
+    await user.click(screen.getByRole("button", { name: "Confirm assignment & approve" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Choose an inspector to assign first.");
     expect(client.approveInspectionBooking).not.toHaveBeenCalled();
 
     await choose(user, screen.getByLabelText("Assign inspector for Kooragang"), "ins-1");
-    await user.click(screen.getByRole("button", { name: "Assign & approve" }));
+    await user.click(screen.getByRole("button", { name: "Confirm assignment & approve" }));
     const alert = await screen.findByText("Only pending inspection bookings can be approved.");
     expect(alert.closest('[role="alert"]')).not.toBeNull();
     expect(alert.closest('[role="alert"]')).not.toHaveTextContent(/someone else/i);
@@ -307,31 +308,31 @@ describe("Inspection bookings", () => {
   it("declines only after confirmation and keeps the booking if declining fails", async () => {
     client.rejectInspectionBooking.mockRejectedValueOnce(api(500, "Internal server error"));
     const user = await renderBookings();
-    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await user.click(screen.getByRole("button", { name: "Reject request" }));
     const dialog = screen.getByRole("alertdialog", { name: "Decline the booking at Kooragang?" });
     expect(client.rejectInspectionBooking).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole("button", { name: "Decline booking" }));
     expect(await within(await screen.findByRole("alertdialog")).findByRole("alert")).toHaveTextContent(/service is unavailable/i);
-    expect(screen.getByText("Kooragang")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Assign & approve" })).toBeInTheDocument();
+    expect(screen.getByText("Kooragang", { selector: ".booking-card__text strong" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Assign inspector" })).toBeInTheDocument();
   });
 
   it("puts Book inspection in the page header, only for someone who can book", async () => {
     client.listInspectionBookings.mockResolvedValue({ total: 1, etag: null, items: [booking] });
     client.listInspections.mockResolvedValue({ total: 0, etag: null, items: [] });
     const { unmount } = render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    await screen.findByText("Kooragang");
+    await screen.findByText("Kooragang", { selector: ".booking-card__text strong" });
     const header = screen.getByRole("heading", { name: "Inspection operations" }).closest("header") as HTMLElement;
     expect(within(header).getByRole("button", { name: "Book inspection" })).toBeVisible();
     unmount();
     render(<InspectionsWorkspace canApprove canApproveBookings={false} canBook={false} canWrite={false} />);
-    await screen.findByText("Kooragang");
+    await screen.findByText("Kooragang", { selector: ".booking-card__text strong" });
     expect(screen.queryByRole("button", { name: "Book inspection" })).not.toBeInTheDocument();
   });
 
   it("names the booked asset by name first, then HMS number", async () => {
     await renderBookings();
-    const card = screen.getByText("Kooragang").closest("article") as HTMLElement;
+    const card = screen.getByText("Kooragang", { selector: ".booking-card__text strong" }).closest("article") as HTMLElement;
     expect(within(card).getByText("Main Pump Hose — HMS-001842")).toBeInTheDocument();
   });
 });
@@ -346,9 +347,10 @@ describe("A successful booking action is never reported as a failure because a l
     client.listAdminUsers.mockResolvedValue({ total: 1, etag: null, items: [{ id: "ins-1", displayName: "Ben Brook", role: "INSPECTOR", accountStatus: "ACTIVE" }] });
     const user = userEvent.setup();
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    await screen.findByText("Kooragang");
+    await screen.findByText("Kooragang", { selector: ".booking-card__text strong" });
+    await user.click(screen.getByRole("button", { name: "Assign inspector" }));
     await choose(user, screen.getByLabelText("Assign inspector for Kooragang"), "ins-1");
-    await user.click(screen.getByRole("button", { name: "Assign & approve" }));
+    await user.click(screen.getByRole("button", { name: "Confirm assignment & approve" }));
 
     const notice = (await screen.findByText(/approved and an inspector assigned, but the latest view could not be refreshed/)).closest('[role="status"]');
     expect(notice).toHaveTextContent("Booking approved");
@@ -356,8 +358,8 @@ describe("A successful booking action is never reported as a failure because a l
     expect(screen.queryByText(/could not be approved/i)).toBeNull();
     expect(client.approveInspectionBooking).toHaveBeenCalledTimes(1);
     // The booking returned by the approval is already applied, so the card no longer offers approval.
-    expect(screen.queryByRole("button", { name: "Assign & approve" })).toBeNull();
-    expect(within(screen.getByText("Kooragang").closest("article") as HTMLElement).getByText("APPROVED")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Assign inspector" })).toBeNull();
+    expect(within(screen.getByText("Kooragang", { selector: ".booking-card__text strong" }).closest("article") as HTMLElement).getByText("Approved")).toBeInTheDocument();
   });
 
   it("confirm reschedule: the confirmation stands when the booking reload fails, and says the view is stale", async () => {
@@ -381,9 +383,9 @@ describe("A successful booking action is never reported as a failure because a l
     client.listAdminUsers.mockResolvedValue({ total: 1, etag: null, items: [{ id: "ins-1", displayName: "Ben Brook", role: "INSPECTOR", accountStatus: "ACTIVE" }] });
     const user = userEvent.setup();
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    await screen.findByText("Kooragang");
+    await screen.findByText("Kooragang", { selector: ".booking-card__text strong" });
     const loads = client.listInspectionBookings.mock.calls.length;
-    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await user.click(screen.getByRole("button", { name: "Reject request" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Decline booking" }));
 
     const alert = await within(await screen.findByRole("alertdialog")).findByRole("alert");
@@ -398,8 +400,8 @@ describe("A successful booking action is never reported as a failure because a l
     client.listInspectionBookings.mockRejectedValue(api(503, "Service unavailable"));
     const user = userEvent.setup();
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    await screen.findByText("Kooragang");
-    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await screen.findByText("Kooragang", { selector: ".booking-card__text strong" });
+    await user.click(screen.getByRole("button", { name: "Reject request" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Decline booking" }));
     expect(await within(await screen.findByRole("alertdialog")).findByRole("alert")).toHaveTextContent("Only pending inspection bookings can be declined.");
   });
@@ -426,7 +428,7 @@ describe("Changing the inspector of a confirmed booking", () => {
     client.listAdminUsers.mockResolvedValue({ total: people.length, etag: null, items: people });
     const user = userEvent.setup();
     render(<InspectionsWorkspace canApprove={props.canApproveBookings} canApproveBookings={props.canApproveBookings} canBook canWrite />);
-    await screen.findByText("Kooragang");
+    await screen.findByText("Kooragang", { selector: ".booking-card__text strong" });
     return user;
   }
 
@@ -624,7 +626,7 @@ describe("Changing the inspector of a confirmed booking", () => {
     client.listInspectionBookings.mockResolvedValue({ total: 1, etag: null, items: [{ ...confirmed, ...overrides } as unknown as InspectionBookingRecord] });
     client.listAdminUsers.mockResolvedValue({ total: 2, etag: null, items: inspectors });
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    await screen.findByText("Kooragang");
+    await screen.findByText("Kooragang", { selector: ".booking-card__text strong" });
     expect(screen.queryByRole("button", { name: /Change inspector/ })).not.toBeInTheDocument();
   });
 
@@ -633,7 +635,7 @@ describe("Changing the inspector of a confirmed booking", () => {
     client.listInspectionBookings.mockResolvedValue({ total: 1, etag: null, items: [{ ...confirmed, changeRequests: [pending] } as unknown as InspectionBookingRecord] });
     client.listAdminUsers.mockResolvedValue({ total: 2, etag: null, items: inspectors });
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    await screen.findByText("Kooragang");
+    await screen.findByText("Kooragang", { selector: ".booking-card__text strong" });
     expect(screen.getByText("Cannot change inspector while a reschedule is pending.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Change inspector/ })).not.toBeInTheDocument();
   });
@@ -648,11 +650,8 @@ describe("Changing the inspector of a confirmed booking", () => {
     client.reassignInspectionBookingInspector.mockResolvedValue(site(5, { inspectorUserId: "ins-2" }));
     const user = userEvent.setup();
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    await screen.findByText("Site 1");
-    expect(screen.queryByText("Site 5")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Show all 5 loaded bookings" }));
-    expect(screen.getByText("Site 5")).toBeInTheDocument();
+    await screen.findByText("Site 1", { selector: ".booking-card__text strong" });
+    expect(screen.getByText("Site 5", { selector: ".booking-card__text strong" })).toBeInTheDocument();
     await open(user, "Site 5");
     await pickInspector(user, "Cara Cole");
     await user.click(within(dialog()).getByRole("button", { name: "Save change" }));
@@ -662,7 +661,7 @@ describe("Changing the inspector of a confirmed booking", () => {
     client.listInspectionBookings.mockResolvedValueOnce({ total: 7, etag: null, items: [site(6), site(7)] });
     await user.click(await screen.findByRole("button", { name: "Load more bookings" }));
     expect(client.listInspectionBookings).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 5 }));
-    expect(await screen.findByText("Site 7")).toBeInTheDocument();
+    expect(await screen.findByText("Site 7", { selector: ".booking-card__text strong" })).toBeInTheDocument();
   });
 
   it("refreshes the inspections after the change, and keeps it with a warning if that refresh fails", async () => {
@@ -690,7 +689,7 @@ describe("Changing the inspector of a confirmed booking", () => {
       .mockResolvedValueOnce({ total: 150, etag: null, nextAfter: null, items: many(101, 50) });
     const user = userEvent.setup();
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    await screen.findByText("Kooragang");
+    await screen.findByText("Kooragang", { selector: ".booking-card__text strong" });
     await open(user);
 
     expect(client.listAdminUsers).toHaveBeenNthCalledWith(1, expect.objectContaining({ role: "INSPECTOR", accountStatus: "ACTIVE", offset: 0 }));

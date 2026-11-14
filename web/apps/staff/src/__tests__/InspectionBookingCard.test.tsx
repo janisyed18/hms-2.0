@@ -69,32 +69,36 @@ describe("InspectionBookingCard", () => {
   });
 
   it.each([
-    ["PENDING_APPROVAL", "PENDING APPROVAL", "booking-status--pending"],
-    ["APPROVED", "APPROVED", "booking-status--approved"],
-    ["REJECTED", "REJECTED", "booking-status--rejected"],
-    ["CANCELLED", "CANCELLED", "booking-status--neutral"]
+    ["PENDING_APPROVAL", "Requested", "booking-status--pending"],
+    ["APPROVED", "Approved", "booking-status--approved"],
+    ["REJECTED", "Rejected", "booking-status--rejected"],
+    ["CANCELLED", "Cancelled", "booking-status--neutral"]
   ] as const)("shows %s as its own status badge", (status, label, className) => {
     setup(booking({ status }), { canApproveBookings: false, canBook: false });
+    expect(screen.getByText("Status")).toBeVisible();
     expect(screen.getByText(label)).toHaveClass(className);
   });
 
   it("lets an approver assign, approve or decline a pending booking, and asks for an inspector first", async () => {
     const { user, onApprove, onDecline } = setup(booking());
-    await user.click(screen.getByRole("button", { name: "Assign & approve" }));
+    expect(screen.getByRole("button", { name: "Assign inspector" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Change inspector/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Assign inspector" }));
+    await user.click(screen.getByRole("button", { name: "Confirm assignment & approve" }));
     expect(onApprove).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("Choose an inspector to assign first.");
 
     await user.selectOptions(screen.getByLabelText("Assign inspector for Port Botany"), "ins-2");
-    await user.click(screen.getByRole("button", { name: "Assign & approve" }));
+    await user.click(screen.getByRole("button", { name: "Confirm assignment & approve" }));
     expect(onApprove).toHaveBeenCalledWith("bk-1", "ins-2");
 
-    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await user.click(screen.getByRole("button", { name: "Reject request" }));
     expect(onDecline).toHaveBeenCalledWith(expect.objectContaining({ id: "bk-1" }));
   });
 
   it("offers no approval controls to someone who cannot approve", () => {
     setup(booking(), { canApproveBookings: false });
-    expect(screen.queryByRole("button", { name: "Assign & approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Assign inspector" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Assign inspector for Port Botany")).not.toBeInTheDocument();
   });
 
@@ -102,8 +106,9 @@ describe("InspectionBookingCard", () => {
     const { user, onChangeInspector } = setup(confirmed());
     const row = screen.getByText("Assigned inspector:").closest("div") as HTMLElement;
     expect(within(row).getByText("Ben Brook")).toBeVisible();
-    await user.click(within(row).getByRole("button", { name: "Change inspector for Port Botany" }));
+    await user.click(screen.getByRole("button", { name: "Change inspector for Port Botany" }));
     expect(onChangeInspector).toHaveBeenCalledWith(expect.objectContaining({ id: "bk-1" }));
+    await user.click(screen.getByText("Actions"));
     expect(screen.getByRole("button", { name: "Request reschedule" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Cancel booking" })).toBeEnabled();
   });
@@ -111,6 +116,7 @@ describe("InspectionBookingCard", () => {
   it("hides the inspector row from a customer, who can still reschedule or cancel", async () => {
     const { user, onRequestReschedule, onCancel } = setup(confirmed(), { canApproveBookings: false });
     expect(screen.queryByText("Assigned inspector:")).not.toBeInTheDocument();
+    await user.click(screen.getByText("Actions"));
     await user.click(screen.getByRole("button", { name: "Request reschedule" }));
     await user.click(screen.getByRole("button", { name: "Cancel booking" }));
     expect(onRequestReschedule).toHaveBeenCalled();
@@ -120,6 +126,7 @@ describe("InspectionBookingCard", () => {
   it("does not offer Change inspector or another reschedule while one is pending", () => {
     setup(confirmed({ changeRequests: [change("PENDING_CUSTOMER_CONFIRMATION")] as never }));
     expect(screen.getByText("Cannot change inspector while a reschedule is pending.")).toBeVisible();
+    expect(screen.getByText("Reschedule requested")).toBeVisible();
     expect(screen.queryByRole("button", { name: /Change inspector/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Request reschedule" })).not.toBeInTheDocument();
     expect(screen.getByText("Awaiting customer confirmation")).toBeVisible();
@@ -149,8 +156,8 @@ describe("InspectionBookingCard", () => {
 
   it("disables every action while another is running, and labels the one in progress", () => {
     setup(booking(), { pendingAction: "approve:bk-1" });
-    expect(screen.getByRole("button", { name: "Approving…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Decline" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Assign inspector" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reject request" })).toBeDisabled();
   });
 
   it("keeps long names and references readable", () => {

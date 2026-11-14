@@ -61,20 +61,23 @@ test.describe("Inspection operations: booking cards across states and widths", (
       // A confirmed, assigned booking.
       await book(customer.page, "2027-10-04");
       await openInspections(admin.page);
+      await admin.page.getByRole("button", { name: "Assign inspector" }).first().click();
       await admin.page.getByLabel("Assign inspector for Port Botany").selectOption({ label: "inspector@example.test" });
-      await admin.page.getByRole("button", { name: "Assign & approve" }).click();
-      await expect(admin.page.locator(".inspection-booking-list")).toContainText("APPROVED", { timeout: 90_000 });
+      await admin.page.getByRole("button", { name: "Confirm assignment & approve" }).click();
+      await expect(admin.page.locator(".inspection-booking-list")).toContainText("Approved", { timeout: 90_000 });
 
       // A second one, approved, then a customer reschedule request waiting for the admin.
       await book(customer.page, "2027-10-05");
       await refreshInspectionsWorkspace(admin.page);
+      await admin.page.getByRole("button", { name: "Assign inspector" }).first().click();
       await admin.page.getByLabel("Assign inspector for Port Botany").selectOption({ label: "inspector@example.test" });
-      await admin.page.getByRole("button", { name: "Assign & approve" }).click();
-      await expect(admin.page.getByRole("button", { name: "Assign & approve" })).toHaveCount(0, { timeout: 90_000 });
+      await admin.page.getByRole("button", { name: "Confirm assignment & approve" }).click();
+      await expect(admin.page.getByRole("button", { name: "Confirm assignment & approve" })).toHaveCount(0, { timeout: 90_000 });
       await expect(async () => {
         await refreshInspectionsWorkspace(customer.page);
-        await expect(card(customer.page, /5 Oct 2027/)).toContainText("APPROVED", { timeout: 4_000 });
+        await expect(card(customer.page, /5 Oct 2027/)).toContainText("Approved", { timeout: 4_000 });
       }).toPass({ timeout: 90_000 });
+      await card(customer.page, /5 Oct 2027/).getByText("Actions").click();
       await card(customer.page, /5 Oct 2027/).getByRole("button", { name: "Request reschedule" }).click();
       await selectFirstAvailableTime(customer.page, "2027-10-07");
       await submitBookingForm(customer.page, "Request reschedule", "/change-requests");
@@ -85,6 +88,17 @@ test.describe("Inspection operations: booking cards across states and widths", (
 
       const page = admin.page;
       await expect(page.locator(".inspection-booking-card")).toHaveCount(3);
+      // One operational list: filtering changes the visible bookings, not a second register.
+      await page.getByRole("combobox", { name: "Filter bookings by status" }).selectOption("REQUESTED");
+      await expect(page.locator(".inspection-booking-card")).toHaveCount(1);
+      await expect(page.getByRole("button", { name: "Assign inspector" })).toHaveCount(1);
+      await page.getByRole("combobox", { name: "Filter bookings by status" }).selectOption("RESCHEDULE");
+      await expect(page.locator(".inspection-booking-card")).toHaveCount(1);
+      await expect(page.locator(".inspection-booking-card")).toContainText("Requested by: Customer");
+      await page.getByRole("button", { name: "Clear filters" }).click();
+      await expect(page.locator(".inspection-booking-card")).toHaveCount(3);
+      await expect(page.getByRole("table", { name: "Inspection records" })).toHaveCount(0);
+
       for (const [label, width, height] of [["desktop-1440", 1440, 1000], ["tablet-1024", 1024, 900], ["mobile-390", 390, 900]] as const) {
         await page.setViewportSize({ width, height });
         await page.getByRole("heading", { name: "Inspection operations" }).scrollIntoViewIfNeeded();

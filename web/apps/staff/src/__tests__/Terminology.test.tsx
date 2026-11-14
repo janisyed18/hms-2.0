@@ -52,29 +52,34 @@ describe("one name for each state", () => {
   });
 });
 
-describe("Inspections has two actions, and they are different ones", () => {
-  it("offers 'Create inspection' (a record for an asset) and 'Book inspection' (a site visit) side by side, with booking the main one", async () => {
+describe("Inspection Operations keeps booking management and execution separate", () => {
+  it("gives an administrator booking actions but no inspection-execution action", async () => {
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    const create = await screen.findByRole("button", { name: "Create inspection" });
-    const book = screen.getByRole("button", { name: "Book inspection" });
-    expect(create).toHaveClass("secondary-button");
-    expect(book).toHaveClass("primary-button");
-    expect(screen.queryByRole("button", { name: /Add inspection/i })).toBeNull();
+    expect(await screen.findByRole("button", { name: "Book inspection" })).toHaveClass("primary-button");
+    expect(screen.getByRole("button", { name: /Bookings \(/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Create inspection" })).toBeNull();
+    screen.getByRole("button", { name: /Inspection reports \(/ }).click();
+    expect(screen.queryByRole("button", { name: "Create inspection" })).toBeNull();
   });
 
-  it("shows only the action a person may take", async () => {
+  it("offers inspection execution only to a write-authorized non-booking reviewer", async () => {
     const first = render(<InspectionsWorkspace canApprove={false} canApproveBookings={false} canBook canWrite={false} />);
     await screen.findByRole("button", { name: "Book inspection" });
     expect(screen.queryByRole("button", { name: "Create inspection" })).toBeNull();
     first.unmount();
-    render(<InspectionsWorkspace canApprove canApproveBookings={false} canBook={false} canWrite />);
-    await screen.findByRole("button", { name: "Create inspection" });
+
+    render(<InspectionsWorkspace canApprove={false} canApproveBookings={false} canBook={false} canWrite />);
+    screen.getByRole("button", { name: /Inspection reports \(/ }).click();
+    expect(await screen.findByRole("button", { name: "Create inspection" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Book inspection" })).toBeNull();
   });
 
-  it("the status tab for submitted work says 'Awaiting review'", async () => {
+  it("distinguishes booking status filtering from inspection report status", async () => {
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    expect(await screen.findByRole("tab", { name: "Awaiting review" })).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Submitted" })).toBeNull();
+    expect(await screen.findByRole("combobox", { name: "Filter bookings by status" })).toBeVisible();
+    expect(screen.getByRole("option", { name: "Reschedule requested" })).toBeInTheDocument();
+    screen.getByRole("button", { name: /Inspection reports \(/ }).click();
+    expect(screen.getByRole("heading", { name: "Inspection reports" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Filter bookings by status" })).toBeNull();
   });
 });
