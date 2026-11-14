@@ -78,6 +78,7 @@ export function InspectionBookingCard({
   // Which inspector was picked for this booking or for one of its reschedule requests, keyed by id.
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [missing, setMissing] = useState<string | null>(null);
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
   const zone = booking.location.schedulingTimezone;
   const when = (value: string) => formatWithZone(value, zone);
   const busy = pendingAction !== null;
@@ -90,6 +91,8 @@ export function InspectionBookingCard({
     inspectors.find((inspector) => inspector.id === booking.inspectorUserId)?.displayName ??
     (booking.inspectorUserId ? "Assigned" : "Not assigned");
   const assets = booking.assets.map(assetLabel).join(", ");
+  const pendingAssignment = canApproveBookings && booking.status === "PENDING_APPROVAL";
+  const displayedStatus = openChange ? "Reschedule requested" : booking.status === "PENDING_APPROVAL" ? "Requested" : booking.status === "APPROVED" ? "Approved" : booking.status === "REJECTED" ? "Rejected" : "Cancelled";
   const choose = (key: string, value: string) => setPicked((current) => ({ ...current, [key]: value }));
 
   function approve(key: string, run: (inspectorId: string) => void) {
@@ -121,37 +124,50 @@ export function InspectionBookingCard({
           </span>
         </div>
         <div className="booking-card__status">
-          <span className={bookingStatusClass(booking.status)}>{booking.status.replace("_", " ")}</span>
+          <span className="booking-card__status-label">Status</span>
+          <span className={bookingStatusClass(openChange ? "PENDING_APPROVAL" : booking.status)}>{displayedStatus}</span>
         </div>
         <div className="booking-card__actions">
-          {canApproveBookings && booking.status === "PENDING_APPROVAL" ? (
-            <>
-              <InspectorSelect
-                inspectors={inspectors}
-                label={`Assign inspector for ${booking.location.name}`}
-                onChange={(value) => choose(booking.id, value)}
-                value={picked[booking.id] ?? ""}
-              />
-              <ActionButton
-                disabled={busy}
-                onClick={() => approve(booking.id, (inspectorId) => onApprove(booking.id, inspectorId))}
-                pending={pendingAction === `approve:${booking.id}`}
-                pendingLabel="Approving…"
-                variant="primary"
-              >
-                Assign & approve
+          {pendingAssignment ? (
+            <div className="booking-assignment-action">
+              <ActionButton disabled={busy} onClick={() => setAssignmentOpen((open) => !open)} variant="primary">
+                Assign inspector
               </ActionButton>
-              <ActionButton disabled={busy} onClick={() => onDecline(booking)} variant="ghost">Decline</ActionButton>
-            </>
+              {assignmentOpen ? (
+                <div className="booking-assignment-choices">
+                  <InspectorSelect
+                    inspectors={inspectors}
+                    label={`Assign inspector for ${booking.location.name}`}
+                    onChange={(value) => choose(booking.id, value)}
+                    value={picked[booking.id] ?? ""}
+                  />
+                  <ActionButton
+                    disabled={busy}
+                    onClick={() => approve(booking.id, (inspectorId) => onApprove(booking.id, inspectorId))}
+                    pending={pendingAction === `approve:${booking.id}`}
+                    pendingLabel="Approving…"
+                    variant="primary"
+                  >
+                    Confirm assignment & approve
+                  </ActionButton>
+                  {missingPrompt(booking.id)}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {canApproveBookings && booking.status === "PENDING_APPROVAL" ? (
+            <ActionButton disabled={busy} onClick={() => onDecline(booking)} variant="ghost">Reject request</ActionButton>
           ) : null}
           {canBook && confirmed && !openChange ? (
-            <>
-              <ActionButton disabled={busy} onClick={() => onRequestReschedule(booking)} variant="secondary">Request reschedule</ActionButton>
-              <ActionButton disabled={busy} onClick={() => onCancel(booking)} variant="ghost">Cancel booking</ActionButton>
-            </>
+            <details className="booking-action-menu">
+              <summary aria-label={`Actions for ${booking.location.name}`}>Actions <ChevronDown aria-hidden="true" size={14}/></summary>
+              <div className="booking-action-menu__items">
+                <ActionButton disabled={busy} onClick={() => onRequestReschedule(booking)} variant="secondary">Request reschedule</ActionButton>
+                <ActionButton disabled={busy} onClick={() => onCancel(booking)} variant="ghost">Cancel booking</ActionButton>
+              </div>
+            </details>
           ) : null}
         </div>
-        {canApproveBookings && booking.status === "PENDING_APPROVAL" ? missingPrompt(booking.id) : null}
       </div>
 
       {canApproveBookings && confirmed ? (
