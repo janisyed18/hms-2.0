@@ -322,6 +322,13 @@ def _require_inspection_write(principal: Principal) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    # SUPER_ADMIN inherits every permission but must never execute field inspections.
+    # The inspector-scoped role is also what enforces assigned-booking access.
+    if not is_inspector_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only assigned inspectors may perform inspection work",
+        )
 
 
 def _require_inspection_booking(principal: Principal) -> None:

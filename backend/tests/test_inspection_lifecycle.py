@@ -373,7 +373,7 @@ async def test_each_step_needs_its_own_permission(
     async with api_client(session_factory, INSPECTOR) as client:
         inspection_id = await draft(client, seeded_sync_session)
     # Everyone but an inspector-capable role is refused the working steps on a draft.
-    for who in (REVIEWER, ADMIN, CUSTOMER):
+    for who in (REVIEWER, ADMIN, CUSTOMER, SUPER):
         async with api_client(session_factory, who) as client:
             assert (await client.post(url(inspection_id, "start"))).status_code == 403
     async with api_client(session_factory, INSPECTOR) as client:
@@ -414,6 +414,26 @@ async def test_an_inspector_acts_only_on_their_own_assignment(
             )  # not theirs: indistinguishable from absent
     async with api_client(session_factory, INSPECTOR) as client:
         assert await status_of(client, inspection_id) == "DRAFT"
+
+
+@pytest.mark.asyncio
+async def test_super_admin_cannot_execute_field_inspections(
+    session_factory: async_sessionmaker[AsyncSession],  # noqa: F811
+    seeded_sync_session: dict[str, str],  # noqa: F811
+    assigned_inspector_booking: str,  # noqa: F811
+) -> None:
+    async with api_client(session_factory, INSPECTOR) as client:
+        inspection_id = await draft(client, seeded_sync_session)
+    async with api_client(session_factory, SUPER) as client:
+        created = await client.post(
+            f"/api/v1/assets/{seeded_sync_session['vopak_asset_id']}/inspections",
+            json={"inspection_type": "SERVICE", "result": None},
+        )
+        assert created.status_code == 403
+        assert (await client.post(url(inspection_id, "start"))).status_code == 403
+        assert (await client.patch(url(inspection_id), json={"result": "PASS"})).status_code == 403
+        assert (await client.post(url(inspection_id, "submit"))).status_code == 403
+        assert (await client.post(url(inspection_id, "rework"))).status_code == 403
 
 
 # --- the offline inspector (compatibility bridge) ---

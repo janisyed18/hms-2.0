@@ -713,7 +713,7 @@ export function HmsApp({ session: providedSession, onLogout, portalMode = false 
                       canApproveBookings={session.roles.some((role) =>
                         role === "SUPER_ADMIN" || role === "HMS_ADMIN"
                       )}
-                      canWrite={hasPermission(session, "inspection:write")}
+                      canWrite={canPerformInspections(session)}
                       onInspectionRouteChange={onInspectionRouteChange}
                       routeInspectionId={route.inspection}
                       bookAssetId={route.bookAsset}
@@ -796,6 +796,13 @@ function normaliseSession(session: StaffSession): StaffSession {
     ...session,
     permissions: Array.from(permissions)
   };
+}
+
+/** Inspection execution belongs only to inspector-scoped identities, never admins. */
+export function canPerformInspections(session: StaffSession): boolean {
+  return session.roles.includes("INSPECTOR") &&
+    !session.roles.some((role) => ["SUPER_ADMIN", "HMS_ADMIN", "REVIEWER", "ASSEMBLY"].includes(role)) &&
+    hasPermission(session, "inspection:write");
 }
 
 function hasPermission(session: StaffSession, permission: StaffPermission): boolean {
