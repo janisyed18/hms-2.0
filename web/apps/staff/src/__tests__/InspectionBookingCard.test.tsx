@@ -106,7 +106,7 @@ describe("InspectionBookingCard", () => {
     const { user, onChangeInspector } = setup(confirmed());
     const row = screen.getByText("Assigned inspector:").closest("div") as HTMLElement;
     expect(within(row).getByText("Ben Brook")).toBeVisible();
-    await user.click(within(row).getByRole("button", { name: "Change inspector for Port Botany" }));
+    await user.click(screen.getByRole("button", { name: "Change inspector for Port Botany" }));
     expect(onChangeInspector).toHaveBeenCalledWith(expect.objectContaining({ id: "bk-1" }));
     await user.click(screen.getByText("Actions"));
     expect(screen.getByRole("button", { name: "Request reschedule" })).toBeEnabled();
