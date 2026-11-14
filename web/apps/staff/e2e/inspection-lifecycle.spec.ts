@@ -101,6 +101,18 @@ function cleanup() {
 }
 
 const SLOW = { timeout: 25_000 };
+
+/**
+ * Waits until a transition has actually been stored. The inspector and the reviewer are
+ * two browsers: one clicks, the other reloads, and a page opened mid-request reads its
+ * list once and then shows the state from before the click for good. The button going is
+ * not the fact being waited for; the stored status is.
+ */
+async function settles(inspectionId: string, status: string): Promise<void> {
+  await expect
+    .poll(() => sqlValue(`SELECT status FROM inspections WHERE id = '${inspectionId}'`), SLOW)
+    .toBe(status);
+}
 const WIDTHS: Array<[number, number]> = [[1440, 900], [1024, 800], [768, 1000], [390, 844]];
 
 const here = (page: Page) => {
@@ -179,6 +191,10 @@ test.describe("inspection lifecycle", () => {
       await detail.getByLabel("Certificate result").selectOption("PASS");
 
       await detail.getByRole("button", { name: "Submit inspection" }).click();
+      // Wait for the submit to land before the reviewer loads: their list is read once
+      // when the page opens, so a page opened mid-submit shows the work as still in
+      // progress and never catches up. The button going is not that fact; the status is.
+      await settles(inspectionId, "SUBMITTED");
       // An inspector cannot review their own work. Switch to the admin's read-only review.
       await reviewer.page.goto(`/?view=inspections&inspection=${inspectionId}`);
       const reviewDetail = detailOf(reviewer.page);
@@ -192,6 +208,7 @@ test.describe("inspection lifecycle", () => {
       await expect(reviewDetail.getByRole("alert").or(reviewDetail.getByText("Say what needs to change"))).toBeVisible();
       await reviewDetail.getByLabel("What needs to change").fill("Hold time must be re-tested");
       await reviewDetail.getByRole("button", { name: "Send back for changes" }).click();
+      await settles(inspectionId, "REJECTED");
       await page.reload();
       await expect(detail.getByRole("status").filter({ hasText: "Changes required" })).toContainText("Hold time must be re-tested", SLOW);
       await expect(detail.getByRole("button", { name: "Begin rework" })).toBeVisible();
@@ -217,18 +234,26 @@ test.describe("inspection lifecycle", () => {
 
       // Resubmitting ends the guidance and still names no reviewer until someone reviews.
       await detail.getByRole("button", { name: "Submit inspection" }).click();
+      await settles(inspectionId, "SUBMITTED");
       await reviewer.page.reload();
       await expect(reviewDetail.getByRole("button", { name: "Approve inspection" })).toBeVisible(SLOW);
       await expect(detail.getByText("Rework requested")).toHaveCount(0);
       await expect(reviewerOf(reviewer.page)).toHaveText("Not reviewed");
       await reviewDetail.getByRole("button", { name: "Approve inspection" }).click();
       await expect(reviewDetail.getByRole("button", { name: "Approve inspection" })).toHaveCount(0, SLOW);
-      await page.reload();
-      await expect(reviewerOf(page)).not.toHaveText("Not reviewed");
-      await expect(detail.getByText("Approved").first()).toBeVisible();
-      for (const name of ["Start inspection", "Save progress", "Submit inspection", "Begin rework", "Request changes"]) {
-        await expect(detail.getByRole("button", { name })).toHaveCount(0);
+      await settles(inspectionId, "APPROVED");
+
+      // Approving the last inspection on a booking completes its appointment, which ends
+      // the inspector's assignment: the work leaves their queue and the record with it.
+      // The approved record is checked where it still belongs — the reviewer's screen.
+      await reviewer.page.reload();
+      await expect(reviewerOf(reviewer.page)).not.toHaveText("Not reviewed");
+      await expect(reviewDetail.getByText("Approved").first()).toBeVisible();
+      for (const name of ["Approve inspection", "Request changes", "Start inspection", "Submit inspection"]) {
+        await expect(reviewDetail.getByRole("button", { name })).toHaveCount(0);
       }
+      await page.reload();
+      await expect(page.getByRole("complementary", { name: "Inspection detail" })).toHaveCount(0, SLOW);
     } finally {
       await Promise.all([session.context.close(), reviewer.context.close()]);
     }

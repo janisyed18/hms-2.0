@@ -155,10 +155,11 @@ test.describe("Delete customer and Change inspector", () => {
       const page = admin.page;
       // One navigation only: a reload straight followed by another races two session refreshes.
       await page.goto("/?view=inspections");
-      await expect(page.getByText("Loading inspections")).toBeHidden({ timeout: 30_000 });
+      await expect(page.getByText(/^Loading (bookings|inspections)$/)).toHaveCount(0, { timeout: 30_000 });
 
       const card = page.locator(".inspection-booking-card").filter({ hasText: "Port Botany" }).first();
-      await expect(card.getByText("Assigned inspector:")).toBeVisible();
+      // The card names the field, then the inspector. Exact, so "Change inspector" is not a match.
+      await expect(card.getByText("Inspector", { exact: true })).toBeVisible();
       await expect(card.locator(".assigned-inspector__name")).toContainText("inspector@example.test");
       // The old three-picker row is gone: no Reassign button, one Change inspector beside the name.
       await expect(page.getByRole("button", { name: /Reassign inspector/ })).toHaveCount(0);
