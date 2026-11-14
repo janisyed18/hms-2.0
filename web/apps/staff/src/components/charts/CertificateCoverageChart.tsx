@@ -26,7 +26,7 @@ export function CertificateCoverageChart({
     { id: "covered", label: "Covered by a valid certificate", value: coverage.coveredAssets, token: "var(--chart-2)" },
     { id: "unverified", label: "Validity unverified (no expiry recorded)", value: coverage.unverifiedAssets, token: "var(--chart-4)" },
     { id: "expired", label: "Certificate expired", value: coverage.expiredAssets, token: "var(--chart-6)" },
-    { id: "missing", label: "No certificate", value: coverage.missingAssets, token: "var(--chart-grid)" }
+    { id: "missing", label: "No certificate", value: coverage.missingAssets, token: "var(--chart-neutral)" }
   ];
   const scale = scaleLinear().domain([0, Math.max(1, eligible)]).range([0, VIEW_WIDTH]);
   const share = (value: number) => (eligible ? Math.round((value / eligible) * 100) : 0);

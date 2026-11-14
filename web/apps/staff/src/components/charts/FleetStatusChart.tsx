@@ -66,6 +66,7 @@ interface FleetStatusChartProps {
 
 export function FleetStatusChart({ fleet, onSelect, selectLabel }: FleetStatusChartProps) {
   const titleId = useId();
+  const hatchId = `${titleId}-hatch`;
   const categories = fleetCategories(fleet);
   const total = fleet.total;
   const scale = scaleLinear().domain([0, Math.max(1, total)]).range([0, VIEW_WIDTH]);
@@ -100,10 +101,21 @@ export function FleetStatusChart({ fleet, onSelect, selectLabel }: FleetStatusCh
             .map((category) => `${category.label} ${category.value}, ${share(category.value)} per cent`)
             .join("; ")}.`}
         </title>
+        <defs>
+          {/* Two neutral categories sit next to each other, so the one that is simply
+              untracked is hatched as well as coloured. */}
+          <pattern id={hatchId} width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+            <rect height="6" width="6" fill="var(--chart-neutral)" />
+            <line stroke="var(--panel)" strokeWidth="2.5" x1="0" x2="0" y1="0" y2="6" />
+          </pattern>
+        </defs>
         {segments.map((segment) =>
           segment.width > 0 ? (
             <rect
               className={`fleet-bar-segment fleet-segment-${segment.id}`}
+              // Inline, because the stylesheet's fill would otherwise win over an
+              // attribute and the hatch would never appear.
+              style={segment.id === "unscheduled" ? { fill: `url(#${hatchId})` } : undefined}
               height={BAR_HEIGHT}
               key={segment.id}
               width={segment.width}

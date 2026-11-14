@@ -51,6 +51,10 @@
   --chart-grid: var(--border);
   --chart-axis: var(--soft);
   --chart-surface: var(--panel-subtle);
+  /* Neutral fills for "no state" categories. Border colours are too faint to carry a
+     chart segment: these keep at least 3:1 against the panel in both themes. */
+  --chart-neutral: #8392a6;
+  --chart-neutral-soft: #6d7c90;
 
   --space-1: 8px;
   --space-2: 16px;
@@ -141,6 +145,8 @@
   --chart-4: #9a5a08;
   --chart-5: #0f6d80;
   --chart-6: #b42318;
+  --chart-neutral: #7e8ca1;
+  --chart-neutral-soft: #5f6f86;
 
 }
 

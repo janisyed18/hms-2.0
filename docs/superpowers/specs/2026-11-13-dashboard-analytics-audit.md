@@ -511,3 +511,40 @@ Verification: 904 Staff tests pass (72 files); lint, typecheck and build clean. 
 browser against a stub API: no page overflow at 1440, 1024, 768 and 390 in both themes, with
 and without the notification panel (16 cases); the focus ring, arrow-key readout, tooltip and
 series toggle all confirmed on the rendered page.
+
+## 14. Final audit (read-only, plus two fixes it found)
+
+**Scope.** 12 commits, 39 files. Nothing outside Dashboard, Analytics and their tests, except
+three deliberate items: one line added to the CI PostgreSQL list, the `reporting_timezone`
+setting, and the My Work hook fix (its own commit, prompted by a CI failure this branch
+exposed). No Terraform, deployment, migration or authentication file is touched.
+
+**Authorisation.** Every reporting query is wrapped in the principal scope: 10 call sites in
+the service and activity modules, with no unscoped execute. `/dashboard`,
+`/analytics/overview` and `/reporting/activity` each require `asset:read` and refuse
+inspectors; escalation still requires `asset:write`. The activity endpoint joins audit rows
+to count escalations but returns only counts, so it needs no audit permission.
+
+**Accessibility, measured in a browser rather than asserted.**
+- Tab order reaches the plot, the six series toggles and the fleet legend, with no trap.
+- Text contrast: axis labels 5.5:1 dark and 5.0:1 light; legend text 16:1 and 17.7:1.
+- Series lines: 5.7–9.8:1 dark, 5.3–6.6:1 light, each with its own dash pattern (6 unique).
+- The hidden data table is 1×1, clipped and absolutely positioned: in the accessibility tree,
+  out of the layout.
+
+Two defects this audit found and fixed:
+- The *Unscheduled* fleet segment and *No certificate* coverage segment were drawn in a border
+  colour: 1.48:1 against the light panel, below the 3:1 a graphical object needs. They now use
+  `--chart-neutral`, at 3.41:1 light and 5.38:1 dark, and every other segment measures 4.0:1 or
+  better in both themes.
+- The hatch distinguishing *Unscheduled* from *Suspended* never rendered, because the
+  stylesheet's `fill` beat the SVG attribute. It is applied inline now, and confirmed present.
+
+**Metric consistency, checked on the rendered pages.** The five fleet legend rows are
+character-identical on both pages; the on-track rate reads 68% and "820 of 1,200" on both; the
+overdue figure reads 23 in the Dashboard KPI, the Analytics exposure KPI and both fleet
+legends. One earlier consistency assertion passed vacuously (its regex matched nothing on
+either side); it was replaced with a direct read of each KPI.
+
+**Checks.** 904 Staff tests (72 files), `eslint` clean, `tsc --noEmit` clean, `vite build`
+clean; backend `ruff` and `mypy` clean over 230 files.

@@ -4294,14 +4294,14 @@ button.fleet-bar-legend-item:hover {
 .fleet-bar-legend-item i.fleet-segment-on-track { background: var(--success); }
 .fleet-bar-legend-item i.fleet-segment-due-soon { background: var(--warning); }
 .fleet-bar-legend-item i.fleet-segment-overdue { background: var(--danger); }
-.fleet-bar-legend-item i.fleet-segment-suspended { background: var(--muted); }
-.fleet-bar-legend-item i.fleet-segment-unscheduled { background: var(--border-strong); }
+.fleet-bar-legend-item i.fleet-segment-suspended { background: var(--chart-neutral-soft); }
+.fleet-bar-legend-item i.fleet-segment-unscheduled { background: var(--chart-neutral); }
 
 rect.fleet-segment-on-track { fill: var(--success); }
 rect.fleet-segment-due-soon { fill: var(--warning); }
 rect.fleet-segment-overdue { fill: var(--danger); }
-rect.fleet-segment-suspended { fill: var(--muted); }
-rect.fleet-segment-unscheduled { fill: var(--border-strong); }
+rect.fleet-segment-suspended { fill: var(--chart-neutral-soft); }
+rect.fleet-segment-unscheduled { fill: var(--chart-neutral); }
 
 .fleet-bar-legend-item strong {
   font-variant-numeric: tabular-nums;
