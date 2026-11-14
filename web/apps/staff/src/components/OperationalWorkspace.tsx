@@ -18,13 +18,14 @@ import {
 } from "lucide-react";
 import { m, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import {
   createHmsClient,
   HmsApiError
 } from "../api/hmsClient";
 import type {
+  ActivityCounts,
   ActivityReport,
   AuditEventRecord,
   DashboardRecord,
@@ -33,6 +34,8 @@ import type {
 } from "../domain/types";
 import { PresencePanel, StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { motionTokens } from "../motion/motionTokens";
+import { ActivityTrendChart } from "./charts/ActivityTrendChart";
+import { FleetStatusChart } from "./charts/FleetStatusChart";
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
 import { ConfirmDialog } from "./interaction/ConfirmDialog";
@@ -52,6 +55,12 @@ import {
 import type { ReportingPeriod } from "../utils/reportingPeriod";
 
 export type OperationalModule = "dashboard" | "sync";
+
+/** An activity report together with the reporting period it was loaded for. */
+interface LoadedActivity {
+  report: ActivityReport;
+  periodLabel: string;
+}
 
 interface OperationalWorkspaceProps {
   canEscalate: boolean;
@@ -230,7 +239,6 @@ export function OperationalWorkspace({
   );
   const fleet = dashboard.fleetStatus;
   const onTrackRate = fleet.onTrackPercent;
-  const series = activitySeries(activity?.report ?? null);
   // Escalations awaiting nobody: what has actually been escalated, across the whole
   // queue rather than the page on screen.
   const escalationTotal = dashboard.overdueEscalated;
@@ -348,7 +356,7 @@ export function OperationalWorkspace({
               action="Open asset register"
               onClick={() => onModuleChange("assets")}
               tone="blue"
-              trend={series ? series.assetsAdded.values : undefined}
+              trend={sparkline(activity?.report ?? null, "assetsAdded")}
             />
           </StaggerItem>
           <StaggerItem>
@@ -390,7 +398,7 @@ export function OperationalWorkspace({
               action="Review submitted inspections"
               onClick={() => onModuleChange("inspections")}
               tone="amber"
-              trend={series ? series.inspectionsSubmitted.values : undefined}
+              trend={sparkline(activity?.report ?? null, "inspectionsSubmitted")}
             />
           </StaggerItem>
           <StaggerItem>
@@ -406,7 +414,7 @@ export function OperationalWorkspace({
               action="Review overdue retests"
               onClick={() => onModuleChange("retest")}
               tone="violet"
-              trend={series ? series.retestsEscalated.values : undefined}
+              trend={sparkline(activity?.report ?? null, "retestsEscalated")}
             />
           </StaggerItem>
         </StaggerGroup>
@@ -437,7 +445,6 @@ export function OperationalWorkspace({
             activity={activity?.report ?? null}
             error={activityError}
             isStale={Boolean(activity && activity.periodLabel !== reportingPeriod.label)}
-            series={series}
           />
         </section>
         <FleetStatusPanel fleet={fleet} onModuleChange={onModuleChange} />
@@ -654,68 +661,6 @@ function formatDashboardDate(now: number): string {
   }).format(new Date(now));
 }
 
-/**
- * The six series the reporting API returns, each counted by the server from an exact
- * timestamp. Nothing here is inferred from an audit action's wording, and there is no
- * "retests completed" series: completing a retest only moves its due date, leaving no
- * timestamp to count.
- */
-const activitySeriesOrder = [
-  { key: "assetsAdded", label: "Assets added", className: "trend-assets" },
-  { key: "inspectionsSubmitted", label: "Inspections submitted", className: "trend-inspections" },
-  { key: "inspectionsApproved", label: "Inspections approved", className: "trend-approved" },
-  { key: "inspectionsRejected", label: "Inspections rejected", className: "trend-rejected" },
-  { key: "certificatesIssued", label: "Certificates issued", className: "trend-certificates" },
-  { key: "retestsEscalated", label: "Retests escalated", className: "trend-escalations" }
-] as const;
-
-type ActivitySeriesKey = (typeof activitySeriesOrder)[number]["key"];
-
-/** An activity report together with the reporting period it was loaded for. */
-interface LoadedActivity {
-  report: ActivityReport;
-  periodLabel: string;
-}
-
-interface ActivitySeries {
-  label: string;
-  className: string;
-  values: number[];
-  total: number;
-}
-
-type ActivitySeriesSet = Record<ActivitySeriesKey, ActivitySeries> & { labels: string[] };
-
-function activitySeries(activity: ActivityReport | null): ActivitySeriesSet | null {
-  if (!activity || activity.buckets.length === 0) {
-    return null;
-  }
-  const labels = activity.buckets.map((bucket) =>
-    formatBucketLabel(bucket.start, activity.granularity, activity.timezone)
-  );
-  const entries = activitySeriesOrder.map((series) => {
-    const values = activity.buckets.map((bucket) => bucket[series.key]);
-    return [
-      series.key,
-      {
-        label: series.label,
-        className: series.className,
-        values,
-        total: activity.totals[series.key]
-      }
-    ] as const;
-  });
-  return { ...Object.fromEntries(entries), labels } as ActivitySeriesSet;
-}
-
-function formatBucketLabel(start: string, granularity: string, timeZone: string): string {
-  const options: Intl.DateTimeFormatOptions =
-    granularity === "hour"
-      ? { hour: "numeric", timeZone }
-      : { day: "numeric", month: "short", timeZone };
-  return new Intl.DateTimeFormat("en-AU", options).format(new Date(start));
-}
-
 function formatAsOf(asOf: string, timeZone: string): string {
   return new Intl.DateTimeFormat("en-AU", {
     day: "numeric",
@@ -728,6 +673,12 @@ function formatAsOf(asOf: string, timeZone: string): string {
 }
 
 /** Named for the as-of date as the Dashboard shows it, which is the organisation's date. */
+/** One series' per-bucket counts for a KPI sparkline, or nothing when it is all zero. */
+function sparkline(activity: ActivityReport | null, key: keyof ActivityCounts): number[] | undefined {
+  if (!activity || activity.buckets.length === 0) return undefined;
+  return activity.buckets.map((bucket) => bucket[key]);
+}
+
 function overdueExportName(asOf: string, timeZone: string): string {
   const date = new Intl.DateTimeFormat("en-CA", {
     year: "numeric",
@@ -848,14 +799,12 @@ function MetricSparkline({ values }: { values: number[] }) {
 function OperationalTrendPanel({
   activity,
   error,
-  isStale,
-  series
+  isStale
 }: {
   activity: ActivityReport | null;
   error: string | null;
   /** True while these figures belong to a period other than the one now selected. */
   isStale: boolean;
-  series: ActivitySeriesSet | null;
 }) {
   if (error) {
     return (
@@ -864,68 +813,16 @@ function OperationalTrendPanel({
       </div>
     );
   }
-  if (!series || !activity) {
+  if (!activity) {
     return (
       <div className="operational-trend">
         <p className="trend-empty">Loading recorded activity…</p>
       </div>
     );
   }
-
-  const lines = activitySeriesOrder.map((entry) => series[entry.key]);
-  const maxValue = Math.max(...lines.flatMap((line) => line.values), 1);
-  const hasActivity = lines.some((line) => line.total > 0);
-  const labelStep = Math.max(1, Math.ceil(series.labels.length / 6));
-
   return (
-    <div className={`operational-trend${isStale ? " is-stale" : ""}`} aria-busy={isStale || undefined}>
-      {hasActivity ? (
-        <>
-          <svg aria-hidden="true" className="operational-trend-chart" viewBox="0 0 640 240">
-            {[0.25, 0.5, 0.75, 1].map((ratio) => <line className="trend-grid-line" key={ratio} x1="12" x2="628" y1={212 - 196 * ratio} y2={212 - 196 * ratio} />)}
-            {lines.map((line) => <path className={`trend-line ${line.className}`} d={chartPath(line.values, maxValue, 640, 240)} key={line.label} pathLength="1" />)}
-            {series.labels.map((label, index) => (
-              index % labelStep === 0 ? (
-                <text key={`${label}-${index}`} x={12 + (616 * index) / Math.max(1, series.labels.length - 1)} y="235">{label}</text>
-              ) : null
-            ))}
-          </svg>
-          {/* The chart is decorative beside this table, which carries the same numbers
-              for anyone reading with assistive technology or unable to tell the lines
-              apart by colour. The wrapper, not the table, carries ``sr-only``: a CSS
-              table treats a specified width as a minimum, so a 1px table still lays out
-              at its content width and widens the page. */}
-          <div className="sr-only">
-          <table>
-            <caption>
-              Recorded activity by {activity.granularity}, {activity.timezone}
-            </caption>
-            <thead>
-              <tr>
-                <th scope="col">Period starting</th>
-                {lines.map((line) => <th key={line.label} scope="col">{line.label}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {series.labels.map((label, index) => (
-                <tr key={`${label}-${index}`}>
-                  <th scope="row">{label}</th>
-                  {lines.map((line) => <td key={line.label}>{line.values[index]}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        </>
-      ) : <p className="trend-empty">No activity was recorded in this period.</p>}
-      <div className="trend-legend" aria-label="Operational trend legend">
-        {lines.map((line) => (
-          <span className={line.className} key={line.label}>
-            <i aria-hidden="true" />
-            {line.label} {formatNumber(line.total)}
-          </span>
-        ))}
-      </div>
+    <div className="operational-trend" aria-busy={isStale || undefined}>
+      <ActivityTrendChart activity={activity} isStale={isStale} />
     </div>
   );
 }
@@ -1005,148 +902,23 @@ function FleetStatusPanel({
   fleet: FleetStatus;
   onModuleChange: (module: AppModule) => void;
 }) {
-  const segments: FleetSegment[] = [
-    {
-      id: "on-track",
-      label: "On track",
-      description: "Scheduled, with more than a week until the retest is due",
-      value: fleet.onTrack,
-      module: "retest"
-    },
-    {
-      id: "due-soon",
-      label: "Due soon",
-      description: "Retest due within the next 7 days",
-      value: fleet.dueSoon,
-      module: "retest"
-    },
-    {
-      id: "overdue",
-      label: "Overdue",
-      description: "Past the retest due date",
-      value: fleet.overdue,
-      module: "retest"
-    },
-    {
-      id: "suspended",
-      label: "Suspended",
-      description: "Retest schedule suspended, so no retest is expected",
-      value: fleet.suspended,
-      module: "retest"
-    },
-    {
-      id: "unscheduled",
-      label: "Unscheduled",
-      description: "No retest schedule, so no retest date is being tracked",
-      value: fleet.unscheduled,
-      module: "assets"
-    }
-  ];
-  const total = fleet.total;
-  const [selection, setSelectedStatus] = useState<FleetSegmentId | null>(null);
-  const selectedStatus = selection
-    ?? (fleet.overdue > 0 ? "overdue" : fleet.dueSoon > 0 ? "due-soon" : "on-track");
-  const selectedSegment = segments.find((segment) => segment.id === selectedStatus) ?? segments[0];
-  const circumference = 2 * Math.PI * 48;
-  let offset = 0;
-
-  function selectSegment(status: FleetSegmentId) {
-    setSelectedStatus(status);
-  }
-
-  function selectWithKeyboard(event: KeyboardEvent<SVGCircleElement>, status: FleetSegmentId) {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      selectSegment(status);
-    }
-  }
-
   return (
     <section className="data-panel health-panel">
       <div className="panel-heading compact">
         <div>
           <h2>Fleet Retest Status</h2>
-          <p>{assetCountLabel(total)} eligible for retest{total ? "" : ". Condemned, retired and draft assets are not counted"}</p>
+          <p>{assetCountLabel(fleet.total)} eligible for retest. Condemned, retired and draft assets are not counted.</p>
         </div>
       </div>
-      <div className="fleet-ring" aria-label="Fleet retest status distribution" role="group">
-        <svg className="fleet-ring-chart" viewBox="0 0 120 120">
-          <circle className="fleet-ring-track" cx="60" cy="60" r="48" />
-          <g transform="rotate(-90 60 60)">
-            {segments.map((segment) => {
-              const segmentLength = total ? (segment.value / total) * circumference : 0;
-              const dashOffset = -offset;
-              offset += segmentLength;
-              const percentage = total ? Math.round((segment.value / total) * 100) : 0;
-              const countLabel = assetCountLabel(segment.value);
-              return segmentLength > 0 ? (
-                <circle
-                  aria-label={`${segment.label}: ${countLabel}, ${percentage}% of the eligible fleet`}
-                  aria-pressed={selectedStatus === segment.id}
-                  className={`fleet-segment fleet-segment-${segment.id}${selectedStatus === segment.id ? " is-selected" : ""}`}
-                  cx="60"
-                  cy="60"
-                  key={segment.id}
-                  onClick={() => selectSegment(segment.id)}
-                  onFocus={() => selectSegment(segment.id)}
-                  onKeyDown={(event) => selectWithKeyboard(event, segment.id)}
-                  onPointerEnter={() => selectSegment(segment.id)}
-                  r="48"
-                  role="button"
-                  strokeDasharray={`${segmentLength} ${circumference - segmentLength}`}
-                  strokeDashoffset={dashOffset}
-                  tabIndex={0}
-                />
-              ) : null;
-            })}
-          </g>
-        </svg>
-        <div className="fleet-ring-core" aria-live="polite">
-          <span>{selectedSegment.label}</span>
-          <strong>{formatNumber(selectedSegment.value)}</strong>
-          <small>{total ? `${Math.round((selectedSegment.value / total) * 100)}% of the fleet` : "No eligible assets"}</small>
-        </div>
-      </div>
-      <p className="fleet-status-meaning">{selectedSegment.description}.</p>
-      <div className="health-legend">
-        {segments.map((segment) => {
-          const percentage = total ? Math.round((segment.value / total) * 100) : 0;
-          return (
-            <button
-        aria-label={`${segment.label}: ${assetCountLabel(segment.value)}, ${percentage}% of the eligible fleet`}
-              className={`fleet-legend-button fleet-legend-${segment.id}${selectedStatus === segment.id ? " is-selected" : ""}`}
-              key={segment.id}
-              onClick={() => selectSegment(segment.id)}
-              onFocus={() => selectSegment(segment.id)}
-              onPointerEnter={() => selectSegment(segment.id)}
-              type="button"
-            >
-              <span>
-                <i aria-hidden="true" className={`dot fleet-segment-${segment.id}`} />
-                {segment.label}
-                <small>{percentage}%</small>
-              </span>
-              <strong>{formatNumber(segment.value)}</strong>
-            </button>
-          );
-        })}
-      </div>
-      <button className="schedule-link" onClick={() => onModuleChange(selectedSegment.module)} type="button">
-        {selectedSegment.id === "unscheduled" ? "Open asset register" : "Open retest schedule"} <ArrowRight aria-hidden="true" size={15} />
-      </button>
+      <FleetStatusChart
+        fleet={fleet}
+        onSelect={(category) => onModuleChange(category.id === "unscheduled" ? "assets" : "retest")}
+        selectLabel={(category) =>
+          category.id === "unscheduled" ? "Opens the asset register." : "Opens the retest schedule."
+        }
+      />
     </section>
   );
-}
-
-type FleetSegmentId = "on-track" | "due-soon" | "overdue" | "suspended" | "unscheduled";
-
-interface FleetSegment {
-  id: FleetSegmentId;
-  label: string;
-  /** What this category means, so a reader never has to guess the rule. */
-  description: string;
-  value: number;
-  module: AppModule;
 }
 
 function assetCountLabel(value: number): string {

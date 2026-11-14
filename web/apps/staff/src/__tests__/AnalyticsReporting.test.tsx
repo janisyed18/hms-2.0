@@ -80,12 +80,13 @@ describe("Analytics shares the Dashboard's fleet definitions", () => {
     const card = (await screen.findByText("Retest on-track rate")).closest(".kpi-card");
     expect(card).toHaveTextContent("60%");
     expect(card).toHaveTextContent("60 of 100 eligible assets on track");
-    const legend = screen.getByText("Fleet retest status").closest(".health-panel")?.querySelector(".health-legend");
-    expect(legend).not.toBeNull();
-    for (const label of ["On track", "Due this week", "Overdue", "Suspended", "Unscheduled"]) {
-      expect(within(legend as HTMLElement).getByRole("button", { name: new RegExp(`^${label}`) })).toBeVisible();
+    const panel = screen.getByText("Fleet retest status").closest(".health-panel");
+    expect(panel).not.toBeNull();
+    for (const label of ["On track", "Due soon", "Overdue", "Suspended", "Unscheduled"]) {
+      expect(
+        within(panel as HTMLElement).getByRole("button", { name: new RegExp(`^${label}: `) })
+      ).toBeVisible();
     }
-    expect(screen.getByText("100 eligible assets")).toBeVisible();
     expect(screen.getByText("3% of eligible assets are overdue")).toBeVisible();
   });
 

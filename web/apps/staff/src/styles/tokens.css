@@ -40,6 +40,18 @@
   --warning: var(--color-warning);
   --danger: var(--color-danger);
 
+  /* Chart series. Six hues that stay apart in both themes; every series also carries a
+     dash pattern or a hatch, so none of them depends on colour alone. */
+  --chart-1: var(--color-cobalt-500);
+  --chart-2: var(--color-success);
+  --chart-3: #a77dff;
+  --chart-4: var(--color-warning);
+  --chart-5: #5ac8d8;
+  --chart-6: var(--color-danger);
+  --chart-grid: var(--border);
+  --chart-axis: var(--soft);
+  --chart-surface: var(--panel-subtle);
+
   --space-1: 8px;
   --space-2: 16px;
   --space-3: 24px;
@@ -123,6 +135,13 @@
   --button-primary-hover: #174ea6;
   --button-danger: #b42318;
   --button-danger-hover: #912018;
+  --chart-1: #1f5fbf;
+  --chart-2: #087a55;
+  --chart-3: #6d3fd4;
+  --chart-4: #9a5a08;
+  --chart-5: #0f6d80;
+  --chart-6: #b42318;
+
 }
 
 html {

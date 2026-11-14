@@ -224,23 +224,25 @@ describe("the Dashboard reports the retest on-track rate", () => {
     stub();
     renderDashboard();
 
-    const panel = await screen.findByRole("group", { name: "Fleet retest status distribution" });
-    const legend = panel.parentElement?.querySelector(".health-legend");
-    expect(legend).not.toBeNull();
-    for (const [label, count, percent] of [
-      ["On track", "60 assets", "60%"],
-      ["Due soon", "10 assets", "10%"],
-      ["Overdue", "3 assets", "3%"],
-      ["Suspended", "2 assets", "2%"],
-      ["Unscheduled", "25 assets", "25%"]
+    await screen.findByText("Fleet Retest Status");
+    for (const [label, count, percent, meaning] of [
+      ["On track", "60 assets", "60%", "Scheduled, with more than a week until the retest is due"],
+      ["Due soon", "10 assets", "10%", "Retest due within the next 7 days"],
+      ["Overdue", "3 assets", "3%", "Past the retest due date"],
+      ["Suspended", "2 assets", "2%", "Retest schedule suspended, so no retest is expected"],
+      ["Unscheduled", "25 assets", "25%", "No retest schedule, so no retest date is being tracked"]
     ]) {
       expect(
-        within(legend as HTMLElement).getByRole("button", {
-          name: `${label}: ${count}, ${percent} of the eligible fleet`
+        screen.getByRole("button", {
+          name: `${label}: ${count}, ${percent} of the eligible fleet. ${meaning}. ${
+            label === "Unscheduled" ? "Opens the asset register." : "Opens the retest schedule."
+          }`
         })
       ).toBeVisible();
     }
-    expect(screen.getByText("100 assets eligible for retest")).toBeVisible();
+    expect(
+      screen.getByText(/100 assets eligible for retest\. Condemned, retired and draft assets are not counted\./)
+    ).toBeVisible();
   });
 });
 
@@ -342,13 +344,18 @@ describe("the Dashboard trend comes from the reporting activity API", () => {
     const fetchMock = stub();
     renderDashboard();
 
-    const legend = await screen.findByLabelText("Operational trend legend");
-    expect(legend).toHaveTextContent("Assets added 12");
-    expect(legend).toHaveTextContent("Inspections submitted 4");
-    expect(legend).toHaveTextContent("Inspections approved 2");
-    expect(legend).toHaveTextContent("Inspections rejected 0");
-    expect(legend).toHaveTextContent("Certificates issued 2");
-    expect(legend).toHaveTextContent("Retests escalated 3");
+    const legend = await screen.findByRole("group", { name: "Activity series" });
+    for (const [label, total] of [
+      ["Assets added", "12"],
+      ["Inspections submitted", "4"],
+      ["Inspections approved", "2"],
+      ["Inspections rejected", "0"],
+      ["Certificates issued", "2"],
+      ["Retests escalated", "3"]
+    ]) {
+      const toggle = within(legend).getByRole("button", { name: `${label} ${total}` });
+      expect(toggle).toHaveAttribute("aria-pressed", "true");
+    }
     expect(
       fetchMock.mock.calls.some(([url]) => String(url).includes("/api/v1/reporting/activity"))
     ).toBe(true);
@@ -373,7 +380,7 @@ describe("the Dashboard trend comes from the reporting activity API", () => {
     const user = userEvent.setup();
     renderDashboard();
 
-    await screen.findByLabelText("Operational trend legend");
+    await screen.findByRole("group", { name: "Activity series" });
     expect(screen.getByText(/Recorded activity for last 1 month, by day\./)).toBeInTheDocument();
 
     await user.selectOptions(screen.getByRole("combobox", { name: "Reporting period" }), "last_week");
@@ -383,7 +390,7 @@ describe("the Dashboard trend comes from the reporting activity API", () => {
       /Recorded activity for last 1 month, by day\. Updating to last 1 week…/
     );
     expect(subtitle).toBeInTheDocument();
-    expect(document.querySelector(".operational-trend.is-stale")).not.toBeNull();
+    expect(document.querySelector(".activity-chart.is-stale")).not.toBeNull();
     expect(document.querySelector('.operational-trend[aria-busy="true"]')).not.toBeNull();
   });
 
@@ -408,7 +415,7 @@ describe("the Dashboard trend comes from the reporting activity API", () => {
     renderDashboard();
 
     expect(await screen.findByText(/Activity is unavailable|Activity could not be loaded/)).toBeVisible();
-    expect(screen.queryByLabelText("Operational trend legend")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Activity series" })).not.toBeInTheDocument();
   });
 
   it("says recent activity needs audit access rather than claiming there was none", async () => {

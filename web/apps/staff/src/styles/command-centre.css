@@ -594,54 +594,7 @@ button:active:not(:disabled) {
   color: var(--accent);
 }
 
-.analytics-fleet-panel .fleet-ring {
-  width: min(236px, 62vw);
-  margin-top: 16px;
-}
-
-.analytics-fleet-panel .fleet-legend-button i.dot.fleet-segment-on-track { background: var(--success); }
-.fleet-legend-button i.dot.fleet-segment-due-soon { background: var(--warning); }
-.fleet-legend-button i.dot.fleet-segment-overdue { background: var(--danger); }
-.fleet-legend-button i.dot.fleet-segment-suspended { background: var(--muted); }
-.fleet-legend-button i.dot.fleet-segment-unscheduled { background: var(--border-strong, var(--border)); }
-
-.fleet-status-meaning {
-  margin: 0;
-  padding: 0 18px 4px;
-  color: var(--soft);
-  font-size: 12px;
-  line-height: 1.45;
-  text-align: center;
-}
-
-.analytics-coverage-certificates {
-  display: grid;
-  gap: 6px;
-  margin: 12px 0 0;
-  padding: 12px 18px 0;
-  border-top: 1px solid var(--border);
-}
-
-.analytics-coverage-certificates > div {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.analytics-coverage-certificates dt {
-  color: var(--soft);
-  font-size: 12px;
-}
-
-.analytics-coverage-certificates dd {
-  margin: 0;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-}
-
-.analytics-inline-retry {
+.analytics-fleet-panel .analytics-fleet-panel .analytics-inline-retry {
   padding: 0;
   border: 0;
   background: none;
@@ -658,64 +611,7 @@ button:active:not(:disabled) {
   font-weight: 650;
 }
 
-.health-legend {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding: 0 20px 18px;
-}
-
-.analytics-fleet-panel .fleet-legend-button {
-  min-height: 72px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-subtle);
-}
-
-.analytics-fleet-panel .fleet-legend-button > span {
-  align-items: flex-start;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.25;
-}
-
-.analytics-fleet-panel .fleet-legend-button strong {
-  align-self: end;
-  color: var(--ink);
-  font-size: 19px;
-}
-
-.fleet-legend-button i {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  margin-top: 3px;
-  border-radius: 50%;
-}
-
 .fleet-legend-button i.fleet-segment-active,
-.fleet-legend-button i.fleet-segment-on-track {
-  background: var(--success);
-}
-
-.fleet-legend-button i.fleet-segment-suspended {
-  background: var(--muted);
-}
-
-.fleet-legend-button i.fleet-segment-unscheduled {
-  background: var(--border-strong, var(--border));
-}
-
-.fleet-legend-button i.fleet-segment-due-soon {
-  background: var(--warning);
-}
-
-.fleet-legend-button i.fleet-segment-overdue {
-  background: var(--danger);
-}
-
 .analytics-panel-link {
   width: calc(100% - 40px);
   min-height: 38px;
@@ -761,55 +657,7 @@ button:active:not(:disabled) {
   font-weight: 650;
 }
 
-.analytics-coverage-bars {
-  display: grid;
-  gap: 15px;
-  padding: 18px 20px;
-}
-
-.analytics-coverage-bars > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 7px 12px;
-}
-
-.analytics-coverage-bars span,
-.analytics-coverage-bars strong {
-  color: var(--color-neutral-700);
-  font-size: 12px;
-}
-
-.analytics-coverage-bars strong {
-  font-variant-numeric: tabular-nums;
-}
-
-.analytics-coverage-bars i {
-  grid-column: 1 / -1;
-  width: var(--coverage);
-  min-width: 2px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--accent);
-  box-shadow: 0 3px 6px rgb(47 111 218 / 22%);
-  transition: width 240ms ease-out;
-}
-
-.analytics-coverage-bars .coverage-expiring {
-  background: var(--warning);
-  box-shadow: 0 3px 6px rgb(196 122 24 / 22%);
-}
-
-.analytics-coverage-bars .coverage-expired {
-  background: var(--danger);
-  box-shadow: 0 3px 6px rgb(204 53 47 / 20%);
-}
-
 .analytics-risk-list,
-.analytics-outcomes-list {
-  display: grid;
-  padding: 12px;
-}
-
 .analytics-risk-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
@@ -917,28 +765,6 @@ button:active:not(:disabled) {
 .analytics-outcome > span:first-child strong {
   color: var(--ink);
   font-size: 13px;
-}
-
-.analytics-outcome-totals {
-  display: inline-grid;
-  grid-template-columns: repeat(3, minmax(44px, 1fr));
-  gap: 6px;
-}
-
-.analytics-outcome-totals b {
-  display: grid;
-  gap: 2px;
-  color: var(--ink);
-  font-size: 15px;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
-
-.analytics-outcome-totals b small {
-  color: var(--soft);
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
 }
 
 .analytics-empty {
@@ -1207,43 +1033,6 @@ button:active:not(:disabled) {
   border-left: 1px solid var(--border);
 }
 
-.fleet-ring {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: min(184px, 70vw);
-  aspect-ratio: 1;
-  margin: 20px auto;
-  background: transparent;
-  filter: none;
-}
-
-.fleet-ring-chart {
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.fleet-ring-track,
-.fleet-segment {
-  fill: none;
-  stroke-width: 11;
-}
-
-.fleet-ring-track {
-  stroke: var(--panel-subtle);
-}
-
-.fleet-segment {
-  cursor: pointer;
-  transition: opacity 160ms ease-out, stroke-width 160ms ease-out;
-}
-
-.fleet-segment:focus-visible {
-  outline: none;
-  stroke-width: 15;
-}
-
 .fleet-segment-active,
 .fleet-segment-on-track {
   stroke: var(--success);
@@ -1266,100 +1055,7 @@ button:active:not(:disabled) {
   stroke: var(--border-strong, var(--border));
 }
 
-.fleet-segment:not(.is-selected) {
-  opacity: 0.72;
-}
-
-.fleet-segment.is-selected {
-  stroke-width: 13;
-  opacity: 1;
-}
-
-.fleet-ring-core {
-  position: absolute;
-  z-index: 1;
-  display: grid;
-  width: 58%;
-  aspect-ratio: 1;
-  place-content: center;
-  gap: 2px;
-  border-radius: 50%;
-  background: var(--panel);
-  color: var(--ink);
-  pointer-events: none;
-  text-align: center;
-}
-
-.fleet-ring-core span {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 760;
-}
-
-.fleet-ring-core strong {
-  font-size: 28px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.fleet-ring-core small {
-  color: var(--soft);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.health-legend {
-  display: grid;
-  gap: 4px;
-  padding: 0 0 16px;
-}
-
-.fleet-legend-button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  min-height: 42px;
-  padding: 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-neutral-700);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.fleet-legend-button > span {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  gap: 8px;
-  color: var(--color-neutral-700);
-  font-size: 13px;
-}
-
-.fleet-legend-button small {
-  margin-left: auto;
-  color: var(--soft);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.fleet-legend-button strong {
-  color: var(--color-neutral-700);
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 780;
-}
-
 .fleet-legend-button:hover,
-.fleet-legend-button.is-selected {
-  border-color: var(--border);
-  background: var(--panel-subtle);
-}
-
 .fleet-legend-button:focus-visible,
 .dashboard-asset-link:focus-visible {
   outline: 3px solid rgb(47 111 218 / 24%);
@@ -1401,22 +1097,6 @@ button:active:not(:disabled) {
   width: 12px;
   margin-left: 5px;
   opacity: 1;
-}
-
-@media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .fleet-ring,
-  .fleet-ring-core {
-    transition: filter 180ms ease-out, box-shadow 180ms ease-out;
-  }
-
-  .fleet-segment:hover {
-    opacity: 1;
-    stroke-width: 13;
-  }
-
-  .fleet-legend-button:hover {
-    transform: translateX(2px);
-  }
 }
 
 .panel-heading {
@@ -1910,80 +1590,8 @@ button:active:not(:disabled) {
   background: var(--panel-subtle);
 }
 
-.operational-trend {
-  padding: 0 18px 16px;
-}
-
-/* While the selected period has changed but its figures have not arrived, the chart is
-   visibly the previous period's rather than passing as the new one. */
-.operational-trend.is-stale .operational-trend-chart,
-.operational-trend.is-stale .trend-legend {
-  opacity: 0.45;
-}
-
-.operational-trend-chart {
-  display: block;
-  width: 100%;
-  min-height: 220px;
-  overflow: visible;
-}
-
-.trend-grid-line {
-  stroke: var(--border);
-  stroke-width: 1;
-}
-
-.trend-line {
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 2.5;
-}
-
 /* Each series carries a dash pattern as well as a colour, so the lines stay separable
    without relying on colour vision. */
-.trend-assets { color: var(--accent-2); stroke: var(--accent-2); }
-.trend-inspections { color: var(--success); stroke: var(--success); stroke-dasharray: 7 4; }
-.trend-approved { color: var(--accent); stroke: var(--accent); stroke-dasharray: 2 3; }
-.trend-rejected { color: var(--warning); stroke: var(--warning); stroke-dasharray: 10 4 2 4; }
-.trend-certificates { color: var(--muted); stroke: var(--muted); stroke-dasharray: 1 4; }
-.trend-escalations { color: var(--danger); stroke: var(--danger); stroke-dasharray: 12 5; }
-
-.trend-legend i {
-  background: currentColor;
-}
-
-.operational-trend-chart text {
-  fill: var(--soft);
-  font-size: 10px;
-  font-weight: 650;
-  text-anchor: middle;
-}
-
-.trend-legend {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 16px;
-  padding-top: 4px;
-  color: var(--soft);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.trend-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.trend-legend i {
-  width: 16px;
-  height: 3px;
-  border-radius: 99px;
-  background: currentColor;
-}
-
 .trend-empty {
   display: grid;
   min-height: 220px;
@@ -2014,21 +1622,7 @@ button:active:not(:disabled) {
 
 .console-dashboard .health-panel {
   display: grid;
-  grid-template-columns: minmax(148px, 0.8fr) minmax(170px, 1fr);
-  align-items: center;
-}
-
-.console-dashboard .health-panel .panel-heading {
-  grid-column: 1 / -1;
-}
-
-.console-dashboard .fleet-ring {
-  width: min(168px, 44vw);
-  margin: 4px auto 14px;
-}
-
-.console-dashboard .health-legend {
-  padding: 0 18px 0 0;
+  align-content: start;
 }
 
 .console-dashboard .due-panel .due-list,
@@ -2358,48 +1952,6 @@ button:active:not(:disabled) {
   grid-column: 1 / -1;
 }
 
-.analytics-fleet-panel .fleet-ring {
-  width: min(218px, 38vw);
-  margin: 26px auto 22px;
-}
-
-.analytics-fleet-panel .fleet-ring-core {
-  width: 59%;
-  background: var(--panel);
-  box-shadow: 0 0 0 1px var(--border), 0 9px 20px rgb(0 0 0 / 14%);
-}
-
-.analytics-fleet-panel .fleet-ring-core strong {
-  font-size: 30px;
-}
-
-.analytics-fleet-panel .fleet-ring-core small {
-  max-width: 92px;
-  margin-inline: auto;
-  line-height: 1.2;
-}
-
-.analytics-fleet-panel .health-legend {
-  align-content: center;
-  grid-template-columns: 1fr;
-  gap: 2px;
-  padding: 20px 20px 12px 0;
-}
-
-.analytics-fleet-panel .fleet-legend-button {
-  min-height: 45px;
-  padding: 9px 10px;
-}
-
-.analytics-fleet-panel .fleet-legend-button > span {
-  align-items: center;
-  color: var(--color-neutral-700);
-}
-
-.analytics-fleet-panel .fleet-legend-button strong {
-  color: var(--ink);
-}
-
 .analytics-posture-alert {
   display: flex;
   align-items: center;
@@ -2448,41 +2000,9 @@ button:active:not(:disabled) {
 }
 
 .analytics-coverage-score i,
-.analytics-coverage-bars i {
-  display: block;
-  width: 100%;
-  min-width: 0;
-  height: 7px;
-  border-radius: 99px;
-  background: linear-gradient(90deg, var(--coverage-color, var(--accent-2)) var(--coverage), var(--border) var(--coverage));
-  box-shadow: none;
-}
-
 .analytics-coverage-score i {
   margin-top: 9px;
   --coverage-color: var(--accent-2);
-}
-
-.analytics-coverage-bars {
-  gap: 16px;
-  padding: 20px;
-}
-
-.analytics-coverage-bars span,
-.analytics-coverage-bars strong {
-  color: var(--color-neutral-700);
-}
-
-.analytics-command .analytics-coverage-bars i {
-  --coverage-color: var(--success);
-}
-
-.analytics-command .analytics-coverage-bars .coverage-expiring {
-  --coverage-color: var(--warning);
-}
-
-.analytics-command .analytics-coverage-bars .coverage-expired {
-  --coverage-color: var(--danger);
 }
 
 .analytics-risk-list {
@@ -2547,73 +2067,7 @@ button:active:not(:disabled) {
   color: var(--accent-2);
 }
 
-.analytics-outcome-summary {
-  display: grid;
-  gap: 18px;
-  width: 100%;
-  min-height: 142px;
-  padding: 22px 20px 16px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
 .analytics-outcome-summary:hover,
-.analytics-outcome-summary:focus-visible {
-  background: var(--panel-subtle);
-}
-
-.analytics-outcome-summary:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: -3px;
-}
-
-.analytics-outcome-summary .analytics-outcome-totals {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0;
-}
-
-.analytics-outcome-summary .analytics-outcome-totals b {
-  padding: 0 10px;
-  border-right: 1px solid var(--border);
-  font-size: 25px;
-  text-align: left;
-}
-
-.analytics-outcome-summary .analytics-outcome-totals b:last-child {
-  border-right: 0;
-}
-
-.analytics-outcome-summary .analytics-outcome-totals b small {
-  margin-top: 4px;
-  font-size: 9px;
-}
-
-.analytics-outcome-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-top: 13px;
-  border-top: 1px solid var(--border);
-  color: var(--soft);
-  font-size: 11px;
-  font-weight: 650;
-}
-
-.analytics-outcome-footer span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.analytics-outcome-footer span:last-child {
-  color: var(--accent-2);
-}
-
 /* Shared record and administration surface contracts. */
 .workspace-state {
   align-items: center;
@@ -4562,3 +4016,418 @@ button:active:not(:disabled) {
   }
 }
 
+
+/* --- charts -------------------------------------------------------------------- */
+
+.activity-chart {
+  display: grid;
+  gap: 10px;
+  padding: 0 18px 14px;
+}
+
+/* While the selected period has changed but its figures have not arrived, the chart is
+   visibly the previous period's rather than passing as the new one. */
+.activity-chart.is-stale {
+  opacity: 0.45;
+}
+
+.activity-chart-plot {
+  position: relative;
+}
+
+.activity-chart-svg {
+  display: block;
+  width: 100%;
+  height: 300px;
+  overflow: visible;
+}
+
+.chart-grid {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+
+.chart-axis {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+
+.chart-axis-label {
+  fill: var(--chart-axis);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.chart-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.5;
+}
+
+.chart-marker line {
+  stroke: var(--border-strong);
+  stroke-dasharray: 3 3;
+  stroke-width: 1;
+}
+
+.chart-plot-target {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+.chart-plot-target:focus-visible {
+  outline: none;
+  fill: color-mix(in srgb, var(--accent) 7%, transparent);
+  stroke: var(--accent-2);
+  stroke-dasharray: 4 3;
+  stroke-width: 1.5;
+}
+
+.chart-tooltip {
+  position: absolute;
+  top: 8px;
+  z-index: 2;
+  min-width: 190px;
+  max-width: min(260px, 70vw);
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+  font-size: 12px;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.chart-tooltip strong {
+  display: block;
+  padding-bottom: 6px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.chart-tooltip dl {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+}
+
+.chart-tooltip dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.chart-tooltip dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--soft);
+}
+
+.chart-tooltip dt i {
+  width: 9px;
+  height: 3px;
+  border-radius: 99px;
+}
+
+.chart-tooltip dd {
+  margin: 0;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--chart-surface);
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+button.chart-legend-item {
+  cursor: pointer;
+  transition: border-color var(--duration-fast) ease, opacity var(--duration-fast) ease;
+}
+
+button.chart-legend-item:hover {
+  border-color: var(--border-hover);
+}
+
+.chart-legend-item.is-hidden {
+  opacity: 0.5;
+}
+
+/* A hidden series is struck through, so its state does not rest on opacity alone. */
+.chart-legend-item.is-hidden .chart-legend-swatch {
+  opacity: 0.4;
+}
+
+.chart-legend-item.is-hidden span {
+  text-decoration: line-through;
+}
+
+.chart-legend-item strong {
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-legend-swatch {
+  width: 24px;
+  height: 8px;
+  flex: none;
+}
+
+.chart-legend-item.is-static i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.chart-legend.is-compact {
+  padding-top: 2px;
+  font-size: 11px;
+}
+
+.chart-empty {
+  margin: 0;
+  padding: 24px 18px;
+  color: var(--soft);
+  font-size: 13px;
+  text-align: center;
+}
+
+.fleet-bar-chart {
+  display: grid;
+  gap: 12px;
+  padding: 4px 18px 16px;
+}
+
+.fleet-bar-svg {
+  display: block;
+  width: 100%;
+  height: 34px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.fleet-bar-segment {
+  stroke: var(--panel);
+  stroke-width: 1;
+}
+
+.fleet-bar-legend {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Flex, not grid: in a narrow panel the count and share wrap to a second line rather
+   than squeezing the label into a column it cannot fit, which overlapped the text. */
+.fleet-bar-legend-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 650;
+  text-align: left;
+}
+
+button.fleet-bar-legend-item {
+  cursor: pointer;
+  transition: background var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+button.fleet-bar-legend-item:hover {
+  border-color: var(--border);
+  background: var(--chart-surface);
+}
+
+.fleet-bar-legend-item i {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 3px;
+}
+
+.fleet-bar-legend-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fleet-bar-legend-item strong {
+  margin-left: auto;
+}
+
+.fleet-bar-legend-item i.fleet-segment-on-track { background: var(--success); }
+.fleet-bar-legend-item i.fleet-segment-due-soon { background: var(--warning); }
+.fleet-bar-legend-item i.fleet-segment-overdue { background: var(--danger); }
+.fleet-bar-legend-item i.fleet-segment-suspended { background: var(--muted); }
+.fleet-bar-legend-item i.fleet-segment-unscheduled { background: var(--border-strong); }
+
+rect.fleet-segment-on-track { fill: var(--success); }
+rect.fleet-segment-due-soon { fill: var(--warning); }
+rect.fleet-segment-overdue { fill: var(--danger); }
+rect.fleet-segment-suspended { fill: var(--muted); }
+rect.fleet-segment-unscheduled { fill: var(--border-strong); }
+
+.fleet-bar-legend-item strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-bar-legend-item small {
+  min-width: 36px;
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.outcomes-chart {
+  display: grid;
+  gap: 8px;
+  padding: 4px 18px 14px;
+}
+
+.outcomes-chart-svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+
+.outcomes-chart-label {
+  fill: var(--soft);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.outcomes-chart-value {
+  fill: var(--ink);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  text-anchor: end;
+}
+
+.outcomes-chart-track {
+  fill: var(--chart-surface);
+}
+
+.coverage-chart {
+  display: grid;
+  gap: 12px;
+  padding: 0 18px 14px;
+}
+
+.coverage-chart-svg {
+  display: block;
+  width: 100%;
+  height: 30px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.coverage-segment {
+  stroke: var(--panel);
+  stroke-width: 1;
+}
+
+.coverage-chart-legend {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.coverage-chart-legend li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12.5px;
+}
+
+.coverage-chart-legend span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.coverage-chart-legend strong {
+  margin-left: auto;
+}
+
+.coverage-chart-legend i {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 3px;
+}
+
+.coverage-chart-legend strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.coverage-chart-legend small {
+  min-width: 36px;
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.coverage-chart-records {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.coverage-chart-records > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.coverage-chart-records dt {
+  color: var(--soft);
+  font-size: 12px;
+}
+
+.coverage-chart-records dd {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button.chart-legend-item,
+  button.fleet-bar-legend-item {
+    transition: none;
+  }
+}

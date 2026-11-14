@@ -419,3 +419,57 @@ overflow, and the new unit test fails. Coverage added: a unit test asserting the
 carries the class and the table does not while staying exposed, and
 `e2e/reporting-responsive.spec.ts`, which checks both workspaces at all four widths and names
 the offending element on failure.
+
+## 11. Phase D outcome (D3 visualisations)
+
+Dependencies: `d3-scale`, `d3-shape`, `d3-array` and their types. No `d3-axis` or
+`d3-selection`: React owns every element, and axes are rendered from `scale.ticks()` as
+ordinary JSX. Time is never re-derived on the client — bucket boundaries come from the server
+and labels are formatted with `Intl` in the organisation timezone the API reports, so a viewer
+in another zone still reads the organisation's days.
+
+`src/components/charts/`:
+
+- `chartPrimitives.ts`: frame maths, "nice" axis maxima, whole-number ticks, label thinning,
+  bucket formatting, and the dash patterns that keep series separable without colour.
+- `ActivityTrendChart.tsx`: the six verified series. Legend buttons toggle a series
+  (`aria-pressed`, struck through when off, never all off); hiding one rescales the y-axis from
+  the visible series only, while the totals and the data table keep the full figures. A
+  focusable plot area steps bucket by bucket with the arrow keys, Home/End and Escape, driving
+  the same marker and tooltip the pointer does, with an `aria-live` readout. The accessible
+  data table carries every number.
+- `FleetStatusChart.tsx`: the five mutually exclusive categories as one stacked bar over the
+  eligible fleet, each legend row naming its count, share and meaning, and drilling down to the
+  retest schedule (or the asset register for unscheduled).
+- `InspectionOutcomesChart.tsx`: outcomes per inspection type on one shared scale.
+- `CertificateCoverageChart.tsx`: asset-level coverage as one bar over the eligible fleet, with
+  certificate-record counts kept separate underneath.
+
+Chart colours are new `--chart-1..6` tokens defined for both themes, plus `--chart-grid`,
+`--chart-axis` and `--chart-surface`.
+
+Layout corrections found by looking at the rendered pages, not by reading code: the Dashboard
+fleet panel was still a two-column grid built for the old ring, which squeezed the bar into
+121px of a 357px panel; and the legend rows were a fixed grid whose label column collapsed and
+overlapped the counts. Both are now single-column, with legend rows that wrap instead of
+overlapping.
+
+Removed as orphaned by this work: the ring, its legend and hover rules, the old trend chart and
+its six series classes, the hand-built coverage bars and the inspection-outcome totals block.
+Pre-existing dead CSS unrelated to this work was left alone and is listed in section 12.
+
+Verification: 902 Staff tests pass (72 files), including a new `Charts.test.tsx` (19) covering
+axis maths, series toggling and rescaling, keyboard readout, timezone formatting, drill-down,
+and every empty state. Lint, typecheck and build are clean. In a real browser against a stub
+API, both workspaces were checked at 1440, 1024, 768 and 390 in both themes, with and without
+the notification panel open: `scrollWidth` equals the viewport in all 16 cases. Hover, marker
+and live readout were confirmed on the rendered page.
+
+### 12. Pre-existing dead CSS (not touched)
+
+Found while removing this work's own orphans; unrelated to Dashboard and Analytics, so left in
+place: `.customer-detail-stack`, `.customer-detail-card`, `.customer-location-loading`,
+`.dashboard-analytics-link`, `.panel-footer`, `.asset-code`, `.dashboard-action-error`,
+`.dashboard-action-notice`, `.dashboard-range-control select`, `.progress-fill`,
+`.loading-shimmer`, `.analytics-snapshot`, `.sidebar-backdrop`, `.sidebar-toggle`,
+`.modal-grid`.

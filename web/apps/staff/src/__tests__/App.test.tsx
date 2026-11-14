@@ -999,8 +999,12 @@ describe("App", () => {
 
     render(<App initialSession={adminSession} />);
 
-    const distribution = await screen.findByRole("group", { name: "Fleet retest status distribution" });
-    expect(distribution.querySelector(".fleet-ring-core")).toHaveTextContent("Overdue1100% of the fleet");
+    // The fleet bar names each category with its count and share of the eligible fleet.
+    expect(
+      await screen.findByRole("button", {
+        name: /^Overdue: 1 asset, 100% of the eligible fleet\./
+      })
+    ).toBeVisible();
 
     await user.click(await screen.findByRole("button", { name: "Open asset API-777" }));
 
@@ -1012,19 +1016,24 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
   });
 
-  it("makes fleet retest-status segments interactive and announces the selected data", async () => {
+  it("drills down from a fleet retest-status category to the matching records", async () => {
     vi.stubGlobal("fetch", dashboardFetch());
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);
 
-    const fleetHealth = await screen.findByRole("group", { name: "Fleet retest status distribution" });
-    await user.click(within(fleetHealth).getByRole("button", { name: "Overdue: 23 assets, 2% of the eligible fleet" }));
+    const overdue = await screen.findByRole("button", {
+      name: /^Overdue: 23 assets, 2% of the eligible fleet\. Past the retest due date\. Opens the retest schedule\.$/
+    });
+    await user.click(overdue);
+    expect(await screen.findByRole("heading", { name: "Retest Schedule" })).toBeVisible();
 
-    const selectedReadout = fleetHealth.querySelector(".fleet-ring-core");
-    expect(selectedReadout).toHaveTextContent("Overdue");
-    expect(selectedReadout).toHaveTextContent("23");
-    expect(selectedReadout).toHaveTextContent("2% of the fleet");
+    // Unscheduled assets have no retest record to open, so that one goes to the register.
+    await user.click(screen.getByRole("button", { name: "Dashboard" }));
+    await user.click(
+      await screen.findByRole("button", { name: /^Unscheduled: 30 assets, 3% of the eligible fleet\./ })
+    );
+    expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
   });
 
   it("opens an upcoming retest's asset from the weekly schedule", async () => {
@@ -1425,7 +1434,7 @@ describe("App", () => {
     expect(await screen.findByText("Fleet retest status")).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Reporting period" })).toHaveValue("last_month");
     expect(screen.getByText("11% of eligible assets are overdue")).toBeVisible();
-    expect(screen.getByText("12 current records")).toBeVisible();
+    expect(screen.getByRole("button", { name: /12 records in this view/ })).toBeVisible();
     expect(screen.getByText("Vopak")).toBeVisible();
     expect(screen.queryByText("Mock data")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Open certificates/i }));

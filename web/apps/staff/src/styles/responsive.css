@@ -213,10 +213,6 @@
     flex-wrap: wrap;
   }
 
-  .analytics-fleet-panel .health-legend {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .global-search-wrap {
     width: min(240px, 32vw);
   }
@@ -499,29 +495,12 @@
     width: 100%;
   }
 
-  .console-dashboard .health-panel {
-    grid-template-columns: 1fr;
-  }
-
-  .console-dashboard .health-panel .health-legend {
-    padding: 0 14px 14px;
-  }
-
   .operational-trend {
     padding-inline: 12px;
   }
 
-  .operational-trend-chart {
-    min-width: 520px;
-  }
-
   .operational-trend {
     overflow-x: auto;
-  }
-
-  .trend-legend {
-    justify-content: flex-start;
-    min-width: 520px;
   }
 
   .panel-heading,
@@ -662,26 +641,9 @@
     width: 100%;
   }
 
-  .analytics-fleet-panel .health-legend {
-    grid-template-columns: 1fr;
-  }
-
-  .analytics-fleet-panel .fleet-legend-button {
-    grid-template-columns: minmax(0, 1fr) auto;
-    min-height: 42px;
-  }
-
-  .analytics-fleet-panel .fleet-legend-button > span {
-    align-items: center;
-  }
-
   .analytics-outcome {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .analytics-outcome-totals {
-    width: 100%;
   }
 
   .asset-register-metrics {
@@ -758,15 +720,6 @@
     grid-template-columns: 1fr;
   }
 
-  .analytics-fleet-panel .fleet-ring {
-    width: min(210px, 62vw);
-    margin-bottom: 6px;
-  }
-
-  .analytics-fleet-panel .health-legend {
-    padding: 4px 20px 14px;
-  }
-
   .analytics-risk-labels {
     display: none;
   }
@@ -785,10 +738,6 @@
     font-size: 9px;
   }
 
-  .analytics-outcome-footer {
-    align-items: flex-start;
-    flex-direction: column;
-  }
 }
 
 /* Inspection booking cards: tablet keeps the three information columns and drops the actions to their own row. */
@@ -874,5 +823,30 @@
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+
+@media (max-width: 880px) {
+  /* The charts scale with their panel: no minimum width, so no page overflow and no
+     inner scrolling to hunt for. */
+  .activity-chart,
+  .fleet-bar-chart,
+  .coverage-chart,
+  .outcomes-chart {
+    padding-inline: 12px;
+  }
+
+  .activity-chart-svg {
+    height: 240px;
+  }
+
+  .chart-tooltip {
+    min-width: 150px;
+    font-size: 11.5px;
+  }
+
+  .fleet-bar-legend-item,
+  .coverage-chart-legend li {
+    gap: 4px 8px;
   }
 }
