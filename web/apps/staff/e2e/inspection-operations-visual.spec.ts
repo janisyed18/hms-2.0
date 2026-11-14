@@ -89,10 +89,10 @@ test.describe("Inspection operations: booking cards across states and widths", (
       const page = admin.page;
       await expect(page.locator(".inspection-booking-card")).toHaveCount(3);
       // One operational list: filtering changes the visible bookings, not a second register.
-      await page.getByRole("combobox", { name: "Booking status" }).selectOption("REQUESTED");
+      await page.getByRole("combobox", { name: "Filter bookings by status" }).selectOption("REQUESTED");
       await expect(page.locator(".inspection-booking-card")).toHaveCount(1);
       await expect(page.getByRole("button", { name: "Assign inspector" })).toHaveCount(1);
-      await page.getByRole("combobox", { name: "Booking status" }).selectOption("RESCHEDULE");
+      await page.getByRole("combobox", { name: "Filter bookings by status" }).selectOption("RESCHEDULE");
       await expect(page.locator(".inspection-booking-card")).toHaveCount(1);
       await expect(page.locator(".inspection-booking-card")).toContainText("Requested by: Customer");
       await page.getByRole("button", { name: "Clear filters" }).click();
