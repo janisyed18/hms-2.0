@@ -315,6 +315,13 @@ def _require_asset_write(principal: Principal) -> None:
 
 
 def _require_inspection_write(principal: Principal) -> None:
+    # Physical inspection execution belongs to an assigned inspector, never an admin.
+    # A broad inspection:write grant (including SUPER_ADMIN) is insufficient.
+    if not is_inspector_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only inspectors may perform inspections",
+        )
     try:
         require_permission(principal, Permission.INSPECTION_WRITE)
     except PermissionError as exc:
