@@ -390,3 +390,32 @@ rather than slicing the UTC ISO string, so the filename matches the date the Das
 
 Verification: 882 Staff tests pass (71 files), lint, typecheck and build clean; the My Work
 hook and workspace tests pass on eight consecutive runs.
+
+### Phase C: horizontal overflow regression
+
+CI's `staff-auth-e2e` failed `notification-center.spec.ts:73`
+(`documentElement.scrollWidth <= innerWidth + 1`) on the Dashboard. Cause found and fixed; it
+was a Phase C regression, not a pre-existing problem.
+
+The accessible activity table added in Phase C carried `sr-only` on the `<table>` itself. CSS
+treats a specified width on a table as a *minimum*, so `width: 1px` does not shrink it: the
+table laid out at its content width (760px), and because its own `overflow: hidden` does not
+contain a table's layout overflow the page grew. At 1024px the document became 1035px wide; at
+768px, 811px. 1440px was wide enough to hide it, which is why only the narrower viewports
+failed.
+
+Fix: the table is wrapped in a `<div class="sr-only">` and the table itself carries no class.
+A block container does clip, the table stays in the accessibility tree, and nothing else
+changed. No page-level `overflow-x: hidden`, no weakened assertion, and the shared `.sr-only`
+class is untouched (it is the standard pattern and correct for non-table content).
+
+Not a regression: at 390px the trend chart is 520px inside `.operational-trend`, which
+`responsive.css` already gives `overflow-x: auto`. That panel-level scroll predates Phase C.
+
+Verification, with the real page against a stub API at the same four viewports (1440, 1024,
+768, 390), on both Dashboard and Analytics, with and without the notification panel open:
+`scrollWidth` equals the viewport in every case. Reverting the wrapper reproduces the
+overflow, and the new unit test fails. Coverage added: a unit test asserting the wrapper
+carries the class and the table does not while staying exposed, and
+`e2e/reporting-responsive.spec.ts`, which checks both workspaces at all four widths and names
+the offending element on failure.

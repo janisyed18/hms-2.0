@@ -892,8 +892,11 @@ function OperationalTrendPanel({
           </svg>
           {/* The chart is decorative beside this table, which carries the same numbers
               for anyone reading with assistive technology or unable to tell the lines
-              apart by colour. */}
-          <table className="sr-only">
+              apart by colour. The wrapper, not the table, carries ``sr-only``: a CSS
+              table treats a specified width as a minimum, so a 1px table still lays out
+              at its content width and widens the page. */}
+          <div className="sr-only">
+          <table>
             <caption>
               Recorded activity by {activity.granularity}, {activity.timezone}
             </caption>
@@ -912,6 +915,7 @@ function OperationalTrendPanel({
               ))}
             </tbody>
           </table>
+          </div>
         </>
       ) : <p className="trend-empty">No activity was recorded in this period.</p>}
       <div className="trend-legend" aria-label="Operational trend legend">

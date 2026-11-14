@@ -387,6 +387,22 @@ describe("the Dashboard trend comes from the reporting activity API", () => {
     expect(document.querySelector('.operational-trend[aria-busy="true"]')).not.toBeNull();
   });
 
+  it("hides the data table in a clipping wrapper, not on the table itself", async () => {
+    stub();
+    renderDashboard();
+
+    const table = await screen.findByRole("table", {
+      name: /Recorded activity by day, Australia\/Sydney/
+    });
+    // A CSS table treats a specified width as a minimum, so `sr-only` on the table does
+    // not shrink it: it lays out at its content width and widens the whole page at the
+    // narrower breakpoints. The wrapper is a block container, which does clip.
+    expect(table).not.toHaveClass("sr-only");
+    expect(table.parentElement).toHaveClass("sr-only");
+    // Still exposed to assistive technology, which is the point of having it.
+    expect(within(table).getByRole("columnheader", { name: "Retests escalated" })).toBeInTheDocument();
+  });
+
   it("says activity could not be loaded instead of showing an empty chart", async () => {
     stub({ activityStatus: 503 });
     renderDashboard();
