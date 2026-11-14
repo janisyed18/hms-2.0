@@ -431,7 +431,8 @@ async def test_super_admin_cannot_execute_field_inspections(
         )
         assert created.status_code == 403
         assert (await client.post(url(inspection_id, "start"))).status_code == 403
-        assert (await client.patch(url(inspection_id), json={"result": "PASS"})).status_code == 403
+        update = await client.patch(url(inspection_id), json={"result": "PASS"})
+        assert update.status_code == 403
         assert (await client.post(url(inspection_id, "submit"))).status_code == 403
         assert (await client.post(url(inspection_id, "rework"))).status_code == 403
 
