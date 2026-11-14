@@ -35,7 +35,8 @@ const openChangeStatuses = new Set(["PENDING_ADMIN_APPROVAL", "PENDING_CUSTOMER_
 function bookingViewStatus(booking: InspectionBookingRecord): BookingViewStatus | "CANCELLED" {
   if (booking.changeRequests.some((change) => openChangeStatuses.has(change.status))) return "RESCHEDULE";
   if (booking.status === "PENDING_APPROVAL") return "REQUESTED";
-  return booking.status;
+  if (booking.status === "APPROVED" || booking.status === "REJECTED") return booking.status;
+  return "CANCELLED";
 }
 
 function formatLocationDateTime(value: string, timezone: string | null | undefined) {
