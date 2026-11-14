@@ -4441,36 +4441,112 @@ rect.fleet-segment-unscheduled { fill: var(--chart-neutral); }
 }
 
 
-/* Unified inspection operations — one active view and scoped booking filters. */
-.inspection-management-switch { display: flex; flex-wrap: wrap; gap: 8px; border-bottom: 1px solid var(--border); }
-.inspection-management-switch button { min-height: 42px; padding: 0 18px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--soft); font-weight: 700; }
-.inspection-management-switch button.is-active { border-color: var(--accent); color: var(--accent-2); }
-.inspection-management-switch button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+
+
+/* ---------------------------------------------- Inspection operations
+
+   One management view at a time, then the filters, the status tabs, the booking
+   table and its pages. The table is the record: it keeps its columns down to
+   tablet width and becomes a stack of labelled rows on a phone. */
+.inspection-management-switch { display: flex; flex-wrap: wrap; gap: 4px; width: fit-content; padding: 4px; border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--surface-muted); }
+.inspection-management-switch button { min-height: 34px; padding: 0 14px; border: 0; border-radius: calc(var(--control-radius) - 3px); background: transparent; color: var(--soft); font-size: 13px; font-weight: 700; }
+.inspection-management-switch button.is-active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow-soft); }
+.inspection-management-switch button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+
 .inspection-bookings-panel { overflow: visible; }
-.inspection-booking-filters { display: grid; grid-template-columns: repeat(4, minmax(110px, 1fr)) minmax(180px, 1.4fr) auto; align-items: end; gap: 12px; padding: 16px; border-bottom: 1px solid var(--border); }
+.inspection-booking-filters { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)) minmax(200px, 1.5fr) auto; align-items: end; gap: 12px; padding: 0 0 16px; }
 .inspection-booking-filters label { display: grid; gap: 6px; min-width: 0; color: var(--soft); font-size: 12px; font-weight: 700; }
 .inspection-booking-filters select, .inspection-booking-filters input { width: 100%; min-width: 0; min-height: 40px; padding: 0 11px; border: 1px solid var(--border-strong, var(--border)); border-radius: var(--control-radius); background: var(--surface-muted); color: var(--ink); font: inherit; font-size: 13px; }
 .inspection-booking-filters select:focus-visible, .inspection-booking-filters input:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
 .inspection-clear-filters { min-height: 40px; white-space: nowrap; }
-.inspection-booking-count { margin: 0; padding: 11px 16px 0; color: var(--soft); font-size: 12px; font-variant-numeric: tabular-nums; }
-.inspection-booking-card { overflow: visible; }
-/* Site · what and when · inspector · status · actions. The inspector column is wide
-   enough for an email address, which is what an unnamed account shows. */
-.booking-card__primary { grid-template-columns: minmax(150px, 1.05fr) minmax(165px, 1.15fr) minmax(170px, 1fr) minmax(120px, .8fr) minmax(235px, auto); }
-.booking-card__inspector, .booking-card__status { display: grid; justify-items: start; justify-content: start; gap: 5px; min-width: 0; }
-.booking-card__field-label { color: var(--soft); font-size: 11px; font-weight: 750; letter-spacing: .025em; }
-.booking-card__inspector-name { display: inline-flex; align-items: center; gap: 7px; min-width: 0; overflow-wrap: anywhere; color: var(--ink); font-size: 12px; font-weight: 650; }
-.booking-card__inspector-name svg { flex: 0 0 auto; color: var(--accent-2); }
-.booking-card__requested-by { color: var(--soft); font-size: 11px; font-weight: 650; }
-.booking-card__assign { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; min-width: 0; }
+
+.inspection-status-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.inspection-status-tabs button { min-height: 40px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--soft); font-size: 13px; font-weight: 700; }
+.inspection-status-tabs button.is-active { border-color: var(--accent); color: var(--accent-2); }
+.inspection-status-tabs button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: -2px; }
+.inspection-status-tabs__count { font-variant-numeric: tabular-nums; font-weight: 600; opacity: .8; }
+
+.inspection-booking-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-md); }
+/* Fixed columns, so a long site name or a stray email cannot drag one column wide and
+   squeeze the rest. Below the table's own width the wrapper scrolls sideways instead. */
+.inspection-booking-table { width: 100%; min-width: 980px; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.inspection-booking-table th:nth-child(1) { width: 23%; }
+.inspection-booking-table th:nth-child(2) { width: 20%; }
+.inspection-booking-table th:nth-child(3) { width: 15%; }
+.inspection-booking-table th:nth-child(4) { width: 15%; }
+.inspection-booking-table th:nth-child(5) { width: 27%; }
+/* The base stylesheet gives every th and td a fixed height and one clipped,
+   ellipsised line. These rows hold a site, a time, a place and an inspector, so they
+   opt out of all three and let each cell grow to its content. */
+.inspection-booking-table th { height: auto; padding: 11px 14px; overflow: visible; border-bottom: 1px solid var(--border); background: var(--surface-muted); color: var(--soft); font-size: 11px; font-weight: 750; letter-spacing: .03em; text-align: left; text-overflow: clip; text-transform: uppercase; white-space: nowrap; }
+/* The cell stays a table cell: a td laid out as flex or grid leaves the table's column
+   algorithm, and its content lands at the table's left edge instead of in its column.
+   Each cell's own layout belongs to the wrapper inside it. */
+.inspection-booking-table td { height: auto; padding: 14px; overflow: visible; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; text-overflow: clip; white-space: normal; vertical-align: top; }
+.inspection-booking-table tr:last-child td { border-bottom: 0; }
+.inspection-booking-table tbody tr:hover { background: var(--surface-subtle, var(--surface-muted)); }
+.booking-table__loading { color: var(--soft); text-align: center; }
+
+.booking-row__cell > .booking-row__details { display: flex; align-items: flex-start; gap: 11px; min-width: 190px; }
+.booking-row__icon { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--control-radius); background: var(--surface-muted); color: var(--accent-2); }
+.booking-row__icon.tone-approved { color: var(--success); }
+.booking-row__icon.tone-rejected { color: var(--danger); }
+.booking-row__identity { display: grid; gap: 2px; min-width: 0; }
+.booking-row__identity strong { color: var(--ink); font-size: 13px; font-weight: 750; overflow-wrap: anywhere; }
+.booking-row__identity > span { color: var(--soft); font-size: 12px; overflow-wrap: anywhere; }
+.booking-row__ref { display: inline-block; width: fit-content; overflow-wrap: normal; white-space: nowrap; margin-top: 3px; padding: 2px 7px; border-radius: 5px; background: var(--surface-muted); color: var(--soft); font-size: 11px; font-weight: 650; letter-spacing: .02em; }
+.booking-row__cell > .booking-row__schedule { display: grid; gap: 5px; min-width: 190px; }
+.booking-row__line { display: flex; align-items: flex-start; gap: 7px; color: var(--ink); overflow-wrap: anywhere; }
+.booking-row__line svg { margin-top: 2px; }
+.booking-row__line svg { flex: 0 0 auto; color: var(--soft); }
+.booking-row__assets { color: var(--soft); font-size: 12px; overflow-wrap: anywhere; }
+.booking-row__cell > .booking-row__inspector { min-width: 150px; }
+.booking-row__inspector .assigned-inspector__name, .booking-row__unassigned { display: flex; align-items: flex-start; gap: 7px; min-width: 0; color: var(--ink); font-weight: 650; overflow-wrap: anywhere; }
+.booking-row__unassigned { color: var(--soft); font-weight: 600; }
+.booking-row__inspector svg { flex: 0 0 auto; margin-top: 2px; color: var(--accent-2); }
+.booking-row__muted { color: var(--soft); }
+.booking-row__cell > .booking-row__status { display: grid; gap: 4px; justify-items: start; min-width: 150px; }
+.booking-row__field-label { color: var(--soft); font-size: 11px; font-weight: 750; letter-spacing: .025em; }
+.booking-row__caption, .booking-row__requested-by { color: var(--soft); font-size: 11px; }
+.booking-row__requested-by { padding: 2px 7px; border-radius: 5px; background: var(--surface-muted); font-weight: 650; }
+.booking-row__cell > .booking-row__actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; min-width: 0; }
+.booking-row__actions .action-button, .booking-action-menu__summary { white-space: nowrap; }
+
 .booking-action-menu { position: relative; flex: 0 0 auto; }
-.booking-action-menu summary { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; padding: 0 12px; border: 1px solid var(--border-strong, var(--border)); border-radius: var(--control-radius); background: var(--panel); color: var(--ink); font-size: 12px; font-weight: 700; cursor: pointer; list-style: none; }
-.booking-action-menu summary::-webkit-details-marker { display: none; }
-.booking-action-menu summary:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
-.booking-action-menu[open] summary { border-color: var(--accent); }
-.booking-action-menu__items { position: absolute; z-index: 15; right: 0; top: calc(100% + 5px); display: grid; gap: 4px; width: max-content; min-width: 186px; max-width: min(280px, 78vw); padding: 7px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); box-shadow: var(--shadow-soft); }
+.booking-action-menu__summary { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; border: 1px solid var(--border-strong, var(--border)); border-radius: var(--control-radius); background: var(--panel); color: var(--ink); font-size: 12px; font-weight: 700; cursor: pointer; list-style: none; }
+.booking-action-menu__summary:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.booking-action-menu__summary[aria-expanded="true"] { border-color: var(--accent); }
+.booking-action-menu__items { position: absolute; z-index: 15; right: 0; top: calc(100% + 5px); display: grid; gap: 4px; width: max-content; min-width: 190px; max-width: min(280px, 78vw); padding: 7px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); box-shadow: var(--shadow-soft); }
 .booking-action-menu__items .action-button { justify-content: flex-start; width: 100%; min-height: 38px; text-align: left; }
+
+.inspection-booking-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 14px; }
+.inspection-booking-pagesize { display: inline-flex; align-items: center; gap: 8px; color: var(--soft); font-size: 12px; font-weight: 700; }
+.inspection-booking-pagesize select { min-height: 34px; padding: 0 9px; border: 1px solid var(--border-strong, var(--border)); border-radius: var(--control-radius); background: var(--surface-muted); color: var(--ink); font: inherit; font-size: 13px; }
+.inspection-booking-count { margin: 0; color: var(--soft); font-size: 12px; font-variant-numeric: tabular-nums; }
+.inspection-booking-pages { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.inspection-booking-pages button { min-width: 34px; min-height: 34px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--panel); color: var(--ink); font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.inspection-booking-pages button.is-active { border-color: var(--accent); background: var(--accent); color: var(--accent-ink, #fff); }
+.inspection-booking-pages button:disabled { color: var(--soft); opacity: .5; }
+.inspection-booking-pages button:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 1px; }
+
 @media (max-width: 1420px) { .inspection-booking-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); } .inspection-clear-filters { justify-self: start; } }
-@media (max-width: 1279px) { .booking-card__primary { grid-template-columns: repeat(3, minmax(0, 1fr)); } .booking-card__status { justify-content: start; } .booking-card__actions { grid-column: 1 / -1; justify-content: flex-start; } .booking-card__assign { justify-content: flex-start; } }
-@media (max-width: 767px) { .inspection-booking-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .inspection-booking-search { grid-column: 1 / -1; } .booking-card__primary { grid-template-columns: minmax(0, 1fr); } .booking-card__actions { justify-content: flex-start; } .booking-action-menu__items { right: auto; left: 0; } }
-@media (max-width: 460px) { .inspection-booking-filters { grid-template-columns: minmax(0, 1fr); } .inspection-booking-search { grid-column: auto; } .booking-card__assign, .booking-card__assign .booking-select, .booking-card__assign select { width: 100%; } }
+@media (max-width: 1023px) { .inspection-booking-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .inspection-booking-search { grid-column: 1 / -1; } }
+
+/* On a phone each booking becomes its own block, with the column headings repeated
+   beside the values so nothing has to be scrolled sideways to be understood. */
+@media (max-width: 767px) {
+  .inspection-booking-filters { grid-template-columns: minmax(0, 1fr); }
+  .inspection-booking-table-wrap { overflow-x: visible; border: 0; }
+  .inspection-booking-table { min-width: 0; table-layout: auto; }
+  .inspection-booking-table, .inspection-booking-table tbody, .inspection-booking-table tr, .inspection-booking-table td { display: block; width: 100%; }
+  .booking-row__cell > div { min-width: 0; }
+  .inspection-booking-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .inspection-booking-table tr.booking-row { margin-bottom: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--panel); }
+  .inspection-booking-table td { border-bottom: 0; padding: 12px 14px; }
+  .inspection-booking-table td + td { padding-top: 0; }
+  .inspection-booking-table td:last-child { padding-top: 12px; border-top: 1px solid var(--border); }
+  .booking-action-menu, .booking-action-menu__summary, .booking-row__actions .action-button { width: 100%; }
+  .booking-action-menu__summary { justify-content: space-between; }
+  .booking-action-menu__items { right: auto; left: 0; width: 100%; max-width: none; }
+  .inspection-booking-pagination { justify-content: flex-start; }
+}

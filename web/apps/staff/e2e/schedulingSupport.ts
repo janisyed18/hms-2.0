@@ -292,19 +292,59 @@ export async function submitBookingForm(
   expect(response.status()).toBe(201);
 }
 
+/** The bookings table on Inspection Operations, and one of its rows. */
+export const bookingTable = (page: Page) => page.locator("table.inspection-booking-table");
+export const bookingRow = (page: Page, text: RegExp | string) =>
+  page.locator("tr.booking-row").filter({ hasText: text });
+
+/**
+ * Picks an inspector in the open dialog. It is the one way an inspector is chosen, for a
+ * first assignment, a change or a reschedule approval: the server is asked whether they
+ * are free for the booking's time, and only a verified "Available" can be saved.
+ */
+export async function pickInspectorInDialog(
+  page: Page,
+  inspectorName: string,
+  dialogName = "Assign inspector",
+  saveLabel = dialogName
+) {
+  const dialog = page.getByRole("dialog", { name: dialogName });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("combobox", { name: /New inspector/ }).click();
+  await dialog.getByRole("option", { name: new RegExp(inspectorName) }).click();
+  // A reassignment is verified against the confirmed appointment before it can be saved.
+  // A first assignment has no appointment to check against, so the server decides on save.
+  if (dialogName === "Change inspector") {
+    await expect(dialog.getByText("Available", { exact: true })).toBeVisible({ timeout: 30_000 });
+  }
+  await dialog.getByRole("button", { name: saveLabel }).click();
+  await expect(dialog).toHaveCount(0, { timeout: 90_000 });
+}
+
+/** Assigns the inspector for a booking still waiting on one. */
+export async function assignInspector(page: Page, site: string, inspectorName: string) {
+  await page.getByRole("button", { name: `Assign inspector for ${site}` }).click();
+  await pickInspectorInDialog(page, inspectorName);
+}
+
+/** Opens a booking row's Actions menu and chooses one of them. */
+export async function chooseRowAction(page: Page, site: string, action: string) {
+  await page.locator("tr.booking-row").filter({ hasText: site }).first()
+    .locator(".booking-action-menu__summary").click();
+  await page.getByRole("button", { name: action }).click();
+}
+
 export async function createAndApproveBooking(customer: Page, admin: Page, localDate = schedulingDate) {
   await openInspections(customer);
   await customer.getByRole("button", { name: "Book inspection" }).click();
   await chooseBookingLocationAndAsset(customer);
   await selectFirstAvailableTime(customer, localDate);
   await submitBookingForm(customer, "Create booking", "/api/v1/inspection-bookings");
-  await expect(customer.locator(".inspection-booking-list")).toContainText("Requested", { timeout: 90_000 });
+  await expect(bookingTable(customer)).toContainText("Requested", { timeout: 90_000 });
 
   await openInspections(admin);
-  const inspectorSelect = admin.getByLabel("Assign inspector for Port Botany");
-  await inspectorSelect.selectOption({ label: "inspector@example.test" });
-  await admin.getByRole("button", { name: "Assign & approve" }).click();
-  await expect(admin.locator(".inspection-booking-list")).toContainText("Approved", { timeout: 90_000 });
+  await assignInspector(admin, "Port Botany", "inspector@example.test");
+  await expect(bookingTable(admin)).toContainText("Approved", { timeout: 90_000 });
 }
 
 export async function bookingApiContext(page: Page) {

@@ -111,8 +111,8 @@ test.describe("Customer location to asset to booking", () => {
     // The form closes, the address drops the asset, and the booking is listed with that asset.
     await expect(form).toBeHidden();
     await expect(page).not.toHaveURL(/book_asset=/);
-    await expect(page.locator(".inspection-booking-list")).toContainText("Requested", { timeout: 90_000 });
-    await expect(page.locator(".inspection-booking-list")).toContainText(assetNumber);
+    await expect(page.locator("table.inspection-booking-table")).toContainText("Requested", { timeout: 90_000 });
+    await expect(page.locator("table.inspection-booking-table")).toContainText(assetNumber);
   });
 
   test("moving the address from one asset to another reloads the form for the second asset", async ({ browser }) => {

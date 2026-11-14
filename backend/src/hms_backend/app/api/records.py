@@ -82,6 +82,7 @@ from hms_backend.app.api.schemas import (
     InspectionBookingListResponse,
     InspectionBookingRead,
     InspectionBookingRejectRequest,
+    InspectionBookingStatusCounts,
     InspectionCreate,
     InspectionListResponse,
     InspectionRead,
@@ -2267,6 +2268,10 @@ async def list_inspection_bookings(
     Every filter runs in SQL against the whole visible set, so paging through a
     filtered list shows the matching bookings rather than whatever the first page
     happened to contain. ``total`` counts the matches, not the catalogue.
+
+    ``status_counts`` counts each state over the same set with the status filter
+    itself left off, which is what the screen's status tabs show: picking one tab
+    does not change what the others say is waiting behind them.
     """
     _require_asset_read(principal)
     statement = _apply_customer_scope(_inspection_booking_statement(), principal)
@@ -2274,8 +2279,6 @@ async def list_inspection_bookings(
         statement = statement.where(
             InspectionBooking.id.in_(assigned_bookings(principal))
         )
-    if status_filter:
-        statement = statement.where(InspectionBooking.status == status_filter)
     if customer_id:
         statement = statement.where(InspectionBooking.customer_id == customer_id)
     if location_id:
@@ -2318,23 +2321,27 @@ async def list_inspection_bookings(
                 asset_match,
             )
         )
-    if has_pending_change:
-        # The Staff "pending requests" queue: bookings with a reschedule awaiting
-        # a decision, wherever in time they fall.
-        statement = statement.where(
-            select(InspectionAppointmentChangeRequest.id)
-            .where(
-                InspectionAppointmentChangeRequest.booking_id == InspectionBooking.id,
-                InspectionAppointmentChangeRequest.deleted_at.is_(None),
-                InspectionAppointmentChangeRequest.status.in_(
-                    (
-                        InspectionChangeRequestStatus.PENDING_ADMIN_APPROVAL.value,
-                        InspectionChangeRequestStatus.PENDING_CUSTOMER_CONFIRMATION.value,
-                    )
-                ),
-            )
-            .exists()
+    # A reschedule awaiting a decision, wherever in time the visit falls. It is not a
+    # booking status of its own, so it is counted and filtered separately.
+    pending_change = (
+        select(InspectionAppointmentChangeRequest.id)
+        .where(
+            InspectionAppointmentChangeRequest.booking_id == InspectionBooking.id,
+            InspectionAppointmentChangeRequest.deleted_at.is_(None),
+            InspectionAppointmentChangeRequest.status.in_(
+                (
+                    InspectionChangeRequestStatus.PENDING_ADMIN_APPROVAL.value,
+                    InspectionChangeRequestStatus.PENDING_CUSTOMER_CONFIRMATION.value,
+                )
+            ),
         )
+        .exists()
+    )
+    counts = await _inspection_booking_status_counts(session, statement, pending_change)
+    if status_filter:
+        statement = statement.where(InspectionBooking.status == status_filter)
+    if has_pending_change:
+        statement = statement.where(pending_change)
     total = await _count(session, statement)
     bookings = (
         await session.scalars(
@@ -2349,8 +2356,57 @@ async def list_inspection_bookings(
         total=total,
         limit=limit,
         offset=offset,
+        status_counts=counts,
         items=[_inspection_booking_read(booking) for booking in bookings],
     )
+
+
+async def _inspection_booking_status_counts(
+    session: AsyncSession,
+    statement: Select[Any],
+    pending_change: Any,
+) -> InspectionBookingStatusCounts:
+    """One pass over the filtered set, counting what each status tab would hold.
+
+    "Reschedule requested" overlaps "Approved" in the data — a booking waiting on a
+    reschedule is still approved — so it is counted on its own and taken back out of
+    the approved tally, which is what the tabs mean by those words.
+    """
+    matching_ids = (
+        statement.order_by(None).with_only_columns(InspectionBooking.id).subquery()
+    )
+    rows = (
+        await session.execute(
+            select(
+                InspectionBooking.status,
+                pending_change.label("awaiting_change"),
+                func.count().label("count"),
+            )
+            .where(InspectionBooking.id.in_(select(matching_ids.c.id)))
+            .group_by(InspectionBooking.status, pending_change)
+        )
+    ).all()
+    counts = {
+        "all": 0,
+        "pending_approval": 0,
+        "reschedule_requested": 0,
+        "approved": 0,
+        "rejected": 0,
+        "cancelled": 0,
+    }
+    by_status = {
+        InspectionBookingStatus.PENDING_APPROVAL.value: "pending_approval",
+        InspectionBookingStatus.APPROVED.value: "approved",
+        InspectionBookingStatus.REJECTED.value: "rejected",
+        InspectionBookingStatus.CANCELLED.value: "cancelled",
+    }
+    for status_value, awaiting_change, count in rows:
+        counts["all"] += count
+        if awaiting_change:
+            counts["reschedule_requested"] += count
+        elif status_value in by_status:
+            counts[by_status[status_value]] += count
+    return InspectionBookingStatusCounts(**counts)
 
 
 # Six whole local weeks (the Month view) can be 42 days plus the hour a daylight-saving

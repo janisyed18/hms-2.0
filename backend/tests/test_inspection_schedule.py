@@ -697,3 +697,76 @@ async def test_a_reschedule_request_names_the_role_that_asked_for_it(
     }
     assert roles[booking_id] == ["CUSTOMER_USER"]
     assert roles[seeded["ids"]["later"]] == [None]
+
+
+@pytest.mark.asyncio
+async def test_status_counts_answer_for_every_tab_whatever_tab_is_open(
+    database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Picking a status tab must not change what the other tabs say is behind them."""
+    _, factory = database
+    seeded = await seed(factory)
+    booking_id = seeded["ids"]["mon_a"]
+    async with factory() as session:
+        booking = await session.get(InspectionBooking, booking_id)
+        assert booking is not None
+        appointment = await session.scalar(
+            select(InspectionAppointment).where(
+                InspectionAppointment.booking_id == booking_id
+            )
+        )
+        assert appointment is not None
+        quote = InspectionAvailabilityQuote(
+            customer_id=booking.customer_id,
+            location_id=booking.location_id,
+            starts_at=utc(2027, 3, 5, 1),
+            ends_at=utc(2027, 3, 5, 2),
+            candidate_inspector_ids=["insp-a"],
+            expires_at=utc(2030, 1, 1),
+        )
+        session.add(quote)
+        await session.flush()
+        session.add(
+            InspectionAppointmentChangeRequest(
+                booking_id=booking_id,
+                appointment_id=appointment.id,
+                availability_quote_id=quote.id,
+                requested_by_user_id="customer",
+                status="PENDING_ADMIN_APPROVAL",
+            )
+        )
+        await session.commit()
+    async with api(factory) as client:
+        everything = await client.get(BOOKINGS)
+        approved_tab = await client.get(BOOKINGS, params={"status": "APPROVED"})
+        reschedule_tab = await client.get(
+            BOOKINGS, params={"has_pending_change": "true"}
+        )
+        one_customer = await client.get(
+            BOOKINGS, params={"customer_id": seeded["orica"]}
+        )
+    counts = everything.json()["status_counts"]
+    # mon_a is approved but waiting on a reschedule, so it is counted there and not
+    # under approved: tue_b, later and straddle are the plain approved three.
+    assert counts == {
+        "all": 7,
+        "pending_approval": 2,
+        "reschedule_requested": 1,
+        "approved": 3,
+        "rejected": 0,
+        "cancelled": 1,
+    }
+    # The same answer from whichever tab is open.
+    assert approved_tab.json()["status_counts"] == counts
+    assert reschedule_tab.json()["status_counts"] == counts
+    assert len(ids_of(approved_tab)) == 4  # the status filter alone: mon_a included
+    assert ids_of(reschedule_tab) == [booking_id]
+    # The other filters do narrow them, so the tabs describe the list being paged.
+    assert one_customer.json()["status_counts"] == {
+        "all": 2,
+        "pending_approval": 0,
+        "reschedule_requested": 0,
+        "approved": 1,
+        "rejected": 0,
+        "cancelled": 1,
+    }

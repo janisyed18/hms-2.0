@@ -157,9 +157,9 @@ test.describe("Delete customer and Change inspector", () => {
       await page.goto("/?view=inspections");
       await expect(page.getByText(/^Loading (bookings|inspections)$/)).toHaveCount(0, { timeout: 30_000 });
 
-      const card = page.locator(".inspection-booking-card").filter({ hasText: "Port Botany" }).first();
-      // The card names the field, then the inspector. Exact, so "Change inspector" is not a match.
-      await expect(card.getByText("Inspector", { exact: true })).toBeVisible();
+      const card = page.locator("tr.booking-row").filter({ hasText: "Port Botany" }).first();
+      // The table names the column, and the row names who is going.
+      await expect(page.getByRole("columnheader", { name: "Assigned inspector" })).toBeVisible();
       await expect(card.locator(".assigned-inspector__name")).toContainText("inspector@example.test");
       // The old three-picker row is gone: no Reassign button, one Change inspector beside the name.
       await expect(page.getByRole("button", { name: /Reassign inspector/ })).toHaveCount(0);

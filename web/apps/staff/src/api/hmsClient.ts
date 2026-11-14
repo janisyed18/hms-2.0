@@ -45,6 +45,7 @@ import type {
   InspectionCreateValues,
   InspectionBookingCreateValues,
   InspectionBookingRecord,
+  InspectionBookingStatusCounts,
   InspectionBookingStatus,
   InspectionScheduleResult,
   InspectionAvailabilitySlot,
@@ -529,6 +530,15 @@ interface ApiInspectionBooking {
   change_requests: ApiInspectionBookingChangeRequest[];
 }
 
+interface ApiInspectionBookingStatusCounts {
+  all: number;
+  pending_approval: number;
+  reschedule_requested: number;
+  approved: number;
+  rejected: number;
+  cancelled: number;
+}
+
 interface ApiInspectionBookingChangeRequest {
   id: string;
   status: "PENDING_ADMIN_APPROVAL" | "PENDING_CUSTOMER_CONFIRMATION" | "APPLIED" | "REJECTED" | "CANCELLED";
@@ -555,6 +565,7 @@ interface ApiInspectionBookingList {
   total: number;
   limit: number;
   offset: number;
+  status_counts?: ApiInspectionBookingStatusCounts;
   items: ApiInspectionBooking[];
 }
 
@@ -1393,6 +1404,20 @@ function toInspection(
     },
     etag
   );
+}
+
+/** The tab counts, defaulted so an older server without them reads as all zeroes. */
+function toBookingStatusCounts(
+  counts: ApiInspectionBookingStatusCounts | undefined
+): InspectionBookingStatusCounts {
+  return {
+    all: counts?.all ?? 0,
+    pendingApproval: counts?.pending_approval ?? 0,
+    rescheduleRequested: counts?.reschedule_requested ?? 0,
+    approved: counts?.approved ?? 0,
+    rejected: counts?.rejected ?? 0,
+    cancelled: counts?.cancelled ?? 0
+  };
 }
 
 function toInspectionBooking(booking: ApiInspectionBooking): InspectionBookingRecord {
@@ -2469,7 +2494,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
 
     async listInspectionBookings(
       listOptions: ListInspectionBookingOptions = {}
-    ): Promise<ApiListResult<InspectionBookingRecord>> {
+    ): Promise<ApiListResult<InspectionBookingRecord> & { statusCounts: InspectionBookingStatusCounts }> {
       const response = await request<ApiInspectionBookingList>(
         "/api/v1/inspection-bookings",
         {},
@@ -2487,6 +2512,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return {
         total: response.data.total,
         etag: response.etag,
+        statusCounts: toBookingStatusCounts(response.data.status_counts),
         items: response.data.items.map(toInspectionBooking)
       };
     },

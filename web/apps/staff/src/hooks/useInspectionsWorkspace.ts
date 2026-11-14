@@ -6,7 +6,7 @@ import { friendlyApiError } from "../components/interaction/friendlyApiError";
 import { useActionRunner } from "../components/interaction/useActionRunner";
 import { useConfirmedAction } from "../components/interaction/useConfirmedAction";
 import { assetLabel } from "../utils/identity";
-import type { AdminUserRecord, AssetRecord, InspectionBookingCreateValues, InspectionBookingRecord, InspectionCreateValues, InspectionRecord, InspectionStatus, InspectionType, InspectionUpdateValues } from "../domain/types";
+import type { AdminUserRecord, AssetRecord, InspectionBookingCreateValues, InspectionBookingRecord, InspectionBookingStatusCounts, InspectionCreateValues, InspectionRecord, InspectionStatus, InspectionType, InspectionUpdateValues } from "../domain/types";
 
 export type InspectionStatusFilter = "ALL" | InspectionStatus;
 export type InspectionTypeFilter = "ALL" | InspectionType;
@@ -35,9 +35,13 @@ export const NO_BOOKING_FILTERS: BookingFilters = {
   status: "ALL", customerId: "ALL", locationId: "ALL", assetId: "ALL", search: ""
 };
 
-const BOOKING_PAGE = 50;
+export const BOOKING_PAGE_SIZES = [10, 25, 50] as const;
 
-function bookingRequest(filters: BookingFilters) {
+const NO_COUNTS: InspectionBookingStatusCounts = {
+  all: 0, pendingApproval: 0, rescheduleRequested: 0, approved: 0, rejected: 0, cancelled: 0
+};
+
+function bookingRequest(filters: BookingFilters, page: number, pageSize: number) {
   const chosen = (value: string) => (value === "ALL" ? undefined : value);
   return {
     status: filters.status === "ALL" || filters.status === "RESCHEDULE_REQUESTED"
@@ -48,8 +52,8 @@ function bookingRequest(filters: BookingFilters) {
     locationId: chosen(filters.locationId),
     assetId: chosen(filters.assetId),
     search: filters.search.trim() || undefined,
-    limit: BOOKING_PAGE,
-    offset: 0
+    limit: pageSize,
+    offset: page * pageSize
   };
 }
 
@@ -82,6 +86,9 @@ export function useInspectionsWorkspace(
   const [bookingTotal, setBookingTotal] = useState(0);
   const [bookingFilters, setBookingFilters] = useState<BookingFilters>(NO_BOOKING_FILTERS);
   const [bookingFacets, setBookingFacets] = useState<BookingFacets>(NO_FACETS);
+  const [bookingStatusCounts, setBookingStatusCounts] = useState<InspectionBookingStatusCounts>(NO_COUNTS);
+  const [bookingPage, setBookingPageState] = useState(0);
+  const [bookingPageSize, setBookingPageSizeState] = useState<number>(BOOKING_PAGE_SIZES[0]);
   const [bookingsLoading, setBookingsLoading] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +138,10 @@ export function useInspectionsWorkspace(
   // Bookings are read with the filters applied, so the server decides what matches
   // across every page instead of the screen narrowing whatever the first page held.
   // ``bookingTotal`` is then the number of matching bookings, not the catalogue size.
-  const bookingQuery = useMemo(() => bookingRequest(bookingFilters), [bookingFilters]);
+  const bookingQuery = useMemo(
+    () => bookingRequest(bookingFilters, bookingPage, bookingPageSize),
+    [bookingFilters, bookingPage, bookingPageSize]
+  );
   const bookingQueryKey = JSON.stringify(bookingQuery);
   useEffect(() => {
     let active = true;
@@ -142,7 +152,10 @@ export function useInspectionsWorkspace(
       void createHmsClient().listInspectionBookings(bookingQuery)
         .then((result) => {
           if (!active) return;
-          setBookings(result.items); setBookingTotal(result.total); rememberFacets(result.items);
+          setBookings(result.items); setBookingTotal(result.total);
+          // A response without counts reads as zero rather than throwing: the tabs then
+          // say nothing instead of the screen failing to render.
+          setBookingStatusCounts(result.statusCounts ?? NO_COUNTS); rememberFacets(result.items);
         })
         .catch((reason: unknown) => { if (active) setError(friendlyApiError(reason, { fallback: "Inspection bookings could not be loaded." }).message); })
         .finally(() => { if (active) setBookingsLoading(false); });
@@ -257,6 +270,7 @@ export function useInspectionsWorkspace(
       const [bookingResult, inspectionResult] = await Promise.all([client.listInspectionBookings(bookingQuery), client.listInspections({ sort: "-created_at" })]);
       setBookings(bookingResult.items);
       setBookingTotal(bookingResult.total);
+      setBookingStatusCounts(bookingResult.statusCounts ?? NO_COUNTS);
       rememberFacets(bookingResult.items);
       setInspections(inspectionResult.items);
     } catch {
@@ -347,16 +361,9 @@ export function useInspectionsWorkspace(
     return createHmsClient().getInspectorAvailability(id, inspectorUserId);
   }
   /** The next page of bookings, so a confirmed booking beyond the first page can still be reached from this screen. */
-  async function loadMoreBookings() {
-    try {
-      const next = await createHmsClient().listInspectionBookings({ ...bookingQuery, offset: bookings.length });
-      setBookings((current) => [...current, ...next.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
-      setBookingTotal(next.total);
-      rememberFacets(next.items);
-    } catch (reason) {
-      setError(friendlyApiError(reason, { fallback: "More bookings could not be loaded." }).message);
-    }
-  }
+  /** Paging and the page size both reload from the server; neither narrows what is here. */
+  function setBookingPage(page: number) { setBookingPageState(Math.max(0, page)); }
+  function setBookingPageSize(size: number) { setBookingPageSizeState(size); setBookingPageState(0); }
   // Declining and cancelling are not availability actions: a 409 is an ordinary state conflict and is
   // shown as stated. The booking is reloaded separately, so a failed reload never changes that message.
   const bookingDecision = useConfirmedAction<{ action: "reject" | "cancel"; booking: InspectionBookingRecord }>(
@@ -414,12 +421,15 @@ export function useInspectionsWorkspace(
   }
   function clearInspectionFilters() { setTypeFilter("ALL"); setResultFilter("ALL"); }
   const activeFilterCount = [typeFilter !== "ALL", resultFilter !== "ALL"].filter(Boolean).length;
+  // Narrowing the list puts you back on its first page: page 3 of the old list is not
+  // page 3 of the new one, and an offset past the end would show nothing at all.
   function setBookingFilter<K extends keyof BookingFilters>(key: K, value: BookingFilters[K]) {
     setBookingFilters((current) => ({ ...current, [key]: value }));
+    setBookingPageState(0);
   }
-  function clearBookingFilters() { setBookingFilters(NO_BOOKING_FILTERS); }
+  function clearBookingFilters() { setBookingFilters(NO_BOOKING_FILTERS); setBookingPageState(0); }
   const hasBookingFilters = (Object.keys(NO_BOOKING_FILTERS) as Array<keyof BookingFilters>)
     .some((key) => bookingFilters[key] !== NO_BOOKING_FILTERS[key]);
 
-  return { bookingFacets, bookingFilters, bookingsLoading, clearBookingFilters, hasBookingFilters, setBookingFilter, checkInspectorAvailability, serverTotal, activeFilterCount, approveInspection, beginInspectionRework, rejectInspection, startInspection, approveInspectionBooking, approveInspectionBookingReschedule, loadInspectors, loadMoreBookings, bookingTotal, reassignInspectionBookingInspector, ratingFor, ratingReady, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
+  return { bookingFacets, bookingFilters, bookingsLoading, bookingStatusCounts, bookingPage, bookingPageSize, setBookingPage, setBookingPageSize, clearBookingFilters, hasBookingFilters, setBookingFilter, checkInspectorAvailability, serverTotal, activeFilterCount, approveInspection, beginInspectionRework, rejectInspection, startInspection, approveInspectionBooking, approveInspectionBookingReschedule, loadInspectors, bookingTotal, reassignInspectionBookingInspector, ratingFor, ratingReady, bookingDecision, bookings, dismissNotice, notice, pendingAction, refreshBookingsAndInspections, clearInspectionFilters, closeDetail, confirmInspectionBookingReschedule, error, inspectors, inspections, isBookingFormOpen, isFormOpen, isLoading, openBooking, openCreate, openDetail, openReschedule, query, requestInspectionBookingReschedule, rescheduleBooking, resultFilter, resultOptions, saveInspection, saveInspectionBooking, saveInspectionUpdate, selectedInspection, setBookingFormOpen, setFormOpen, setQuery, setResultFilter, setStatusFilter, setTypeFilter, statusFilter, submitInspection, typeFilter, visibleInspections };
 }

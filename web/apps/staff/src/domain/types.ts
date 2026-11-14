@@ -831,6 +831,16 @@ export interface InspectionRecord {
   etag?: string | null;
 }
 
+/** How many bookings each status tab holds, for the set the filters describe. */
+export interface InspectionBookingStatusCounts {
+  all: number;
+  pendingApproval: number;
+  rescheduleRequested: number;
+  approved: number;
+  rejected: number;
+  cancelled: number;
+}
+
 export interface InspectionBookingRecord {
   id: string;
   customer: RecordSummary;

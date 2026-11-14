@@ -21,7 +21,38 @@ whatever the role would otherwise land on, so shared links still work. `openInsp
 in the Playwright helpers waits for whichever view the role gets;
 `openInspectionRecords` switches to the register for the flows that work in it.
 
-## 2. Filters that mean what they say
+## 2. The booking register is a table
+
+Bookings are a register, so they are shown as one: **Inspection details · Schedule &
+location · Assigned inspector · Status · Actions**, one row per booking, built to the
+approved mock-up.
+
+- The first column names the site, the customer and the booking's own reference
+  (`REF: HMS-…`, the last ten characters of its id, so searching for what is printed
+  finds the booking).
+- The second gives the time in the site's own zone, the place as `city, state`, and what
+  is booked.
+- Status sits behind an explicit "Status" label with a one-line caption, and a pending
+  reschedule adds who asked for it.
+- Actions are the ones that state allows: **Assign inspector** on a new request,
+  **Change inspector** on a confirmed one, and a menu for what changes a booking already
+  agreed. A rejected or cancelled booking offers nothing.
+
+Under the table: rows per page, the range (`1 – 10 of 24 bookings`) and page numbers.
+Paging asks the server for that page; nothing is narrowed on the client.
+
+Three things the table needed that are easy to get wrong:
+
+- A `<td>` laid out as flex or grid **leaves the table's column algorithm**, and its
+  content lands at the table's left edge instead of in its column. Each cell keeps
+  `display: table-cell` and its layout lives on a wrapper inside it.
+- The base stylesheet gives every `th`/`td` a fixed height and one clipped, ellipsised
+  line. This table opts out of all three so a site name, a time and an email can wrap.
+- The Actions menu is **React's state, not a `<details>`**. As an uncontrolled
+  `<details>`, every reload of the list — an approval's refresh, the inspector roster
+  arriving — reset it, so the menu shut itself the moment something else finished.
+
+## 3. Filters that mean what they say
 
 Every booking filter is now a server query, not a second pass over the page already
 loaded. `GET /api/v1/inspection-bookings` takes `status`, `customer_id`, `location_id`,
@@ -39,7 +70,18 @@ filtered list gives the matching bookings and `total` counts the matches.
   them from the current, already-narrowed page would drop the option needed to widen the
   search again.
 
-## 3. Statuses, origins and actions
+### Status tabs
+
+`GET /inspection-bookings` returns `status_counts` alongside the page: how many bookings
+each tab holds, counted over the same filtered set with the status filter itself left
+off. Picking a tab therefore does not change what the other tabs say is waiting behind
+them, and the tiles, the tabs and the range under the table all quote the same source.
+
+"Reschedule requested" overlaps "Approved" in the data — a booking waiting on a
+reschedule is still approved — so it is counted on its own and taken back out of the
+approved tally, which is what the tabs mean by those words.
+
+## 4. Statuses, origins and actions
 
 Status reads **Requested / Approved / Rejected / Reschedule requested / Cancelled**, each
 behind an explicit "Status" label.
@@ -72,7 +114,16 @@ single rename across both is worth doing, and is not part of this change.
 Availability quotes, conflict validation, active-inspector eligibility, the reassignment
 dialog and the server-side concurrency locks are untouched.
 
-## 4. Admins manage, inspectors inspect
+### Choosing an inspector
+
+Assigning, reassigning and approving a reschedule all pick one inspector in the same
+dialog. Only a **reassignment** can be verified up front: the availability endpoint
+answers for a confirmed appointment, and a booking still awaiting approval has none. So
+the dialog checks and refuses to save an unverified choice when reassigning, and when
+assigning it claims nothing — the server validates on approval and a refusal is shown in
+place, with the choice kept.
+
+## 5. Admins manage, inspectors inspect
 
 Field execution is inspector-only, and only on the inspector's own confirmed assignment.
 `_require_inspection_write` refuses anyone who is not inspector-scoped, so a Super Admin
@@ -90,7 +141,7 @@ worker, which the gate now refuses. The fixture builds a real inspector with an 
 booking, a confirmed appointment and the booked asset, and every race assertion
 (`[200, 409]`, one audit event, one outbox event, the audit chain) is unchanged.
 
-## 5. The certificate-service failure
+## 6. The certificate-service failure
 
 `test_pki.py::test_init_writes_private_files_and_validates` asserted
 `"root" not in secret.lower()` over a JSON file that is mostly base64 PEM. A run of base64

@@ -8,7 +8,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 
 import { InspectionDetail } from "./InspectionDetail";
-import { InspectionBookingCard } from "./InspectionBookingCard";
+import { InspectionBookingsTable } from "./InspectionBookingsTable";
 import { InspectionBookingForm } from "./InspectionBookingForm";
 import { ActionNotice } from "./interaction/ActionNotice";
 import { ChangeInspectorDialog } from "./interaction/ChangeInspectorDialog";
@@ -16,11 +16,12 @@ import { ConfirmDialog } from "./interaction/ConfirmDialog";
 import { InspectionForm } from "./InspectionForm";
 import { ModuleTable, activeFilterList, type ModuleColumn } from "./ModuleTable";
 import {
+  BOOKING_PAGE_SIZES,
   type InspectionStatusFilter,
   useInspectionsWorkspace
 } from "../hooks/useInspectionsWorkspace";
 import { createHmsClient } from "../api/hmsClient";
-import type { AssetRecord, InspectionRecord } from "../domain/types";
+import type { AssetRecord, InspectionBookingRecord, InspectionRecord } from "../domain/types";
 import { friendlyApiError } from "./interaction/friendlyApiError";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { assetLabel } from "../utils/identity";
@@ -133,9 +134,13 @@ export function InspectionsWorkspace({
       handled.current?.();
     }
   }, [bookingAsset, workspace.isBookingFormOpen]);
-  /** The booking whose inspector the open "Change inspector" dialog is for. */
-  const [changingInspector, setChangingInspector] = useState<string | null>(null);
-  const [showAllBookings, setShowAllBookings] = useState(false);
+  /** What the open inspector dialog is for: a first assignment, a change, or approving
+      a reschedule. All three pick one inspector and verify them the same way. */
+  type InspectorTask =
+    | { kind: "assign"; booking: InspectionBookingRecord }
+    | { kind: "change"; booking: InspectionBookingRecord }
+    | { kind: "approve-change"; booking: InspectionBookingRecord; changeId: string };
+  const [inspectorTask, setInspectorTask] = useState<InspectorTask | null>(null);
   // Bookings and inspection records are distinct objects. Show one management view at a time
   // rather than duplicate full-height sections; retain the inspector/reviewer records workflow.
   const [managementView, setManagementView] = useState<"bookings" | "records">(
@@ -155,33 +160,43 @@ export function InspectionsWorkspace({
     // loadInspectors is recreated each render; the list is loaded once, and only when needed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canApproveBookings, needsInspectors]);
-  const changingBooking = workspace.bookings.find((booking) => booking.id === changingInspector) ?? null;
-  const hasReschedule = (booking: (typeof workspace.bookings)[number]) =>
-    booking.changeRequests.some((change) =>
-      change.status === "PENDING_ADMIN_APPROVAL" || change.status === "PENDING_CUSTOMER_CONFIRMATION"
-    );
-  // The tiles count the bookings on screen, so each number agrees with the list beneath
-  // it. The line under the list says how many the server matched in all, and whether
-  // more are waiting to be loaded.
-  const requestedCount = workspace.bookings.filter((booking) => booking.status === "PENDING_APPROVAL").length;
-  const rescheduleCount = workspace.bookings.filter(hasReschedule).length;
-  const approvedBookingCount = workspace.bookings.filter((booking) => booking.status === "APPROVED" && !hasReschedule(booking)).length;
-  const rejectedBookingCount = workspace.bookings.filter((booking) => booking.status === "REJECTED").length;
+  // Every number on this screen is the server's count for the whole filtered set, so the
+  // tiles, the tabs and the range under the table all agree with each other.
+  const counts = workspace.bookingStatusCounts;
   const { bookingFacets, bookingFilters, hasBookingFilters, setBookingFilter } = workspace;
+  const statusTabs = [
+    { value: "ALL" as const, label: "All", count: counts.all },
+    { value: "PENDING_APPROVAL" as const, label: "Requested", count: counts.pendingApproval },
+    { value: "RESCHEDULE_REQUESTED" as const, label: "Reschedule requested", count: counts.rescheduleRequested },
+    { value: "APPROVED" as const, label: "Approved", count: counts.approved },
+    { value: "REJECTED" as const, label: "Rejected", count: counts.rejected }
+  ];
   function changeBookingFilter<K extends keyof typeof bookingFilters>(key: K, value: (typeof bookingFilters)[K]) {
     setBookingFilter(key, value);
-    setShowAllBookings(false);
   }
-  function clearBookingFilters() {
-    workspace.clearBookingFilters();
-    setShowAllBookings(false);
-  }
-  const loadedBookings = workspace.bookings.length;
+  function clearBookingFilters() { workspace.clearBookingFilters(); }
+  const pageCount = Math.max(1, Math.ceil(workspace.bookingTotal / workspace.bookingPageSize));
+  const pageNumbers = Array.from({ length: pageCount }, (_, index) => index);
+  const firstOnPage = workspace.bookingTotal === 0 ? 0 : workspace.bookingPage * workspace.bookingPageSize + 1;
+  const lastOnPage = Math.min(workspace.bookingTotal, firstOnPage + workspace.bookings.length - 1);
   const bookingCountLabel = workspace.bookingsLoading
     ? "Loading bookings"
-    : `${workspace.bookingTotal} ${hasBookingFilters ? "matching booking" : "booking"}${workspace.bookingTotal === 1 ? "" : "s"}${
-        workspace.bookingTotal > loadedBookings ? ` · ${loadedBookings} shown` : ""
-      }`;
+    : workspace.bookingTotal === 0
+      ? "No bookings"
+      : `${firstOnPage} – ${lastOnPage} of ${workspace.bookingTotal} booking${workspace.bookingTotal === 1 ? "" : "s"}`;
+
+  /** The one place a chosen inspector is applied, whichever task opened the dialog. */
+  async function saveInspectorTask(inspectorId: string): Promise<string | null> {
+    if (!inspectorTask) return "This booking is no longer available.";
+    const result = inspectorTask.kind === "change"
+      ? await workspace.reassignInspectionBookingInspector(inspectorTask.booking.id, inspectorId)
+      : inspectorTask.kind === "assign"
+        ? await workspace.approveInspectionBooking(inspectorTask.booking.id, inspectorId)
+        : await workspace.approveInspectionBookingReschedule(inspectorTask.changeId, inspectorId);
+    if (result && !result.ok) return result.error.message;
+    setInspectorTask(null);
+    return null;
+  }
 
   const columns: ModuleColumn<InspectionRecord>[] = [
     {
@@ -235,7 +250,7 @@ export function InspectionsWorkspace({
           <div>
             <span className="inspection-command-eyebrow">Inspection management</span>
             <h2 id="inspection-workspace-heading">Inspection operations</h2>
-            <p>Review inspection work, pressure tests, and approval readiness.</p>
+            <p>Manage inspection requests, approvals, reschedules and inspector assignments.</p>
           </div>
           <div className="inspection-command-side">
             <div className="inspection-command-context" aria-label="Current inspection scope">
@@ -265,10 +280,10 @@ export function InspectionsWorkspace({
         ) : null}
         <section aria-label="Inspection overview">
           <StaggerGroup className="inspection-metrics inspection-command-metrics">
-            <InspectionMetric icon={ClipboardCheck} label="Requested" value={requestedCount} detail="Awaiting assignment and approval" tone="blue" />
-            <InspectionMetric icon={Clock3} label="Reschedule requested" value={rescheduleCount} detail="Pending a decision" tone="amber" />
-            <InspectionMetric icon={CheckCircle2} label="Approved" value={approvedBookingCount} detail="Confirmed bookings" tone="green" />
-            <InspectionMetric icon={AlertTriangle} label="Rejected" value={rejectedBookingCount} detail="Declined requests" tone="red" />
+            <InspectionMetric icon={ClipboardCheck} label="New requests" value={counts.pendingApproval} detail="Awaiting assignment or review" tone="blue" />
+            <InspectionMetric icon={Clock3} label="Reschedule requested" value={counts.rescheduleRequested} detail="Pending approval" tone="amber" />
+            <InspectionMetric icon={CheckCircle2} label="Approved" value={counts.approved} detail="Scheduled and confirmed" tone="green" />
+            <InspectionMetric icon={AlertTriangle} label="Rejected" value={counts.rejected} detail="Not approved" tone="red" />
           </StaggerGroup>
         </section>
         <div className="inspection-management-switch" role="group" aria-label="Inspection management view">
@@ -279,15 +294,7 @@ export function InspectionsWorkspace({
         </div>
         {managementView === "bookings" ? (
         <section className="inspection-bookings-panel" aria-labelledby="inspection-bookings-heading">
-          <header className="inspection-bookings-heading">
-            <div className="inspection-bookings-title">
-              <span className="inspection-bookings-icon"><CalendarDays aria-hidden="true" size={20} /></span>
-              <div>
-                <h3 id="inspection-bookings-heading">Inspection bookings</h3>
-                <p>Assign and approve site visits, and decide the reschedules people ask for.</p>
-              </div>
-            </div>
-          </header>
+          <h3 className="sr-only" id="inspection-bookings-heading">Inspection bookings</h3>
           <div className="inspection-booking-filters" role="group" aria-label="Filter inspection bookings">
             <label>
               <span>Status</span>
@@ -323,70 +330,91 @@ export function InspectionsWorkspace({
             </label>
             <label className="inspection-booking-search">
               <span>Search</span>
-              <input aria-label="Search bookings" placeholder="Customer, site, asset or reference…" value={bookingFilters.search} onChange={(event) => changeBookingFilter("search", event.target.value)} type="search" />
+              <input aria-label="Search bookings" placeholder="Search by customer, asset, reference…" value={bookingFilters.search} onChange={(event) => changeBookingFilter("search", event.target.value)} type="search" />
             </label>
-            <button className="secondary-button inspection-clear-filters" disabled={!hasBookingFilters} onClick={clearBookingFilters} type="button">Clear filters</button>
+            <button className="secondary-button inspection-clear-filters" disabled={!hasBookingFilters} onClick={clearBookingFilters} type="button">
+              Clear filters
+            </button>
           </div>
-          <p className="inspection-booking-count" role="status">{bookingCountLabel}</p>
-          {workspace.bookings.length ? (
-            <div className="inspection-booking-list" aria-label="Inspection bookings">
-              {(showAllBookings ? workspace.bookings : workspace.bookings.slice(0, 4)).map((booking) => (
-                <InspectionBookingCard
-                  booking={booking}
-                  canApproveBookings={canApproveBookings}
-                  canBook={canBook}
-                  inspectors={workspace.inspectors}
-                  key={booking.id}
-                  onApprove={(bookingId, inspectorId) => void workspace.approveInspectionBooking(bookingId, inspectorId)}
-                  onApproveReschedule={(changeId, inspectorId) => void workspace.approveInspectionBookingReschedule(changeId, inspectorId)}
-                  onCancel={(target) => workspace.bookingDecision.request({ action: "cancel", booking: target })}
-                  onChangeInspector={(target) => void workspace.loadInspectors().then((loaded) => { if (loaded) setChangingInspector(target.id); })}
-                  onConfirmReschedule={(changeId) => void workspace.confirmInspectionBookingReschedule(changeId)}
-                  onDecline={(target) => workspace.bookingDecision.request({ action: "reject", booking: target })}
-                  onRequestReschedule={workspace.openReschedule}
-                  pendingAction={workspace.pendingAction}
-                />
+
+          {/* The counts come from the server for the whole filtered set, so a tab says
+              what is behind it rather than what this page happens to hold. */}
+          <div className="inspection-status-tabs" role="tablist" aria-label="Booking status">
+            {statusTabs.map((tab) => (
+              <button
+                aria-selected={bookingFilters.status === tab.value}
+                className={bookingFilters.status === tab.value ? "is-active" : ""}
+                key={tab.value}
+                onClick={() => changeBookingFilter("status", tab.value)}
+                role="tab"
+                type="button"
+              >
+                {tab.label} <span className="inspection-status-tabs__count">({tab.count})</span>
+              </button>
+            ))}
+          </div>
+
+          <InspectionBookingsTable
+            bookings={workspace.bookings}
+            canApproveBookings={canApproveBookings}
+            canBook={canBook}
+            filtered={hasBookingFilters}
+            inspectors={workspace.inspectors}
+            loading={workspace.bookingsLoading}
+            onApproveReschedule={(booking, changeId) => void workspace.loadInspectors().then((loaded) => { if (loaded) setInspectorTask({ kind: "approve-change", booking, changeId }); })}
+            onAssign={(booking) => void workspace.loadInspectors().then((loaded) => { if (loaded) setInspectorTask({ kind: "assign", booking }); })}
+            onCancel={(target) => workspace.bookingDecision.request({ action: "cancel", booking: target })}
+            onChangeInspector={(booking) => void workspace.loadInspectors().then((loaded) => { if (loaded) setInspectorTask({ kind: "change", booking }); })}
+            onConfirmReschedule={(changeId) => void workspace.confirmInspectionBookingReschedule(changeId)}
+            onDecline={(target) => workspace.bookingDecision.request({ action: "reject", booking: target })}
+            onRequestReschedule={workspace.openReschedule}
+            pendingAction={workspace.pendingAction}
+          />
+
+          <div className="inspection-booking-pagination">
+            <label className="inspection-booking-pagesize">
+              <span>Rows per page</span>
+              <select
+                aria-label="Bookings per page"
+                onChange={(event) => workspace.setBookingPageSize(Number(event.target.value))}
+                value={workspace.bookingPageSize}
+              >
+                {BOOKING_PAGE_SIZES.map((size) => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </label>
+            <p className="inspection-booking-count" role="status">{bookingCountLabel}</p>
+            <div className="inspection-booking-pages" role="group" aria-label="Booking pages">
+              <button aria-label="Previous page" disabled={workspace.bookingPage === 0} onClick={() => workspace.setBookingPage(workspace.bookingPage - 1)} type="button">‹</button>
+              {pageNumbers.map((page) => (
+                <button
+                  aria-current={page === workspace.bookingPage ? "page" : undefined}
+                  aria-label={`Page ${page + 1}`}
+                  className={page === workspace.bookingPage ? "is-active" : ""}
+                  key={page}
+                  onClick={() => workspace.setBookingPage(page)}
+                  type="button"
+                >
+                  {page + 1}
+                </button>
               ))}
-              {!showAllBookings && loadedBookings > 4 ? (
-                <button className="secondary-button compact-action" onClick={() => setShowAllBookings(true)} type="button">
-                  {`Show all ${loadedBookings} bookings on this page`}
-                </button>
-              ) : null}
-              {workspace.bookingTotal > workspace.bookings.length ? (
-                <button className="secondary-button compact-action" onClick={() => void workspace.loadMoreBookings()} type="button">
-                  Load more bookings
-                </button>
-              ) : null}
-              <ChangeInspectorDialog
-                checkAvailability={(inspectorId) => workspace.checkInspectorAvailability(changingBooking?.id ?? "", inspectorId)}
-                currentInspectorId={changingBooking?.inspectorUserId ?? null}
-                currentInspectorName={workspace.inspectors.find((inspector) => inspector.id === changingBooking?.inspectorUserId)?.displayName ?? "Assigned"}
-                inspectors={workspace.inspectors.map((inspector) => ({ id: inspector.id, name: inspector.displayName }))}
-                onClose={() => setChangingInspector(null)}
-                onSave={async (inspectorId) => {
-                  if (!changingBooking) return "This booking is no longer available.";
-                  const result = await workspace.reassignInspectionBookingInspector(changingBooking.id, inspectorId);
-                  if (!result.ok) return result.error.message;
-                  setChangingInspector(null);
-                  return null;
-                }}
-                open={changingBooking !== null}
-                siteName={changingBooking?.location.name ?? ""}
-                whenLabel={changingBooking ? formatLocationDateTime(changingBooking.scheduledAt, changingBooking.location.schedulingTimezone) : undefined}
-              />
+              <button aria-label="Next page" disabled={workspace.bookingPage >= pageCount - 1} onClick={() => workspace.setBookingPage(workspace.bookingPage + 1)} type="button">›</button>
             </div>
-          ) : (
-            <p className="inspection-booking-empty">
-              <CalendarDays aria-hidden="true" size={22} />
-              {workspace.bookingsLoading ? (
-                <span><strong>Loading bookings…</strong> The matching bookings appear here.</span>
-              ) : hasBookingFilters ? (
-                <span><strong>No bookings match these filters.</strong> Clear the filters to see every booking.</span>
-              ) : (
-                <span><strong>No inspection bookings are scheduled.</strong> Book a site visit to coordinate inspection work.</span>
-              )}
-            </p>
-          )}
+          </div>
+
+          <ChangeInspectorDialog
+            checkAvailability={(inspectorId) => workspace.checkInspectorAvailability(inspectorTask?.booking.id ?? "", inspectorId)}
+            currentInspectorId={inspectorTask?.kind === "change" ? inspectorTask.booking.inspectorUserId : null}
+            currentInspectorName={workspace.inspectors.find((inspector) => inspector.id === inspectorTask?.booking.inspectorUserId)?.displayName ?? "Not assigned"}
+            inspectors={workspace.inspectors.map((inspector) => ({ id: inspector.id, name: inspector.displayName }))}
+            onClose={() => setInspectorTask(null)}
+            onSave={saveInspectorTask}
+            open={inspectorTask !== null}
+            saveLabel={inspectorTask?.kind === "change" ? "Save change" : "Assign inspector"}
+            siteName={inspectorTask?.booking.location.name ?? ""}
+            title={inspectorTask?.kind === "change" ? "Change inspector" : "Assign inspector"}
+            verifyAvailability={inspectorTask?.kind === "change"}
+            whenLabel={inspectorTask ? formatLocationDateTime(inspectorTask.booking.scheduledAt, inspectorTask.booking.location.schedulingTimezone) : undefined}
+          />
         </section>
         ) : null}
         {managementView === "records" ? (

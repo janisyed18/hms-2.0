@@ -114,7 +114,7 @@ test.describe("usability polish", () => {
       await createAndApproveBooking(customer.page, admin.page); // Mon 4 Oct 2027: daylight time, AEDT
 
       await openInspections(admin.page);
-      await expect(admin.page.locator(".inspection-booking-list")).toContainText(/4 Oct(ober)? 2027, 8:00 am AEDT/);
+      await expect(admin.page.locator("table.inspection-booking-table")).toContainText(/4 Oct(ober)? 2027, 8:00 am AEDT/);
 
       await customer.page.goto("/portal/?view=bookings");
       const card = customer.page.locator(".portal-booking-card").first();

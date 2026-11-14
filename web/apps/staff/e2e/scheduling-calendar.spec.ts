@@ -5,6 +5,7 @@ import { expect, test, type Browser, type Page } from "@playwright/test";
 
 import { resetAuthTestAccounts } from "./global-setup";
 import {
+  chooseRowAction,
   activatedAccounts,
   activePasswords,
   authenticatorSecrets,
@@ -234,7 +235,7 @@ test.describe("staff scheduling and dispatch calendar", () => {
       const confirmed = s.customer.page.waitForResponse(
         (response) => response.url().includes("/confirm") && response.request().method() === "POST"
       );
-      await s.customer.page.getByRole("button", { name: "Confirm reschedule" }).click();
+      await chooseRowAction(s.customer.page, "Port Botany", "Confirm reschedule");
       expect((await confirmed).status()).toBe(200);
 
       // Back on the calendar, the change is no longer pending.

@@ -766,10 +766,26 @@ class InspectionBookingRead(BaseModel):
     change_requests: list[InspectionAppointmentChangeRequestRead] = []
 
 
+class InspectionBookingStatusCounts(BaseModel):
+    """What each status tab holds, over the filtered set with the status filter off.
+
+    ``reschedule_requested`` counts bookings waiting on a reschedule decision, which
+    are approved bookings and so are left out of ``approved``.
+    """
+
+    all: int = 0
+    pending_approval: int = 0
+    reschedule_requested: int = 0
+    approved: int = 0
+    rejected: int = 0
+    cancelled: int = 0
+
+
 class InspectionBookingListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    status_counts: InspectionBookingStatusCounts = InspectionBookingStatusCounts()
     items: list[InspectionBookingRead]
 
 
