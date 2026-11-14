@@ -313,8 +313,9 @@ async def test_an_approved_inspection_is_final(
             for action in ("start", "rework", "submit")
         ]
         patch = await client.patch(url(inspection_id), json={"result": "PASS"})
-    assert again.status_code == reject.status_code == patch.status_code == 409
-    assert results == [409, 409, 409]
+    assert again.status_code == reject.status_code == 409
+    assert patch.status_code == 403
+    assert results == [403, 403, 403]
 
 
 @pytest.mark.asyncio
