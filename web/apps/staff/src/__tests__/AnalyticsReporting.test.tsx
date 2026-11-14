@@ -50,7 +50,7 @@ function overviewBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function stub(options: { failAfter?: number } = {}) {
+function stub(options: { failAfter?: number; holdAfterFirst?: boolean } = {}) {
   let calls = 0;
   const fetchMock = vi.fn(async (url: string | URL | Request) => {
     const path = new URL(String(url), "http://test").pathname;
@@ -58,6 +58,9 @@ function stub(options: { failAfter?: number } = {}) {
       calls += 1;
       if (options.failAfter !== undefined && calls > options.failAfter) {
         return new Response(JSON.stringify({ detail: "Analytics is unavailable" }), { status: 503 });
+      }
+      if (options.holdAfterFirst && calls > 1) {
+        return new Promise<Response>(() => undefined);
       }
       return ok(overviewBody());
     }
@@ -107,6 +110,20 @@ describe("Analytics shares the Dashboard's fleet definitions", () => {
     expect(
       await screen.findByText(/The period changes activity figures only, not current fleet status\./)
     ).toBeVisible();
+  });
+
+  it("names the period its throughput belongs to while a newer period is loading", async () => {
+    stub({ holdAfterFirst: true });
+    const user = userEvent.setup();
+    render(<AnalyticsWorkspace onModuleChange={vi.fn()} />);
+
+    expect(await screen.findByText(/Inspection throughput is for last 1 month\./)).toBeVisible();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Reporting period" }), "last_week");
+
+    expect(await screen.findByText("Updating to last 1 week…")).toBeVisible();
+    // Still described as last month's, because that is what is on screen.
+    expect(screen.getByText(/Inspection throughput is for last 1 month\./)).toBeVisible();
   });
 
   it("keeps the last good figures and offers a retry when a refresh fails", async () => {

@@ -367,3 +367,26 @@ fixture now dropping its database even when the migration fails.
 belong with the Phase D charts and Phase E polish; the trend chart has no tooltips, series
 toggles or keyboard inspection yet (Phase D), though it does ship an accessible data table
 and dash patterns so the lines are separable without colour.
+
+### Phase C review corrections
+
+**My Work (unrelated to Phase C, fixed separately in 2405cfb).** CI's `staff-web` job failed on
+`MyWorkWorkspace.test.tsx`: the UI showed existing work but said "could not be loaded". Cause
+confirmed and reproduced: `useMyWork` recorded "we hold results" in an effect keyed on `work`,
+while a refresh queued behind the first load starts inside that load's own promise chain,
+before React commits the render. The ref is now set as soon as the response arrives, and the
+effect is gone. `useMyWork.test.ts` reproduces the race deterministically (the hook test
+fails without the fix), so it no longer depends on machine load. Neither the message wording
+nor the assertion was changed.
+
+**Stale activity under a new period label.** The Dashboard now stores the reporting period each
+activity report was loaded for. The trend subtitle names that period, adds "Updating to <new
+period>…" while a replacement is in flight, and the panel is marked `aria-busy` and dimmed, so
+last month's chart can never pass as this week's. Analytics does the same for inspection
+throughput.
+
+**Export filename.** `overdueExportName` formats the as-of date in the organisation timezone
+rather than slicing the UTC ISO string, so the filename matches the date the Dashboard shows.
+
+Verification: 882 Staff tests pass (71 files), lint, typecheck and build clean; the My Work
+hook and workspace tests pass on eight consecutive runs.

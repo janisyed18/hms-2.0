@@ -79,8 +79,9 @@ export function OperationalWorkspace({
 }: OperationalWorkspaceProps) {
   const [dashboardEvents, setDashboardEvents] = useState<AuditEventRecord[]>([]);
   const [eventsError, setEventsError] = useState<string | null>(null);
-  const [activity, setActivity] = useState<ActivityReport | null>(null);
+  const [activity, setActivity] = useState<LoadedActivity | null>(null);
   const [activityError, setActivityError] = useState<string | null>(null);
+  const [activityLoading, setActivityLoading] = useState(false);
   const [overduePage, setOverduePage] = useState(1);
   const [overduePageSize, setOverduePageSize] = useState(overduePageSizes[0]);
   const overdueStart = (overduePage - 1) * overduePageSize;
@@ -147,18 +148,21 @@ export function OperationalWorkspace({
         }
       });
 
+    setActivityLoading(true);
     client
       .getReportingActivity(reportingPeriod)
       .then((result) => {
         if (current()) {
-          setActivity(result);
+          setActivity({ report: result, periodLabel: reportingPeriod.label });
           setActivityError(null);
+          setActivityLoading(false);
         }
       })
       .catch((error: unknown) => {
         if (current()) {
           setActivity(null);
           setActivityError(errorMessage(error, "Activity could not be loaded."));
+          setActivityLoading(false);
         }
       });
 
@@ -226,7 +230,7 @@ export function OperationalWorkspace({
   );
   const fleet = dashboard.fleetStatus;
   const onTrackRate = fleet.onTrackPercent;
-  const series = activitySeries(activity);
+  const series = activitySeries(activity?.report ?? null);
   // Escalations awaiting nobody: what has actually been escalated, across the whole
   // queue rather than the page on screen.
   const escalationTotal = dashboard.overdueEscalated;
@@ -240,7 +244,7 @@ export function OperationalWorkspace({
     setDashboardNotice(null);
     try {
       const rows = await fetchAllOverdueRetests(dashboard.overdueTotal, reportingPeriod);
-      downloadCsv(overdueExportName(dashboard.asOf), [
+      downloadCsv(overdueExportName(dashboard.asOf, dashboard.timezone), [
         ["Asset", "Customer", "Product", "Due date", "Days overdue", "Status"],
         ...rows.map((retest) => [
           retest.assetNumber,
@@ -414,9 +418,14 @@ export function OperationalWorkspace({
             <div>
               <h2>Operational Trends</h2>
               <p>
+                {/* The period the figures on screen belong to, which during a change is
+                    still the previous one until its replacement arrives. */}
                 {activity
-                  ? `Recorded activity for ${reportingPeriod.label.toLowerCase()}, by ${activity.granularity}.`
+                  ? `Recorded activity for ${activity.periodLabel.toLowerCase()}, by ${activity.report.granularity}.`
                   : "Recorded activity for the selected period."}
+                {activityLoading && activity && activity.periodLabel !== reportingPeriod.label
+                  ? ` Updating to ${reportingPeriod.label.toLowerCase()}…`
+                  : ""}
               </p>
             </div>
             <button className="subtle-link-button" onClick={() => onModuleChange("analytics")} type="button">
@@ -424,7 +433,12 @@ export function OperationalWorkspace({
               Analytics
             </button>
           </div>
-          <OperationalTrendPanel activity={activity} error={activityError} series={series} />
+          <OperationalTrendPanel
+            activity={activity?.report ?? null}
+            error={activityError}
+            isStale={Boolean(activity && activity.periodLabel !== reportingPeriod.label)}
+            series={series}
+          />
         </section>
         <FleetStatusPanel fleet={fleet} onModuleChange={onModuleChange} />
       </div>
@@ -657,6 +671,12 @@ const activitySeriesOrder = [
 
 type ActivitySeriesKey = (typeof activitySeriesOrder)[number]["key"];
 
+/** An activity report together with the reporting period it was loaded for. */
+interface LoadedActivity {
+  report: ActivityReport;
+  periodLabel: string;
+}
+
 interface ActivitySeries {
   label: string;
   className: string;
@@ -707,8 +727,15 @@ function formatAsOf(asOf: string, timeZone: string): string {
   }).format(new Date(asOf));
 }
 
-function overdueExportName(asOf: string): string {
-  return `overdue-retests-${asOf.slice(0, 10)}.csv`;
+/** Named for the as-of date as the Dashboard shows it, which is the organisation's date. */
+function overdueExportName(asOf: string, timeZone: string): string {
+  const date = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone
+  }).format(new Date(asOf));
+  return `overdue-retests-${date}.csv`;
 }
 
 /** Every overdue row, not just the page on screen, read through the same queue. */
@@ -821,10 +848,13 @@ function MetricSparkline({ values }: { values: number[] }) {
 function OperationalTrendPanel({
   activity,
   error,
+  isStale,
   series
 }: {
   activity: ActivityReport | null;
   error: string | null;
+  /** True while these figures belong to a period other than the one now selected. */
+  isStale: boolean;
   series: ActivitySeriesSet | null;
 }) {
   if (error) {
@@ -848,7 +878,7 @@ function OperationalTrendPanel({
   const labelStep = Math.max(1, Math.ceil(series.labels.length / 6));
 
   return (
-    <div className="operational-trend">
+    <div className={`operational-trend${isStale ? " is-stale" : ""}`} aria-busy={isStale || undefined}>
       {hasActivity ? (
         <>
           <svg aria-hidden="true" className="operational-trend-chart" viewBox="0 0 640 240">

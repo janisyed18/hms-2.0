@@ -45,6 +45,9 @@ const fleetLabels: Record<FleetPosture, string> = {
 
 export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) {
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
+  // The period the figures on screen were loaded for: while a change is in flight, or a
+  // refresh has failed, it is still the previous one and must be named as such.
+  const [loadedPeriodLabel, setLoadedPeriodLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -63,6 +66,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
       .then((result) => {
         if (token !== latestRequest.current) return;
         setOverview(result);
+        setLoadedPeriodLabel(reportingPeriod.label);
         setError(null);
         setLoading(false);
       })
@@ -105,6 +109,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
   if (overview === null) return null;
 
   const onTrackRate = overview.fleetStatus.onTrackPercent;
+  const isPeriodChanging = loading && loadedPeriodLabel !== null && loadedPeriodLabel !== reportingPeriod.label;
   const reviewRate = percentage(
     overview.inspectionOutcomes.reduce((total, outcome) => total + outcome.approved, 0),
     overview.inspectionOutcomes.reduce(
@@ -129,8 +134,13 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
           <span className="analytics-eyebrow">Operational intelligence</span>
           <h2>Fleet performance at a glance</h2>
           <p>
-            Fleet status and certificate coverage are current as at {formatDateTime(overview.asOf)}. Inspection throughput is for {reportingPeriod.label.toLowerCase()}. {REPORTING_PERIOD_SCOPE_NOTE}
+            Fleet status and certificate coverage are current as at {formatDateTime(overview.asOf)}. Inspection throughput is for {(loadedPeriodLabel ?? reportingPeriod.label).toLowerCase()}. {REPORTING_PERIOD_SCOPE_NOTE}
           </p>
+          {isPeriodChanging ? (
+            <span className="analytics-updated" role="status">
+              Updating to {reportingPeriod.label.toLowerCase()}…
+            </span>
+          ) : null}
           <span className="analytics-updated">
             <CalendarClock aria-hidden="true" size={14} />
             Last updated {formatDateTime(overview.generatedAt)}

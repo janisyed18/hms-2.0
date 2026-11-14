@@ -1914,6 +1914,13 @@ button:active:not(:disabled) {
   padding: 0 18px 16px;
 }
 
+/* While the selected period has changed but its figures have not arrived, the chart is
+   visibly the previous period's rather than passing as the new one. */
+.operational-trend.is-stale .operational-trend-chart,
+.operational-trend.is-stale .trend-legend {
+  opacity: 0.45;
+}
+
 .operational-trend-chart {
   display: block;
   width: 100%;

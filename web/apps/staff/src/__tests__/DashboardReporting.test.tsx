@@ -103,6 +103,8 @@ function activityBody() {
 
 interface StubOptions {
   overrides?: DashboardOverrides;
+  /** Hold every activity response after the first, to model a slow period change. */
+  holdActivityAfterFirst?: boolean;
   activityStatus?: number;
   auditStatus?: number;
   dashboardFailsAfter?: number;
@@ -112,6 +114,7 @@ interface StubOptions {
 
 function stub(options: StubOptions = {}) {
   let dashboardCalls = 0;
+  let activityCalls = 0;
   const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const target = new URL(String(url), "http://test");
     const path = target.pathname;
@@ -130,6 +133,10 @@ function stub(options: StubOptions = {}) {
         return new Response(JSON.stringify({ detail: "Activity is unavailable" }), {
           status: options.activityStatus
         });
+      }
+      activityCalls += 1;
+      if (options.holdActivityAfterFirst && activityCalls > 1) {
+        return new Promise<Response>(() => undefined);
       }
       return ok(activityBody());
     }
@@ -306,6 +313,25 @@ describe("the Dashboard export covers every overdue record", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Exported all 3 overdue retests.");
     expect(requested.some(([limit]) => limit === 100)).toBe(true);
   });
+
+  it("names the file for the as-of date in the organisation timezone", async () => {
+    // 00:30 UTC on 14 November is 11:30 on the 14th in Sydney, but the 13th in UTC.
+    stub({ overrides: { overdueTotal: 1 } });
+    const filenames: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+      this: HTMLAnchorElement
+    ) {
+      filenames.push(this.download);
+    });
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await screen.findByRole("table", { name: "Overdue retests" });
+    await user.click(screen.getByRole("button", { name: "Export all" }));
+
+    await waitFor(() => expect(filenames).toHaveLength(1));
+    expect(filenames[0]).toBe("overdue-retests-2026-11-14.csv");
+  });
 });
 
 describe("the Dashboard trend comes from the reporting activity API", () => {
@@ -337,6 +363,25 @@ describe("the Dashboard trend comes from the reporting activity API", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("5");
     expect(rows[1]).toHaveTextContent("7");
+  });
+
+  it("names the period its figures belong to while a newer period is loading", async () => {
+    stub({ holdActivityAfterFirst: true });
+    const user = userEvent.setup();
+    renderDashboard();
+
+    await screen.findByLabelText("Operational trend legend");
+    expect(screen.getByText(/Recorded activity for last 1 month, by day\./)).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Reporting period" }), "last_week");
+
+    // The chart still shows last month's figures, so it says so and marks itself busy.
+    const subtitle = await screen.findByText(
+      /Recorded activity for last 1 month, by day\. Updating to last 1 week…/
+    );
+    expect(subtitle).toBeInTheDocument();
+    expect(document.querySelector(".operational-trend.is-stale")).not.toBeNull();
+    expect(document.querySelector('.operational-trend[aria-busy="true"]')).not.toBeNull();
   });
 
   it("says activity could not be loaded instead of showing an empty chart", async () => {
