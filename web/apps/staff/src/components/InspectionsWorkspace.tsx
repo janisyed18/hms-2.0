@@ -300,16 +300,16 @@ export function InspectionsWorkspace({
             <label><span>Status</span><select aria-label="Booking status filter" value={bookingStatusFilter} onChange={(event) => { setBookingStatusFilter(event.target.value); setShowAllBookings(false); }}>
               <option value="ALL">All statuses</option><option value="PENDING_APPROVAL">Requested</option><option value="RESCHEDULE_REQUESTED">Reschedule requested</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option><option value="CANCELLED">Cancelled</option>
             </select></label>
-            <label><span>Customer</span><select aria-label="Booking customer filter" value={bookingCustomerFilter} onChange={(event) => { setBookingCustomerFilter(event.target.value); setShowAllBookings(false); }}><option value="ALL">All customers</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></label>
-            <label><span>Asset</span><select aria-label="Booking asset filter" value={bookingAssetFilter} onChange={(event) => { setBookingAssetFilter(event.target.value); setShowAllBookings(false); }}><option value="ALL">All assets</option>{assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}</select></label>
-            <label><span>Location</span><select aria-label="Booking location filter" value={bookingLocationFilter} onChange={(event) => { setBookingLocationFilter(event.target.value); setShowAllBookings(false); }}><option value="ALL">All locations</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+            <label><span>Customer</span><select aria-label="Booking customer filter" value={bookingCustomerFilter} onChange={(event) => { setBookingCustomerFilter(event.target.value); setShowAllBookings(false); }}><option value="ALL">All customers</option>{customers.map((customer) => <option key={customer.id} value={customer.id}>Customer · {customer.name}</option>)}</select></label>
+            <label><span>Asset</span><select aria-label="Booking asset filter" value={bookingAssetFilter} onChange={(event) => { setBookingAssetFilter(event.target.value); setShowAllBookings(false); }}><option value="ALL">All assets</option>{assets.map((asset) => <option key={asset.id} value={asset.id}>Asset · {asset.name}</option>)}</select></label>
+            <label><span>Location</span><select aria-label="Booking location filter" value={bookingLocationFilter} onChange={(event) => { setBookingLocationFilter(event.target.value); setShowAllBookings(false); }}><option value="ALL">All locations</option>{locations.map((location) => <option key={location.id} value={location.id}>Location · {location.name}</option>)}</select></label>
             <label className="inspection-booking-search"><span>Search</span><input aria-label="Search booking requests" placeholder="Customer, asset or reference…" value={bookingSearch} onChange={(event) => { setBookingSearch(event.target.value); setShowAllBookings(false); }}/></label>
             <button className="secondary-button inspection-clear-filters" disabled={!hasBookingFilters} onClick={clearBookingFilters} type="button">Clear filters</button>
           </div>
           <p className="inspection-booking-count" role="status">{filteredBookings.length} matching of {workspace.bookings.length} loaded bookings{workspace.bookingTotal > workspace.bookings.length ? ` · ${workspace.bookingTotal} total; load more to search additional records` : ""}</p>
           {filteredBookings.length ? (
             <div className="inspection-booking-list" aria-label="Inspection bookings">
-              {(showAllBookings ? filteredBookings : filteredBookings.slice(0, 10)).map((booking) => (
+              {(showAllBookings ? filteredBookings : filteredBookings.slice(0, 4)).map((booking) => (
                 <InspectionBookingCard
                   booking={booking}
                   canApproveBookings={canApproveBookings}
@@ -326,9 +326,9 @@ export function InspectionsWorkspace({
                   pendingAction={workspace.pendingAction}
                 />
               ))}
-              {!showAllBookings && filteredBookings.length > 10 ? (
+              {!showAllBookings && filteredBookings.length > 4 ? (
                 <button className="secondary-button compact-action" onClick={() => setShowAllBookings(true)} type="button">
-                  {`Show all ${filteredBookings.length} matching loaded bookings`}
+                  {hasBookingFilters ? `Show all ${filteredBookings.length} matching loaded bookings` : `Show all ${filteredBookings.length} loaded bookings`}
                 </button>
               ) : null}
               {workspace.bookingTotal > workspace.bookings.length ? (

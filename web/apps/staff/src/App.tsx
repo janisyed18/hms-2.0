@@ -801,8 +801,7 @@ function normaliseSession(session: StaffSession): StaffSession {
 /** Inspection execution belongs only to inspector-scoped identities, never admins. */
 export function canPerformInspections(session: StaffSession): boolean {
   return session.roles.includes("INSPECTOR") &&
-    !session.roles.some((role) => ["SUPER_ADMIN", "HMS_ADMIN", "REVIEWER", "ASSEMBLY"].includes(role)) &&
-    hasPermission(session, "inspection:write");
+    !session.roles.some((role) => ["SUPER_ADMIN", "HMS_ADMIN", "REVIEWER", "ASSEMBLY"].includes(role));
 }
 
 function hasPermission(session: StaffSession, permission: StaffPermission): boolean {

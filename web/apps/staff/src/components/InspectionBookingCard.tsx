@@ -128,7 +128,7 @@ export function InspectionBookingCard({
         {canApproveBookings ? (
           <div className="booking-card__inspector">
             <span className="booking-card__field-label">Inspector</span>
-            <span className="booking-card__inspector-name"><UserRound aria-hidden="true" size={16} />{inspectorName}</span>
+            <span className="booking-card__inspector-name assigned-inspector__name"><UserRound aria-hidden="true" size={16} />{inspectorName}</span>
           </div>
         ) : null}
         <div className="booking-card__status">

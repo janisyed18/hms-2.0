@@ -307,7 +307,8 @@ describe("Inspection bookings", () => {
   it("declines only after confirmation and keeps the booking if declining fails", async () => {
     client.rejectInspectionBooking.mockRejectedValueOnce(api(500, "Internal server error"));
     const user = await renderBookings();
-    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await user.click(screen.getByText("Actions"));
+    await user.click(screen.getByRole("button", { name: "Reject request" }));
     const dialog = screen.getByRole("alertdialog", { name: "Decline the booking at Kooragang?" });
     expect(client.rejectInspectionBooking).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole("button", { name: "Decline booking" }));
@@ -357,7 +358,7 @@ describe("A successful booking action is never reported as a failure because a l
     expect(client.approveInspectionBooking).toHaveBeenCalledTimes(1);
     // The booking returned by the approval is already applied, so the card no longer offers approval.
     expect(screen.queryByRole("button", { name: "Assign & approve" })).toBeNull();
-    expect(within(screen.getByText("Kooragang").closest("article") as HTMLElement).getByText("APPROVED")).toBeInTheDocument();
+    expect(within(screen.getByText("Kooragang").closest("article") as HTMLElement).getByText("Approved")).toBeInTheDocument();
   });
 
   it("confirm reschedule: the confirmation stands when the booking reload fails, and says the view is stale", async () => {
@@ -383,7 +384,8 @@ describe("A successful booking action is never reported as a failure because a l
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
     await screen.findByText("Kooragang");
     const loads = client.listInspectionBookings.mock.calls.length;
-    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await user.click(screen.getByText("Actions"));
+    await user.click(screen.getByRole("button", { name: "Reject request" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Decline booking" }));
 
     const alert = await within(await screen.findByRole("alertdialog")).findByRole("alert");
@@ -399,7 +401,8 @@ describe("A successful booking action is never reported as a failure because a l
     const user = userEvent.setup();
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
     await screen.findByText("Kooragang");
-    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await user.click(screen.getByText("Actions"));
+    await user.click(screen.getByRole("button", { name: "Reject request" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Decline booking" }));
     expect(await within(await screen.findByRole("alertdialog")).findByRole("alert")).toHaveTextContent("Only pending inspection bookings can be declined.");
   });
@@ -433,7 +436,7 @@ describe("Changing the inspector of a confirmed booking", () => {
   it("shows the assigned inspector beside Change inspector, and saves only from the dialog", async () => {
     client.reassignInspectionBookingInspector.mockResolvedValue({ ...confirmed, inspectorUserId: "ins-2" });
     const user = await renderConfirmed();
-    expect(screen.getByText("Assigned inspector:")).toBeInTheDocument();
+    expect(screen.getByText("Inspector")).toBeInTheDocument();
     await waitFor(() => expect(assigned()).toBe("Ben Brook"));
 
     await open(user);
@@ -634,7 +637,7 @@ describe("Changing the inspector of a confirmed booking", () => {
     client.listAdminUsers.mockResolvedValue({ total: 2, etag: null, items: inspectors });
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
     await screen.findByText("Kooragang");
-    expect(screen.getByText("Cannot change inspector while a reschedule is pending.")).toBeInTheDocument();
+    expect(screen.getByText("Reassignment paused while reschedule is pending.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Change inspector/ })).not.toBeInTheDocument();
   });
 
@@ -649,7 +652,7 @@ describe("Changing the inspector of a confirmed booking", () => {
     const user = userEvent.setup();
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
     await screen.findByText("Site 1");
-    expect(screen.queryByText("Site 5")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change inspector for Site 5" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Show all 5 loaded bookings" }));
     expect(screen.getByText("Site 5")).toBeInTheDocument();
