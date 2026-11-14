@@ -330,6 +330,48 @@ describe("Inspection bookings", () => {
     expect(screen.queryByRole("button", { name: "Book inspection" })).not.toBeInTheDocument();
   });
 
+  it("filters the single booking list by status, customer, asset, location and search", async () => {
+    const second = {
+      ...booking,
+      id: "bk-2",
+      customer: { id: "cust-2", code: "ACME", name: "Acme" },
+      location: { id: "loc-2", name: "Newcastle", schedulingTimezone: "Australia/Sydney" },
+      assets: [{ ...assetSummary, id: "asset-2", assetNumber: "ACME-22", assetName: "Spare Hose" }],
+      status: "APPROVED",
+      inspectorUserId: "ins-1",
+      appointment: { status: "CONFIRMED" }
+    } as unknown as InspectionBookingRecord;
+    client.listInspectionBookings.mockResolvedValue({ total: 2, etag: null, items: [booking, second] });
+    client.listAdminUsers.mockResolvedValue({ total: 1, etag: null, items: [{ id: "ins-1", displayName: "Ben Brook", role: "INSPECTOR", accountStatus: "ACTIVE" }] });
+    const user = userEvent.setup();
+    render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite={false} />);
+    await screen.findByText("Kooragang");
+    expect(screen.getByText("Newcastle")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Booking status filter"), "APPROVED");
+    expect(screen.queryByText("Kooragang")).not.toBeInTheDocument();
+    expect(screen.getByText("Newcastle")).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Booking status filter"), "ALL");
+    await user.selectOptions(screen.getByLabelText("Booking customer filter"), "cust-1");
+    expect(screen.queryByText("Newcastle")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Booking customer filter"), "ALL");
+
+    await user.selectOptions(screen.getByLabelText("Booking asset filter"), "asset-2");
+    expect(screen.queryByText("Kooragang")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Booking asset filter"), "ALL");
+
+    await user.selectOptions(screen.getByLabelText("Booking location filter"), "loc-1");
+    expect(screen.queryByText("Newcastle")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Booking location filter"), "ALL");
+
+    await user.type(screen.getByLabelText("Search booking requests"), "ACME-22");
+    expect(screen.queryByText("Kooragang")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByText("Kooragang")).toBeInTheDocument();
+    expect(screen.getByText("Newcastle")).toBeInTheDocument();
+  });
+
   it("names the booked asset by name first, then HMS number", async () => {
     await renderBookings();
     const card = screen.getByText("Kooragang").closest("article") as HTMLElement;
