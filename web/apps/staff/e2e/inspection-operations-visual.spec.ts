@@ -63,7 +63,7 @@ test.describe("Inspection operations: booking cards across states and widths", (
       await openInspections(admin.page);
       await admin.page.getByLabel("Assign inspector for Port Botany").selectOption({ label: "inspector@example.test" });
       await admin.page.getByRole("button", { name: "Assign & approve" }).click();
-      await expect(admin.page.locator(".inspection-booking-list")).toContainText("APPROVED", { timeout: 90_000 });
+      await expect(admin.page.locator(".inspection-booking-list")).toContainText("Approved", { timeout: 90_000 });
 
       // A second one, approved, then a customer reschedule request waiting for the admin.
       await book(customer.page, "2027-10-05");
@@ -73,8 +73,9 @@ test.describe("Inspection operations: booking cards across states and widths", (
       await expect(admin.page.getByRole("button", { name: "Assign & approve" })).toHaveCount(0, { timeout: 90_000 });
       await expect(async () => {
         await refreshInspectionsWorkspace(customer.page);
-        await expect(card(customer.page, /5 Oct 2027/)).toContainText("APPROVED", { timeout: 4_000 });
+        await expect(card(customer.page, /5 Oct 2027/)).toContainText("Approved", { timeout: 4_000 });
       }).toPass({ timeout: 90_000 });
+      await card(customer.page, /5 Oct 2027/).locator(".booking-action-menu summary").click();
       await card(customer.page, /5 Oct 2027/).getByRole("button", { name: "Request reschedule" }).click();
       await selectFirstAvailableTime(customer.page, "2027-10-07");
       await submitBookingForm(customer.page, "Request reschedule", "/change-requests");

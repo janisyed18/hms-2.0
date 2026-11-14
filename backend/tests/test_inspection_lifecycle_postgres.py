@@ -10,6 +10,7 @@ import asyncio
 import os
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -30,8 +31,14 @@ from hms_backend.app.main import create_app
 from hms_backend.app.models.foundation import AuditEvent
 from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.customers.models import Customer, CustomerLocation
+from hms_backend.app.modules.identity.models import User
 from hms_backend.app.modules.inspections.models import (
     Inspection,
+    InspectionAppointment,
+    InspectionAppointmentStatus,
+    InspectionBooking,
+    InspectionBookingAsset,
+    InspectionBookingStatus,
     InspectionStatus,
     PressureTestResult,
 )
@@ -44,10 +51,15 @@ pytestmark = pytest.mark.skipif(
     not POSTGRES_URL, reason="POSTGRES_TEST_DATABASE_URL is not configured"
 )
 
+# Field work is inspector-only, and only on the inspector's own confirmed assignment,
+# so the worker here is an inspector and every inspection below hangs off a booking
+# assigned to them. A Super Admin is refused by design and cannot stand in.
+INSPECTOR_USER_ID = "11111111-1111-7111-8111-111111111111"
 WORKER = Principal(
     user_id="lifecycle-worker",
-    roles=frozenset({Role.SUPER_ADMIN}),
+    roles=frozenset({Role.INSPECTOR}),
     customer_ids=frozenset(),
+    record_user_id=INSPECTOR_USER_ID,
 )
 REVIEWER = Principal(
     user_id="lifecycle-reviewer",
@@ -98,10 +110,32 @@ async def client_for(
         yield client
 
 
+async def inspector_user(
+    database: async_sessionmaker[AsyncSession],
+) -> str:
+    """The one inspector row the assignments point at, created on first use."""
+    async with database() as session:
+        existing = await session.get(User, INSPECTOR_USER_ID)
+        if existing is None:
+            session.add(
+                User(
+                    id=INSPECTOR_USER_ID,
+                    oidc_subject="local:lifecycle-worker",
+                    email="lifecycle-worker@example.test",
+                    first_name="Lifecycle",
+                    last_name="Inspector",
+                    role=Role.INSPECTOR.value,
+                )
+            )
+            await session.commit()
+    return INSPECTOR_USER_ID
+
+
 async def make_inspection(
     database: async_sessionmaker[AsyncSession], status: str
 ) -> str:
     token = uuid4().hex[:12]
+    inspector_id = await inspector_user(database)
     async with database() as session:
         standard = Standard(code=f"S-{token}", name="Lifecycle standard")
         product = Product(
@@ -120,12 +154,38 @@ async def make_inspection(
             asset_number=f"A-{token}",
             lifecycle_status="IN_SERVICE",
         )
+        session.add(asset)
+        await session.flush()
+        booking = InspectionBooking(
+            customer_id=customer.id,
+            location_id=location.id,
+            scheduled_at=datetime(2027, 3, 1, 1, tzinfo=UTC),
+            scheduled_end_at=datetime(2027, 3, 1, 3, tzinfo=UTC),
+            status=InspectionBookingStatus.APPROVED.value,
+            requested_by_user_id=inspector_id,
+            inspector_user_id=inspector_id,
+        )
+        session.add(booking)
+        await session.flush()
+        session.add_all(
+            [
+                InspectionBookingAsset(booking_id=booking.id, asset_id=asset.id),
+                InspectionAppointment(
+                    booking_id=booking.id,
+                    customer_id=customer.id,
+                    location_id=location.id,
+                    status=InspectionAppointmentStatus.CONFIRMED.value,
+                    current_revision_number=1,
+                ),
+            ]
+        )
         inspection = Inspection(
             asset=asset,
+            booking_id=booking.id,
             inspection_type="SERVICE",
             status=status,
             result="PASS",
-            inspector_user_id="lifecycle-worker",
+            inspector_user_id=inspector_id,
         )
         inspection.pressure_test = PressureTestResult(
             applied_pressure_kpa=2250,
@@ -133,7 +193,7 @@ async def make_inspection(
             passed=True,
             measurements=complete(),
         )
-        session.add_all([asset, inspection])
+        session.add(inspection)
         await session.commit()
         return inspection.id
 

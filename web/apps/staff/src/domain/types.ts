@@ -879,6 +879,8 @@ export interface InspectionBookingChangeRequest {
   reason: string | null;
   emergency: boolean;
   createdAt: string;
+  /** The role of the user who asked for the change, or null when it cannot be resolved. */
+  requestedByRole: string | null;
 }
 
 export interface ScheduleInspector {

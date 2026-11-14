@@ -38,7 +38,13 @@ from hms_backend.app.models.foundation import AuditEvent
 from hms_backend.app.modules.certificates.models import Certificate
 from hms_backend.app.modules.certificates.tasks import _run_batch
 from hms_backend.app.modules.identity.models import User
-from hms_backend.app.modules.inspections.models import Inspection, InspectionStatus
+from hms_backend.app.modules.inspections.models import (
+    Inspection,
+    InspectionAppointment,
+    InspectionBooking,
+    InspectionBookingAsset,
+    InspectionStatus,
+)
 from hms_backend.app.modules.jobs.models import CertificateBatchJob, JobStatus
 
 SUBJECT_PREFIX = "local:"
@@ -253,12 +259,37 @@ async def test_bulk_job_stores_the_requesting_users_id(
 async def test_staff_created_inspection_stores_the_users_id(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    admin = await make_user(session_factory, Role.SUPER_ADMIN)
+    inspector = await make_user(session_factory, Role.INSPECTOR)
     inspection_id = await seed_approved_inspection(session_factory, "U4")
     async with session_factory() as session:
-        asset_id = (await session.get(Inspection, inspection_id)).asset_id  # type: ignore[union-attr]
+        previous = await session.get(Inspection, inspection_id)
+        assert previous is not None
+        asset_id = previous.asset_id
+        asset = previous.asset
+        booking = InspectionBooking(
+            customer_id=asset.customer_id,
+            location_id=asset.location_id,
+            scheduled_at=datetime(2027, 10, 4, 1, tzinfo=UTC),
+            scheduled_end_at=datetime(2027, 10, 4, 2, tzinfo=UTC),
+            status="APPROVED",
+            requested_by_user_id=inspector.id,
+            inspector_user_id=inspector.id,
+        )
+        session.add(booking)
+        await session.flush()
+        session.add_all([
+            InspectionBookingAsset(booking_id=booking.id, asset_id=asset_id),
+            InspectionAppointment(
+                booking_id=booking.id,
+                customer_id=asset.customer_id,
+                location_id=asset.location_id,
+                status="CONFIRMED",
+                current_revision_number=1,
+            ),
+        ])
+        await session.commit()
 
-    async with client_for(session_factory, admin) as client:
+    async with client_for(session_factory, inspector) as client:
         created = await client.post(
             f"/api/v1/assets/{asset_id}/inspections",
             json={
@@ -275,8 +306,8 @@ async def test_staff_created_inspection_stores_the_users_id(
     async with session_factory() as session:
         inspection = await session.get(Inspection, created.json()["id"])
         assert inspection is not None
-        assert inspection.inspector_user_id == admin.id
-        assert inspection.inspector_user_id != admin.oidc_subject
+        assert inspection.inspector_user_id == inspector.id
+        assert inspection.inspector_user_id != inspector.oidc_subject
 
 
 async def run_bulk_job(

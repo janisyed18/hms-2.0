@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import stat
 from pathlib import Path
 
@@ -65,8 +66,19 @@ def test_init_writes_private_files_and_validates(tmp_path: Path) -> None:
     assert main(check) == 0
     leaf = load_certs((out / "signer.cert.pem").read_bytes())[0]
     assert "HMS DEV Certificate Signer" in leaf.subject.rfc4514_string()
-    # The engine never receives the root key: it is not in the signer secret.
-    assert "root" not in (out / "pki-signer.secret.json").read_text().lower()
+    # The engine never receives the root key. Checked against the material itself:
+    # the secret carries exactly the signer's own certificate and key, and neither is
+    # the root's. (Searching the text for "root" also matched when a run of base64 in
+    # the PEM happened to spell it, which failed roughly one run in three hundred and
+    # tested nothing about the key.)
+    secret = json.loads((out / "pki-signer.secret.json").read_text())
+    assert set(secret) == {"certificate_pem", "private_key_pem"}
+    assert secret["private_key_pem"] == (out / "signer.key.pem").read_text()
+    assert secret["certificate_pem"] == (out / "signer.cert.pem").read_text()
+    root_key = (out / "root-ca.key.pem").read_text()
+    root_cert = (out / "root-ca.cert.pem").read_text()
+    assert root_key not in secret["private_key_pem"]
+    assert root_cert not in secret["certificate_pem"]
 
 
 def test_init_refuses_to_overwrite(tmp_path: Path) -> None:

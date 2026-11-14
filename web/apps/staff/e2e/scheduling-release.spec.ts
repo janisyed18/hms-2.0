@@ -70,6 +70,7 @@ test.describe("scheduling release workflow", () => {
 
       await refreshInspectionsWorkspace(customer.page);
       await expect(customer.page.locator(".inspection-booking-list time")).toContainText("8:00");
+      await customer.page.locator(".inspection-booking-card .booking-action-menu summary").first().click();
       await customer.page.getByRole("button", { name: "Request reschedule" }).click();
       await selectFirstAvailableTime(customer.page);
       await submitBookingForm(customer.page, "Request reschedule", "/change-requests");
@@ -79,8 +80,9 @@ test.describe("scheduling release workflow", () => {
       const rescheduleInspector = admin.page.getByLabel("Assign inspector for reschedule at Port Botany");
       await rescheduleInspector.selectOption({ label: "inspector@example.test" });
       await admin.page.getByRole("button", { name: "Approve reschedule" }).click();
-      await expect(admin.page.locator(".inspection-booking-list")).toContainText("APPROVED");
+      await expect(admin.page.locator(".inspection-booking-list")).toContainText("Approved");
 
+      await admin.page.locator(".inspection-booking-card .booking-action-menu summary").first().click();
       await admin.page.getByRole("button", { name: "Request reschedule" }).click();
       await selectFirstAvailableTime(admin.page);
       await chooseOption(admin.page.getByLabel("Inspector for rescheduled inspection"), { label: "inspector@example.test" });
@@ -89,7 +91,7 @@ test.describe("scheduling release workflow", () => {
 
       await refreshInspectionsWorkspace(customer.page);
       await customer.page.getByRole("button", { name: "Confirm reschedule" }).click();
-      await expect(customer.page.locator(".inspection-booking-list")).toContainText("APPROVED");
+      await expect(customer.page.locator(".inspection-booking-list")).toContainText("Approved");
     } finally {
       await Promise.all([customer.context.close(), admin.context.close(), inspector.context.close()]);
     }

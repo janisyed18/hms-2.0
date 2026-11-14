@@ -58,10 +58,6 @@ function pressureLabel(inspection: InspectionRecord) {
   }`;
 }
 
-function countByStatus(inspections: InspectionRecord[], status: string) {
-  return inspections.filter((inspection) => inspection.status === status).length;
-}
-
 function formatLocationDateTime(value: string, timezone: string | null | undefined) {
   return formatWithZone(value, timezone);
 }
@@ -140,22 +136,52 @@ export function InspectionsWorkspace({
   /** The booking whose inspector the open "Change inspector" dialog is for. */
   const [changingInspector, setChangingInspector] = useState<string | null>(null);
   const [showAllBookings, setShowAllBookings] = useState(false);
-  // The assigned inspector's name needs the inspector list, so it is loaded once a confirmed booking is on screen.
-  const hasConfirmedBooking = workspace.bookings.some((booking) => booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED");
+  // Bookings and inspection records are distinct objects. Show one management view at a time
+  // rather than duplicate full-height sections; retain the inspector/reviewer records workflow.
+  const [managementView, setManagementView] = useState<"bookings" | "records">(
+    routeInspectionId ? "records" : canBook || canApproveBookings ? "bookings" : "records"
+  );
+  // A direct inspection link must open the record even for admins whose default view is bookings.
+  useEffect(() => { if (routeInspectionId) setManagementView("records"); }, [routeInspectionId]);
+  // The inspector list is what names an assigned inspector and what an assignment or a
+  // reschedule decision is picked from, so it is loaded once a booking on screen needs it.
+  const needsInspectors = workspace.bookings.some((booking) =>
+    (booking.status === "APPROVED" && booking.appointment?.status === "CONFIRMED") ||
+    booking.status === "PENDING_APPROVAL" ||
+    booking.changeRequests.some((change) => change.status === "PENDING_ADMIN_APPROVAL"));
   const { loadInspectors } = workspace;
   useEffect(() => {
-    if (canApproveBookings && hasConfirmedBooking) void loadInspectors();
+    if (canApproveBookings && needsInspectors) void loadInspectors();
     // loadInspectors is recreated each render; the list is loaded once, and only when needed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canApproveBookings, hasConfirmedBooking]);
+  }, [canApproveBookings, needsInspectors]);
   const changingBooking = workspace.bookings.find((booking) => booking.id === changingInspector) ?? null;
-  const draftCount =
-    countByStatus(workspace.inspections, "DRAFT") + countByStatus(workspace.inspections, "IN_PROGRESS");
-  const submittedCount = countByStatus(workspace.inspections, "SUBMITTED");
-  const approvedCount = countByStatus(workspace.inspections, "APPROVED");
-  const attentionCount = workspace.inspections.filter((inspection) =>
-    ["DRAFT", "IN_PROGRESS", "REJECTED"].includes(inspection.status)
-  ).length;
+  const hasReschedule = (booking: (typeof workspace.bookings)[number]) =>
+    booking.changeRequests.some((change) =>
+      change.status === "PENDING_ADMIN_APPROVAL" || change.status === "PENDING_CUSTOMER_CONFIRMATION"
+    );
+  // The tiles count the bookings on screen, so each number agrees with the list beneath
+  // it. The line under the list says how many the server matched in all, and whether
+  // more are waiting to be loaded.
+  const requestedCount = workspace.bookings.filter((booking) => booking.status === "PENDING_APPROVAL").length;
+  const rescheduleCount = workspace.bookings.filter(hasReschedule).length;
+  const approvedBookingCount = workspace.bookings.filter((booking) => booking.status === "APPROVED" && !hasReschedule(booking)).length;
+  const rejectedBookingCount = workspace.bookings.filter((booking) => booking.status === "REJECTED").length;
+  const { bookingFacets, bookingFilters, hasBookingFilters, setBookingFilter } = workspace;
+  function changeBookingFilter<K extends keyof typeof bookingFilters>(key: K, value: (typeof bookingFilters)[K]) {
+    setBookingFilter(key, value);
+    setShowAllBookings(false);
+  }
+  function clearBookingFilters() {
+    workspace.clearBookingFilters();
+    setShowAllBookings(false);
+  }
+  const loadedBookings = workspace.bookings.length;
+  const bookingCountLabel = workspace.bookingsLoading
+    ? "Loading bookings"
+    : `${workspace.bookingTotal} ${hasBookingFilters ? "matching booking" : "booking"}${workspace.bookingTotal === 1 ? "" : "s"}${
+        workspace.bookingTotal > loadedBookings ? ` · ${loadedBookings} shown` : ""
+      }`;
 
   const columns: ModuleColumn<InspectionRecord>[] = [
     {
@@ -215,8 +241,8 @@ export function InspectionsWorkspace({
             <div className="inspection-command-context" aria-label="Current inspection scope">
               <ClipboardCheck aria-hidden="true" size={23} />
               <span>
-                <strong>{workspace.inspections.length} inspection{workspace.inspections.length === 1 ? "" : "s"}</strong>
-                <small>{workspace.visibleInspections.length} matching the current view</small>
+                <strong>{workspace.bookingTotal} booking{workspace.bookingTotal === 1 ? "" : "s"}</strong>
+                <small>{hasBookingFilters ? "Matching the current filters" : "Across all statuses"}</small>
               </span>
             </div>
             {canBook ? (
@@ -239,22 +265,69 @@ export function InspectionsWorkspace({
         ) : null}
         <section aria-label="Inspection overview">
           <StaggerGroup className="inspection-metrics inspection-command-metrics">
-            <InspectionMetric icon={ClipboardCheck} label="Draft" value={draftCount} detail="Awaiting completion" tone="blue" />
-            <InspectionMetric icon={Clock3} label="Awaiting review" value={submittedCount} detail="Waiting for a reviewer" tone="amber" />
-            <InspectionMetric icon={CheckCircle2} label="Approved" value={approvedCount} detail="Ready for records" tone="green" />
-            <InspectionMetric icon={AlertTriangle} label="Attention" value={attentionCount} detail="Draft or rejected work" tone="red" />
+            <InspectionMetric icon={ClipboardCheck} label="Requested" value={requestedCount} detail="Awaiting assignment and approval" tone="blue" />
+            <InspectionMetric icon={Clock3} label="Reschedule requested" value={rescheduleCount} detail="Pending a decision" tone="amber" />
+            <InspectionMetric icon={CheckCircle2} label="Approved" value={approvedBookingCount} detail="Confirmed bookings" tone="green" />
+            <InspectionMetric icon={AlertTriangle} label="Rejected" value={rejectedBookingCount} detail="Declined requests" tone="red" />
           </StaggerGroup>
         </section>
+        <div className="inspection-management-switch" role="group" aria-label="Inspection management view">
+          {(canBook || canApproveBookings) ? (
+            <button aria-pressed={managementView === "bookings"} className={managementView === "bookings" ? "is-active" : ""} onClick={() => setManagementView("bookings")} type="button">Booking requests</button>
+          ) : null}
+          <button aria-pressed={managementView === "records"} className={managementView === "records" ? "is-active" : ""} onClick={() => setManagementView("records")} type="button">Inspection records</button>
+        </div>
+        {managementView === "bookings" ? (
         <section className="inspection-bookings-panel" aria-labelledby="inspection-bookings-heading">
           <header className="inspection-bookings-heading">
             <div className="inspection-bookings-title">
               <span className="inspection-bookings-icon"><CalendarDays aria-hidden="true" size={20} /></span>
               <div>
                 <h3 id="inspection-bookings-heading">Inspection bookings</h3>
-                <p>Schedule site visits before per-asset inspection work begins.</p>
+                <p>Assign and approve site visits, and decide the reschedules people ask for.</p>
               </div>
             </div>
           </header>
+          <div className="inspection-booking-filters" role="group" aria-label="Filter inspection bookings">
+            <label>
+              <span>Status</span>
+              <select aria-label="Filter by booking status" value={bookingFilters.status} onChange={(event) => changeBookingFilter("status", event.target.value as typeof bookingFilters.status)}>
+                <option value="ALL">All statuses</option>
+                <option value="PENDING_APPROVAL">Requested</option>
+                <option value="RESCHEDULE_REQUESTED">Reschedule requested</option>
+                <option value="APPROVED">Approved</option>
+                <option value="REJECTED">Rejected</option>
+                <option value="CANCELLED">Cancelled</option>
+              </select>
+            </label>
+            <label>
+              <span>Customer</span>
+              <select aria-label="Filter by customer" value={bookingFilters.customerId} onChange={(event) => changeBookingFilter("customerId", event.target.value)}>
+                <option value="ALL">All customers</option>
+                {bookingFacets.customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Asset</span>
+              <select aria-label="Filter by asset" value={bookingFilters.assetId} onChange={(event) => changeBookingFilter("assetId", event.target.value)}>
+                <option value="ALL">All assets</option>
+                {bookingFacets.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Location</span>
+              <select aria-label="Filter by location" value={bookingFilters.locationId} onChange={(event) => changeBookingFilter("locationId", event.target.value)}>
+                <option value="ALL">All locations</option>
+                {bookingFacets.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}
+              </select>
+            </label>
+            <label className="inspection-booking-search">
+              <span>Search</span>
+              <input aria-label="Search bookings" placeholder="Customer, site, asset or reference…" value={bookingFilters.search} onChange={(event) => changeBookingFilter("search", event.target.value)} type="search" />
+            </label>
+            <button className="secondary-button inspection-clear-filters" disabled={!hasBookingFilters} onClick={clearBookingFilters} type="button">Clear filters</button>
+          </div>
+          <p className="inspection-booking-count" role="status">{bookingCountLabel}</p>
           {workspace.bookings.length ? (
             <div className="inspection-booking-list" aria-label="Inspection bookings">
               {(showAllBookings ? workspace.bookings : workspace.bookings.slice(0, 4)).map((booking) => (
@@ -274,12 +347,12 @@ export function InspectionsWorkspace({
                   pendingAction={workspace.pendingAction}
                 />
               ))}
-              {!showAllBookings && workspace.bookings.length > 4 ? (
+              {!showAllBookings && loadedBookings > 4 ? (
                 <button className="secondary-button compact-action" onClick={() => setShowAllBookings(true)} type="button">
-                  {`Show all ${workspace.bookings.length} loaded bookings`}
+                  {`Show all ${loadedBookings} bookings on this page`}
                 </button>
               ) : null}
-              {showAllBookings && workspace.bookingTotal > workspace.bookings.length ? (
+              {workspace.bookingTotal > workspace.bookings.length ? (
                 <button className="secondary-button compact-action" onClick={() => void workspace.loadMoreBookings()} type="button">
                   Load more bookings
                 </button>
@@ -305,10 +378,18 @@ export function InspectionsWorkspace({
           ) : (
             <p className="inspection-booking-empty">
               <CalendarDays aria-hidden="true" size={22} />
-              <span><strong>No inspection bookings are scheduled.</strong> Book a site visit to coordinate inspection work.</span>
+              {workspace.bookingsLoading ? (
+                <span><strong>Loading bookings…</strong> The matching bookings appear here.</span>
+              ) : hasBookingFilters ? (
+                <span><strong>No bookings match these filters.</strong> Clear the filters to see every booking.</span>
+              ) : (
+                <span><strong>No inspection bookings are scheduled.</strong> Book a site visit to coordinate inspection work.</span>
+              )}
             </p>
           )}
         </section>
+        ) : null}
+        {managementView === "records" ? (
         <div className="inspection-filter-tabs" role="tablist" aria-label="Inspection status filters">
           {statusFilters.map((filter) => (
             <button
@@ -323,8 +404,10 @@ export function InspectionsWorkspace({
             </button>
           ))}
         </div>
+        ) : null}
       </div>
 
+      {managementView === "records" ? (
       <div className={`inspection-layout${workspace.selectedInspection ? " detail-open" : " detail-closed"}`}>
         {workspace.selectedInspection && workspace.ratingReady ? (
           <InspectionDetail
@@ -423,6 +506,7 @@ export function InspectionsWorkspace({
           </div>
         )}
       </div>
+      ) : null}
 
       <ConfirmDialog
         confirmLabel={workspace.bookingDecision.target?.action === "reject" ? "Decline booking" : "Cancel booking"}

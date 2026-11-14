@@ -175,10 +175,21 @@ export async function signedInPage(browser: Browser, email: string, permanentPas
   return { context, page };
 }
 
+/**
+ * Inspection Operations, settled. It shows one management view at a time, so this waits
+ * for whichever the role lands on rather than assuming the record register is up.
+ */
 export async function openInspections(page: Page) {
   await page.getByRole("navigation", { name: "Primary navigation" })
     .getByRole("button", { name: "Inspections", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Inspection operations" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Inspection management view" })).toBeVisible();
+  await expect(page.getByText(/^Loading (bookings|inspections)$/)).toHaveCount(0, { timeout: 30_000 });
+}
+
+/** Switches to the inspection record register and waits for it. */
+export async function openInspectionRecords(page: Page) {
+  await page.getByRole("button", { name: "Inspection records", exact: true }).click();
   await expect(page.getByText("Loading inspections")).toBeHidden({ timeout: 30_000 });
   await expect(page.getByRole("table", { name: "Inspection records" })).toBeVisible();
 }
@@ -287,13 +298,13 @@ export async function createAndApproveBooking(customer: Page, admin: Page, local
   await chooseBookingLocationAndAsset(customer);
   await selectFirstAvailableTime(customer, localDate);
   await submitBookingForm(customer, "Create booking", "/api/v1/inspection-bookings");
-  await expect(customer.locator(".inspection-booking-list")).toContainText("PENDING APPROVAL", { timeout: 90_000 });
+  await expect(customer.locator(".inspection-booking-list")).toContainText("Requested", { timeout: 90_000 });
 
   await openInspections(admin);
   const inspectorSelect = admin.getByLabel("Assign inspector for Port Botany");
   await inspectorSelect.selectOption({ label: "inspector@example.test" });
   await admin.getByRole("button", { name: "Assign & approve" }).click();
-  await expect(admin.locator(".inspection-booking-list")).toContainText("APPROVED", { timeout: 90_000 });
+  await expect(admin.locator(".inspection-booking-list")).toContainText("Approved", { timeout: 90_000 });
 }
 
 export async function bookingApiContext(page: Page) {

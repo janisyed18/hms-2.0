@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -37,7 +37,10 @@ const confirmed = (overrides: Partial<InspectionBookingRecord> = {}) =>
     ...overrides
   });
 
-const change = (status: string, id = "ch-1") => ({ id, status, startsAt: "2027-03-08T00:00:00Z", endsAt: "2027-03-08T01:00:00Z", reason: null, emergency: false, createdAt: "2027-03-01T00:00:00Z" });
+// ``requestedByRole`` is what the API reports for the stored requester; the card never
+// infers the origin from the status, so each fixture states it.
+const change = (status: string, requestedByRole: string | null = "CUSTOMER_USER", id = "ch-1") =>
+  ({ id, status, startsAt: "2027-03-08T00:00:00Z", endsAt: "2027-03-08T01:00:00Z", reason: null, emergency: false, createdAt: "2027-03-01T00:00:00Z", requestedByRole });
 
 function setup(record: InspectionBookingRecord, props: Partial<InspectionBookingCardProps> = {}) {
   const handlers = {
@@ -69,10 +72,10 @@ describe("InspectionBookingCard", () => {
   });
 
   it.each([
-    ["PENDING_APPROVAL", "PENDING APPROVAL", "booking-status--pending"],
-    ["APPROVED", "APPROVED", "booking-status--approved"],
-    ["REJECTED", "REJECTED", "booking-status--rejected"],
-    ["CANCELLED", "CANCELLED", "booking-status--neutral"]
+    ["PENDING_APPROVAL", "Requested", "booking-status--pending"],
+    ["APPROVED", "Approved", "booking-status--approved"],
+    ["REJECTED", "Rejected", "booking-status--rejected"],
+    ["CANCELLED", "Cancelled", "booking-status--neutral"]
   ] as const)("shows %s as its own status badge", (status, label, className) => {
     setup(booking({ status }), { canApproveBookings: false, canBook: false });
     expect(screen.getByText(label)).toHaveClass(className);
@@ -100,17 +103,19 @@ describe("InspectionBookingCard", () => {
 
   it("shows the assigned inspector with Change inspector beside the name on a confirmed booking", async () => {
     const { user, onChangeInspector } = setup(confirmed());
-    const row = screen.getByText("Assigned inspector:").closest("div") as HTMLElement;
-    expect(within(row).getByText("Ben Brook")).toBeVisible();
-    await user.click(within(row).getByRole("button", { name: "Change inspector for Port Botany" }));
+    expect(screen.getByText("Inspector")).toBeVisible();
+    expect(screen.getByText("Ben Brook")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Change inspector for Port Botany" }));
     expect(onChangeInspector).toHaveBeenCalledWith(expect.objectContaining({ id: "bk-1" }));
+    await user.click(screen.getByText("Actions"));
     expect(screen.getByRole("button", { name: "Request reschedule" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Cancel booking" })).toBeEnabled();
   });
 
   it("hides the inspector row from a customer, who can still reschedule or cancel", async () => {
     const { user, onRequestReschedule, onCancel } = setup(confirmed(), { canApproveBookings: false });
-    expect(screen.queryByText("Assigned inspector:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Inspector")).not.toBeInTheDocument();
+    await user.click(screen.getByText("Actions"));
     await user.click(screen.getByRole("button", { name: "Request reschedule" }));
     await user.click(screen.getByRole("button", { name: "Cancel booking" }));
     expect(onRequestReschedule).toHaveBeenCalled();
@@ -118,8 +123,10 @@ describe("InspectionBookingCard", () => {
   });
 
   it("does not offer Change inspector or another reschedule while one is pending", () => {
-    setup(confirmed({ changeRequests: [change("PENDING_CUSTOMER_CONFIRMATION")] as never }));
-    expect(screen.getByText("Cannot change inspector while a reschedule is pending.")).toBeVisible();
+    setup(confirmed({ changeRequests: [change("PENDING_CUSTOMER_CONFIRMATION", "HMS_ADMIN")] as never }));
+    expect(screen.getByText("Reassignment paused while reschedule is pending.")).toBeVisible();
+    expect(screen.getByText("Reschedule requested")).toBeVisible();
+    expect(screen.getByText("Requested by: Admin")).toBeVisible();
     expect(screen.queryByRole("button", { name: /Change inspector/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Request reschedule" })).not.toBeInTheDocument();
     expect(screen.getByText("Awaiting customer confirmation")).toBeVisible();
@@ -135,8 +142,25 @@ describe("InspectionBookingCard", () => {
     expect(onApproveReschedule).toHaveBeenCalledWith("ch-1", "ins-1");
   });
 
+  it("names the role that asked for a reschedule, from the request itself", () => {
+    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL", "CUSTOMER_USER")] as never }));
+    expect(screen.getByText("Reschedule requested")).toBeVisible();
+    expect(screen.getByText("Requested by: Customer")).toBeVisible();
+  });
+
+  it("names an inspector-initiated request as the inspector, not as whoever approves it", () => {
+    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL", "INSPECTOR")] as never }));
+    expect(screen.getByText("Requested by: Inspector")).toBeVisible();
+  });
+
+  it("says nothing about the origin when the requester's role is unknown", () => {
+    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL", null)] as never }));
+    expect(screen.getByText("Reschedule requested")).toBeVisible();
+    expect(screen.queryByText(/Requested by:/)).not.toBeInTheDocument();
+  });
+
   it("a customer sees their own request as awaiting admin approval", () => {
-    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL")] as never }), { canApproveBookings: false });
+    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL", "CUSTOMER_USER")] as never }), { canApproveBookings: false });
     expect(screen.getByText("Awaiting admin approval")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve reschedule" })).not.toBeInTheDocument();
   });

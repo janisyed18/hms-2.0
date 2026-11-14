@@ -136,6 +136,7 @@ from hms_backend.app.core.object_storage import (
 from hms_backend.app.core.rbac import (
     Permission,
     Principal,
+    Role,
     has_permission,
     is_customer_scoped,
     require_permission,
@@ -322,6 +323,13 @@ def _require_inspection_write(principal: Principal) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+    # SUPER_ADMIN inherits every permission but must never execute field inspections.
+    # The inspector-scoped role is also what enforces assigned-booking access.
+    if not is_inspector_scoped(principal):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only assigned inspectors may perform inspection work",
+        )
 
 
 def _require_inspection_booking(principal: Principal) -> None:
@@ -342,6 +350,19 @@ def _require_certificate_approve(principal: Principal) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
+
+
+def _require_inspection_review(principal: Principal) -> None:
+    # HMS admins may review inspection work, but this does NOT grant the separate
+    # certificate-approval permission. Inspectors remain unable to approve themselves.
+    if Role.HMS_ADMIN in principal.roles or has_permission(
+        principal, Permission.CERTIFICATE_APPROVE
+    ):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Inspection review requires an admin or reviewer role",
+    )
 
 
 async def _count(session: AsyncSession, statement: Select[Any]) -> int:
@@ -2234,10 +2255,19 @@ async def list_inspection_bookings(
     principal: PrincipalDep,
     status_filter: Annotated[str | None, Query(alias="status")] = None,
     customer_id: str | None = None,
+    location_id: str | None = None,
+    asset_id: str | None = None,
+    search: Annotated[str | None, Query(max_length=200)] = None,
     has_pending_change: bool = False,
     limit: LimitParam = 50,
     offset: OffsetParam = 0,
 ) -> InspectionBookingListResponse:
+    """Inspection bookings this principal may see, narrowed by the server.
+
+    Every filter runs in SQL against the whole visible set, so paging through a
+    filtered list shows the matching bookings rather than whatever the first page
+    happened to contain. ``total`` counts the matches, not the catalogue.
+    """
     _require_asset_read(principal)
     statement = _apply_customer_scope(_inspection_booking_statement(), principal)
     if is_inspector_scoped(principal):
@@ -2248,6 +2278,46 @@ async def list_inspection_bookings(
         statement = statement.where(InspectionBooking.status == status_filter)
     if customer_id:
         statement = statement.where(InspectionBooking.customer_id == customer_id)
+    if location_id:
+        statement = statement.where(InspectionBooking.location_id == location_id)
+    if asset_id:
+        statement = statement.where(
+            select(InspectionBookingAsset.id)
+            .where(
+                InspectionBookingAsset.booking_id == InspectionBooking.id,
+                InspectionBookingAsset.asset_id == asset_id,
+                InspectionBookingAsset.deleted_at.is_(None),
+            )
+            .exists()
+        )
+    term = (search or "").strip()
+    if term:
+        search_pattern = f"%{term.lower()}%"
+        asset_match = (
+            select(InspectionBookingAsset.id)
+            .join(Asset, Asset.id == InspectionBookingAsset.asset_id)
+            .where(
+                InspectionBookingAsset.booking_id == InspectionBooking.id,
+                InspectionBookingAsset.deleted_at.is_(None),
+                or_(
+                    func.lower(Asset.asset_number).like(search_pattern),
+                    func.lower(Asset.asset_name).like(search_pattern),
+                    func.lower(Asset.tag).like(search_pattern),
+                ),
+            )
+            .exists()
+        )
+        statement = statement.join(
+            CustomerLocation, CustomerLocation.id == InspectionBooking.location_id
+        ).where(
+            or_(
+                func.lower(Customer.name).like(search_pattern),
+                func.lower(Customer.code).like(search_pattern),
+                func.lower(CustomerLocation.name).like(search_pattern),
+                func.lower(InspectionBooking.id).like(search_pattern),
+                asset_match,
+            )
+        )
     if has_pending_change:
         # The Staff "pending requests" queue: bookings with a reschedule awaiting
         # a decision, wherever in time they fall.
@@ -3143,6 +3213,9 @@ async def create_inspection_booking_change_request(
             ),
         )
     await session.commit()
+    # Load the requester explicitly: a just-created row has no loaded relationship,
+    # and reading one would be a lazy load on an async session.
+    await session.refresh(change, ["requested_by"])
     return _inspection_booking_change_request_read(change)
 
 
@@ -3440,7 +3513,7 @@ async def approve_inspection(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> InspectionRead:
-    _require_certificate_approve(principal)
+    _require_inspection_review(principal)
     inspection = await _get_inspection_or_404(
         session, inspection_id, principal, lock=True
     )
@@ -3486,7 +3559,7 @@ async def reject_inspection(
     session: SessionDep,
     principal: PrincipalDep,
 ) -> InspectionRead:
-    _require_certificate_approve(principal)
+    _require_inspection_review(principal)
     inspection = await _get_inspection_or_404(
         session, inspection_id, principal, lock=True
     )
@@ -6170,6 +6243,9 @@ def _inspection_booking_change_request_read(
         reason=change.reason,
         emergency=change.emergency,
         created_at=change.created_at,
+        requested_by_role=(
+            change.requested_by.role if change.requested_by is not None else None
+        ),
     )
 
 

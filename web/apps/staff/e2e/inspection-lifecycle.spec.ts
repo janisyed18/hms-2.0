@@ -18,6 +18,9 @@ import { chooseOption } from "./choose";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const ASSET = "00000000-0000-7000-8000-0000000000b1";
 const INSPECTION = "00000000-0000-7000-8000-0000000000b2";
+const BOOKING = "00000000-0000-7000-8000-0000000000b3";
+const APPOINTMENT = "00000000-0000-7000-8000-0000000000b4";
+const REVISION = "00000000-0000-7000-8000-0000000000b5";
 
 function sql(command: string): void {
   execFileSync(
@@ -48,12 +51,40 @@ function prepare() {
   `);
 }
 
+// Attach the lifecycle asset to a real confirmed inspector assignment. The inspector can
+// execute work; the separate admin account reviews it. No admin impersonates an inspector.
+function seedBooking() {
+  sql(`
+    INSERT INTO inspection_bookings (id, version, created_at, updated_at, customer_id, location_id,
+      scheduled_at, scheduled_end_at, status, requested_by_user_id, inspector_user_id)
+      SELECT '${BOOKING}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, a.customer_id, a.location_id,
+        '2027-10-04T01:00:00Z', '2027-10-04T02:00:00Z', 'APPROVED', u.id, u.id
+      FROM assets a CROSS JOIN users u WHERE a.id = '${ASSET}' AND u.email = 'inspector@example.test';
+    INSERT INTO inspection_booking_assets (id, version, created_at, updated_at, booking_id, asset_id)
+      VALUES ('00000000-0000-7000-8000-0000000000b6', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${BOOKING}', '${ASSET}');
+    INSERT INTO inspection_appointments (id, version, created_at, updated_at, booking_id, customer_id,
+      location_id, status, current_revision_number)
+      SELECT '${APPOINTMENT}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${BOOKING}', a.customer_id,
+        a.location_id, 'CONFIRMED', 1 FROM assets a WHERE a.id = '${ASSET}';
+    INSERT INTO inspection_appointment_revisions (id, version, created_at, updated_at, appointment_id,
+      revision_number, starts_at, ends_at, timezone_id, local_start_snapshot,
+      local_end_snapshot, utc_offset_start, utc_offset_end, tzdata_version,
+      inspector_user_id, created_by_user_id)
+      SELECT '${REVISION}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${APPOINTMENT}',
+        1, '2027-10-04T01:00:00Z', '2027-10-04T02:00:00Z', 'Australia/Sydney',
+        '2027-10-04T12:00:00', '2027-10-04T13:00:00', '+11:00', '+11:00', '2026e', u.id, u.id
+      FROM users u WHERE u.email = 'inspector@example.test';
+  `);
+}
+
 // For the layout checks only, which need a record in a given state without walking there.
 function seedInspection(status: "DRAFT" | "REJECTED", reason = "") {
   sql(`
-    INSERT INTO inspections (id, version, created_at, updated_at, asset_id, inspection_type, status, rejection_reason, rejected_at)
-      VALUES ('${INSPECTION}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${ASSET}', 'SERVICE', '${status}',
-              ${reason ? `'${reason}'` : "NULL"}, ${status === "REJECTED" ? "CURRENT_TIMESTAMP" : "NULL"});
+    INSERT INTO inspections (id, version, created_at, updated_at, asset_id, booking_id, inspector_user_id, inspection_type, status, rejection_reason, rejected_at)
+      SELECT '${INSPECTION}', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, '${ASSET}', '${BOOKING}', u.id,
+        'SERVICE', '${status}', ${reason ? `'${reason}'` : "NULL"},
+        ${status === "REJECTED" ? "CURRENT_TIMESTAMP" : "NULL"}
+      FROM users u WHERE u.email = 'inspector@example.test';
   `);
 }
 
@@ -61,11 +92,27 @@ function cleanup() {
   sql(`
     DELETE FROM pressure_test_results WHERE inspection_id IN (SELECT id FROM inspections WHERE asset_id = '${ASSET}');
     DELETE FROM inspections WHERE asset_id = '${ASSET}';
+    DELETE FROM inspection_appointment_revisions WHERE appointment_id = '${APPOINTMENT}';
+    DELETE FROM inspection_appointments WHERE booking_id = '${BOOKING}';
+    DELETE FROM inspection_booking_assets WHERE booking_id = '${BOOKING}';
+    DELETE FROM inspection_bookings WHERE id = '${BOOKING}';
     DELETE FROM assets WHERE id = '${ASSET}';
   `);
 }
 
 const SLOW = { timeout: 25_000 };
+
+/**
+ * Waits until a transition has actually been stored. The inspector and the reviewer are
+ * two browsers: one clicks, the other reloads, and a page opened mid-request reads its
+ * list once and then shows the state from before the click for good. The button going is
+ * not the fact being waited for; the stored status is.
+ */
+async function settles(inspectionId: string, status: string): Promise<void> {
+  await expect
+    .poll(() => sqlValue(`SELECT status FROM inspections WHERE id = '${inspectionId}'`), SLOW)
+    .toBe(status);
+}
 const WIDTHS: Array<[number, number]> = [[1440, 900], [1024, 800], [768, 1000], [390, 844]];
 
 const here = (page: Page) => {
@@ -94,9 +141,12 @@ test.describe("inspection lifecycle", () => {
 
   test("start, submit, send back, rework, resubmit, approve — with the asset's next action following along", async ({ browser }) => {
     test.setTimeout(240_000);
-    const session = await signedInPage(browser, "super.admin@example.test", permanentPasswords.admin);
+    const session = await signedInPage(browser, "inspector@example.test", permanentPasswords.inspector);
+    const reviewer = await signedInPage(browser, "super.admin@example.test", permanentPasswords.admin);
     const page = session.page;
     page.setDefaultTimeout(20_000);
+    reviewer.page.setDefaultTimeout(20_000);
+    seedBooking();
     try {
       // The real creation flow captures no work: only the asset and the type.
       await page.goto("/?view=inspections");
@@ -141,16 +191,25 @@ test.describe("inspection lifecycle", () => {
       await detail.getByLabel("Certificate result").selectOption("PASS");
 
       await detail.getByRole("button", { name: "Submit inspection" }).click();
-      await expect(detail.getByRole("button", { name: "Request changes" })).toBeVisible(SLOW);
-      await expect(detail.getByRole("button", { name: "Approve inspection" })).toBeVisible();
-      await expect(reviewerOf(page)).toHaveText("Not reviewed");
+      // Wait for the submit to land before the reviewer loads: their list is read once
+      // when the page opens, so a page opened mid-submit shows the work as still in
+      // progress and never catches up. The button going is not that fact; the status is.
+      await settles(inspectionId, "SUBMITTED");
+      // An inspector cannot review their own work. Switch to the admin's read-only review.
+      await reviewer.page.goto(`/?view=inspections&inspection=${inspectionId}`);
+      const reviewDetail = detailOf(reviewer.page);
+      await expect(reviewDetail.getByRole("button", { name: "Request changes" })).toBeVisible(SLOW);
+      await expect(reviewDetail.getByRole("button", { name: "Approve inspection" })).toBeVisible();
+      await expect(reviewerOf(reviewer.page)).toHaveText("Not reviewed");
 
       // Send it back; a reason is required.
-      await detail.getByRole("button", { name: "Request changes" }).click();
-      await detail.getByRole("button", { name: "Send back for changes" }).click();
-      await expect(detail.getByRole("alert").or(detail.getByText("Say what needs to change"))).toBeVisible();
-      await detail.getByLabel("What needs to change").fill("Hold time must be re-tested");
-      await detail.getByRole("button", { name: "Send back for changes" }).click();
+      await reviewDetail.getByRole("button", { name: "Request changes" }).click();
+      await reviewDetail.getByRole("button", { name: "Send back for changes" }).click();
+      await expect(reviewDetail.getByRole("alert").or(reviewDetail.getByText("Say what needs to change"))).toBeVisible();
+      await reviewDetail.getByLabel("What needs to change").fill("Hold time must be re-tested");
+      await reviewDetail.getByRole("button", { name: "Send back for changes" }).click();
+      await settles(inspectionId, "REJECTED");
+      await page.reload();
       await expect(detail.getByRole("status").filter({ hasText: "Changes required" })).toContainText("Hold time must be re-tested", SLOW);
       await expect(detail.getByRole("button", { name: "Begin rework" })).toBeVisible();
       await expect(detail.getByRole("button", { name: "Submit inspection" })).toHaveCount(0);
@@ -175,26 +234,37 @@ test.describe("inspection lifecycle", () => {
 
       // Resubmitting ends the guidance and still names no reviewer until someone reviews.
       await detail.getByRole("button", { name: "Submit inspection" }).click();
-      await expect(detail.getByRole("button", { name: "Approve inspection" })).toBeVisible(SLOW);
+      await settles(inspectionId, "SUBMITTED");
+      await reviewer.page.reload();
+      await expect(reviewDetail.getByRole("button", { name: "Approve inspection" })).toBeVisible(SLOW);
       await expect(detail.getByText("Rework requested")).toHaveCount(0);
-      await expect(reviewerOf(page)).toHaveText("Not reviewed");
-      await detail.getByRole("button", { name: "Approve inspection" }).click();
-      await expect(detail.getByRole("button", { name: "Approve inspection" })).toHaveCount(0, SLOW);
-      await expect(reviewerOf(page)).not.toHaveText("Not reviewed");
-      await expect(detail.getByText("Approved").first()).toBeVisible();
-      for (const name of ["Start inspection", "Save progress", "Submit inspection", "Begin rework", "Request changes"]) {
-        await expect(detail.getByRole("button", { name })).toHaveCount(0);
+      await expect(reviewerOf(reviewer.page)).toHaveText("Not reviewed");
+      await reviewDetail.getByRole("button", { name: "Approve inspection" }).click();
+      await expect(reviewDetail.getByRole("button", { name: "Approve inspection" })).toHaveCount(0, SLOW);
+      await settles(inspectionId, "APPROVED");
+
+      // Approving the last inspection on a booking completes its appointment, which ends
+      // the inspector's assignment: the work leaves their queue and the record with it.
+      // The approved record is checked where it still belongs — the reviewer's screen.
+      await reviewer.page.reload();
+      await expect(reviewerOf(reviewer.page)).not.toHaveText("Not reviewed");
+      await expect(reviewDetail.getByText("Approved").first()).toBeVisible();
+      for (const name of ["Approve inspection", "Request changes", "Start inspection", "Submit inspection"]) {
+        await expect(reviewDetail.getByRole("button", { name })).toHaveCount(0);
       }
+      await page.reload();
+      await expect(page.getByRole("complementary", { name: "Inspection detail" })).toHaveCount(0, SLOW);
     } finally {
-      await session.context.close();
+      await Promise.all([session.context.close(), reviewer.context.close()]);
     }
   });
 
   test("a first-time inspection and a changes-required one fit from desktop to phone width", async ({ browser }) => {
     test.setTimeout(240_000);
-    const session = await signedInPage(browser, "super.admin@example.test", permanentPasswords.admin);
+    const session = await signedInPage(browser, "inspector@example.test", permanentPasswords.inspector);
     const page = session.page;
     page.setDefaultTimeout(20_000);
+    seedBooking();
     try {
       seedInspection("DRAFT");
       for (const [width, height] of WIDTHS) {

@@ -537,6 +537,7 @@ interface ApiInspectionBookingChangeRequest {
   reason: string | null;
   emergency: boolean;
   created_at: string;
+  requested_by_role: string | null;
 }
 
 interface ApiInspectionAvailability {
@@ -789,6 +790,10 @@ interface ListInspectionOptions {
 interface ListInspectionBookingOptions {
   status?: InspectionBookingStatus;
   customerId?: string;
+  locationId?: string;
+  assetId?: string;
+  /** Free text matched by the server against customer, site, asset and booking reference. */
+  search?: string;
   hasPendingChange?: boolean;
   limit?: number;
   offset?: number;
@@ -1435,7 +1440,8 @@ function toInspectionBookingChangeRequest(
     endsAt: change.ends_at,
     reason: change.reason,
     emergency: change.emergency,
-    createdAt: change.created_at
+    createdAt: change.created_at,
+    requestedByRole: change.requested_by_role ?? null
   };
 }
 
@@ -2472,6 +2478,9 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           offset: listOptions.offset ?? 0,
           status: listOptions.status,
           customer_id: listOptions.customerId,
+          location_id: listOptions.locationId,
+          asset_id: listOptions.assetId,
+          search: listOptions.search?.trim() || undefined,
           has_pending_change: listOptions.hasPendingChange ? "true" : undefined
         }
       );
