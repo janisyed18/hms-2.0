@@ -96,7 +96,7 @@ test.describe("usability polish", () => {
       await expect(book).toHaveClass(/primary-button/);
       await expect(page.getByRole("button", { name: "Create inspection" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Booking requests" })).toHaveAttribute("aria-pressed", "true");
-      await expect(page.getByLabel("Booking status filter")).toBeVisible();
+      await expect(page.getByLabel("Filter by booking status")).toBeVisible();
       await page.getByRole("button", { name: "Inspection records" }).click();
       await expect(page.getByRole("tab", { name: "Awaiting review" })).toBeVisible();
       await expect(page.getByRole("button", { name: "Create inspection" })).toHaveCount(0);

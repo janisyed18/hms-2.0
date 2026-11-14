@@ -25,6 +25,17 @@ export interface InspectionBookingCardProps {
 
 const OPEN_CHANGE = ["PENDING_ADMIN_APPROVAL", "PENDING_CUSTOMER_CONFIRMATION"];
 
+/**
+ * Who asked for a reschedule, named by the role stored against the request. Roles the
+ * screen has no word for return null, so nothing is claimed about the origin.
+ */
+function requesterLabel(role: string | null): string | null {
+  if (role === "CUSTOMER_USER") return "Customer";
+  if (role === "HMS_ADMIN" || role === "SUPER_ADMIN") return "Admin";
+  if (role === "INSPECTOR") return "Inspector";
+  return null;
+}
+
 /** Booking status only. The appointment and the reschedule request each have their own status. */
 function bookingStatusClass(status: InspectionBookingRecord["status"]) {
   if (status === "APPROVED") return "booking-status booking-status--approved";
@@ -87,9 +98,9 @@ export function InspectionBookingCard({
   const awaitingAdmin = byStatus("PENDING_ADMIN_APPROVAL");
   const awaitingCustomer = byStatus("PENDING_CUSTOMER_CONFIRMATION");
   const activeChange = awaitingAdmin[0] ?? awaitingCustomer[0];
-  // Existing API workflows identify customer-initiated vs admin-initiated requests by their next approver.
-  // They do not currently expose an inspector-originated booking request.
-  const requester = awaitingAdmin.length ? "Customer" : awaitingCustomer.length ? "Admin" : null;
+  // Who asked, from the role the API reports for the stored requester. An unknown role
+  // says nothing rather than naming one: the next approver is not proof of the origin.
+  const requester = activeChange ? requesterLabel(activeChange.requestedByRole) : null;
   const bookingStatus = activeChange ? "Reschedule requested" : booking.status === "PENDING_APPROVAL" ? "Requested" : booking.status === "CANCELLED" ? "Cancelled" : booking.status === "REJECTED" ? "Rejected" : "Approved";
   const inspectorName =
     inspectors.find((inspector) => inspector.id === booking.inspectorUserId)?.displayName ??
@@ -171,19 +182,17 @@ export function InspectionBookingCard({
           {canApproveBookings && confirmed && openChange ? (
             <small className="field-hint">Reassignment paused while reschedule is pending.</small>
           ) : null}
-          {(canApproveBookings && booking.status === "PENDING_APPROVAL") || (canBook && confirmed && !openChange) ? (
+          {/* Deciding a new request is the work of this screen, so assigning and declining
+              stay in reach. The menu holds what changes a booking already agreed. */}
+          {canApproveBookings && booking.status === "PENDING_APPROVAL" ? (
+            <ActionButton disabled={busy} onClick={() => onDecline(booking)} variant="secondary">Decline</ActionButton>
+          ) : null}
+          {canBook && confirmed && !openChange ? (
             <details className="booking-action-menu">
               <summary>Actions <ChevronDown aria-hidden="true" size={15} /></summary>
               <div className="booking-action-menu__items">
-                {canBook && confirmed && !openChange ? (
-                  <>
-                    <ActionButton disabled={busy} onClick={() => onRequestReschedule(booking)} variant="ghost">Request reschedule</ActionButton>
-                    <ActionButton disabled={busy} onClick={() => onCancel(booking)} variant="ghost">Cancel booking</ActionButton>
-                  </>
-                ) : null}
-                {canApproveBookings && booking.status === "PENDING_APPROVAL" ? (
-                  <ActionButton disabled={busy} onClick={() => onDecline(booking)} variant="ghost">Reject request</ActionButton>
-                ) : null}
+                <ActionButton disabled={busy} onClick={() => onRequestReschedule(booking)} variant="ghost">Request reschedule</ActionButton>
+                <ActionButton disabled={busy} onClick={() => onCancel(booking)} variant="ghost">Cancel booking</ActionButton>
               </div>
             </details>
           ) : null}

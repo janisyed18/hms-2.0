@@ -733,6 +733,10 @@ class InspectionAppointmentChangeRequestRead(BaseModel):
     reason: str | None
     emergency: bool
     created_at: datetime
+    # The role of the user who asked for the change, from the stored requester.
+    # None when that identity has no user record, so the screen says nothing rather
+    # than guessing who asked.
+    requested_by_role: str | None = None
 
 
 class InspectionAssetSummary(BaseModel):

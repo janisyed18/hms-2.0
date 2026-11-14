@@ -37,7 +37,10 @@ const confirmed = (overrides: Partial<InspectionBookingRecord> = {}) =>
     ...overrides
   });
 
-const change = (status: string, id = "ch-1") => ({ id, status, startsAt: "2027-03-08T00:00:00Z", endsAt: "2027-03-08T01:00:00Z", reason: null, emergency: false, createdAt: "2027-03-01T00:00:00Z" });
+// ``requestedByRole`` is what the API reports for the stored requester; the card never
+// infers the origin from the status, so each fixture states it.
+const change = (status: string, requestedByRole: string | null = "CUSTOMER_USER", id = "ch-1") =>
+  ({ id, status, startsAt: "2027-03-08T00:00:00Z", endsAt: "2027-03-08T01:00:00Z", reason: null, emergency: false, createdAt: "2027-03-01T00:00:00Z", requestedByRole });
 
 function setup(record: InspectionBookingRecord, props: Partial<InspectionBookingCardProps> = {}) {
   const handlers = {
@@ -88,8 +91,7 @@ describe("InspectionBookingCard", () => {
     await user.click(screen.getByRole("button", { name: "Assign & approve" }));
     expect(onApprove).toHaveBeenCalledWith("bk-1", "ins-2");
 
-    await user.click(screen.getByText("Actions"));
-    await user.click(screen.getByRole("button", { name: "Reject request" }));
+    await user.click(screen.getByRole("button", { name: "Decline" }));
     expect(onDecline).toHaveBeenCalledWith(expect.objectContaining({ id: "bk-1" }));
   });
 
@@ -121,7 +123,7 @@ describe("InspectionBookingCard", () => {
   });
 
   it("does not offer Change inspector or another reschedule while one is pending", () => {
-    setup(confirmed({ changeRequests: [change("PENDING_CUSTOMER_CONFIRMATION")] as never }));
+    setup(confirmed({ changeRequests: [change("PENDING_CUSTOMER_CONFIRMATION", "HMS_ADMIN")] as never }));
     expect(screen.getByText("Reassignment paused while reschedule is pending.")).toBeVisible();
     expect(screen.getByText("Reschedule requested")).toBeVisible();
     expect(screen.getByText("Requested by: Admin")).toBeVisible();
@@ -140,14 +142,25 @@ describe("InspectionBookingCard", () => {
     expect(onApproveReschedule).toHaveBeenCalledWith("ch-1", "ins-1");
   });
 
-  it("identifies customer-initiated reschedule requests for approvers", () => {
-    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL")] as never }));
+  it("names the role that asked for a reschedule, from the request itself", () => {
+    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL", "CUSTOMER_USER")] as never }));
     expect(screen.getByText("Reschedule requested")).toBeVisible();
     expect(screen.getByText("Requested by: Customer")).toBeVisible();
   });
 
+  it("names an inspector-initiated request as the inspector, not as whoever approves it", () => {
+    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL", "INSPECTOR")] as never }));
+    expect(screen.getByText("Requested by: Inspector")).toBeVisible();
+  });
+
+  it("says nothing about the origin when the requester's role is unknown", () => {
+    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL", null)] as never }));
+    expect(screen.getByText("Reschedule requested")).toBeVisible();
+    expect(screen.queryByText(/Requested by:/)).not.toBeInTheDocument();
+  });
+
   it("a customer sees their own request as awaiting admin approval", () => {
-    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL")] as never }), { canApproveBookings: false });
+    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL", "CUSTOMER_USER")] as never }), { canApproveBookings: false });
     expect(screen.getByText("Awaiting admin approval")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve reschedule" })).not.toBeInTheDocument();
   });
@@ -158,11 +171,10 @@ describe("InspectionBookingCard", () => {
     expect(onConfirmReschedule).toHaveBeenCalledWith("ch-1");
   });
 
-  it("disables every action while another is running, and labels the one in progress", async () => {
+  it("disables every action while another is running, and labels the one in progress", () => {
     setup(booking(), { pendingAction: "approve:bk-1" });
     expect(screen.getByRole("button", { name: "Approving…" })).toBeDisabled();
-    await userEvent.setup().click(screen.getByText("Actions"));
-    expect(screen.getByRole("button", { name: "Reject request" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Decline" })).toBeDisabled();
   });
 
   it("keeps long names and references readable", () => {

@@ -24,6 +24,7 @@ from hms_backend.app.api.dependencies import get_current_principal, get_session
 from hms_backend.app.core.rbac import Principal, Role
 from hms_backend.app.main import create_app
 from hms_backend.app.models.base import Base
+from hms_backend.app.modules.assets.models import Asset
 from hms_backend.app.modules.customers.models import Customer, CustomerLocation
 from hms_backend.app.modules.identity.models import AccountStatus, User
 from hms_backend.app.modules.inspections.models import (
@@ -32,7 +33,10 @@ from hms_backend.app.modules.inspections.models import (
     InspectionAppointmentRevision,
     InspectionAvailabilityQuote,
     InspectionBooking,
+    InspectionBookingAsset,
 )
+from hms_backend.app.modules.products.models import Product
+from hms_backend.app.modules.reference.models import Standard
 
 ADMIN = Principal("admin-1", frozenset({Role.HMS_ADMIN}), frozenset())
 URL = "/api/v1/inspection-schedule"
@@ -533,3 +537,163 @@ async def test_six_local_weeks_across_a_daylight_saving_change_fit_the_cap(
         )
     assert month.status_code == 200
     assert too_wide.status_code == 422
+
+
+# --- GET /inspection-bookings: the filters the Inspection Operations screen uses ---
+#
+# Every one of them runs in SQL over the whole visible set, so a filtered page is the
+# matching bookings and ``total`` counts the matches. Filtering only the rows a page
+# happened to load would quietly hide the rest.
+BOOKINGS = "/api/v1/inspection-bookings"
+
+
+async def attach_asset(
+    factory: async_sessionmaker[AsyncSession], booking_id: str, asset_number: str
+) -> str:
+    """One asset on one booking, so the asset filter and search have something real."""
+    async with factory() as session:
+        booking = await session.get(InspectionBooking, booking_id)
+        assert booking is not None
+        standard = Standard(code=f"STD-{asset_number}", name="Lifecycle standard")
+        product = Product(
+            category="Hose",
+            sub_category="Test",
+            code=f"PRD-{asset_number}",
+            name="Schedule product",
+            standard=standard,
+        )
+        asset = Asset(
+            customer_id=booking.customer_id,
+            location_id=booking.location_id,
+            product=product,
+            asset_number=asset_number,
+            lifecycle_status="IN_SERVICE",
+        )
+        session.add(asset)
+        await session.flush()
+        session.add(InspectionBookingAsset(booking_id=booking.id, asset_id=asset.id))
+        await session.commit()
+        return asset.id
+
+
+@pytest.mark.asyncio
+async def test_bookings_filter_by_location_asset_and_text_on_the_server(
+    database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, factory = database
+    seeded = await seed(factory)
+    ids = seeded["ids"]
+    asset_id = await attach_asset(factory, ids["tue_b"], "HOSE-9001")
+    async with api(factory) as client:
+        perth = await client.get(BOOKINGS, params={"location_id": seeded["perth"]})
+        by_asset = await client.get(BOOKINGS, params={"asset_id": asset_id})
+        by_asset_number = await client.get(BOOKINGS, params={"search": "hose-9001"})
+        by_customer_name = await client.get(BOOKINGS, params={"search": "orica"})
+        by_site = await client.get(BOOKINGS, params={"search": "kwinana"})
+        nothing = await client.get(BOOKINGS, params={"search": "no-such-booking"})
+    assert sorted(ids_of(perth)) == sorted([ids["tue_b"], ids["cancelled"]])
+    assert ids_of(by_asset) == [ids["tue_b"]]
+    assert ids_of(by_asset_number) == [ids["tue_b"]]
+    assert sorted(ids_of(by_customer_name)) == sorted([ids["tue_b"], ids["cancelled"]])
+    assert sorted(ids_of(by_site)) == sorted([ids["tue_b"], ids["cancelled"]])
+    assert ids_of(nothing) == []
+    assert nothing.json()["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_filtered_total_counts_matches_not_the_whole_catalogue(
+    database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """The second page of a filtered list holds matches the first page left out."""
+    _, factory = database
+    seeded = await seed(factory)
+    async with api(factory) as client:
+        unfiltered = await client.get(BOOKINGS)
+        first = await client.get(
+            BOOKINGS, params={"customer_id": seeded["vopak"], "limit": 2, "offset": 0}
+        )
+        second = await client.get(
+            BOOKINGS, params={"customer_id": seeded["vopak"], "limit": 2, "offset": 2}
+        )
+    vopak_total = first.json()["total"]
+    assert vopak_total == 5 < unfiltered.json()["total"]
+    assert second.json()["total"] == vopak_total
+    assert len(ids_of(first)) == 2 and len(ids_of(second)) == 2
+    assert set(ids_of(first)).isdisjoint(ids_of(second))
+
+
+@pytest.mark.asyncio
+async def test_a_reschedule_request_names_the_role_that_asked_for_it(
+    database: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """The label comes from the stored requester, not from whoever acts next."""
+    _, factory = database
+    seeded = await seed(factory)
+    booking_id = seeded["ids"]["mon_a"]
+    async with factory() as session:
+        session.add(
+            User(
+                id="portal-user",
+                oidc_subject="local:portal-user",
+                email="portal-user@example.test",
+                role=Role.CUSTOMER_USER.value,
+                account_status=AccountStatus.ACTIVE.value,
+            )
+        )
+        booking = await session.get(InspectionBooking, booking_id)
+        assert booking is not None
+        appointment = await session.scalar(
+            select(InspectionAppointment).where(
+                InspectionAppointment.booking_id == booking_id
+            )
+        )
+        assert appointment is not None
+        quote = InspectionAvailabilityQuote(
+            customer_id=booking.customer_id,
+            location_id=booking.location_id,
+            starts_at=utc(2027, 3, 5, 1),
+            ends_at=utc(2027, 3, 5, 2),
+            candidate_inspector_ids=["insp-a"],
+            expires_at=utc(2030, 1, 1),
+        )
+        session.add(quote)
+        later_id = seeded["ids"]["later"]
+        later_appointment = await session.scalar(
+            select(InspectionAppointment.id).where(
+                InspectionAppointment.booking_id == later_id
+            )
+        )
+        assert later_appointment is not None
+        await session.flush()
+        session.add_all(
+            [
+                InspectionAppointmentChangeRequest(
+                    booking_id=booking_id,
+                    appointment_id=appointment.id,
+                    availability_quote_id=quote.id,
+                    requested_by_user_id="portal-user",
+                    status="PENDING_ADMIN_APPROVAL",
+                ),
+                # An identity with no user row: the role is unknown, and the API says
+                # so rather than naming a role it cannot stand behind.
+                InspectionAppointmentChangeRequest(
+                    booking_id=later_id,
+                    appointment_id=later_appointment,
+                    availability_quote_id=quote.id,
+                    requested_by_user_id="dev-header-identity",
+                    status="PENDING_ADMIN_APPROVAL",
+                ),
+            ]
+        )
+        await session.commit()
+    async with api(factory) as client:
+        listed = await client.get(BOOKINGS, params={"has_pending_change": "true"})
+    assert listed.status_code == 200, listed.text
+    roles = {
+        item["id"]: [
+            change["requested_by_role"] for change in item["change_requests"]
+        ]
+        for item in listed.json()["items"]
+    }
+    assert roles[booking_id] == ["CUSTOMER_USER"]
+    assert roles[seeded["ids"]["later"]] == [None]

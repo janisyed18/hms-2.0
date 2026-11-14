@@ -1,3 +1,4 @@
+import { expect } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
 
@@ -7,6 +8,15 @@ import type { UserEvent } from "@testing-library/user-event";
  */
 export async function choose(user: UserEvent, control: HTMLElement, option: string): Promise<void> {
   if (control.tagName === "SELECT") {
+    // A native select can be on screen before the list it offers has arrived (the
+    // inspector roster is fetched once bookings are in), so wait for the option.
+    await waitFor(() =>
+      expect(
+        Array.from((control as HTMLSelectElement).options).some(
+          (item) => item.value === option || item.textContent?.trim() === option
+        )
+      ).toBe(true)
+    );
     await user.selectOptions(control, option);
     return;
   }
