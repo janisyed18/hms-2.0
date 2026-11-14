@@ -1,8 +1,9 @@
 import base64
 from typing import Literal
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +15,21 @@ class Settings(BaseSettings):
 
     # Public base URL used to build certificate verification links (QR codes).
     public_base_url: str = "http://127.0.0.1:8000"
+
+    # IANA zone for Dashboard and Analytics calendar dates: "today", retest deadlines
+    # and chart buckets. Timestamps stay UTC in storage and in comparisons. This is
+    # deliberately separate from CustomerLocation.scheduling_timezone, which governs
+    # appointment availability at a site.
+    reporting_timezone: str = "Australia/Sydney"
+
+    @field_validator("reporting_timezone")
+    @classmethod
+    def _known_reporting_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except Exception as exc:  # unknown key, or no tz database available
+            raise ValueError(f"unknown IANA timezone: {value!r}") from exc
+        return value
 
     # gRPC address of the certificate engine (services/certificate).
     certificate_service_address: str = "127.0.0.1:50051"

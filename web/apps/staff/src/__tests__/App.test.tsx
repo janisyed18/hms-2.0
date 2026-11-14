@@ -334,11 +334,18 @@ function dashboardFetch() {
     const limit = Number(requestUrl.searchParams.get("limit") ?? "5");
     const offset = Number(requestUrl.searchParams.get("offset") ?? "0");
     return okJson({
+      as_of: "2026-11-14T00:30:00Z",
+      timezone: "Australia/Sydney",
       total_assets: 1247,
       total_customers: 34,
       in_service_assets: 1089,
+      fleet_status: { on_track: 1000, due_soon: 135, overdue: 23, suspended: 12, unscheduled: 30, total: 1200, on_track_percent: 83 },
       due_soon_assets: 135,
       overdue_assets: 23,
+      overdue_schedules: 23,
+      overdue_escalated: 2,
+      escalation_eligible_total: 23,
+      escalated_today: 0,
       awaiting_review_inspections: 8,
       overdue_total: dashboardRetests.length,
       overdue_limit: limit,
@@ -356,23 +363,31 @@ function analyticsFetch() {
     if (requestUrl.pathname === "/api/v1/analytics/overview") {
       return okJson({
         generated_at: "2026-07-18T09:30:00Z",
+        as_of: "2026-07-18T09:30:00Z",
+        timezone: "Australia/Sydney",
         total_assets: 12,
         in_service_assets: 9,
         due_soon_assets: 2,
         overdue_assets: 1,
         awaiting_review_inspections: 3,
+        fleet_status: { on_track: 6, due_soon: 2, overdue: 1, suspended: 0, unscheduled: 0, total: 9, on_track_percent: 67 },
         fleet_posture: {
           clear: 6,
           due_soon: 2,
           overdue: 1
         },
         certificate_coverage: {
+          eligible_assets: 9,
           covered_assets: 8,
+          unverified_assets: 0,
+          expired_assets: 0,
+          missing_assets: 1,
+          expiring_assets: 2,
           coverage_percent: 89,
+          issued: 10,
           expiring_soon: 2,
           expired: 1,
-          issued: 10,
-          missing_assets: 1
+          issued_in_period: 4
         },
         customer_risk: [{
           customer_id: "customer-vopak",
@@ -409,11 +424,18 @@ function dashboardActionsFetch() {
     const requestUrl = new URL(String(url), "http://test");
     if (requestUrl.pathname === "/api/v1/dashboard") {
       return okJson({
+        as_of: "2026-11-14T00:30:00Z",
+        timezone: "Australia/Sydney",
         total_assets: 1,
         total_customers: 1,
         in_service_assets: 0,
+        fleet_status: { on_track: 0, due_soon: 0, overdue: 1, suspended: 0, unscheduled: 0, total: 1, on_track_percent: 0 },
         due_soon_assets: 0,
         overdue_assets: 1,
+        overdue_schedules: 1,
+        overdue_escalated: 0,
+        escalation_eligible_total: 1,
+        escalated_today: 0,
         awaiting_review_inspections: 1,
         overdue_total: 1,
         overdue_limit: 5,
@@ -434,7 +456,7 @@ function dashboardActionsFetch() {
       requestUrl.pathname === "/api/v1/retest-schedules/escalate-overdue" &&
       init?.method === "POST"
     ) {
-      return okJson({ dispatched: 1 });
+      return okJson({ dispatched: 1, eligible: 1 });
     }
     if (requestUrl.pathname === "/api/v1/inspections") {
       return okJson({ total: 1, limit: 50, offset: 0, items: [apiInspection] });
@@ -454,11 +476,18 @@ function dashboardAssetOpenFetch(includeUpcoming = false) {
     const requestUrl = new URL(String(url), "http://test");
     if (requestUrl.pathname === "/api/v1/dashboard") {
       return okJson({
+        as_of: "2026-11-14T00:30:00Z",
+        timezone: "Australia/Sydney",
         total_assets: 1,
         total_customers: 1,
         in_service_assets: 0,
+        fleet_status: { on_track: 0, due_soon: 0, overdue: 1, suspended: 0, unscheduled: 0, total: 1, on_track_percent: 0 },
         due_soon_assets: 0,
         overdue_assets: 1,
+        overdue_schedules: 1,
+        overdue_escalated: 0,
+        escalation_eligible_total: 1,
+        escalated_today: 0,
         awaiting_review_inspections: 0,
         overdue_total: 1,
         overdue_limit: 5,
@@ -829,9 +858,9 @@ describe("App", () => {
     // One place to add an asset: the Assets register. The top bar no longer repeats it.
     expect(screen.queryByRole("button", { name: "New Asset" })).not.toBeInTheDocument();
     expect(await screen.findByText("Total Assets")).toBeVisible();
-    expect(await screen.findByText("Healthy Fleet")).toBeVisible();
+    expect(await screen.findByText("Retest on-track rate")).toBeVisible();
     expect(await screen.findByText("Overdue Retests")).toBeVisible();
-    expect(await screen.findByText("Fleet Health")).toBeVisible();
+    expect(await screen.findByText("Fleet Retest Status")).toBeVisible();
     expect(await screen.findByText("Due This Week")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Awaiting review" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Customers" }));
@@ -889,7 +918,7 @@ describe("App", () => {
     expect(
       [...within(dashboard).getByLabelText("Operational highlights").querySelectorAll(".kpi-label")]
         .map((label) => label.textContent)
-    ).toEqual(["Total Assets", "Healthy Fleet", "Overdue", "Awaiting review", "Escalations"]);
+    ).toEqual(["Total Assets", "Retest on-track rate", "Overdue", "Awaiting review", "Escalated"]);
     expect(
       screen.getByRole("heading", { name: "Awaiting review" }).closest(".dashboard-primary")
     ).not.toBeNull();
@@ -937,9 +966,10 @@ describe("App", () => {
 
     render(<App initialSession={adminSession} />);
 
-    await user.click(await screen.findByRole("button", { name: "Export" }));
-    expect(downloadClick).toHaveBeenCalledOnce();
-    expect(screen.getByRole("status")).toHaveTextContent("Downloaded the current overdue retest page.");
+    await user.click(await screen.findByRole("button", { name: "Export all" }));
+    await waitFor(() => expect(downloadClick).toHaveBeenCalledOnce());
+    // Every overdue record, and the notice says so rather than implying one page.
+    expect(screen.getByRole("status")).toHaveTextContent("Exported all 1 overdue retest.");
 
     await user.click(screen.getByRole("button", { name: "Send Escalation" }));
     // Nothing is sent until the dialog is confirmed.
@@ -969,8 +999,12 @@ describe("App", () => {
 
     render(<App initialSession={adminSession} />);
 
-    const distribution = await screen.findByRole("group", { name: "Fleet health distribution" });
-    expect(distribution.querySelector(".fleet-ring-core")).toHaveTextContent("Overdue1100% of fleet");
+    // The fleet bar names each category with its count and share of the eligible fleet.
+    expect(
+      await screen.findByRole("button", {
+        name: /^Overdue: 1 asset, 100% of the eligible fleet\./
+      })
+    ).toBeVisible();
 
     await user.click(await screen.findByRole("button", { name: "Open asset API-777" }));
 
@@ -982,19 +1016,24 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
   });
 
-  it("makes fleet-health segments interactive and announces the selected data", async () => {
+  it("drills down from a fleet retest-status category to the matching records", async () => {
     vi.stubGlobal("fetch", dashboardFetch());
     const user = userEvent.setup();
 
     render(<App initialSession={adminSession} />);
 
-    const fleetHealth = await screen.findByRole("group", { name: "Fleet health distribution" });
-    await user.click(within(fleetHealth).getByRole("button", { name: "Overdue: 23 assets, 2% of fleet" }));
+    const overdue = await screen.findByRole("button", {
+      name: /^Overdue: 23 assets, 2% of the eligible fleet\. Past the retest due date\. Opens the retest schedule\.$/
+    });
+    await user.click(overdue);
+    expect(await screen.findByRole("heading", { name: "Retest Schedule" })).toBeVisible();
 
-    const selectedReadout = fleetHealth.querySelector(".fleet-ring-core");
-    expect(selectedReadout).toHaveTextContent("Overdue");
-    expect(selectedReadout).toHaveTextContent("23");
-    expect(selectedReadout).toHaveTextContent("2% of fleet");
+    // Unscheduled assets have no retest record to open, so that one goes to the register.
+    await user.click(screen.getByRole("button", { name: "Dashboard" }));
+    await user.click(
+      await screen.findByRole("button", { name: /^Unscheduled: 30 assets, 3% of the eligible fleet\./ })
+    );
+    expect(await screen.findByRole("heading", { name: "Asset Register" })).toBeVisible();
   });
 
   it("opens an upcoming retest's asset from the weekly schedule", async () => {
@@ -1392,10 +1431,10 @@ describe("App", () => {
 
     await user.click(await screen.findByRole("button", { name: "Analytics" }));
     expect(await screen.findByRole("heading", { name: "Analytics" })).toBeVisible();
-    expect(await screen.findByText("Fleet posture")).toBeVisible();
+    expect(await screen.findByText("Fleet retest status")).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Reporting period" })).toHaveValue("last_month");
-    expect(screen.getByText("11% of assets are overdue")).toBeVisible();
-    expect(screen.getByText("12 current records")).toBeVisible();
+    expect(screen.getByText("11% of eligible assets are overdue")).toBeVisible();
+    expect(screen.getByRole("button", { name: /12 records in this view/ })).toBeVisible();
     expect(screen.getByText("Vopak")).toBeVisible();
     expect(screen.queryByText("Mock data")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Open certificates/i }));

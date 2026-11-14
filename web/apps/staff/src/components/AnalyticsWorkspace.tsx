@@ -11,15 +11,22 @@ import {
   UsersRound
 } from "lucide-react";
 import { m, useReducedMotion } from "motion/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import { createHmsClient } from "../api/hmsClient";
+import { CertificateCoverageChart } from "./charts/CertificateCoverageChart";
+import { FleetStatusChart } from "./charts/FleetStatusChart";
+import { InspectionOutcomesChart } from "./charts/InspectionOutcomesChart";
 import type { AnalyticsOverview } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { motionTokens } from "../motion/motionTokens";
-import { formatDateTime } from "../utils/dateTime";
-import { reportingPeriodForPreset } from "../utils/reportingPeriod";
+import { formatCount as formatNumber, formatReportingTime } from "./charts/chartPrimitives";
+import {
+  REPORTING_PERIOD_SCOPE_NOTE,
+  reportingPeriodForPreset,
+  withReportingTimeZone
+} from "../utils/reportingPeriod";
 import type { ReportingPeriod } from "../utils/reportingPeriod";
 import type { AppModule } from "./AppShell";
 import { ReportingPeriodControl } from "./ReportingPeriodControl";
@@ -29,42 +36,41 @@ interface AnalyticsWorkspaceProps {
   onModuleChange: (module: AppModule) => void;
 }
 
-type FleetPosture = "clear" | "dueSoon" | "overdue";
-
-const fleetLabels: Record<FleetPosture, string> = {
-  clear: "Clear for service",
-  dueSoon: "Due this week",
-  overdue: "Overdue"
-};
-
 export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) {
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
+  // The period the figures on screen were loaded for: while a change is in flight, or a
+  // refresh has failed, it is still the previous one and must be named as such.
+  const [loadedPeriodLabel, setLoadedPeriodLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
   const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriod>(() => reportingPeriodForPreset("last_month"));
   const reducedMotion = useReducedMotion();
+  const latestRequest = useRef(0);
 
   useEffect(() => {
-    let active = true;
+    // Only the newest request may write state: a slow reply from a previous period
+    // must not replace the figures for the one now selected.
+    const token = ++latestRequest.current;
     setLoading(true);
-    setError(null);
 
     createHmsClient()
       .getAnalyticsOverview(reportingPeriod)
       .then((result) => {
-        if (!active) return;
+        if (token !== latestRequest.current) return;
         setOverview(result);
+        setLoadedPeriodLabel(reportingPeriod.label);
+        setError(null);
         setLoading(false);
       })
       .catch((cause: unknown) => {
-        if (!active) return;
+        if (token !== latestRequest.current) return;
         setError(cause instanceof Error ? cause.message : "Analytics data could not be loaded.");
         setLoading(false);
       });
 
     return () => {
-      active = false;
+      // Nothing to abort: the token check above already ignores a superseded reply.
     };
   }, [refreshKey, reportingPeriod]);
 
@@ -95,7 +101,8 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
 
   if (overview === null) return null;
 
-  const fleetHealth = percentage(overview.fleetPosture.clear, fleetPostureTotal(overview));
+  const onTrackRate = overview.fleetStatus.onTrackPercent;
+  const isPeriodChanging = loading && loadedPeriodLabel !== null && loadedPeriodLabel !== reportingPeriod.label;
   const reviewRate = percentage(
     overview.inspectionOutcomes.reduce((total, outcome) => total + outcome.approved, 0),
     overview.inspectionOutcomes.reduce(
@@ -119,14 +126,25 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
         <div>
           <span className="analytics-eyebrow">Operational intelligence</span>
           <h2>Fleet performance at a glance</h2>
-          <p>Operational health, risk exposure, inspection throughput, and certificate coverage for {reportingPeriod.label.toLowerCase()}.</p>
+          <p>
+            Fleet status and certificate coverage are current as at {formatReportingTime(overview.asOf, overview.timezone)}. Inspection throughput is for {(loadedPeriodLabel ?? reportingPeriod.label).toLowerCase()}. {REPORTING_PERIOD_SCOPE_NOTE}
+          </p>
+          {isPeriodChanging ? (
+            <span className="analytics-updated" role="status">
+              Updating to {reportingPeriod.label.toLowerCase()}…
+            </span>
+          ) : null}
           <span className="analytics-updated">
             <CalendarClock aria-hidden="true" size={14} />
-            Last updated {formatDateTime(overview.generatedAt)}
+            Last updated {formatReportingTime(overview.generatedAt, overview.timezone)}
           </span>
         </div>
         <div className="analytics-header-actions">
-          <ReportingPeriodControl onChange={setReportingPeriod} period={reportingPeriod} />
+              <ReportingPeriodControl
+            onChange={(period) => setReportingPeriod(withReportingTimeZone(period, overview.timezone))}
+            period={reportingPeriod}
+            timeZone={overview.timezone}
+          />
           <button
             aria-label="Refresh analytics"
             className="analytics-refresh"
@@ -140,18 +158,29 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
         </div>
       </header>
 
-      {error ? <p className="analytics-inline-error" role="status">Showing the most recently loaded results. {error}</p> : null}
+      {error ? (
+        <p className="analytics-inline-error" role="status">
+          These figures are from the last successful load. {error}{" "}
+          <button className="analytics-inline-retry" onClick={() => setRefreshKey((value) => value + 1)} type="button">
+            Retry
+          </button>
+        </p>
+      ) : null}
 
       <div className="kpi-grid" aria-label="Live analytics highlights">
         <StaggerGroup className="kpi-grid-motion">
           <StaggerItem>
             <AnalyticsMetric
-              helper={`${overview.fleetPosture.clear} clear for service`}
+              helper={
+                onTrackRate === null
+                  ? "No eligible assets to measure"
+                  : `${formatNumber(overview.fleetStatus.onTrack)} of ${formatNumber(overview.fleetStatus.total)} eligible assets on track`
+              }
               icon={<ShieldCheck aria-hidden="true" size={18} />}
-              label="Fleet health"
-              onClick={() => onModuleChange("assets")}
-              tone="green"
-              value={`${fleetHealth}%`}
+              label="Retest on-track rate"
+              onClick={() => onModuleChange("retest")}
+              tone={onTrackRate === null ? "blue" : "green"}
+              value={onTrackRate === null ? "N/A" : `${onTrackRate}%`}
             />
           </StaggerItem>
           <StaggerItem>
@@ -176,7 +205,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
           </StaggerItem>
           <StaggerItem>
             <AnalyticsMetric
-              helper={`${overview.certificateCoverage.missingAssets} service assets without coverage`}
+              helper={`${formatNumber(overview.certificateCoverage.missingAssets)} eligible assets without a certificate`}
               icon={<FileCheck2 aria-hidden="true" size={18} />}
               label="Certificate coverage"
               onClick={() => onModuleChange("certificates")}
@@ -189,7 +218,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
 
       <div className="analytics-command-grid">
         <StaggerItem>
-          <FleetPosturePanel overview={overview} onNavigate={() => onModuleChange("assets")} />
+          <FleetPosturePanel overview={overview} onNavigate={onModuleChange} />
         </StaggerItem>
         <StaggerItem>
           <CertificateCoveragePanel overview={overview} onNavigate={() => onModuleChange("certificates")} />
@@ -253,35 +282,33 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
             <div className="panel-heading">
               <div>
                 <h2>Inspection outcomes</h2>
-                <p>Current submitted, approved, and rejected inspection records.</p>
+                <p>
+                {loadedPeriodLabel
+                  ? `Submitted, approved and rejected inspections for ${loadedPeriodLabel.toLowerCase()}.`
+                  : "Submitted, approved and rejected inspection records."}
+              </p>
               </div>
               <BadgeCheck aria-hidden="true" size={19} />
             </div>
             {overview.inspectionOutcomes.length ? (
-              <m.button
-                aria-label="View inspection records"
-                className="analytics-outcome-summary"
-                onClick={() => onModuleChange("inspections")}
-                transition={motionTokens.spring.gentle}
-                type="button"
-                whileHover={reducedMotion ? undefined : { y: -2 }}
-                whileTap={reducedMotion ? undefined : { scale: 0.99 }}
-              >
-                <span className="analytics-outcome-totals">
-                  <b>{inspectionTotals.submitted}<small>Awaiting review</small></b>
-                  <b>{inspectionTotals.approved}<small>Approved</small></b>
-                  <b>{inspectionTotals.rejected}<small>Rejected</small></b>
-                </span>
-                <span className="analytics-outcome-footer">
-                  <span>
-                    <ClipboardCheck aria-hidden="true" size={16} />
-                    {inspectionRecordCount} current records
-                  </span>
-                  <span>
-                    View inspection records <ArrowUpRight aria-hidden="true" size={14} />
-                  </span>
-                </span>
-              </m.button>
+              <>
+                <InspectionOutcomesChart
+                  outcomes={overview.inspectionOutcomes}
+                  periodLabel={loadedPeriodLabel}
+                />
+                <m.button
+                  className="analytics-panel-link"
+                  onClick={() => onModuleChange("inspections")}
+                  transition={motionTokens.spring.gentle}
+                  type="button"
+                  whileHover={reducedMotion ? undefined : { y: -1 }}
+                  whileTap={reducedMotion ? undefined : { scale: 0.995 }}
+                >
+                  <ClipboardCheck aria-hidden="true" size={16} />
+                  {inspectionRecordCount} records in this view. Open inspection records
+                  <ArrowUpRight aria-hidden="true" size={14} />
+                </m.button>
+              </>
             ) : (
               <EmptyPanel message="No submitted, approved, or rejected inspections are visible." />
             )}
@@ -326,132 +353,69 @@ function AnalyticsMetric({
   );
 }
 
-function FleetPosturePanel({ overview, onNavigate }: { overview: AnalyticsOverview; onNavigate: () => void }) {
-  const [selected, setSelected] = useState<FleetPosture | null>(null);
-  const posture = overview.fleetPosture;
-  const total = fleetPostureTotal(overview);
-  const activePosture = selected ?? initialFleetPosture(posture);
-  const segments: Array<{ key: FleetPosture; value: number; className: string }> = [
-    { key: "clear", value: posture.clear, className: "fleet-segment-active" },
-    { key: "dueSoon", value: posture.dueSoon, className: "fleet-segment-due-soon" },
-    { key: "overdue", value: posture.overdue, className: "fleet-segment-overdue" }
-  ];
-  let offset = 0;
-
+function FleetPosturePanel({
+  overview,
+  onNavigate
+}: {
+  overview: AnalyticsOverview;
+  onNavigate: (module: AppModule) => void;
+}) {
   return (
     <section className="data-panel health-panel analytics-fleet-panel">
       <div className="panel-heading">
         <div>
-          <h2>Fleet posture</h2>
-          <p>Serviceable assets classified by current retest position.</p>
+          <h2>Fleet retest status</h2>
+          <p>Every eligible asset in exactly one category. Condemned, retired and draft assets are excluded.</p>
         </div>
         <BarChart3 aria-hidden="true" size={19} />
       </div>
-      <div className="fleet-ring">
-        <svg className="fleet-ring-chart" viewBox="0 0 120 120" aria-label="Fleet posture breakdown" role="img">
-          <circle className="fleet-ring-track" cx="60" cy="60" r="40" />
-          <g transform="rotate(-90 60 60)">
-            {segments.map((segment) => {
-              const length = total ? segment.value / total * 251.327 : 0;
-              const dashOffset = -offset;
-              offset += length;
-              return (
-                <circle
-                  aria-label={`${fleetLabels[segment.key]}: ${segment.value}`}
-                  className={`fleet-segment ${segment.className}${activePosture === segment.key ? " is-selected" : ""}`}
-                  cx="60"
-                  cy="60"
-                  key={segment.key}
-                  onBlur={() => setSelected(null)}
-                  onClick={() => setSelected(segment.key)}
-                  onFocus={() => setSelected(segment.key)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      setSelected(segment.key);
-                    }
-                  }}
-                  onPointerEnter={() => setSelected(segment.key)}
-                  r="40"
-                  role="button"
-                  strokeDasharray={`${length} ${251.327 - length}`}
-                  strokeDashoffset={dashOffset}
-                  tabIndex={0}
-                />
-              );
-            })}
-          </g>
-        </svg>
-        <span className="fleet-ring-core">
-          <span>{fleetLabels[activePosture]}</span>
-          <strong>{posture[activePosture]}</strong>
-          <small>{total} total assets</small>
-        </span>
-      </div>
-      <div className="health-legend">
-        {segments.map((segment) => (
-          <button
-            className={`fleet-legend-button${activePosture === segment.key ? " is-selected" : ""}`}
-            key={segment.key}
-            onClick={() => setSelected(segment.key)}
-            onPointerEnter={() => setSelected(segment.key)}
-            type="button"
-          >
-            <span>
-              <i className={segment.className} aria-hidden="true" />
-              {fleetLabels[segment.key]}
-            </span>
-            <strong>{segment.value}</strong>
-          </button>
-        ))}
-      </div>
-      {posture.overdue > 0 ? (
+      {/* The same field the Dashboard shows, so the two pages cannot disagree about
+          what is overdue or on track. */}
+      <FleetStatusChart
+        fleet={overview.fleetStatus}
+        onSelect={(category) => onNavigate(category.id === "unscheduled" ? "assets" : "retest")}
+        selectLabel={(category) =>
+          category.id === "unscheduled" ? "Opens the asset register." : "Opens the retest schedule."
+        }
+      />
+      {overview.fleetStatus.overdue > 0 ? (
         <div className="analytics-posture-alert">
           <AlertTriangle aria-hidden="true" size={18} />
           <span>
-            <strong>{percentage(posture.overdue, total)}% of assets are overdue</strong>
-            {posture.overdue} asset{posture.overdue === 1 ? "" : "s"} require immediate attention.
+            <strong>
+              {percentage(overview.fleetStatus.overdue, overview.fleetStatus.total)}% of eligible assets are overdue
+            </strong>
+            {overview.fleetStatus.overdue} asset{overview.fleetStatus.overdue === 1 ? "" : "s"} past a retest due date.
           </span>
         </div>
       ) : null}
-      <button className="analytics-panel-link" onClick={onNavigate} type="button">
-        Open asset register <ArrowUpRight aria-hidden="true" size={14} />
-      </button>
     </section>
   );
 }
 
-function CertificateCoveragePanel({ overview, onNavigate }: { overview: AnalyticsOverview; onNavigate: () => void }) {
+function CertificateCoveragePanel({
+  overview,
+  onNavigate
+}: {
+  overview: AnalyticsOverview;
+  onNavigate: () => void;
+}) {
   const coverage = overview.certificateCoverage;
-  const rows = [
-    { label: "Covered service assets", value: coverage.coveredAssets, max: overview.inServiceAssets, tone: "coverage-valid" },
-    { label: "Expiring within 60 days", value: coverage.expiringSoon, max: Math.max(coverage.issued, 1), tone: "coverage-expiring" },
-    { label: "Expired certificates", value: coverage.expired, max: Math.max(coverage.issued, 1), tone: "coverage-expired" }
-  ];
-
   return (
     <section className="data-panel analytics-coverage-panel">
       <div className="panel-heading">
         <div>
           <h2>Certificate coverage</h2>
-          <p>Current issued-certificate status across the in-service fleet.</p>
+          <p>Assets holding a certificate that is valid today, whenever it was issued.</p>
         </div>
         <FileCheck2 aria-hidden="true" size={19} />
       </div>
       <div className="analytics-coverage-score">
         <strong>{coverage.coveragePercent}%</strong>
-        <span>{coverage.coveredAssets} of {overview.inServiceAssets} in-service assets covered</span>
+        <span>{formatNumber(coverage.coveredAssets)} of {formatNumber(coverage.eligibleAssets)} eligible assets covered</span>
         <i style={{ "--coverage": `${coverage.coveragePercent}%` } as CSSProperties} />
       </div>
-      <div className="analytics-coverage-bars">
-        {rows.map((row) => (
-          <div key={row.label}>
-            <span>{row.label}</span>
-            <strong>{row.value}</strong>
-            <i className={row.tone} style={{ "--coverage": `${percentage(row.value, row.max)}%` } as CSSProperties} />
-          </div>
-        ))}
-      </div>
+      <CertificateCoverageChart coverage={coverage} />
       <button className="analytics-panel-link" onClick={onNavigate} type="button">
         Open certificates <ArrowUpRight aria-hidden="true" size={14} />
       </button>
@@ -461,17 +425,6 @@ function CertificateCoveragePanel({ overview, onNavigate }: { overview: Analytic
 
 function EmptyPanel({ message }: { message: string }) {
   return <p className="analytics-empty">{message}</p>;
-}
-
-function fleetPostureTotal(overview: AnalyticsOverview) {
-  const posture = overview.fleetPosture;
-  return posture.clear + posture.dueSoon + posture.overdue;
-}
-
-function initialFleetPosture(posture: AnalyticsOverview["fleetPosture"]): FleetPosture {
-  if (posture.overdue > 0) return "overdue";
-  if (posture.dueSoon > 0) return "dueSoon";
-  return "clear";
 }
 
 function percentage(value: number, total: number) {

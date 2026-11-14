@@ -475,11 +475,18 @@ describe("hmsClient", () => {
       const path = new URL(url, "http://test").pathname;
       const payload = path === "/api/v1/dashboard"
         ? {
+            as_of: "2026-09-18T12:00:00Z",
+            timezone: "Australia/Sydney",
             total_assets: 0,
             total_customers: 0,
             in_service_assets: 0,
+            fleet_status: { on_track: 0, due_soon: 0, overdue: 0, suspended: 0, unscheduled: 0, total: 0, on_track_percent: null },
             due_soon_assets: 0,
             overdue_assets: 0,
+            overdue_schedules: 0,
+            overdue_escalated: 0,
+            escalation_eligible_total: 0,
+            escalated_today: 0,
             awaiting_review_inspections: 0,
             overdue_total: 0,
             overdue_limit: 5,
@@ -490,19 +497,27 @@ describe("hmsClient", () => {
           }
         : {
             generated_at: "2026-09-18T12:00:00Z",
+            as_of: "2026-09-18T12:00:00Z",
+            timezone: "Australia/Sydney",
             total_assets: 0,
             in_service_assets: 0,
             due_soon_assets: 0,
             overdue_assets: 0,
             awaiting_review_inspections: 0,
+            fleet_status: { on_track: 0, due_soon: 0, overdue: 0, suspended: 0, unscheduled: 0, total: 0, on_track_percent: null },
             fleet_posture: { clear: 0, due_soon: 0, overdue: 0 },
             certificate_coverage: {
+              eligible_assets: 0,
               covered_assets: 0,
+              unverified_assets: 0,
+              expired_assets: 0,
+              missing_assets: 0,
+              expiring_assets: 0,
               coverage_percent: 0,
+              issued: 0,
               expiring_soon: 0,
               expired: 0,
-              issued: 0,
-              missing_assets: 0
+              issued_in_period: 0
             },
             customer_risk: [],
             inspection_outcomes: []

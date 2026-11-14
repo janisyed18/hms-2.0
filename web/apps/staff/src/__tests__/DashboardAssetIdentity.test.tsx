@@ -12,7 +12,11 @@ function stubDashboard() {
     const path = new URL(String(url), "http://test").pathname;
     if (path !== "/api/v1/dashboard") return ok(empty);
     return ok({
-      total_assets: 2, total_customers: 1, in_service_assets: 2, due_soon_assets: 2, overdue_assets: 2,
+      as_of: "2026-11-14T00:30:00Z", timezone: "Australia/Sydney",
+      total_assets: 2, total_customers: 1, in_service_assets: 2,
+      fleet_status: { on_track: 0, due_soon: 2, overdue: 2, suspended: 0, unscheduled: 0, total: 4, on_track_percent: 0 },
+      due_soon_assets: 2, overdue_assets: 2, overdue_schedules: 2, overdue_escalated: 0,
+      escalation_eligible_total: 2, escalated_today: 0,
       awaiting_review_inspections: 2, overdue_total: 2, overdue_limit: 5, overdue_offset: 0,
       overdue_retests: [
         { asset_id: "a1", asset_number: "HMS-1", asset_name: "Main Transfer Hose", customer_name: "Mine Ltd", product_name: "Hose", due_at: "2026-10-01", days_overdue: 9, status: "OVERDUE" },

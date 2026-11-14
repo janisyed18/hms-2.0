@@ -809,6 +809,9 @@ class RetestScheduleListResponse(BaseModel):
 
 class RetestEscalationResponse(BaseModel):
     dispatched: int
+    # Schedules eligible when the request started. Equals ``dispatched`` unless an
+    # event was already queued for the same schedule and day.
+    eligible: int = 0
 
 
 class DashboardRetestRead(BaseModel):
@@ -840,12 +843,36 @@ class DashboardReviewRead(BaseModel):
     result: str | None
 
 
+class FleetStatusRead(BaseModel):
+    """Mutually exclusive retest status of the eligible fleet (parts sum to total)."""
+
+    on_track: int
+    due_soon: int
+    overdue: int
+    suspended: int
+    unscheduled: int
+    total: int
+    # Share of the eligible fleet that is on track. None when the fleet is empty.
+    on_track_percent: int | None
+
+
 class DashboardRead(BaseModel):
+    # Current snapshot as of ``as_of``; the reporting period does not change these.
+    as_of: datetime
+    timezone: str
     total_assets: int
     total_customers: int
     in_service_assets: int
+    fleet_status: FleetStatusRead
     due_soon_assets: int
+    # Distinct eligible assets with an overdue schedule.
     overdue_assets: int
+    # Overdue schedules; the queue total. Equal to overdue_assets while a schedule is
+    # one-to-one with an asset, but counted separately so labels stay honest.
+    overdue_schedules: int
+    overdue_escalated: int
+    escalation_eligible_total: int
+    escalated_today: int
     awaiting_review_inspections: int
     overdue_total: int
     overdue_limit: int
@@ -899,12 +926,21 @@ class MyWorkRead(BaseModel):
 
 
 class AnalyticsCertificateCoverageRead(BaseModel):
+    # Asset level, over the eligible fleet. covered + unverified + expired + missing
+    # equals eligible_assets. Unverified: only undated certificates, validity unknown.
+    eligible_assets: int
     covered_assets: int
+    unverified_assets: int
+    expired_assets: int
+    missing_assets: int
+    expiring_assets: int
     coverage_percent: int
+    # Certificate level (ISSUED certificate records), kept apart from the asset counts.
+    issued: int
     expiring_soon: int
     expired: int
-    issued: int
-    missing_assets: int
+    # Activity: certificates issued in the selected period (None without a period).
+    issued_in_period: int | None = None
 
 
 class AnalyticsFleetPostureRead(BaseModel):
@@ -930,7 +966,10 @@ class AnalyticsCustomerRiskRead(BaseModel):
 
 class AnalyticsOverviewRead(BaseModel):
     generated_at: datetime
+    as_of: datetime
+    timezone: str
     total_assets: int
+    fleet_status: FleetStatusRead
     in_service_assets: int
     due_soon_assets: int
     overdue_assets: int
@@ -1259,3 +1298,35 @@ class AuditEventListResponse(BaseModel):
     limit: int
     offset: int
     items: list[AuditEventRead]
+
+
+class ActivityBucketRead(BaseModel):
+    start: datetime
+    end: datetime
+    assets_added: int
+    inspections_submitted: int
+    inspections_approved: int
+    inspections_rejected: int
+    certificates_issued: int
+    retests_escalated: int
+
+
+class ActivityTotalsRead(BaseModel):
+    assets_added: int
+    inspections_submitted: int
+    inspections_approved: int
+    inspections_rejected: int
+    certificates_issued: int
+    retests_escalated: int
+
+
+class ActivityRead(BaseModel):
+    """Complete activity counts for ``[start_at, end_at)``; never truncated."""
+
+    generated_at: datetime
+    start_at: datetime
+    end_at: datetime
+    timezone: str
+    granularity: str
+    buckets: list[ActivityBucketRead]
+    totals: ActivityTotalsRead

@@ -10,6 +10,8 @@ import type { ReportingPeriod, ReportingPeriodPreset } from "../utils/reportingP
 interface ReportingPeriodControlProps {
   onChange: (period: ReportingPeriod) => void;
   period: ReportingPeriod;
+  /** The organisation's IANA zone, so custom dates mean whole days there. */
+  timeZone?: string;
 }
 
 const quickPresets: Array<{ label: string; value: Exclude<ReportingPeriodPreset, "custom"> }> = [
@@ -20,21 +22,21 @@ const quickPresets: Array<{ label: string; value: Exclude<ReportingPeriodPreset,
   { value: "last_three_months", label: "Last 3 months" }
 ];
 
-export function ReportingPeriodControl({ onChange, period }: ReportingPeriodControlProps) {
+export function ReportingPeriodControl({ onChange, period, timeZone }: ReportingPeriodControlProps) {
   const [startDate, setStartDate] = useState(period.startDate);
   const [endDate, setEndDate] = useState(period.endDate);
   const isCustom = period.preset === "custom";
 
   function selectPreset(preset: ReportingPeriodPreset) {
     if (preset === "custom") {
-      onChange(reportingPeriodFromDates(startDate, endDate) ?? reportingPeriodForPreset("last_month"));
+      onChange(reportingPeriodFromDates(startDate, endDate, timeZone) ?? reportingPeriodForPreset("last_month"));
       return;
     }
     onChange(reportingPeriodForPreset(preset));
   }
 
   function applyCustomRange() {
-    const range = reportingPeriodFromDates(startDate, endDate);
+    const range = reportingPeriodFromDates(startDate, endDate, timeZone);
     if (range) onChange(range);
   }
 
@@ -62,9 +64,10 @@ export function ReportingPeriodControl({ onChange, period }: ReportingPeriodCont
             <span>To</span>
             <input aria-label="Reporting period end" min={startDate} onChange={(event) => setEndDate(event.target.value)} type="date" value={endDate} />
           </label>
-          <button disabled={!reportingPeriodFromDates(startDate, endDate)} onClick={applyCustomRange} type="button">
+          <button disabled={!reportingPeriodFromDates(startDate, endDate, timeZone)} onClick={applyCustomRange} type="button">
             Apply
           </button>
+          {timeZone ? <span className="reporting-period-zone">Whole days, {timeZone.replaceAll("_", " ")}</span> : null}
         </div>
       ) : null}
     </div>

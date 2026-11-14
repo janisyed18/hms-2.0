@@ -27,12 +27,38 @@ export interface DashboardReviewRecord {
   result: string | null;
 }
 
+/**
+ * Retest status of the eligible fleet. The five categories are mutually exclusive and
+ * sum to `total`, so they can be shown as one partition.
+ */
+export interface FleetStatus {
+  onTrack: number;
+  dueSoon: number;
+  overdue: number;
+  suspended: number;
+  unscheduled: number;
+  total: number;
+  /** Share of the eligible fleet on track. Null when there is no eligible fleet. */
+  onTrackPercent: number | null;
+}
+
 export interface DashboardRecord {
+  /** The instant the snapshot figures were measured, and the organisation timezone. */
+  asOf: string;
+  timezone: string;
   totalAssets: number;
   totalCustomers: number;
   inServiceAssets: number;
+  fleetStatus: FleetStatus;
   dueSoonAssets: number;
+  /** Distinct eligible assets with an overdue schedule. */
   overdueAssets: number;
+  /** Overdue schedules: the queue total. */
+  overdueSchedules: number;
+  overdueEscalated: number;
+  /** What a send-escalation request would act on now. Authoritative count: the server. */
+  escalationEligibleTotal: number;
+  escalatedToday: number;
   awaitingReviewInspections: number;
   overdueTotal: number;
   overdueLimit: number;
@@ -79,12 +105,24 @@ export interface MyWorkRecord {
 }
 
 export interface AnalyticsCertificateCoverage {
+  /**
+   * Asset-level coverage over the eligible fleet: covered + unverified + expired +
+   * missing equals eligibleAssets. "Unverified" means the asset's only usable
+   * certificates carry no expiry date, so their validity is unknown.
+   */
+  eligibleAssets: number;
   coveredAssets: number;
+  unverifiedAssets: number;
+  expiredAssets: number;
+  missingAssets: number;
+  expiringAssets: number;
   coveragePercent: number;
+  /** Certificate-level counts, which are not asset counts. */
+  issued: number;
   expiringSoon: number;
   expired: number;
-  issued: number;
-  missingAssets: number;
+  /** Activity: certificates issued in the selected period. Null without a period. */
+  issuedInPeriod: number | null;
 }
 
 export interface AnalyticsFleetPosture {
@@ -110,15 +148,50 @@ export interface AnalyticsCustomerRisk {
 
 export interface AnalyticsOverview {
   generatedAt: string;
+  asOf: string;
+  timezone: string;
   totalAssets: number;
   inServiceAssets: number;
   dueSoonAssets: number;
   overdueAssets: number;
   awaitingReviewInspections: number;
+  /** The same partition the Dashboard shows: one source of truth for fleet status. */
+  fleetStatus: FleetStatus;
   fleetPosture: AnalyticsFleetPosture;
   certificateCoverage: AnalyticsCertificateCoverage;
   customerRisk: AnalyticsCustomerRisk[];
   inspectionOutcomes: AnalyticsInspectionOutcome[];
+}
+
+/** The six activity series the reporting API exposes, each from an exact timestamp. */
+export interface ActivityCounts {
+  assetsAdded: number;
+  inspectionsSubmitted: number;
+  inspectionsApproved: number;
+  inspectionsRejected: number;
+  certificatesIssued: number;
+  retestsEscalated: number;
+}
+
+export interface ActivityBucket extends ActivityCounts {
+  start: string;
+  end: string;
+}
+
+export interface ActivityReport {
+  generatedAt: string;
+  startAt: string;
+  endAt: string;
+  timezone: string;
+  granularity: "hour" | "day" | "week" | string;
+  buckets: ActivityBucket[];
+  totals: ActivityCounts;
+}
+
+export interface RetestEscalationResult {
+  /** What the server actually sent. Authoritative over any count shown beforehand. */
+  dispatched: number;
+  eligible: number;
 }
 
 export interface NotificationRecord {

@@ -1,9 +1,13 @@
 import type {
+  ActivityCounts,
+  ActivityReport,
   ApiListResult,
   AdminUserFormValues,
   AdminUserCreateResult,
   AdminUserRecord,
   AnalyticsOverview,
+  FleetStatus,
+  RetestEscalationResult,
   AdminUserUpdateValues,
   AssetConfigurationOptions,
   AssetCertificateHistoryRecord,
@@ -149,12 +153,29 @@ interface ApiDashboardReview {
   result: string | null;
 }
 
+interface ApiFleetStatus {
+  on_track: number;
+  due_soon: number;
+  overdue: number;
+  suspended: number;
+  unscheduled: number;
+  total: number;
+  on_track_percent: number | null;
+}
+
 interface ApiDashboard {
+  as_of: string;
+  timezone: string;
   total_assets: number;
   total_customers: number;
   in_service_assets: number;
+  fleet_status: ApiFleetStatus;
   due_soon_assets: number;
   overdue_assets: number;
+  overdue_schedules: number;
+  overdue_escalated: number;
+  escalation_eligible_total: number;
+  escalated_today: number;
   awaiting_review_inspections: number;
   overdue_total: number;
   overdue_limit: number;
@@ -164,25 +185,52 @@ interface ApiDashboard {
   awaiting_review: ApiDashboardReview[];
 }
 
+interface ApiActivityCounts {
+  assets_added: number;
+  inspections_submitted: number;
+  inspections_approved: number;
+  inspections_rejected: number;
+  certificates_issued: number;
+  retests_escalated: number;
+}
+
+interface ApiActivity {
+  generated_at: string;
+  start_at: string;
+  end_at: string;
+  timezone: string;
+  granularity: string;
+  buckets: Array<ApiActivityCounts & { start: string; end: string }>;
+  totals: ApiActivityCounts;
+}
+
 interface ApiAnalyticsOverview {
   generated_at: string;
+  as_of: string;
+  timezone: string;
   total_assets: number;
   in_service_assets: number;
   due_soon_assets: number;
   overdue_assets: number;
   awaiting_review_inspections: number;
+  fleet_status: ApiFleetStatus;
   fleet_posture: {
     clear: number;
     due_soon: number;
     overdue: number;
   };
   certificate_coverage: {
+    eligible_assets: number;
     covered_assets: number;
+    unverified_assets: number;
+    expired_assets: number;
+    missing_assets: number;
+    expiring_assets: number;
     coverage_percent: number;
+    issued: number;
     expiring_soon: number;
     expired: number;
-    issued: number;
-    missing_assets: number;
+    issued_in_period: number | null;
   };
   customer_risk: Array<{
     customer_id: string;
@@ -201,6 +249,7 @@ interface ApiAnalyticsOverview {
 
 interface ApiRetestEscalation {
   dispatched: number;
+  eligible?: number;
 }
 
 interface ApiNotification {
@@ -922,13 +971,59 @@ function toContact(contact: ApiContact): CustomerContact {
   };
 }
 
+function toFleetStatus(status: ApiFleetStatus): FleetStatus {
+  return {
+    onTrack: status.on_track,
+    dueSoon: status.due_soon,
+    overdue: status.overdue,
+    suspended: status.suspended,
+    unscheduled: status.unscheduled,
+    total: status.total,
+    onTrackPercent: status.on_track_percent
+  };
+}
+
+function toActivityCounts(counts: ApiActivityCounts): ActivityCounts {
+  return {
+    assetsAdded: counts.assets_added,
+    inspectionsSubmitted: counts.inspections_submitted,
+    inspectionsApproved: counts.inspections_approved,
+    inspectionsRejected: counts.inspections_rejected,
+    certificatesIssued: counts.certificates_issued,
+    retestsEscalated: counts.retests_escalated
+  };
+}
+
+function toActivityReport(activity: ApiActivity): ActivityReport {
+  return {
+    generatedAt: activity.generated_at,
+    startAt: activity.start_at,
+    endAt: activity.end_at,
+    timezone: activity.timezone,
+    granularity: activity.granularity,
+    buckets: activity.buckets.map((bucket) => ({
+      start: bucket.start,
+      end: bucket.end,
+      ...toActivityCounts(bucket)
+    })),
+    totals: toActivityCounts(activity.totals)
+  };
+}
+
 function toDashboard(dashboard: ApiDashboard): DashboardRecord {
   return {
+    asOf: dashboard.as_of,
+    timezone: dashboard.timezone,
     totalAssets: dashboard.total_assets,
     totalCustomers: dashboard.total_customers,
     inServiceAssets: dashboard.in_service_assets,
+    fleetStatus: toFleetStatus(dashboard.fleet_status),
     dueSoonAssets: dashboard.due_soon_assets,
     overdueAssets: dashboard.overdue_assets,
+    overdueSchedules: dashboard.overdue_schedules,
+    overdueEscalated: dashboard.overdue_escalated,
+    escalationEligibleTotal: dashboard.escalation_eligible_total,
+    escalatedToday: dashboard.escalated_today,
     awaitingReviewInspections: dashboard.awaiting_review_inspections,
     overdueTotal: dashboard.overdue_total,
     overdueLimit: dashboard.overdue_limit,
@@ -1004,23 +1099,31 @@ function toMyWork(work: ApiMyWork): MyWorkRecord {
 function toAnalyticsOverview(overview: ApiAnalyticsOverview): AnalyticsOverview {
   return {
     generatedAt: overview.generated_at,
+    asOf: overview.as_of,
+    timezone: overview.timezone,
     totalAssets: overview.total_assets,
     inServiceAssets: overview.in_service_assets,
     dueSoonAssets: overview.due_soon_assets,
     overdueAssets: overview.overdue_assets,
     awaitingReviewInspections: overview.awaiting_review_inspections,
+    fleetStatus: toFleetStatus(overview.fleet_status),
     fleetPosture: {
       clear: overview.fleet_posture.clear,
       dueSoon: overview.fleet_posture.due_soon,
       overdue: overview.fleet_posture.overdue
     },
     certificateCoverage: {
+      eligibleAssets: overview.certificate_coverage.eligible_assets,
       coveredAssets: overview.certificate_coverage.covered_assets,
+      unverifiedAssets: overview.certificate_coverage.unverified_assets,
+      expiredAssets: overview.certificate_coverage.expired_assets,
+      missingAssets: overview.certificate_coverage.missing_assets,
+      expiringAssets: overview.certificate_coverage.expiring_assets,
       coveragePercent: overview.certificate_coverage.coverage_percent,
+      issued: overview.certificate_coverage.issued,
       expiringSoon: overview.certificate_coverage.expiring_soon,
       expired: overview.certificate_coverage.expired,
-      issued: overview.certificate_coverage.issued,
-      missingAssets: overview.certificate_coverage.missing_assets
+      issuedInPeriod: overview.certificate_coverage.issued_in_period
     },
     customerRisk: overview.customer_risk.map((risk) => ({
       customerId: risk.customer_id,
@@ -1858,12 +1961,24 @@ export function createHmsClient(options: HmsClientOptions = {}) {
       return toAnalyticsOverview(response.data);
     },
 
-    async escalateOverdueRetests(): Promise<number> {
+    /**
+     * Complete activity counts for the period, bucketed by the server. This replaces
+     * reading the audit log: it is scoped, never truncated, and needs no audit access.
+     */
+    async getReportingActivity(reportingPeriod: ReportingPeriod): Promise<ActivityReport> {
+      const response = await request<ApiActivity>("/api/v1/reporting/activity", {}, {
+        start_at: reportingPeriod.startAt,
+        end_at: reportingPeriod.endAt
+      });
+      return toActivityReport(response.data);
+    },
+
+    async escalateOverdueRetests(): Promise<RetestEscalationResult> {
       const response = await request<ApiRetestEscalation>(
         "/api/v1/retest-schedules/escalate-overdue",
         { method: "POST" }
       );
-      return response.data.dispatched;
+      return { dispatched: response.data.dispatched, eligible: response.data.eligible ?? response.data.dispatched };
     },
 
     async listNotifications(
