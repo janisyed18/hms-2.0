@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -69,10 +69,10 @@ describe("InspectionBookingCard", () => {
   });
 
   it.each([
-    ["PENDING_APPROVAL", "PENDING APPROVAL", "booking-status--pending"],
-    ["APPROVED", "APPROVED", "booking-status--approved"],
-    ["REJECTED", "REJECTED", "booking-status--rejected"],
-    ["CANCELLED", "CANCELLED", "booking-status--neutral"]
+    ["PENDING_APPROVAL", "Requested", "booking-status--pending"],
+    ["APPROVED", "Approved", "booking-status--approved"],
+    ["REJECTED", "Rejected", "booking-status--rejected"],
+    ["CANCELLED", "Cancelled", "booking-status--neutral"]
   ] as const)("shows %s as its own status badge", (status, label, className) => {
     setup(booking({ status }), { canApproveBookings: false, canBook: false });
     expect(screen.getByText(label)).toHaveClass(className);
@@ -88,7 +88,8 @@ describe("InspectionBookingCard", () => {
     await user.click(screen.getByRole("button", { name: "Assign & approve" }));
     expect(onApprove).toHaveBeenCalledWith("bk-1", "ins-2");
 
-    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await user.click(screen.getByText("Actions"));
+    await user.click(screen.getByRole("button", { name: "Reject request" }));
     expect(onDecline).toHaveBeenCalledWith(expect.objectContaining({ id: "bk-1" }));
   });
 
@@ -100,17 +101,19 @@ describe("InspectionBookingCard", () => {
 
   it("shows the assigned inspector with Change inspector beside the name on a confirmed booking", async () => {
     const { user, onChangeInspector } = setup(confirmed());
-    const row = screen.getByText("Assigned inspector:").closest("div") as HTMLElement;
-    expect(within(row).getByText("Ben Brook")).toBeVisible();
-    await user.click(within(row).getByRole("button", { name: "Change inspector for Port Botany" }));
+    expect(screen.getByText("Inspector")).toBeVisible();
+    expect(screen.getByText("Ben Brook")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Change inspector for Port Botany" }));
     expect(onChangeInspector).toHaveBeenCalledWith(expect.objectContaining({ id: "bk-1" }));
+    await user.click(screen.getByText("Actions"));
     expect(screen.getByRole("button", { name: "Request reschedule" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Cancel booking" })).toBeEnabled();
   });
 
   it("hides the inspector row from a customer, who can still reschedule or cancel", async () => {
     const { user, onRequestReschedule, onCancel } = setup(confirmed(), { canApproveBookings: false });
-    expect(screen.queryByText("Assigned inspector:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Inspector")).not.toBeInTheDocument();
+    await user.click(screen.getByText("Actions"));
     await user.click(screen.getByRole("button", { name: "Request reschedule" }));
     await user.click(screen.getByRole("button", { name: "Cancel booking" }));
     expect(onRequestReschedule).toHaveBeenCalled();
@@ -119,7 +122,9 @@ describe("InspectionBookingCard", () => {
 
   it("does not offer Change inspector or another reschedule while one is pending", () => {
     setup(confirmed({ changeRequests: [change("PENDING_CUSTOMER_CONFIRMATION")] as never }));
-    expect(screen.getByText("Cannot change inspector while a reschedule is pending.")).toBeVisible();
+    expect(screen.getByText("Reassignment paused while reschedule is pending.")).toBeVisible();
+    expect(screen.getByText("Reschedule requested")).toBeVisible();
+    expect(screen.getByText("Requested by: Admin")).toBeVisible();
     expect(screen.queryByRole("button", { name: /Change inspector/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Request reschedule" })).not.toBeInTheDocument();
     expect(screen.getByText("Awaiting customer confirmation")).toBeVisible();
@@ -133,6 +138,12 @@ describe("InspectionBookingCard", () => {
     await user.selectOptions(screen.getByLabelText("Assign inspector for reschedule at Port Botany"), "ins-1");
     await user.click(screen.getByRole("button", { name: "Approve reschedule" }));
     expect(onApproveReschedule).toHaveBeenCalledWith("ch-1", "ins-1");
+  });
+
+  it("identifies customer-initiated reschedule requests for approvers", () => {
+    setup(confirmed({ changeRequests: [change("PENDING_ADMIN_APPROVAL")] as never }));
+    expect(screen.getByText("Reschedule requested")).toBeVisible();
+    expect(screen.getByText("Requested by: Customer")).toBeVisible();
   });
 
   it("a customer sees their own request as awaiting admin approval", () => {
@@ -150,7 +161,8 @@ describe("InspectionBookingCard", () => {
   it("disables every action while another is running, and labels the one in progress", () => {
     setup(booking(), { pendingAction: "approve:bk-1" });
     expect(screen.getByRole("button", { name: "Approving…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Decline" })).toBeDisabled();
+    await userEvent.setup().click(screen.getByText("Actions"));
+    expect(screen.getByRole("button", { name: "Reject request" })).toBeDisabled();
   });
 
   it("keeps long names and references readable", () => {
