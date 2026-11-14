@@ -326,7 +326,7 @@ describe("Inspection bookings", () => {
     expect(within(header).getByRole("button", { name: "Book inspection" })).toBeVisible();
     unmount();
     render(<InspectionsWorkspace canApprove canApproveBookings={false} canBook={false} canWrite={false} />);
-    await screen.findByText("Kooragang");
+    expect(await screen.findByRole("button", { name: "Inspection records" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: "Book inspection" })).not.toBeInTheDocument();
   });
 
