@@ -38,7 +38,9 @@ function dashboardBody(limit: number, offset: number, overrides: DashboardOverri
     status: index === 0 ? "ESCALATED" : "OVERDUE"
   }));
   return {
-    as_of: "2026-11-14T00:30:00Z",
+    // 23:30 UTC on 13 November is 10:30 on the 14th in Sydney: the two dates differ, so
+    // anything that formats this in UTC is visibly wrong.
+    as_of: "2026-11-13T23:30:00Z",
     timezone: "Australia/Sydney",
     total_assets: 120,
     total_customers: 4,
@@ -315,7 +317,8 @@ describe("the Dashboard export covers every overdue record", () => {
   });
 
   it("names the file for the as-of date in the organisation timezone", async () => {
-    // 00:30 UTC on 14 November is 11:30 on the 14th in Sydney, but the 13th in UTC.
+    // The as-of instant is 13 November in UTC and 14 November in Sydney: the filename
+    // must follow the date the Dashboard shows, so slicing the UTC string fails here.
     stub({ overrides: { overdueTotal: 1 } });
     const filenames: string[] = [];
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
