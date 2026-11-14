@@ -32,10 +32,6 @@ export function useMyWork({
     client.current = providedClient ?? createHmsClient();
   }, [providedClient]);
 
-  useEffect(() => {
-    hasWork.current = work !== null;
-  }, [work]);
-
   const refresh = useCallback(async (queueIfBusy = false) => {
     if (inFlight.current) {
       if (queueIfBusy) queued.current = true;
@@ -44,6 +40,11 @@ export function useMyWork({
     inFlight.current = true;
     try {
       const next = await client.current.getMyWork(limit);
+      // Set here, not from an effect keyed on ``work``: a queued refresh starts inside
+      // this same promise chain, before React commits the render below, and it must
+      // already know that results are held so a failure reads as "could not be
+      // refreshed" rather than "could not be loaded".
+      hasWork.current = true;
       setWork(next);
       setError(null);
     } catch {
