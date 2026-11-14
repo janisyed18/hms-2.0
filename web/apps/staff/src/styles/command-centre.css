@@ -4562,3 +4562,35 @@ rect.fleet-segment-unscheduled { fill: var(--chart-neutral); }
   .inspection-booking-filters { grid-template-columns: minmax(0, 1fr); }
   .booking-card__actions { justify-content: flex-start; }
 }
+
+.inspection-record-view-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 15px;
+  border-bottom: 1px solid var(--border);
+}
+.inspection-record-view-tabs button {
+  padding: 10px 14px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--soft);
+  cursor: pointer;
+  font-weight: 700;
+}
+.inspection-record-view-tabs button.is-active {
+  border-bottom-color: var(--accent-2);
+  color: var(--ink);
+}
+.inspection-report-card {
+  grid-template-columns: minmax(0, 2fr) minmax(130px, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 16px;
+}
+.inspection-report-card > button { justify-self: end; }
+@media (max-width: 650px) {
+  .inspection-report-card { grid-template-columns: minmax(0, 1fr); }
+  .inspection-report-card > button { justify-self: start; }
+}
