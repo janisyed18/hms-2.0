@@ -215,24 +215,24 @@ export function InspectionsWorkspace({
         {recordView === "bookings" ? (
         <div className="inspection-booking-filters" role="group" aria-label="Filter inspection bookings">
           <label>Status
-            <select aria-label="Booking status" value={bookingStatus} onChange={(event) => setBookingStatus(event.target.value as BookingViewStatus)}>
+            <select aria-label="Filter bookings by status" value={bookingStatus} onChange={(event) => setBookingStatus(event.target.value as BookingViewStatus)}>
               {bookingStatusOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
           <label>Customer
-            <select aria-label="Booking customer" value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)}>
+            <select aria-label="Filter bookings by customer" value={customerFilter} onChange={(event) => setCustomerFilter(event.target.value)}>
               <option value="ALL">All customers</option>
               {bookingOptions.customers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
           <label>Asset
-            <select aria-label="Booking asset" value={assetFilter} onChange={(event) => setAssetFilter(event.target.value)}>
+            <select aria-label="Filter bookings by asset" value={assetFilter} onChange={(event) => setAssetFilter(event.target.value)}>
               <option value="ALL">All assets</option>
               {bookingOptions.assets.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </label>
           <label>Location
-            <select aria-label="Booking location" value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}>
+            <select aria-label="Filter bookings by location" value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}>
               <option value="ALL">All locations</option>
               {bookingOptions.locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
