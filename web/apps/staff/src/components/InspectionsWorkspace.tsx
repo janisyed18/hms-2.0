@@ -190,6 +190,10 @@ export function InspectionsWorkspace({
             {bookingAssetError}
           </ActionNotice>
         ) : null}
+        {workspace.error ? (
+          <ActionNotice kind="error" title="Inspection records unavailable">{workspace.error}</ActionNotice>
+        ) : null}
+        {workspace.isLoading ? <p role="status">Loading inspection records…</p> : null}
         {workspace.notice ? (
           <ActionNotice kind={workspace.notice.kind} onDismiss={workspace.dismissNotice} title={workspace.notice.title}>
             {workspace.notice.message}
