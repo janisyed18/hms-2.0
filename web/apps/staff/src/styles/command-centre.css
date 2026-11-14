@@ -4601,3 +4601,6 @@ rect.fleet-segment-unscheduled { fill: var(--chart-neutral); }
   font-weight: 650;
   white-space: normal;
 }
+
+/* Actions menus need to escape the card at the bottom of a booking list. */
+.inspection-bookings-panel { overflow: visible; }
