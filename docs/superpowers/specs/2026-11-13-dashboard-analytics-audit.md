@@ -473,3 +473,41 @@ place: `.customer-detail-stack`, `.customer-detail-card`, `.customer-location-lo
 `.dashboard-action-notice`, `.dashboard-range-control select`, `.progress-fill`,
 `.loading-shimmer`, `.analytics-snapshot`, `.sidebar-backdrop`, `.sidebar-toggle`,
 `.modal-grid`.
+
+## 13. Phase E outcome (polish and chart corrections)
+
+Both review findings were real, reproduced, and fixed with tests that fail when the old
+behaviour is restored:
+
+- **Weekly labels across daylight saving.** `formatBucketRange` subtracted exactly 24 hours
+  from a week's exclusive end to name its last day. For the Sydney week ending 5 October 2026
+  that gave 3 October, because daylight saving starts in that week and the local day is 23
+  hours. It now uses the last included instant (`end - 1ms`).
+- **Pointer inspection assumed even buckets.** The pointer x was turned into an index by
+  dividing the width evenly. Buckets are not even: a daylight-saving day is 23 or 25 hours and
+  the first and last bucket of a period are clipped to it. The position is now inverted
+  through the x scale and matched by `nearestBucketIndex`, which prefers the bucket containing
+  the instant and otherwise takes the closest start. jsdom's pointer events carry no
+  `clientX`, so the selection logic is unit-tested directly rather than through a DOM event.
+
+Polish, each found by looking at the rendered pages:
+
+- **Axis ticks** read 0, 4, 8, 11, 15 because a maximum was divided by a fixed count and
+  rounded. `axisTicks` now picks a round step first and ends the axis on a multiple of it, so
+  the gaps are even (0, 5, 10, 15). Used by the trend and outcomes charts.
+- **Tooltip at narrow widths** anchors to the near edge within the first and last thirds
+  instead of centring, so it stays inside the panel, and its maximum width is the container
+  rather than the viewport.
+- **Keyboard target moved out of the SVG.** It was a focusable `rect` inside `svg role="img"`,
+  where assistive technology does not reliably reach it. The SVG is now `aria-hidden`, with a
+  positioned overlay carrying `role="application"`, the label, the focus ring and the
+  handlers; a hidden summary names the granularity, timezone, series shown and axis maximum.
+- **Reporting times in the organisation timezone on both pages.** Analytics showed `as_of` and
+  `generated_at` in UTC through the generic system-timestamp formatter while the Dashboard used
+  the organisation zone. One `formatReportingTime` now serves both.
+- Analytics asset counts are thousands-separated, matching the Dashboard.
+
+Verification: 904 Staff tests pass (72 files); lint, typecheck and build clean. In a real
+browser against a stub API: no page overflow at 1440, 1024, 768 and 390 in both themes, with
+and without the notification panel (16 cases); the focus ring, arrow-key readout, tooltip and
+series toggle all confirmed on the rendered page.

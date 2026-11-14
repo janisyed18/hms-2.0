@@ -6,7 +6,12 @@ import { ActivityTrendChart } from "../components/charts/ActivityTrendChart";
 import { CertificateCoverageChart } from "../components/charts/CertificateCoverageChart";
 import { FleetStatusChart } from "../components/charts/FleetStatusChart";
 import { InspectionOutcomesChart } from "../components/charts/InspectionOutcomesChart";
-import { countTicks, labelIndices, niceMax } from "../components/charts/chartPrimitives";
+import {
+  axisTicks,
+  formatBucketRange,
+  labelIndices,
+  nearestBucketIndex
+} from "../components/charts/chartPrimitives";
 import type { ActivityReport, FleetStatus } from "../domain/types";
 
 function activity(overrides: Partial<ActivityReport> = {}): ActivityReport {
@@ -55,17 +60,69 @@ const fleet: FleetStatus = {
 };
 
 describe("chart primitives", () => {
-  it("rounds an axis maximum up to a readable number", () => {
-    expect(niceMax(0)).toBe(1);
-    expect(niceMax(4)).toBe(4);
-    expect(niceMax(37)).toBe(40);
-    expect(niceMax(41)).toBe(50);
-    expect(niceMax(1234)).toBe(1250);
+  it("ends the axis on a round number with evenly spaced ticks", () => {
+    expect(axisTicks(0)).toEqual({ top: 1, ticks: [0, 1] });
+    expect(axisTicks(3)).toEqual({ top: 3, ticks: [0, 1, 2, 3] });
+    // The old approach gave 0, 4, 8, 11, 15 here: even steps, uneven labels.
+    expect(axisTicks(15)).toEqual({ top: 15, ticks: [0, 5, 10, 15] });
+    expect(axisTicks(37)).toEqual({ top: 40, ticks: [0, 10, 20, 30, 40] });
+    expect(axisTicks(242)).toEqual({ top: 300, ticks: [0, 100, 200, 300] });
+    // Every tick is a whole number, and the last one is the axis top.
+    for (const peak of [1, 7, 19, 64, 123, 999, 4821]) {
+      const { top, ticks } = axisTicks(peak);
+      expect(ticks[0]).toBe(0);
+      expect(ticks[ticks.length - 1]).toBe(top);
+      expect(top).toBeGreaterThanOrEqual(peak);
+      expect(ticks.every((tick) => Number.isInteger(tick))).toBe(true);
+      const gaps = ticks.slice(1).map((tick, index) => tick - ticks[index]);
+      expect(new Set(gaps).size).toBe(1);
+    }
   });
 
-  it("gives whole-number ticks up to that maximum", () => {
-    expect(countTicks(40)).toEqual([0, 10, 20, 30, 40]);
-    expect(countTicks(3)).toEqual([0, 1, 2, 3]);
+  it("names a week by its last included day, even across a daylight-saving change", () => {
+    // Daylight saving starts in Sydney on 4 October 2026, so that local week is 167
+    // hours long: 24 hours before its exclusive end is the 3rd, not the 4th.
+    expect(
+      formatBucketRange(
+        "2026-09-27T14:00:00Z",
+        "2026-10-04T13:00:00Z",
+        "week",
+        "Australia/Sydney"
+      )
+    ).toBe("28 Sept to 4 Oct");
+    // And a week with no transition still reads correctly.
+    expect(
+      formatBucketRange(
+        "2026-10-04T13:00:00Z",
+        "2026-10-11T13:00:00Z",
+        "week",
+        "Australia/Sydney"
+      )
+    ).toBe("5 Oct to 11 Oct");
+  });
+
+  it("finds the bucket holding an instant when the buckets are uneven", () => {
+    // Daylight saving starts in Sydney on 4 October 2026, so the middle local day is
+    // 23 hours long. Dividing the span evenly would misplace instants near the edges.
+    const buckets = [
+      { start: "2026-10-02T13:00:00Z", end: "2026-10-03T13:00:00Z" },
+      { start: "2026-10-03T13:00:00Z", end: "2026-10-04T12:00:00Z" },
+      { start: "2026-10-04T12:00:00Z", end: "2026-10-05T13:00:00Z" }
+    ];
+    const at = (iso: string) => nearestBucketIndex(buckets, new Date(iso).getTime());
+
+    expect(at("2026-10-02T13:00:00Z")).toBe(0);
+    expect(at("2026-10-03T12:59:59Z")).toBe(0);
+    expect(at("2026-10-03T13:00:00Z")).toBe(1);
+    // Inside the short bucket, past where an even split would put the boundary.
+    expect(at("2026-10-04T11:59:59Z")).toBe(1);
+    expect(at("2026-10-04T12:00:00Z")).toBe(2);
+    expect(at("2026-10-05T12:59:59Z")).toBe(2);
+    // Outside the period: the nearest bucket, never null or a wrapped index.
+    expect(at("2026-09-30T00:00:00Z")).toBe(0);
+    expect(at("2026-10-09T00:00:00Z")).toBe(2);
+    expect(nearestBucketIndex(buckets, Number.NaN)).toBeNull();
+    expect(nearestBucketIndex([], 0)).toBeNull();
   });
 
   it("thins labels while keeping the first and last", () => {
@@ -94,14 +151,16 @@ describe("ActivityTrendChart", () => {
     render(<ActivityTrendChart activity={activity()} />);
 
     // 40 is the tallest value, and it comes from Assets added.
-    expect(screen.getByText("Vertical axis maximum 40.")).toBeInTheDocument();
+    expect(screen.getByText(/Vertical axis maximum 40\./)).toBeInTheDocument();
 
     const toggle = screen.getByRole("button", { name: "Assets added 54" });
     await user.click(toggle);
 
     expect(toggle).toHaveAttribute("aria-pressed", "false");
     // The axis now follows the tallest visible series (Inspections submitted, 4).
-    expect(screen.getByText("Vertical axis maximum 4.")).toBeInTheDocument();
+    expect(screen.getByText(/Vertical axis maximum 4\./)).toBeInTheDocument();
+    // The hidden summary also names which series are drawn.
+    expect(screen.getByText(/Series shown: Inspections submitted/)).toBeInTheDocument();
     expect(document.querySelectorAll("path.chart-line")).toHaveLength(5);
     // The totals and the data table are untouched: only the drawing changed.
     expect(toggle).toHaveTextContent("54");
@@ -150,6 +209,41 @@ describe("ActivityTrendChart", () => {
 
     fireEvent.keyDown(plot, { key: "Escape" });
     expect(document.querySelector(".chart-tooltip")).toBeNull();
+  });
+
+  it("anchors the tooltip to the near edge instead of hanging off it", () => {
+    // Ten daily buckets, so the first and last markers sit close to the edges.
+    const many: ActivityReport = {
+      ...activity(),
+      buckets: Array.from({ length: 10 }, (_, index) => ({
+        start: new Date(Date.UTC(2026, 10, 1 + index, 13)).toISOString(),
+        end: new Date(Date.UTC(2026, 10, 2 + index, 13)).toISOString(),
+        assetsAdded: index,
+        inspectionsSubmitted: 1,
+        inspectionsApproved: 1,
+        inspectionsRejected: 0,
+        certificatesIssued: 0,
+        retestsEscalated: 0
+      }))
+    };
+    render(<ActivityTrendChart activity={many} />);
+    const plot = screen.getByRole("application");
+
+    fireEvent.focus(plot);
+    fireEvent.keyDown(plot, { key: "Home" });
+    expect(document.querySelector(".chart-tooltip")).toHaveClass("is-start");
+
+    fireEvent.keyDown(plot, { key: "End" });
+    expect(document.querySelector(".chart-tooltip")).toHaveClass("is-end");
+
+    // A marker in the middle is centred, as before.
+    fireEvent.keyDown(plot, { key: "Home" });
+    for (let step = 0; step < 5; step += 1) {
+      fireEvent.keyDown(plot, { key: "ArrowRight" });
+    }
+    const tooltip = document.querySelector(".chart-tooltip");
+    expect(tooltip).not.toHaveClass("is-start");
+    expect(tooltip).not.toHaveClass("is-end");
   });
 
   it("formats bucket dates in the organisation timezone, not the viewer's", () => {

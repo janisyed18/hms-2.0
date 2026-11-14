@@ -4073,24 +4073,23 @@ button:active:not(:disabled) {
 }
 
 .chart-plot-target {
-  fill: transparent;
+  position: absolute;
   cursor: crosshair;
+  border-radius: 4px;
 }
 
 .chart-plot-target:focus-visible {
-  outline: none;
-  fill: color-mix(in srgb, var(--accent) 7%, transparent);
-  stroke: var(--accent-2);
-  stroke-dasharray: 4 3;
-  stroke-width: 1.5;
+  outline: 2px dashed var(--accent-2);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
 .chart-tooltip {
   position: absolute;
   top: 8px;
   z-index: 2;
-  min-width: 190px;
-  max-width: min(260px, 70vw);
+  min-width: 170px;
+  max-width: min(260px, calc(100% - 16px));
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -4099,6 +4098,15 @@ button:active:not(:disabled) {
   font-size: 12px;
   pointer-events: none;
   transform: translateX(-50%);
+}
+
+/* Anchored to the near edge rather than centred, so it cannot hang off the panel. */
+.chart-tooltip.is-start {
+  transform: translateX(-12px);
+}
+
+.chart-tooltip.is-end {
+  transform: translateX(calc(-100% + 12px));
 }
 
 .chart-tooltip strong {

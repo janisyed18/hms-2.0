@@ -35,6 +35,7 @@ import type {
 import { PresencePanel, StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { motionTokens } from "../motion/motionTokens";
 import { ActivityTrendChart } from "./charts/ActivityTrendChart";
+import { formatReportingTime } from "./charts/chartPrimitives";
 import { FleetStatusChart } from "./charts/FleetStatusChart";
 import { ActionButton } from "./interaction/ActionButton";
 import { ActionNotice } from "./interaction/ActionNotice";
@@ -327,7 +328,7 @@ export function OperationalWorkspace({
           <span className="dashboard-context">Dashboard</span>
           <h2>Good {greetingForCurrentTime(dashboardNow)}{userName ? `, ${userName}` : ""}</h2>
           <p>
-            Current status as at {formatAsOf(dashboard.asOf, dashboard.timezone)}. Activity shown for {reportingPeriod.label.toLowerCase()}. {REPORTING_PERIOD_SCOPE_NOTE}
+            Current status as at {formatReportingTime(dashboard.asOf, dashboard.timezone)}. Activity shown for {reportingPeriod.label.toLowerCase()}. {REPORTING_PERIOD_SCOPE_NOTE}
           </p>
         </div>
         <div className="dashboard-hero-actions">
@@ -661,18 +662,6 @@ function formatDashboardDate(now: number): string {
   }).format(new Date(now));
 }
 
-function formatAsOf(asOf: string, timeZone: string): string {
-  return new Intl.DateTimeFormat("en-AU", {
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone,
-    timeZoneName: "short"
-  }).format(new Date(asOf));
-}
-
-/** Named for the as-of date as the Dashboard shows it, which is the organisation's date. */
 /** One series' per-bucket counts for a KPI sparkline, or nothing when it is all zero. */
 function sparkline(activity: ActivityReport | null, key: keyof ActivityCounts): number[] | undefined {
   if (!activity || activity.buckets.length === 0) return undefined;

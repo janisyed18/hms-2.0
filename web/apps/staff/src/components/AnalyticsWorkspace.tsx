@@ -21,8 +21,7 @@ import { InspectionOutcomesChart } from "./charts/InspectionOutcomesChart";
 import type { AnalyticsOverview } from "../domain/types";
 import { StaggerGroup, StaggerItem } from "../motion/MotionPrimitives";
 import { motionTokens } from "../motion/motionTokens";
-import { formatDateTime } from "../utils/dateTime";
-import { formatCount as formatNumber } from "./charts/chartPrimitives";
+import { formatCount as formatNumber, formatReportingTime } from "./charts/chartPrimitives";
 import {
   REPORTING_PERIOD_SCOPE_NOTE,
   reportingPeriodForPreset,
@@ -128,7 +127,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
           <span className="analytics-eyebrow">Operational intelligence</span>
           <h2>Fleet performance at a glance</h2>
           <p>
-            Fleet status and certificate coverage are current as at {formatDateTime(overview.asOf)}. Inspection throughput is for {(loadedPeriodLabel ?? reportingPeriod.label).toLowerCase()}. {REPORTING_PERIOD_SCOPE_NOTE}
+            Fleet status and certificate coverage are current as at {formatReportingTime(overview.asOf, overview.timezone)}. Inspection throughput is for {(loadedPeriodLabel ?? reportingPeriod.label).toLowerCase()}. {REPORTING_PERIOD_SCOPE_NOTE}
           </p>
           {isPeriodChanging ? (
             <span className="analytics-updated" role="status">
@@ -137,7 +136,7 @@ export function AnalyticsWorkspace({ onModuleChange }: AnalyticsWorkspaceProps) 
           ) : null}
           <span className="analytics-updated">
             <CalendarClock aria-hidden="true" size={14} />
-            Last updated {formatDateTime(overview.generatedAt)}
+            Last updated {formatReportingTime(overview.generatedAt, overview.timezone)}
           </span>
         </div>
         <div className="analytics-header-actions">

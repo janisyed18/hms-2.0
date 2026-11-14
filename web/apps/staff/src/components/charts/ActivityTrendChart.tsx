@@ -6,13 +6,13 @@ import type { KeyboardEvent } from "react";
 
 import type { ActivityBucket, ActivityCounts, ActivityReport } from "../../domain/types";
 import {
+  axisTicks,
   chartFrame,
-  countTicks,
   formatBucketRange,
   formatBucketStart,
   formatCount,
   labelIndices,
-  niceMax,
+  nearestBucketIndex,
   seriesDash
 } from "./chartPrimitives";
 
@@ -50,7 +50,7 @@ export function ActivityTrendChart({ activity, isStale = false }: ActivityTrendC
   const [hidden, setHidden] = useState<ReadonlySet<SeriesKey>>(() => new Set());
   const [focusedBucket, setFocusedBucket] = useState<number | null>(null);
   const [pointerBucket, setPointerBucket] = useState<number | null>(null);
-  const plotRef = useRef<SVGRectElement>(null);
+  const plotRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
 
   const buckets = activity.buckets;
@@ -71,7 +71,7 @@ export function ActivityTrendChart({ activity, isStale = false }: ActivityTrendC
     const peak = d3Max(
       visible.flatMap((series) => buckets.map((bucket) => bucket[series.key]))
     ) ?? 0;
-    const top = niceMax(peak);
+    const { top, ticks: yTicks } = axisTicks(peak);
     const scaleY = scaleLinear()
       .domain([0, top])
       .range([frame.margin.top + frame.innerHeight, frame.margin.top]);
@@ -85,11 +85,17 @@ export function ActivityTrendChart({ activity, isStale = false }: ActivityTrendC
           .x((bucket) => scaleX(new Date(bucket.start)))
           .y((bucket) => scaleY(bucket[series.key]))(buckets) ?? ""
     }));
-    return { x: scaleX, y: scaleY, yMax: top, ticks: countTicks(peak), paths: built };
+    return { x: scaleX, y: scaleY, yMax: top, ticks: yTicks, paths: built };
   }, [buckets, frame.innerHeight, frame.innerWidth, frame.margin.left, frame.margin.top, visible]);
 
   const activeBucket = pointerBucket ?? focusedBucket;
   const labelled = labelIndices(buckets.length, 6);
+  // Near an edge the tooltip anchors to that side instead of centring, so it stays
+  // inside the panel at narrow widths rather than hanging off it.
+  const activeRatio = activeBucket === null
+    ? 0.5
+    : x(new Date(buckets[activeBucket].start)) / VIEW_WIDTH;
+  const tooltipSide = activeRatio < 0.3 ? "start" : activeRatio > 0.7 ? "end" : "center";
 
   function toggle(key: SeriesKey) {
     setHidden((current) => {
@@ -103,13 +109,15 @@ export function ActivityTrendChart({ activity, isStale = false }: ActivityTrendC
 
   function bucketFromPointer(clientX: number) {
     const plot = plotRef.current?.getBoundingClientRect();
-    if (!plot || buckets.length === 0) return null;
+    if (!plot || plot.width === 0 || buckets.length === 0) return null;
+    // Through the x scale, not by dividing the width evenly: the buckets are not all
+    // the same length.
     const ratio = (clientX - plot.left) / plot.width;
-    const index = Math.round(ratio * (buckets.length - 1));
-    return Math.min(buckets.length - 1, Math.max(0, index));
+    const viewX = frame.margin.left + ratio * frame.innerWidth;
+    return nearestBucketIndex(buckets, x.invert(viewX).getTime());
   }
 
-  function onPlotKeyDown(event: KeyboardEvent<SVGRectElement>) {
+  function onPlotKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (buckets.length === 0) return;
     const current = focusedBucket ?? 0;
     const moves: Record<string, number> = {
@@ -142,16 +150,15 @@ export function ActivityTrendChart({ activity, isStale = false }: ActivityTrendC
   return (
     <div className={`activity-chart${isStale ? " is-stale" : ""}`}>
       <div className="activity-chart-plot">
+        {/* Decorative: the figures are in the summary and table below, and the keyboard
+            target is a sibling rather than a child, because a focusable element inside
+            an image role is not reliably reachable. */}
         <svg
-          aria-labelledby={titleId}
+          aria-hidden="true"
           className="activity-chart-svg"
           preserveAspectRatio="none"
-          role="img"
           viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
         >
-          <title id={titleId}>
-            {`Recorded activity by ${activity.granularity}, ${visible.map((series) => series.label).join(", ")}. The figures are also in the table below.`}
-          </title>
           {ticks.map((tick) => {
             const yPosition = y(tick);
             return (
@@ -215,29 +222,31 @@ export function ActivityTrendChart({ activity, isStale = false }: ActivityTrendC
               ))}
             </g>
           ) : null}
-          {/* The keyboard and pointer target. Focusable, so the chart can be inspected
-              without a mouse; arrow keys step bucket by bucket. */}
-          <rect
-            aria-describedby={`${titleId}-readout`}
-            aria-label={`Activity by ${activity.granularity}. Use the arrow keys to read each period.`}
-            className="chart-plot-target"
-            height={frame.innerHeight}
-            onBlur={() => setFocusedBucket(null)}
-            onFocus={() => setFocusedBucket((current) => current ?? 0)}
-            onKeyDown={onPlotKeyDown}
-            onPointerLeave={() => setPointerBucket(null)}
-            onPointerMove={(event) => setPointerBucket(bucketFromPointer(event.clientX))}
-            ref={plotRef}
-            role="application"
-            tabIndex={0}
-            width={frame.innerWidth}
-            x={frame.margin.left}
-            y={frame.margin.top}
-          />
         </svg>
+        {/* The keyboard and pointer target, over the plot area: focusable, so the chart
+            can be inspected without a mouse, with arrow keys stepping bucket by bucket. */}
+        <div
+          aria-describedby={`${titleId}-readout`}
+          aria-label={`Activity by ${activity.granularity}. Use the arrow keys to read each period.`}
+          className="chart-plot-target"
+          onBlur={() => setFocusedBucket(null)}
+          onFocus={() => setFocusedBucket((current) => current ?? 0)}
+          onKeyDown={onPlotKeyDown}
+          onPointerLeave={() => setPointerBucket(null)}
+          onPointerMove={(event) => setPointerBucket(bucketFromPointer(event.clientX))}
+          ref={plotRef}
+          role="application"
+          style={{
+            left: `${(frame.margin.left / VIEW_WIDTH) * 100}%`,
+            top: `${(frame.margin.top / VIEW_HEIGHT) * 100}%`,
+            width: `${(frame.innerWidth / VIEW_WIDTH) * 100}%`,
+            height: `${(frame.innerHeight / VIEW_HEIGHT) * 100}%`
+          }}
+          tabIndex={0}
+        />
         {activeBucket !== null ? (
           <div
-            className="chart-tooltip"
+            className={`chart-tooltip${tooltipSide === "center" ? "" : ` is-${tooltipSide}`}`}
             style={{
               left: `${(x(new Date(buckets[activeBucket].start)) / VIEW_WIDTH) * 100}%`
             }}
@@ -264,6 +273,11 @@ export function ActivityTrendChart({ activity, isStale = false }: ActivityTrendC
           </div>
         ) : null}
       </div>
+      <p className="sr-only" id={titleId}>
+        {`Recorded activity by ${activity.granularity}, ${activity.timezone}. Series shown: ${visible
+          .map((series) => series.label)
+          .join(", ")}. Vertical axis maximum ${formatCount(yMax)}. The figures are in the table below.`}
+      </p>
       {/* What the pointer or the arrow keys are on, announced without moving focus. */}
       <p aria-live="polite" className="sr-only" id={`${titleId}-readout`}>
         {readout}
@@ -329,7 +343,6 @@ export function ActivityTrendChart({ activity, isStale = false }: ActivityTrendC
           </tbody>
         </table>
       </div>
-      <p className="sr-only">{`Vertical axis maximum ${formatCount(yMax)}.`}</p>
     </div>
   );
 }

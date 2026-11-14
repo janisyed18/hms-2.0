@@ -2,7 +2,7 @@ import { scaleLinear } from "d3-scale";
 import { useId } from "react";
 
 import type { AnalyticsInspectionOutcome } from "../../domain/types";
-import { countTicks, formatCount, niceMax } from "./chartPrimitives";
+import { axisTicks, formatCount } from "./chartPrimitives";
 
 const OUTCOMES = [
   { key: "submitted", label: "Awaiting review", token: "var(--chart-4)" },
@@ -35,9 +35,9 @@ export function InspectionOutcomesChart({ outcomes, periodLabel }: InspectionOut
   const peak = Math.max(
     ...outcomes.flatMap((outcome) => OUTCOMES.map((entry) => outcome[entry.key]))
   );
-  const scale = scaleLinear().domain([0, niceMax(peak)]).range([0, VIEW_WIDTH - LABEL_WIDTH - 46]);
+  const { top, ticks } = axisTicks(peak, 3);
+  const scale = scaleLinear().domain([0, top]).range([0, VIEW_WIDTH - LABEL_WIDTH - 46]);
   const height = outcomes.length * OUTCOMES.length * ROW_HEIGHT + 26;
-  const ticks = countTicks(peak, 3);
 
   return (
     <div className="outcomes-chart">
