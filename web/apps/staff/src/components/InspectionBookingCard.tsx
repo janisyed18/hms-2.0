@@ -195,6 +195,7 @@ export function InspectionBookingCard({
           <CalendarClock aria-hidden="true" size={16} />
           <span className="booking-card__row-text">
             <strong>Reschedule request:</strong>
+            <span>Requested by: Customer</span>
             <time dateTime={change.startsAt}>{when(change.startsAt)}</time>
           </span>
           <span className="booking-card__row-actions">
@@ -223,6 +224,7 @@ export function InspectionBookingCard({
           <CalendarClock aria-hidden="true" size={16} />
           <span className="booking-card__row-text">
             <strong>Reschedule request:</strong>
+            <span>Requested by: Admin</span>
             <time dateTime={change.startsAt}>{when(change.startsAt)}</time>
           </span>
           <span className="booking-status booking-status--pending">Awaiting customer confirmation</span>
@@ -234,6 +236,7 @@ export function InspectionBookingCard({
           <CalendarClock aria-hidden="true" size={16} />
           <span className="booking-card__row-text">
             <strong>Reschedule request:</strong>
+            <span>Requested by: Customer</span>
             <time dateTime={change.startsAt}>{when(change.startsAt)}</time>
           </span>
           <span className="booking-status booking-status--pending">Awaiting admin approval</span>
@@ -245,6 +248,7 @@ export function InspectionBookingCard({
           <CalendarClock aria-hidden="true" size={16} />
           <span className="booking-card__row-text">
             <strong>Reschedule request:</strong>
+            <span>Requested by: Admin</span>
             <time dateTime={change.startsAt}>{when(change.startsAt)}</time>
           </span>
           <ActionButton
