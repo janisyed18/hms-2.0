@@ -82,7 +82,7 @@ describe("status mapping", () => {
     done.appointment!.status = "NO_SHOW";
     expect(statusOf(done)).toBe("no-show");
     const asked = booking("a", "x", "y", {
-      changeRequests: [{ id: "c", status: "PENDING_ADMIN_APPROVAL", startsAt: "x", endsAt: "y", reason: null, emergency: false, createdAt: "x" }]
+      changeRequests: [{ id: "c", status: "PENDING_ADMIN_APPROVAL", startsAt: "x", endsAt: "y", reason: null, emergency: false, createdAt: "x", requestedByRole: "CUSTOMER_USER" }]
     });
     expect(statusOf(asked)).toBe("change-requested");
     asked.changeRequests[0].status = "APPLIED";

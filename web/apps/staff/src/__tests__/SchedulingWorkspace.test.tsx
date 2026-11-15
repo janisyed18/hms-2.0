@@ -112,7 +112,8 @@ function booking(seed: Seed): InspectionBookingRecord {
             endsAt: "2027-03-05T01:00:00Z",
             reason: "Site closed",
             emergency: false,
-            createdAt: "2027-02-25T00:00:00Z"
+            createdAt: "2027-02-25T00:00:00Z",
+            requestedByRole: "CUSTOMER_USER"
           }
         ]
       : []

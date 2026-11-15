@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from hms_backend.app.modules.assets.models import Asset
     from hms_backend.app.modules.certificates.models import Certificate
     from hms_backend.app.modules.customers.models import Customer, CustomerLocation
+    from hms_backend.app.modules.identity.models import User
 
 
 class InspectionType(StrEnum):
@@ -286,6 +287,19 @@ class InspectionAppointmentChangeRequest(SyncableMixin, Base):
     booking: Mapped[InspectionBooking] = relationship(back_populates="change_requests")
     appointment: Mapped[InspectionAppointment] = relationship(
         back_populates="change_requests"
+    )
+    # Who asked for the change, so the screen can say "Requested by: Customer" from the
+    # stored requester instead of inferring it from whoever has to act next. Read-only
+    # and FK-free: ``requested_by_user_id`` may name an identity with no user row (a
+    # development header), and that resolves to None rather than failing the read.
+    requested_by: Mapped[User | None] = relationship(
+        "User",
+        primaryjoin=(
+            "foreign(InspectionAppointmentChangeRequest.requested_by_user_id)"
+            " == User.id"
+        ),
+        viewonly=True,
+        lazy="selectin",
     )
     availability_quote: Mapped[InspectionAvailabilityQuote] = relationship(
         lazy="selectin"

@@ -45,6 +45,7 @@ import type {
   InspectionCreateValues,
   InspectionBookingCreateValues,
   InspectionBookingRecord,
+  InspectionBookingStatusCounts,
   InspectionBookingStatus,
   InspectionScheduleResult,
   InspectionAvailabilitySlot,
@@ -529,6 +530,15 @@ interface ApiInspectionBooking {
   change_requests: ApiInspectionBookingChangeRequest[];
 }
 
+interface ApiInspectionBookingStatusCounts {
+  all: number;
+  pending_approval: number;
+  reschedule_requested: number;
+  approved: number;
+  rejected: number;
+  cancelled: number;
+}
+
 interface ApiInspectionBookingChangeRequest {
   id: string;
   status: "PENDING_ADMIN_APPROVAL" | "PENDING_CUSTOMER_CONFIRMATION" | "APPLIED" | "REJECTED" | "CANCELLED";
@@ -537,6 +547,7 @@ interface ApiInspectionBookingChangeRequest {
   reason: string | null;
   emergency: boolean;
   created_at: string;
+  requested_by_role: string | null;
 }
 
 interface ApiInspectionAvailability {
@@ -554,6 +565,7 @@ interface ApiInspectionBookingList {
   total: number;
   limit: number;
   offset: number;
+  status_counts?: ApiInspectionBookingStatusCounts;
   items: ApiInspectionBooking[];
 }
 
@@ -789,6 +801,10 @@ interface ListInspectionOptions {
 interface ListInspectionBookingOptions {
   status?: InspectionBookingStatus;
   customerId?: string;
+  locationId?: string;
+  assetId?: string;
+  /** Free text matched by the server against customer, site, asset and booking reference. */
+  search?: string;
   hasPendingChange?: boolean;
   limit?: number;
   offset?: number;
@@ -1390,6 +1406,20 @@ function toInspection(
   );
 }
 
+/** The tab counts, defaulted so an older server without them reads as all zeroes. */
+function toBookingStatusCounts(
+  counts: ApiInspectionBookingStatusCounts | undefined
+): InspectionBookingStatusCounts {
+  return {
+    all: counts?.all ?? 0,
+    pendingApproval: counts?.pending_approval ?? 0,
+    rescheduleRequested: counts?.reschedule_requested ?? 0,
+    approved: counts?.approved ?? 0,
+    rejected: counts?.rejected ?? 0,
+    cancelled: counts?.cancelled ?? 0
+  };
+}
+
 function toInspectionBooking(booking: ApiInspectionBooking): InspectionBookingRecord {
   return {
     id: booking.id,
@@ -1435,7 +1465,8 @@ function toInspectionBookingChangeRequest(
     endsAt: change.ends_at,
     reason: change.reason,
     emergency: change.emergency,
-    createdAt: change.created_at
+    createdAt: change.created_at,
+    requestedByRole: change.requested_by_role ?? null
   };
 }
 
@@ -2463,7 +2494,7 @@ export function createHmsClient(options: HmsClientOptions = {}) {
 
     async listInspectionBookings(
       listOptions: ListInspectionBookingOptions = {}
-    ): Promise<ApiListResult<InspectionBookingRecord>> {
+    ): Promise<ApiListResult<InspectionBookingRecord> & { statusCounts: InspectionBookingStatusCounts }> {
       const response = await request<ApiInspectionBookingList>(
         "/api/v1/inspection-bookings",
         {},
@@ -2472,12 +2503,16 @@ export function createHmsClient(options: HmsClientOptions = {}) {
           offset: listOptions.offset ?? 0,
           status: listOptions.status,
           customer_id: listOptions.customerId,
+          location_id: listOptions.locationId,
+          asset_id: listOptions.assetId,
+          search: listOptions.search?.trim() || undefined,
           has_pending_change: listOptions.hasPendingChange ? "true" : undefined
         }
       );
       return {
         total: response.data.total,
         etag: response.etag,
+        statusCounts: toBookingStatusCounts(response.data.status_counts),
         items: response.data.items.map(toInspectionBooking)
       };
     },

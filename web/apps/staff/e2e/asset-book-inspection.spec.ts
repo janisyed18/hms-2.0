@@ -62,9 +62,9 @@ test.describe("Customer location to asset to booking", () => {
     await expect(page).toHaveURL(/book_asset=/);
     await expect(page.getByRole("combobox", { name: "Booking customer" })).toHaveValue("Vopak");
     await expect(page.getByLabel("Booking location")).toContainText("Port Botany");
-    const ticked = form.locator("fieldset.booking-asset-list input[type=checkbox]:checked");
-    await expect(ticked).toHaveCount(1);
-    await expect(form.getByRole("checkbox", { name: new RegExp(assetNumber) })).toBeChecked();
+    const chosen = form.locator(".booking-asset-chosen li");
+    await expect(chosen).toHaveCount(1);
+    await expect(chosen.first()).toContainText(assetNumber);
     // Nothing the asset cannot supply is invented: the date and time are still the person's to choose.
     await expect(page.getByLabel("Preferred inspection date")).toHaveValue("");
     await expect(form.getByRole("button", { name: "Create booking" })).toBeDisabled();
@@ -84,7 +84,7 @@ test.describe("Customer location to asset to booking", () => {
     await expect(page.getByRole("alert").filter({ hasText: "Asset not loaded" })).toBeVisible();
     const form = page.locator("form.inspection-booking-form");
     await expect(form).toBeVisible();
-    await expect(form.locator("fieldset.booking-asset-list input[type=checkbox]:checked")).toHaveCount(0);
+    await expect(form.locator(".booking-asset-chosen li")).toHaveCount(0);
     await expect(page.getByLabel("Booking location")).toContainText("Choose a customer first");
   });
 
@@ -96,7 +96,7 @@ test.describe("Customer location to asset to booking", () => {
     await page.getByRole("complementary", { name: "Asset detail" }).getByRole("button", { name: "Book Inspection" }).click();
 
     const form = page.locator("form.inspection-booking-form");
-    await expect(form.getByRole("checkbox", { name: new RegExp(assetNumber) })).toBeChecked();
+    await expect(form.locator(".booking-asset-chosen li")).toContainText(assetNumber);
     await page.getByLabel("Preferred inspection date").fill(schedulingDate);
     const time = page.getByLabel("Available inspection time");
     await expect(time).toBeEnabled();
@@ -111,8 +111,8 @@ test.describe("Customer location to asset to booking", () => {
     // The form closes, the address drops the asset, and the booking is listed with that asset.
     await expect(form).toBeHidden();
     await expect(page).not.toHaveURL(/book_asset=/);
-    await expect(page.locator(".inspection-booking-list")).toContainText("PENDING APPROVAL", { timeout: 90_000 });
-    await expect(page.locator(".inspection-booking-list")).toContainText(assetNumber);
+    await expect(page.locator("table.inspection-booking-table")).toContainText("Requested", { timeout: 90_000 });
+    await expect(page.locator("table.inspection-booking-table")).toContainText(assetNumber);
   });
 
   test("moving the address from one asset to another reloads the form for the second asset", async ({ browser }) => {
@@ -130,9 +130,9 @@ test.describe("Customer location to asset to booking", () => {
     const openFormNumber = async () => {
       const form = page.locator("form.inspection-booking-form");
       await expect(form).toBeVisible();
-      const ticked = form.locator("fieldset.booking-asset-list input[type=checkbox]:checked");
-      await expect(ticked).toHaveCount(1);
-      return (await ticked.first().evaluate((box) => (box as HTMLInputElement).labels?.[0]?.textContent ?? "")).trim();
+      const chosen = form.locator(".booking-asset-chosen li");
+      await expect(chosen).toHaveCount(1);
+      return (await chosen.first().locator("span").innerText()).trim();
     };
     const seen: string[] = [];
     for (const id of [first, second]) {

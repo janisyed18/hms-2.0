@@ -5,6 +5,8 @@ import { expect, test } from "@playwright/test";
 
 import { resetAuthTestAccounts } from "./global-setup";
 import {
+  chooseRowAction,
+  pickInspectorInDialog,
   repoRoot,
   schedulingDate,
   permanentPasswords,
@@ -69,27 +71,29 @@ test.describe("scheduling release workflow", () => {
       await expect(inspector.page.getByRole("table", { name: "Inspection records" })).toContainText("Draft");
 
       await refreshInspectionsWorkspace(customer.page);
-      await expect(customer.page.locator(".inspection-booking-list time")).toContainText("8:00");
+      await expect(customer.page.locator("table.inspection-booking-table time")).toContainText("8:00");
+      await customer.page.locator("tr.booking-row .booking-action-menu__summary").first().click();
       await customer.page.getByRole("button", { name: "Request reschedule" }).click();
       await selectFirstAvailableTime(customer.page);
       await submitBookingForm(customer.page, "Request reschedule", "/change-requests");
-      await expect(customer.page.locator(".inspection-booking-list")).toContainText("Awaiting admin approval", { timeout: 90_000 });
+      await expect(customer.page.locator("table.inspection-booking-table")).toContainText("Reschedule requested", { timeout: 90_000 });
 
       await refreshInspectionsWorkspace(admin.page);
-      const rescheduleInspector = admin.page.getByLabel("Assign inspector for reschedule at Port Botany");
-      await rescheduleInspector.selectOption({ label: "inspector@example.test" });
-      await admin.page.getByRole("button", { name: "Approve reschedule" }).click();
-      await expect(admin.page.locator(".inspection-booking-list")).toContainText("APPROVED");
+      // Approving a reschedule picks the inspector in the same dialog an assignment uses.
+      await chooseRowAction(admin.page, "Port Botany", "Approve reschedule");
+      await pickInspectorInDialog(admin.page, "inspector@example.test");
+      await expect(admin.page.locator("table.inspection-booking-table")).toContainText("Approved");
 
+      await admin.page.locator("tr.booking-row .booking-action-menu__summary").first().click();
       await admin.page.getByRole("button", { name: "Request reschedule" }).click();
       await selectFirstAvailableTime(admin.page);
       await chooseOption(admin.page.getByLabel("Inspector for rescheduled inspection"), { label: "inspector@example.test" });
       await submitBookingForm(admin.page, "Request reschedule", "/change-requests");
-      await expect(admin.page.locator(".inspection-booking-list")).toContainText("Awaiting customer confirmation", { timeout: 90_000 });
+      await expect(admin.page.locator("table.inspection-booking-table")).toContainText("Awaiting customer confirmation", { timeout: 90_000 });
 
       await refreshInspectionsWorkspace(customer.page);
-      await customer.page.getByRole("button", { name: "Confirm reschedule" }).click();
-      await expect(customer.page.locator(".inspection-booking-list")).toContainText("APPROVED");
+      await chooseRowAction(customer.page, "Port Botany", "Confirm reschedule");
+      await expect(customer.page.locator("table.inspection-booking-table")).toContainText("Approved");
     } finally {
       await Promise.all([customer.context.close(), admin.context.close(), inspector.context.close()]);
     }
@@ -319,15 +323,21 @@ test.describe("scheduling release workflow", () => {
 
       // Going back to "Choose the location" clears the assets, the date, the times and the quote.
       await chooseOption(customer.page.getByLabel("Booking location"), "");
-      await expect(customer.page.getByRole("checkbox")).toHaveCount(0);
+      await expect(customer.page.locator(".booking-asset-chosen li")).toHaveCount(0);
+      await expect(customer.page.getByRole("button", { name: "Choose assets" })).toHaveCount(0);
       await expect(customer.page.getByLabel("Preferred inspection date")).toHaveValue("");
       await expect(customer.page.getByLabel("Preferred inspection date")).toBeDisabled();
       await expect(customer.page.getByLabel("Available inspection time")).toHaveCount(0);
       await expect(create).toBeDisabled();
 
-      // Choosing the location again does not bring the old asset back.
+      // Choosing the location again does not bring the old asset back: the booking carries
+      // nothing, and the picker opens with nothing ticked.
       await chooseOption(customer.page.getByLabel("Booking location"), { label: "Port Botany" });
-      await expect(customer.page.getByRole("checkbox").first()).not.toBeChecked();
+      await expect(customer.page.locator(".booking-asset-chosen li")).toHaveCount(0);
+      await customer.page.getByRole("button", { name: "Choose assets" }).click();
+      const picker = customer.page.getByRole("dialog", { name: "Choose assets" });
+      await expect(picker.getByRole("checkbox").first()).not.toBeChecked();
+      await picker.getByRole("button", { name: "Cancel" }).click();
       await expect(create).toBeDisabled();
     } finally {
       await customer.context.close();

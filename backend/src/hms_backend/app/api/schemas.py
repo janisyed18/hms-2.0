@@ -733,6 +733,10 @@ class InspectionAppointmentChangeRequestRead(BaseModel):
     reason: str | None
     emergency: bool
     created_at: datetime
+    # The role of the user who asked for the change, from the stored requester.
+    # None when that identity has no user record, so the screen says nothing rather
+    # than guessing who asked.
+    requested_by_role: str | None = None
 
 
 class InspectionAssetSummary(BaseModel):
@@ -762,10 +766,26 @@ class InspectionBookingRead(BaseModel):
     change_requests: list[InspectionAppointmentChangeRequestRead] = []
 
 
+class InspectionBookingStatusCounts(BaseModel):
+    """What each status tab holds, over the filtered set with the status filter off.
+
+    ``reschedule_requested`` counts bookings waiting on a reschedule decision, which
+    are approved bookings and so are left out of ``approved``.
+    """
+
+    all: int = 0
+    pending_approval: int = 0
+    reschedule_requested: int = 0
+    approved: int = 0
+    rejected: int = 0
+    cancelled: int = 0
+
+
 class InspectionBookingListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    status_counts: InspectionBookingStatusCounts = InspectionBookingStatusCounts()
     items: list[InspectionBookingRead]
 
 

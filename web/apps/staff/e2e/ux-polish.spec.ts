@@ -91,13 +91,15 @@ test.describe("usability polish", () => {
 
       await page.goto("/?view=inspections");
       const book = page.getByRole("button", { name: "Book inspection" });
-      const create = page.getByRole("button", { name: "Create inspection" });
+      // Admins manage bookings and reviews, but cannot execute a field inspection.
       await expect(book).toBeVisible();
-      await expect(create).toBeVisible();
       await expect(book).toHaveClass(/primary-button/);
-      await expect(create).toHaveClass(/secondary-button/);
-      await expect(page.getByRole("button", { name: /Add inspection/i })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Create inspection" })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Booking requests" })).toHaveAttribute("aria-pressed", "true");
+      await expect(page.getByLabel("Filter by booking status")).toBeVisible();
+      await page.getByRole("button", { name: "Inspection records" }).click();
       await expect(page.getByRole("tab", { name: "Awaiting review" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Create inspection" })).toHaveCount(0);
     } finally {
       await admin.context.close();
     }
@@ -112,7 +114,7 @@ test.describe("usability polish", () => {
       await createAndApproveBooking(customer.page, admin.page); // Mon 4 Oct 2027: daylight time, AEDT
 
       await openInspections(admin.page);
-      await expect(admin.page.locator(".inspection-booking-list")).toContainText(/4 Oct(ober)? 2027, 8:00 am AEDT/);
+      await expect(admin.page.locator("table.inspection-booking-table")).toContainText(/4 Oct(ober)? 2027, 8:00 am AEDT/);
 
       await customer.page.goto("/portal/?view=bookings");
       const card = customer.page.locator(".portal-booking-card").first();

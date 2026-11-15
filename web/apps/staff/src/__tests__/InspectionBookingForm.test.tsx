@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -72,10 +72,40 @@ async function pickCustomer(user: ReturnType<typeof userEvent.setup>, id: string
   await choose(user, screen.getByRole("combobox", { name: "Booking customer" }), id);
 }
 
-async function assetBoxes() {
-  await waitFor(() => expect(screen.getAllByRole("checkbox").length).toBeGreaterThan(0));
-  return screen.getAllByRole("checkbox").map((box) => (box as HTMLInputElement).labels?.[0]?.textContent);
+/** Assets are chosen in the picker dialog now, so these drive it the way a person does. */
+async function openPicker(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: /Choose assets|Change assets/ }));
+  return within(await screen.findByRole("dialog", { name: "Choose assets" }));
 }
+
+/** Leaves the picker without changing the booking. */
+async function cancelPicker(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(within(screen.getByRole("dialog", { name: "Choose assets" })).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Choose assets" })).not.toBeInTheDocument());
+}
+
+/** Confirms the picker and returns to the form. */
+async function confirmPicker(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: /^Use \d+ asset|^Use no assets$/ }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Choose assets" })).not.toBeInTheDocument());
+}
+
+/** Opens the picker, ticks the named assets and confirms, the way a person would. */
+async function pickAssets(user: ReturnType<typeof userEvent.setup>, labels: string[]) {
+  const picker = await openPicker(user);
+  for (const label of labels) await user.click(await picker.findByRole("checkbox", { name: label }));
+  await confirmPicker(user);
+}
+
+async function assetBoxes(user: ReturnType<typeof userEvent.setup>) {
+  const picker = await openPicker(user);
+  await waitFor(() => expect(picker.getAllByRole("checkbox").length).toBeGreaterThan(0));
+  return picker.getAllByRole("checkbox").map((box) => (box as HTMLInputElement).labels?.[0]?.textContent);
+}
+
+/** What the form says it is carrying, which is what a submit will send. */
+const chosenAssets = () =>
+  Array.from(document.querySelectorAll(".booking-asset-chosen li span")).map((row) => row.textContent?.trim() ?? "");
 
 function slots(prefix: string): InspectionAvailabilitySlot[] {
   return [
@@ -112,9 +142,7 @@ describe("booking started from an asset", () => {
 
     expect(screen.getByRole("combobox", { name: "Booking customer" })).toHaveValue("TH Industries");
     await waitFor(() => expect(screen.getByLabelText("Booking location")).toHaveTextContent("Harris Park"));
-    const labels = await assetBoxes();
-    expect(labels).toContain("ASSET-A3");
-    expect(screen.getAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked)).toHaveLength(1);
+    await waitFor(() => expect(chosenAssets()).toEqual(["ASSET-A3"]));
     expect(screen.getByLabelText("Preferred inspection date")).toHaveValue("");
     expect(screen.getByLabelText("Additional inspection information")).toHaveValue("");
     expect(submitButton()).toBeDisabled();
@@ -123,7 +151,7 @@ describe("booking started from an asset", () => {
   it("submits the asset's own customer, location and id once a time is chosen", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderForm({ initialAsset: assets.find((item) => item.id === "a3") });
-    await assetBoxes();
+    await screen.findByRole("button", { name: /Choose assets|Change assets/ });
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
     await choose(user, await screen.findByLabelText("Available inspection time"), "loc-a-quote-1");
     await user.click(submitButton());
@@ -136,7 +164,7 @@ describe("booking started from an asset", () => {
     expect(screen.getByRole("combobox", { name: "Booking customer" })).toHaveValue("TH Industries");
     expect(screen.getByText("Choose a location to see its assets.")).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("ASSET-Z1 has no location recorded");
-    expect(screen.queryAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked)).toHaveLength(0);
+    expect(chosenAssets()).toHaveLength(0);
   });
 });
 
@@ -144,34 +172,34 @@ describe("changing what an asset started", () => {
   it("clears the assets, date and chosen time when the location is changed after the prefill", async () => {
     const user = userEvent.setup();
     renderForm({ initialAsset: assets.find((item) => item.id === "a3") });
-    await assetBoxes();
+    await screen.findByRole("button", { name: /Choose assets|Change assets/ });
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
     await choose(user, await screen.findByLabelText("Available inspection time"), "loc-a-quote-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-b");
     await waitFor(() => expect(screen.getByLabelText("Preferred inspection date")).toHaveValue(""));
-    expect(screen.getAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked)).toHaveLength(0);
+    expect(chosenAssets()).toHaveLength(0);
     expect(submitButton()).toBeDisabled();
   });
 
   it("clears the location and assets when the customer is changed after the prefill", async () => {
     const user = userEvent.setup();
     renderForm({ initialAsset: assets.find((item) => item.id === "a3") });
-    await assetBoxes();
+    await screen.findByRole("button", { name: /Choose assets|Change assets/ });
     await pickCustomer(user, "cust-2");
     expect(screen.getByLabelText("Booking location")).not.toHaveTextContent("Harris Park");
-    expect(screen.queryAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked)).toHaveLength(0);
+    expect(chosenAssets()).toHaveLength(0);
     expect(submitButton()).toBeDisabled();
   });
 
   it("reloads every field for a different asset, even after the first one was edited", async () => {
     const user = userEvent.setup();
     const { rerender, props } = renderForm({ initialAsset: assets.find((item) => item.id === "a3") });
-    await assetBoxes();
+    await screen.findByRole("button", { name: /Choose assets|Change assets/ });
     await user.type(screen.getByLabelText("Additional inspection information"), "gate code 12");
     rerender(<InspectionBookingForm {...props} initialAsset={assets.find((item) => item.id === "b1")} />);
     await waitFor(() => expect(screen.getByLabelText("Booking location")).toHaveTextContent("Preston"));
     expect(screen.getByLabelText("Additional inspection information")).toHaveValue("");
-    await waitFor(() => expect(screen.getAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked)).toHaveLength(1));
+    await waitFor(() => expect(chosenAssets()).toHaveLength(1));
   });
 });
 
@@ -196,13 +224,14 @@ describe("new booking", () => {
     await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
 
-    const labels = await assetBoxes();
-    expect(labels).toHaveLength(25);
-    expect(labels[0]).toBe("ASSET-A1");
-    screen.getAllByRole("checkbox").forEach((box) => expect(box).not.toBeChecked());
-    expect(screen.getByText(/25 of 60 assets shown/)).toBeVisible();
-    // Only assets that can take new work are asked for.
+    const picker = await openPicker(user);
+    await waitFor(() => expect(picker.getAllByRole("checkbox")).toHaveLength(25));
+    expect(picker.getAllByRole("checkbox")[0]).toHaveAccessibleName("ASSET-A1");
+    picker.getAllByRole("checkbox").forEach((box) => expect(box).not.toBeChecked());
+    expect(picker.getByText(/60 assets at this location, 25 shown/)).toBeVisible();
+    // Only assets that can take new work, at this customer's chosen location, are asked for.
     expect(listAssets).toHaveBeenCalledWith(expect.objectContaining({ customerId: "cust-1", locationId: "loc-a", newWorkOnly: true, limit: 25, offset: 0 }));
+    expect(chosenAssets()).toHaveLength(0);
     expect(submitButton()).toBeDisabled();
   });
 
@@ -212,19 +241,20 @@ describe("new booking", () => {
 
     await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await assetBoxes();
-    expect(screen.queryByRole("checkbox", { name: "ASSET-A60" })).not.toBeInTheDocument();
+    const picker = await openPicker(user);
+    expect(picker.queryByRole("checkbox", { name: "ASSET-A60" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Show more assets" }));
-    await user.click(await screen.findByRole("button", { name: "Show more assets" }));
-    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A60" }));
-    expect(screen.getByRole("checkbox", { name: "ASSET-A60" })).toBeChecked();
+    await user.click(await picker.findByRole("button", { name: "Show more assets" }));
+    await user.click(await picker.findByRole("button", { name: "Show more assets" }));
+    await user.click(await picker.findByRole("checkbox", { name: "ASSET-A60" }));
+    expect(picker.getByRole("checkbox", { name: "ASSET-A60" })).toBeChecked();
 
-    // Searching moves the page on, and the ticked asset is still counted and still shown.
-    await user.type(screen.getByLabelText("Search assets"), "ASSET-A5");
-    await waitFor(() => expect(screen.getByText(/11 matching/)).toBeVisible());
-    expect(screen.getByRole("checkbox", { name: "ASSET-A60" })).toBeChecked();
-    expect(screen.getByText(/1 selected/)).toBeVisible();
+    // Searching moves the page on; the asset chosen before it is still counted.
+    await user.type(picker.getByRole("searchbox", { name: "Search assets" }), "ASSET-A5");
+    await waitFor(() => expect(picker.getByRole("status")).toHaveTextContent(/11 matching/));
+    expect(picker.getByText(/1 selected/)).toBeVisible();
+    await confirmPicker(user);
+    expect(chosenAssets()).toEqual(["ASSET-A60"]);
   });
 
   it("books after the user explicitly picks location, asset, date and a quoted time", async () => {
@@ -233,7 +263,7 @@ describe("new booking", () => {
 
     await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A2" }));
+    await pickAssets(user, ["ASSET-A2"]);
     expect(submitButton()).toBeDisabled();
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
     await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
@@ -263,30 +293,26 @@ describe("new booking", () => {
 
     await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-c");
-    await assetBoxes();
-    expect(screen.getByText(/25 of 150 assets shown/)).toBeVisible();
+    const picker = await openPicker(user);
+    await waitFor(() => expect(picker.getByText(/150 assets at this location, 25 shown/)).toBeVisible());
 
-    await user.click(screen.getByRole("button", { name: "Select all assets" }));
+    await user.click(picker.getByRole("button", { name: "Select all" }));
 
-    // All 150 are held, not just the 100 of the first page or the 25 on screen.
-    await waitFor(() => expect(screen.getByText(/150 selected/)).toBeVisible());
+    // All 150 are held, not just the 25 on screen: the server was asked for the rest.
+    await waitFor(() => expect(picker.getByText(/150 selected/)).toBeVisible());
     expect(listAllAssets).toHaveBeenCalledWith(expect.objectContaining({
       customerId: "cust-1",
       locationId: "loc-c",
       newWorkOnly: true
     }));
-    // An asset from the second Select All page is ticked and shown, though the visible
-    // page never reached it.
-    expect(screen.getByRole("checkbox", { name: "ASSET-C150" })).toBeChecked();
 
-    // Untick two: one on the first page, one only Select All brought in.
-    await user.click(screen.getByRole("checkbox", { name: "ASSET-C1" }));
-    await user.click(screen.getByRole("checkbox", { name: "ASSET-C150" }));
-    await waitFor(() => expect(screen.getByText(/148 selected/)).toBeVisible());
-    // The one on the visible page stays, unticked; the off-page one only had a row
-    // because it was selected, so unticking it takes the row away.
-    expect(screen.getByRole("checkbox", { name: "ASSET-C1" })).not.toBeChecked();
-    expect(screen.queryByRole("checkbox", { name: "ASSET-C150" })).not.toBeInTheDocument();
+    // Untick two: one on the visible page, one only Select All brought in.
+    await user.click(picker.getByRole("checkbox", { name: "ASSET-C1" }));
+    await waitFor(() => expect(picker.getByText(/149 selected/)).toBeVisible());
+    await user.type(picker.getByRole("searchbox", { name: "Search assets" }), "ASSET-C150");
+    await user.click(await picker.findByRole("checkbox", { name: "ASSET-C150" }));
+    await waitFor(() => expect(picker.getByText(/148 selected/)).toBeVisible());
+    await confirmPicker(user);
 
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
     await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
@@ -313,7 +339,7 @@ describe("new booking", () => {
 
     await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A1" }));
+    await pickAssets(user, ["ASSET-A1"]);
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
     await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
     await choose(user, screen.getByLabelText("Available inspection time"), "loc-a-quote-1");
@@ -321,8 +347,10 @@ describe("new booking", () => {
 
     await choose(user, screen.getByLabelText("Booking location"), "loc-b");
 
-    expect(await assetBoxes()).toEqual(["ASSET-B1"]);
+    expect(chosenAssets()).toHaveLength(0);
+    expect(await assetBoxes(user)).toEqual(["ASSET-B1"]);
     expect(screen.getByRole("checkbox", { name: "ASSET-B1" })).not.toBeChecked();
+    await cancelPicker(user);
     expect(screen.getByLabelText("Preferred inspection date")).toHaveValue("");
     expect(screen.queryByLabelText("Available inspection time")).not.toBeInTheDocument();
     expect(submitButton()).toBeDisabled();
@@ -340,10 +368,10 @@ describe("new booking", () => {
 
     await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A1" }));
+    await pickAssets(user, ["ASSET-A1"]);
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
     await choose(user, screen.getByLabelText("Booking location"), "loc-b");
-    await user.click(await screen.findByRole("checkbox", { name: "ASSET-B1" }));
+    await pickAssets(user, ["ASSET-B1"]);
     await act(async () => resolveSlow(slots("loc-a-stale")));
 
     expect(screen.queryByRole("option", { name: /loc-a-stale/ })).not.toBeInTheDocument();
@@ -352,7 +380,7 @@ describe("new booking", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("ignores a Select All that finishes after the user has moved to another location", async () => {
+  it("ignores a Select All that finishes after the picker closed and the location changed", async () => {
     let releaseSlow: (value: { total: number; items: AssetRecord[] }) => void = () => undefined;
     listAllAssets.mockImplementationOnce(
       () => new Promise<{ total: number; items: AssetRecord[] }>((resolve) => { releaseSlow = resolve; })
@@ -362,20 +390,22 @@ describe("new booking", () => {
 
     await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await assetBoxes();
-    await user.click(screen.getByRole("button", { name: "Select all assets" }));
+    const picker = await openPicker(user);
+    await user.click(await picker.findByRole("button", { name: "Select all" }));
+    // Leave before the answer comes back, then move the booking to another site.
+    await cancelPicker(user);
     await choose(user, screen.getByLabelText("Booking location"), "loc-b");
-    expect(await assetBoxes()).toEqual(["ASSET-B1"]);
 
-    // Harris Park's answer arrives only now, after Preston is on screen.
+    // Harris Park's answer arrives only now, with Preston on screen.
     const harrisPark = assets.filter((item) => item.location?.id === "loc-a");
     await act(async () => releaseSlow({ total: harrisPark.length, items: harrisPark }));
 
-    const ticked = screen.getAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked);
-    expect(ticked).toHaveLength(0);
-    expect(screen.queryByRole("checkbox", { name: "ASSET-A1" })).not.toBeInTheDocument();
+    // Nothing from the place the user left is carried into the booking.
+    expect(chosenAssets()).toHaveLength(0);
+    expect(await assetBoxes(user)).toEqual(["ASSET-B1"]);
+    await cancelPicker(user);
 
-    await user.click(screen.getByRole("checkbox", { name: "ASSET-B1" }));
+    await pickAssets(user, ["ASSET-B1"]);
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-07");
     await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
     await choose(user, screen.getByLabelText("Available inspection time"), "loc-b-quote-1");
@@ -393,7 +423,7 @@ describe("new booking", () => {
 
     await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A1" }));
+    await pickAssets(user, ["ASSET-A1"]);
     const date = screen.getByLabelText("Preferred inspection date");
     await user.type(date, "2030-01-07");
     await waitFor(() => expect(screen.getByLabelText("Available inspection time")).toBeEnabled());
@@ -412,11 +442,11 @@ describe("new booking", () => {
 
     await pickCustomer(user, "cust-1");
     await choose(user, screen.getByLabelText("Booking location"), "loc-a");
-    await user.click(await screen.findByRole("checkbox", { name: "ASSET-A2" }));
+    await pickAssets(user, ["ASSET-A2"]);
     rerender(<InspectionBookingForm {...props} />);
 
     expect(screen.getByLabelText("Booking location")).toHaveTextContent("Harris Park");
-    expect(screen.getByRole("checkbox", { name: "ASSET-A2" })).toBeChecked();
+    expect(chosenAssets()).toEqual(["ASSET-A2"]);
   });
 });
 
@@ -438,8 +468,9 @@ describe("reschedule", () => {
     const location = screen.getByLabelText("Booking location");
     expect(location).toHaveTextContent("Harris Park");
     expect(location).toBeDisabled();
-    expect(screen.getByRole("checkbox", { name: "ASSET-A1" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "ASSET-A1" })).toBeDisabled();
+    // A reschedule keeps the booking's own assets: they are stated, not re-chosen.
+    expect(screen.getByText("ASSET-A1")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Choose assets|Change assets/ })).not.toBeInTheDocument();
     expect(submitButton()).toBeDisabled();
 
     await user.type(screen.getByLabelText("Preferred inspection date"), "2030-01-08");

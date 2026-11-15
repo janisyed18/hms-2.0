@@ -159,10 +159,10 @@ test.describe("Operational interaction feedback", () => {
       // Bookings: a business conflict is explained as stated; a taken time says the booking changed.
       await requestSlots(customer.page, [0, 1]);
       await nav(page, "Inspections");
-      const list = page.locator(".inspection-booking-list");
-      await expect(list).toContainText("PENDING APPROVAL", { timeout: 60_000 });
-      const first = list.locator("article").first();
-      await first.getByRole("button", { name: "Decline" }).click();
+      const list = page.locator("table.inspection-booking-table");
+      await expect(list).toContainText("Requested", { timeout: 60_000 });
+      await list.locator("tr.booking-row").first().locator(".booking-action-menu__summary").click();
+      await page.getByRole("button", { name: "Decline request" }).click();
       const decline = page.getByRole("alertdialog", { name: /Decline the booking at/ });
       await failOnce(page, /\/api\/v1\/inspection-bookings\/[^/]+\/reject$/, "POST", 409, apiError("Only pending inspection bookings can be declined."));
       await decline.getByRole("button", { name: "Decline booking" }).click();

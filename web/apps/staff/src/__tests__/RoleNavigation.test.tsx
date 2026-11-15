@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { HmsApp, modulesForSession } from "../App";
+import { HmsApp, canPerformInspections, modulesForSession } from "../App";
 import type { StaffRole, StaffSession } from "../domain/types";
 
 function session(role: StaffRole): StaffSession {
@@ -30,6 +30,14 @@ describe("role navigation", () => {
     ["CUSTOMER_USER", ["dashboard", "my-work", "customers", "assets", "inspections", "certificates", "retest", "notifications"]]
   ] as const)("shows the approved %s workspace", (role, expected) => {
     expect(modulesForSession(session(role))).toEqual(expected);
+  });
+
+  it("allows only inspector-scoped sessions to perform inspections, not admins", () => {
+    expect(canPerformInspections(session("INSPECTOR"))).toBe(true);
+    for (const role of ["SUPER_ADMIN", "HMS_ADMIN", "REVIEWER", "CUSTOMER_USER"] as const) {
+      expect(canPerformInspections(session(role))).toBe(false);
+    }
+    expect(canPerformInspections({ ...session("INSPECTOR"), roles: ["INSPECTOR", "SUPER_ADMIN"] })).toBe(false);
   });
 
   it("unions modules for a persisted multi-role session", () => {

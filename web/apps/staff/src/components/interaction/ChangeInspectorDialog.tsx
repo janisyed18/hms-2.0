@@ -41,7 +41,10 @@ export function ChangeInspectorDialog({
   onClose,
   onSave,
   open,
+  saveLabel = "Save change",
   siteName,
+  title = "Change inspector",
+  verifyAvailability = true,
   whenLabel
 }: {
   /** Asks the server about one replacement. A rejection means "could not verify". */
@@ -52,7 +55,18 @@ export function ChangeInspectorDialog({
   onClose: () => void;
   onSave: (inspectorId: string) => Promise<string | null>;
   open: boolean;
+  /** The confirm button's words. Assigning a first inspector is not a change. */
+  saveLabel?: string;
+  /**
+   * Whether the server can be asked if an inspector is free for this booking. It can
+   * only answer for a confirmed appointment, so a booking still awaiting approval is
+   * assigned without a check here and validated by the server when it is approved.
+   * The dialog then claims nothing about availability rather than implying a check.
+   */
+  verifyAvailability?: boolean;
   siteName: string;
+  /** The dialog's name, which is also how it is found by assistive technology. */
+  title?: string;
   /** The booking's date and time, already formatted for its site. */
   whenLabel?: string;
 }) {
@@ -65,7 +79,10 @@ export function ChangeInspectorDialog({
       inspectors={inspectors}
       onClose={onClose}
       onSave={onSave}
+      saveLabel={saveLabel}
       siteName={siteName}
+      title={title}
+      verifyAvailability={verifyAvailability}
       whenLabel={whenLabel}
     />
   );
@@ -86,7 +103,10 @@ function DialogBody({
   inspectors,
   onClose,
   onSave,
+  saveLabel = "Save change",
   siteName,
+  title = "Change inspector",
+  verifyAvailability = true,
   whenLabel
 }: Omit<Parameters<typeof ChangeInspectorDialog>[0], "open">) {
   const id = useId();
@@ -118,6 +138,7 @@ function DialogBody({
   // Ask about the first few replacements up front so the list can say who is free; a failure shows no chip, never "Available".
   useEffect(() => {
     let alive = true;
+    if (!verifyAvailability) return;
     const ids = replacements.slice(0, PREVIEW_LIMIT).map((inspector) => inspector.id);
     setStanding(Object.fromEntries(ids.map((inspectorId) => [inspectorId, "checking" as Standing])));
     for (const inspectorId of ids) {
@@ -171,7 +192,7 @@ function DialogBody({
   function choose(inspectorId: string) {
     setChoice(inspectorId);
     setRefusal(null);
-    if (!inspectorId) {
+    if (!inspectorId || !verifyAvailability) {
       latest.current += 1;
       setCheck({ state: "idle" });
       return;
@@ -184,8 +205,8 @@ function DialogBody({
     setPending(true);
     setRefusal(null);
     // Someone may have booked this inspector since the first check, so ask again before changing anything.
-    const fresh = await verify(choice);
-    if (!fresh || fresh.available !== true) {
+    const fresh = verifyAvailability ? await verify(choice) : null;
+    if (verifyAvailability && (!fresh || fresh.available !== true)) {
       setPending(false);
       return;
     }
@@ -196,7 +217,9 @@ function DialogBody({
   }
 
   const result = check.state === "done" ? check.result : null;
-  const verified = result?.available === true;
+  // Without a check to go on, a chosen inspector is enough to send: the server decides,
+  // and refuses in place if they are not free.
+  const verified = verifyAvailability ? result?.available === true : choice !== "";
   const blocked = result !== null && (!result.eligible || result.available === false);
   const suggestions = (result?.suggestedInspectorIds ?? []).filter((inspectorId) => inspectorId !== choice && inspectorId !== currentInspectorId).slice(0, 3);
 
@@ -233,7 +256,7 @@ function DialogBody({
         <header className="change-inspector__header">
           <span aria-hidden="true" className="dialog-icon"><ArrowLeftRight size={20} /></span>
           <div>
-            <h2 id={titleId}>Change inspector</h2>
+            <h2 id={titleId}>{title}</h2>
             <p className="field-hint" id={descriptionId}>
               The appointment date, time, location and assets stay the same. Only the inspector changes.
             </p>
@@ -363,7 +386,7 @@ function DialogBody({
         <div className="confirm-dialog__actions">
           <button className="action-button action-button--ghost" disabled={pending} onClick={onClose} type="button">Cancel</button>
           <ActionButton disabled={!verified || pending} onClick={() => void save()} pending={pending} pendingLabel="Saving…" variant="primary">
-            <Check aria-hidden="true" size={15} /> Save change
+            <Check aria-hidden="true" size={15} /> {saveLabel}
           </ActionButton>
         </div>
       </div>

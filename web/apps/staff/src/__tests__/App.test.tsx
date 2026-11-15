@@ -1214,10 +1214,11 @@ describe("App", () => {
     expect(await screen.findByRole("row", { name: /API Standard/i })).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Inspections" }));
+    await user.click(await screen.findByRole("button", { name: "Inspection records" }));
     expect((await screen.findAllByRole("row", { name: /API-777/i }))[0]).toBeVisible();
-    const inspectionOverview = screen.getByRole("region", { name: "Inspection overview" });
-    expect(inspectionOverview).toHaveTextContent("Draft1");
-    expect(inspectionOverview).toHaveTextContent("Awaiting review0");
+    // The old inspection-status totals are no longer presented as booking KPI totals.
+    expect(screen.getByRole("tab", { name: "Awaiting review" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Draft" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Certificates" }));
     expect(await screen.findByRole("row", { name: /CERT-API-777-1/i })).toBeVisible();

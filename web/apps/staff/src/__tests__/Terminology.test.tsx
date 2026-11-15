@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { InspectionsWorkspace } from "../components/InspectionsWorkspace";
@@ -53,13 +54,12 @@ describe("one name for each state", () => {
 });
 
 describe("Inspections has two actions, and they are different ones", () => {
-  it("offers 'Create inspection' (a record for an asset) and 'Book inspection' (a site visit) side by side, with booking the main one", async () => {
-    render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
-    const create = await screen.findByRole("button", { name: "Create inspection" });
-    const book = screen.getByRole("button", { name: "Book inspection" });
-    expect(create).toHaveClass("secondary-button");
+  it("shows one booking management view for admins, without inspection execution", async () => {
+    render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite={false} />);
+    const book = await screen.findByRole("button", { name: "Book inspection" });
     expect(book).toHaveClass("primary-button");
-    expect(screen.queryByRole("button", { name: /Add inspection/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "Booking requests" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "Create inspection" })).toBeNull();
   });
 
   it("shows only the action a person may take", async () => {
@@ -74,6 +74,7 @@ describe("Inspections has two actions, and they are different ones", () => {
 
   it("the status tab for submitted work says 'Awaiting review'", async () => {
     render(<InspectionsWorkspace canApprove canApproveBookings canBook canWrite />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Inspection records" }));
     expect(await screen.findByRole("tab", { name: "Awaiting review" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Submitted" })).toBeNull();
   });

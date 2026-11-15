@@ -175,10 +175,21 @@ export async function signedInPage(browser: Browser, email: string, permanentPas
   return { context, page };
 }
 
+/**
+ * Inspection Operations, settled. It shows one management view at a time, so this waits
+ * for whichever the role lands on rather than assuming the record register is up.
+ */
 export async function openInspections(page: Page) {
   await page.getByRole("navigation", { name: "Primary navigation" })
     .getByRole("button", { name: "Inspections", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Inspection operations" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Inspection management view" })).toBeVisible();
+  await expect(page.getByText(/^Loading (bookings|inspections)$/)).toHaveCount(0, { timeout: 30_000 });
+}
+
+/** Switches to the inspection record register and waits for it. */
+export async function openInspectionRecords(page: Page) {
+  await page.getByRole("button", { name: "Inspection records", exact: true }).click();
   await expect(page.getByText("Loading inspections")).toBeHidden({ timeout: 30_000 });
   await expect(page.getByRole("table", { name: "Inspection records" })).toBeVisible();
 }
@@ -219,23 +230,36 @@ export async function chooseBookingLocationAndAsset(page: Page) {
     return asset.asset_name ? `${asset.asset_name} — ${asset.asset_number}` : asset.asset_number;
   });
   selectedBookingAssets.set(page, assetLabel);
-  const asset = page.getByRole("checkbox", { name: assetLabel, exact: true });
-  await expect(asset).toBeVisible();
-  await expect(asset).not.toBeChecked();
-  await asset.check();
+  await pickBookingAssets(page, [assetLabel]);
 }
 
-/** Every asset checkbox the booking form offers; the fieldset holds no other checkbox. */
+/**
+ * Chooses assets through the picker dialog, which is the only way a new booking gets
+ * them. The dialog lists this customer's assets at this location and nothing else.
+ */
+export async function pickBookingAssets(page: Page, labels: string[]) {
+  await page.getByRole("button", { name: "Choose assets" }).click();
+  const picker = page.getByRole("dialog", { name: "Choose assets" });
+  await expect(picker).toBeVisible();
+  for (const label of labels) {
+    const asset = picker.getByRole("checkbox", { name: label, exact: true });
+    await expect(asset).toBeVisible();
+    await asset.check();
+  }
+  await picker.getByRole("button", { name: /^Use \d+ asset/ }).click();
+  await expect(picker).toHaveCount(0);
+}
+
+/** The assets the booking form is carrying, which the picker wrote back to it. */
 function bookingAssetCheckboxes(page: Page) {
-  return page.locator("form.inspection-booking-form fieldset.booking-asset-list input[type=checkbox]");
+  return page.locator("form.inspection-booking-form .booking-asset-chosen li");
 }
 
-/** The labels of the assets currently ticked, so a selection can be compared before and after. */
+/** The labels of the chosen assets, so a selection can be compared before and after. */
 async function checkedBookingAssets(page: Page): Promise<string[]> {
-  return bookingAssetCheckboxes(page).evaluateAll((inputs) =>
-    inputs
-      .filter((input) => (input as HTMLInputElement).checked)
-      .map((input) => input.closest("label")?.textContent?.trim() ?? "")
+  return bookingAssetCheckboxes(page).evaluateAll((rows) =>
+    rows
+      .map((row) => row.querySelector("span")?.textContent?.trim() ?? "")
       .sort()
   );
 }
@@ -244,17 +268,18 @@ export async function selectFirstAvailableTime(page: Page, localDate = schedulin
   const form = page.locator("form.inspection-booking-form");
   // Two ways in, and they carry their assets differently. A new booking ticked one asset
   // itself, so hold the form to that identity. A reschedule opens on the booking's own
-  // assets, already ticked and locked, and never recorded one here.
+  // assets, stated and not re-chosen, and never recorded one here.
   const rescheduling = (await form.getByRole("button", { name: "Request reschedule" }).count()) > 0;
+  let selectedBefore: string[] = [];
   if (rescheduling) {
-    await expect(bookingAssetCheckboxes(page).first()).toBeDisabled();
+    await expect(form.locator(".booking-asset-fixed").first()).toBeVisible();
   } else {
     const assetLabel = selectedBookingAssets.get(page);
     expect(assetLabel, "a new booking must choose its asset before its time").toBeTruthy();
-    await expect(form.getByRole("checkbox", { name: assetLabel!, exact: true })).toBeChecked();
+    await expect(form.locator(".booking-asset-chosen li")).toContainText(assetLabel!);
+    selectedBefore = await checkedBookingAssets(page);
+    expect(selectedBefore.length).toBeGreaterThan(0);
   }
-  const selectedBefore = await checkedBookingAssets(page);
-  expect(selectedBefore.length).toBeGreaterThan(0);
 
   const dateInput = page.getByLabel("Preferred inspection date");
   await dateInput.fill(localDate);
@@ -263,7 +288,7 @@ export async function selectFirstAvailableTime(page: Page, localDate = schedulin
   await expect(timeSelect).toBeEnabled();
   await chooseOption(timeSelect, { first: true });
   // Picking a date and a time says nothing about which assets the visit covers.
-  expect(await checkedBookingAssets(page)).toEqual(selectedBefore);
+  if (!rescheduling) expect(await checkedBookingAssets(page)).toEqual(selectedBefore);
 }
 
 export async function submitBookingForm(
@@ -281,19 +306,59 @@ export async function submitBookingForm(
   expect(response.status()).toBe(201);
 }
 
+/** The bookings table on Inspection Operations, and one of its rows. */
+export const bookingTable = (page: Page) => page.locator("table.inspection-booking-table");
+export const bookingRow = (page: Page, text: RegExp | string) =>
+  page.locator("tr.booking-row").filter({ hasText: text });
+
+/**
+ * Picks an inspector in the open dialog. It is the one way an inspector is chosen, for a
+ * first assignment, a change or a reschedule approval: the server is asked whether they
+ * are free for the booking's time, and only a verified "Available" can be saved.
+ */
+export async function pickInspectorInDialog(
+  page: Page,
+  inspectorName: string,
+  dialogName = "Assign inspector",
+  saveLabel = dialogName
+) {
+  const dialog = page.getByRole("dialog", { name: dialogName });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("combobox", { name: /New inspector/ }).click();
+  await dialog.getByRole("option", { name: new RegExp(inspectorName) }).click();
+  // A reassignment is verified against the confirmed appointment before it can be saved.
+  // A first assignment has no appointment to check against, so the server decides on save.
+  if (dialogName === "Change inspector") {
+    await expect(dialog.getByText("Available", { exact: true })).toBeVisible({ timeout: 30_000 });
+  }
+  await dialog.getByRole("button", { name: saveLabel }).click();
+  await expect(dialog).toHaveCount(0, { timeout: 90_000 });
+}
+
+/** Assigns the inspector for a booking still waiting on one. */
+export async function assignInspector(page: Page, site: string, inspectorName: string) {
+  await page.getByRole("button", { name: `Assign inspector for ${site}` }).click();
+  await pickInspectorInDialog(page, inspectorName);
+}
+
+/** Opens a booking row's Actions menu and chooses one of them. */
+export async function chooseRowAction(page: Page, site: string, action: string) {
+  await page.locator("tr.booking-row").filter({ hasText: site }).first()
+    .locator(".booking-action-menu__summary").click();
+  await page.getByRole("button", { name: action }).click();
+}
+
 export async function createAndApproveBooking(customer: Page, admin: Page, localDate = schedulingDate) {
   await openInspections(customer);
   await customer.getByRole("button", { name: "Book inspection" }).click();
   await chooseBookingLocationAndAsset(customer);
   await selectFirstAvailableTime(customer, localDate);
   await submitBookingForm(customer, "Create booking", "/api/v1/inspection-bookings");
-  await expect(customer.locator(".inspection-booking-list")).toContainText("PENDING APPROVAL", { timeout: 90_000 });
+  await expect(bookingTable(customer)).toContainText("Requested", { timeout: 90_000 });
 
   await openInspections(admin);
-  const inspectorSelect = admin.getByLabel("Assign inspector for Port Botany");
-  await inspectorSelect.selectOption({ label: "inspector@example.test" });
-  await admin.getByRole("button", { name: "Assign & approve" }).click();
-  await expect(admin.locator(".inspection-booking-list")).toContainText("APPROVED", { timeout: 90_000 });
+  await assignInspector(admin, "Port Botany", "inspector@example.test");
+  await expect(bookingTable(admin)).toContainText("Approved", { timeout: 90_000 });
 }
 
 export async function bookingApiContext(page: Page) {

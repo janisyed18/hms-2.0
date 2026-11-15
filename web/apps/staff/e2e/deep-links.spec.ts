@@ -122,6 +122,9 @@ test.describe("shared URL and deep-link routing", () => {
       await expect.poll(() => here(page)).toBe("/?view=assets");
 
       await nav(page, "Inspections");
+      // Inspection Operations opens on booking requests for an admin; the register is
+      // the other management view, and a record link must open it from anywhere.
+      await page.getByRole("button", { name: "Inspection records", exact: true }).click();
       await expect(page.getByRole("table", { name: "Inspection records" })).toBeVisible();
       await page.getByRole("table", { name: "Inspection records" }).locator("tr.is-clickable").first().click();
       await expect(page.getByRole("complementary", { name: "Inspection detail" })).toBeVisible();
