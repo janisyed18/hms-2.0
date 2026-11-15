@@ -4550,3 +4550,38 @@ rect.fleet-segment-unscheduled { fill: var(--chart-neutral); }
   .booking-action-menu__items { right: auto; left: 0; width: 100%; max-width: none; }
   .inspection-booking-pagination { justify-content: flex-start; }
 }
+
+
+/* ------------------------------------------------ Booking asset picker
+
+   Choosing which assets a visit covers. The dialog carries the search and the
+   list; the form keeps only what was chosen, so a long list never pushes the
+   date and time off the screen. */
+.booking-asset-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.booking-asset-summary .field-hint { margin: 0; }
+.booking-asset-chosen { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; }
+.booking-asset-chosen li { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--surface-muted); font-size: 13px; }
+.booking-asset-chosen li span { overflow-wrap: anywhere; }
+.booking-asset-fixed { margin: 0 0 4px; font-size: 13px; }
+
+.asset-picker { display: grid; gap: 14px; width: min(560px, 94vw); max-height: min(720px, 88vh); }
+.asset-picker__header { display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 12px; }
+.asset-picker__header h2 { margin: 0 0 2px; font-size: 17px; }
+.asset-picker__header .field-hint { margin: 0; }
+.asset-picker__search { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 0 12px; border: 1px solid var(--border-strong, var(--border)); border-radius: var(--control-radius); background: var(--surface-muted); }
+.asset-picker__search svg { flex: 0 0 auto; color: var(--soft); }
+.asset-picker__search input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 14px; }
+.asset-picker__search input:focus { outline: none; }
+.asset-picker__search:focus-within { border-color: var(--accent); outline: 2px solid var(--accent-2); outline-offset: 1px; }
+.asset-picker__toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.asset-picker__toolbar .field-hint { margin: 0; font-variant-numeric: tabular-nums; }
+.asset-picker__list { display: grid; gap: 2px; overflow-y: auto; min-height: 120px; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.asset-picker__list .checkbox-field { min-height: 38px; padding: 0 8px; border-radius: var(--control-radius); }
+.asset-picker__list .checkbox-field:hover { background: var(--surface-muted); }
+.asset-picker__footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+
+@media (max-width: 520px) {
+  .asset-picker { width: 94vw; }
+  .asset-picker__toolbar, .asset-picker__footer { justify-content: flex-start; }
+  .asset-picker__footer .action-button, .asset-picker__footer button { flex: 1 1 auto; }
+}

@@ -53,8 +53,10 @@ beforeEach(() => {
   });
 });
 
-const checked = () => screen.getAllByRole("checkbox").filter((box) => (box as HTMLInputElement).checked)
-  .map((box) => (box as HTMLInputElement).labels?.[0]?.textContent ?? "");
+/** The assets the booking form is carrying. They are chosen in the picker dialog, so the
+    form lists what was chosen rather than a tick box per asset at the location. */
+const checked = () =>
+  Array.from(document.querySelectorAll(".booking-asset-chosen li span")).map((row) => row.textContent?.trim() ?? "");
 
 describe("booking started from an asset in the address", () => {
   it("opens the form with that asset's customer, location and the asset, then reports it handled when closed", async () => {

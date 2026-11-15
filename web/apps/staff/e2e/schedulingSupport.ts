@@ -230,23 +230,36 @@ export async function chooseBookingLocationAndAsset(page: Page) {
     return asset.asset_name ? `${asset.asset_name} — ${asset.asset_number}` : asset.asset_number;
   });
   selectedBookingAssets.set(page, assetLabel);
-  const asset = page.getByRole("checkbox", { name: assetLabel, exact: true });
-  await expect(asset).toBeVisible();
-  await expect(asset).not.toBeChecked();
-  await asset.check();
+  await pickBookingAssets(page, [assetLabel]);
 }
 
-/** Every asset checkbox the booking form offers; the fieldset holds no other checkbox. */
+/**
+ * Chooses assets through the picker dialog, which is the only way a new booking gets
+ * them. The dialog lists this customer's assets at this location and nothing else.
+ */
+export async function pickBookingAssets(page: Page, labels: string[]) {
+  await page.getByRole("button", { name: "Choose assets" }).click();
+  const picker = page.getByRole("dialog", { name: "Choose assets" });
+  await expect(picker).toBeVisible();
+  for (const label of labels) {
+    const asset = picker.getByRole("checkbox", { name: label, exact: true });
+    await expect(asset).toBeVisible();
+    await asset.check();
+  }
+  await picker.getByRole("button", { name: /^Use \d+ asset/ }).click();
+  await expect(picker).toHaveCount(0);
+}
+
+/** The assets the booking form is carrying, which the picker wrote back to it. */
 function bookingAssetCheckboxes(page: Page) {
-  return page.locator("form.inspection-booking-form fieldset.booking-asset-list input[type=checkbox]");
+  return page.locator("form.inspection-booking-form .booking-asset-chosen li");
 }
 
-/** The labels of the assets currently ticked, so a selection can be compared before and after. */
+/** The labels of the chosen assets, so a selection can be compared before and after. */
 async function checkedBookingAssets(page: Page): Promise<string[]> {
-  return bookingAssetCheckboxes(page).evaluateAll((inputs) =>
-    inputs
-      .filter((input) => (input as HTMLInputElement).checked)
-      .map((input) => input.closest("label")?.textContent?.trim() ?? "")
+  return bookingAssetCheckboxes(page).evaluateAll((rows) =>
+    rows
+      .map((row) => row.querySelector("span")?.textContent?.trim() ?? "")
       .sort()
   );
 }
@@ -255,17 +268,18 @@ export async function selectFirstAvailableTime(page: Page, localDate = schedulin
   const form = page.locator("form.inspection-booking-form");
   // Two ways in, and they carry their assets differently. A new booking ticked one asset
   // itself, so hold the form to that identity. A reschedule opens on the booking's own
-  // assets, already ticked and locked, and never recorded one here.
+  // assets, stated and not re-chosen, and never recorded one here.
   const rescheduling = (await form.getByRole("button", { name: "Request reschedule" }).count()) > 0;
+  let selectedBefore: string[] = [];
   if (rescheduling) {
-    await expect(bookingAssetCheckboxes(page).first()).toBeDisabled();
+    await expect(form.locator(".booking-asset-fixed").first()).toBeVisible();
   } else {
     const assetLabel = selectedBookingAssets.get(page);
     expect(assetLabel, "a new booking must choose its asset before its time").toBeTruthy();
-    await expect(form.getByRole("checkbox", { name: assetLabel!, exact: true })).toBeChecked();
+    await expect(form.locator(".booking-asset-chosen li")).toContainText(assetLabel!);
+    selectedBefore = await checkedBookingAssets(page);
+    expect(selectedBefore.length).toBeGreaterThan(0);
   }
-  const selectedBefore = await checkedBookingAssets(page);
-  expect(selectedBefore.length).toBeGreaterThan(0);
 
   const dateInput = page.getByLabel("Preferred inspection date");
   await dateInput.fill(localDate);
@@ -274,7 +288,7 @@ export async function selectFirstAvailableTime(page: Page, localDate = schedulin
   await expect(timeSelect).toBeEnabled();
   await chooseOption(timeSelect, { first: true });
   // Picking a date and a time says nothing about which assets the visit covers.
-  expect(await checkedBookingAssets(page)).toEqual(selectedBefore);
+  if (!rescheduling) expect(await checkedBookingAssets(page)).toEqual(selectedBefore);
 }
 
 export async function submitBookingForm(

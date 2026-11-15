@@ -323,15 +323,21 @@ test.describe("scheduling release workflow", () => {
 
       // Going back to "Choose the location" clears the assets, the date, the times and the quote.
       await chooseOption(customer.page.getByLabel("Booking location"), "");
-      await expect(customer.page.getByRole("checkbox")).toHaveCount(0);
+      await expect(customer.page.locator(".booking-asset-chosen li")).toHaveCount(0);
+      await expect(customer.page.getByRole("button", { name: "Choose assets" })).toHaveCount(0);
       await expect(customer.page.getByLabel("Preferred inspection date")).toHaveValue("");
       await expect(customer.page.getByLabel("Preferred inspection date")).toBeDisabled();
       await expect(customer.page.getByLabel("Available inspection time")).toHaveCount(0);
       await expect(create).toBeDisabled();
 
-      // Choosing the location again does not bring the old asset back.
+      // Choosing the location again does not bring the old asset back: the booking carries
+      // nothing, and the picker opens with nothing ticked.
       await chooseOption(customer.page.getByLabel("Booking location"), { label: "Port Botany" });
-      await expect(customer.page.getByRole("checkbox").first()).not.toBeChecked();
+      await expect(customer.page.locator(".booking-asset-chosen li")).toHaveCount(0);
+      await customer.page.getByRole("button", { name: "Choose assets" }).click();
+      const picker = customer.page.getByRole("dialog", { name: "Choose assets" });
+      await expect(picker.getByRole("checkbox").first()).not.toBeChecked();
+      await picker.getByRole("button", { name: "Cancel" }).click();
       await expect(create).toBeDisabled();
     } finally {
       await customer.context.close();
